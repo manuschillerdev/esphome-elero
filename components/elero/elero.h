@@ -162,7 +162,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t freq1_{0x71};
   uint8_t freq2_{0x21};
   InternalGPIOPin *gdo0_pin_{nullptr};
-  ISRInternalGPIOPin gdo0_irq_pin_{nullptr};
   std::map<uint32_t, EleroCover*> address_to_cover_mapping_;
 #ifdef USE_SENSOR
   std::map<uint32_t, sensor::Sensor*> address_to_rssi_sensor_;
