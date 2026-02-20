@@ -5,18 +5,23 @@
 #include "esphome/components/spi/spi.h"
 #include "esphome/components/elero/cc1101.h"
 #include <vector>
+#include <map>
 
 // All encryption/decryption structures copied from https://github.com/QuadCorei8085/elero_protocol/ (MIT)
 // All remote handling based on code from https://github.com/stanleypa/eleropy (GPLv3)
 
 namespace esphome {
 
+#ifdef USE_SENSOR
 namespace sensor {
 class Sensor;
 }
+#endif
+#ifdef USE_TEXT_SENSOR
 namespace text_sensor {
 class TextSensor;
 }
+#endif
 
 namespace elero {
 
@@ -114,9 +119,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void register_cover(EleroCover *cover);
   bool send_command(t_elero_command *cmd);
 
-  // Sensor registration
+#ifdef USE_SENSOR
   void register_rssi_sensor(uint32_t address, sensor::Sensor *sensor);
+#endif
+#ifdef USE_TEXT_SENSOR
   void register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor);
+#endif
 
   // Discovery / scan mode
   void start_scan() { scan_mode_ = true; }
@@ -126,18 +134,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   size_t get_discovered_count() const { return discovered_blinds_.size(); }
   void clear_discovered() { discovered_blinds_.clear(); }
 
-  // Cover access for web interface
-  const std::map<uint32_t, EleroCover*> &get_covers() const { return address_to_cover_mapping_; }
-
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }
   void set_freq2(uint8_t freq) { freq2_ = freq; }
-
-#ifdef USE_WEBSERVER
-  void set_web_server(bool enabled) { web_server_enabled_ = enabled; }
-  bool is_web_server_enabled() const { return web_server_enabled_; }
-#endif
 
  private:
   uint8_t count_bits(uint8_t byte);
@@ -164,15 +164,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   InternalGPIOPin *gdo0_pin_{nullptr};
   ISRInternalGPIOPin gdo0_irq_pin_{nullptr};
   std::map<uint32_t, EleroCover*> address_to_cover_mapping_;
+#ifdef USE_SENSOR
   std::map<uint32_t, sensor::Sensor*> address_to_rssi_sensor_;
+#endif
+#ifdef USE_TEXT_SENSOR
   std::map<uint32_t, text_sensor::TextSensor*> address_to_text_sensor_;
+#endif
   std::vector<DiscoveredBlind> discovered_blinds_;
   bool scan_mode_{false};
-#ifdef USE_WEBSERVER
-  bool web_server_enabled_{false};
-#endif
 };
 
 }  // namespace elero
 }  // namespace esphome
-

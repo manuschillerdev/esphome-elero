@@ -10,6 +10,17 @@ static const char *const TAG = "elero.cover";
 
 void EleroCover::dump_config() {
   LOG_COVER("", "Elero Cover", this);
+  ESP_LOGCONFIG(TAG, "  Blind Address: 0x%06x", this->command_.blind_addr);
+  ESP_LOGCONFIG(TAG, "  Remote Address: 0x%06x", this->command_.remote_addr);
+  ESP_LOGCONFIG(TAG, "  Channel: %d", this->command_.channel);
+  ESP_LOGCONFIG(TAG, "  Hop: 0x%02x", this->command_.hop);
+  ESP_LOGCONFIG(TAG, "  Pck Inf: 0x%02x 0x%02x", this->command_.pck_inf[0], this->command_.pck_inf[1]);
+  if (this->open_duration_ > 0)
+    ESP_LOGCONFIG(TAG, "  Open Duration: %dms", this->open_duration_);
+  if (this->close_duration_ > 0)
+    ESP_LOGCONFIG(TAG, "  Close Duration: %dms", this->close_duration_);
+  ESP_LOGCONFIG(TAG, "  Poll Interval: %dms", this->poll_intvl_);
+  ESP_LOGCONFIG(TAG, "  Supports Tilt: %s", YESNO(this->supports_tilt_));
 }
 
 void EleroCover::setup() {
@@ -84,7 +95,7 @@ void EleroCover::handle_commands(uint32_t now) {
           this->increase_counter();
         }
       } else {
-        ESP_LOGD(TAG, "Retry #%d for blind 0x%02x", this->send_retries_, this->command_.blind_addr);
+        ESP_LOGD(TAG, "Retry #%d for blind 0x%06x", this->send_retries_, this->command_.blind_addr);
         this->send_retries_++;
         if(this->send_retries_ > ELERO_SEND_RETRIES) {
           ESP_LOGE(TAG, "Hit maximum number of retries, giving up.");
@@ -113,7 +124,7 @@ cover::CoverTraits EleroCover::get_traits() {
 }
 
 void EleroCover::set_rx_state(uint8_t state) {
-  ESP_LOGV(TAG, "Got state: 0x%02x for blind 0x%02x", state, this->command_.blind_addr);
+  ESP_LOGV(TAG, "Got state: 0x%02x (%s) for blind 0x%06x", state, elero_state_to_string(state), this->command_.blind_addr);
   float pos = this->position;
   float current_tilt = this->tilt;
   CoverOperation op = this->current_operation;
@@ -129,6 +140,11 @@ void EleroCover::set_rx_state(uint8_t state) {
     op = COVER_OPERATION_IDLE;
     current_tilt = 0.0;
     break;
+  case ELERO_STATE_INTERMEDIATE:
+    op = COVER_OPERATION_IDLE;
+    current_tilt = 0.0;
+    // Keep current position estimate
+    break;
   case ELERO_STATE_START_MOVING_UP:
   case ELERO_STATE_MOVING_UP:
     op = COVER_OPERATION_OPENING;
@@ -143,9 +159,31 @@ void EleroCover::set_rx_state(uint8_t state) {
     op = COVER_OPERATION_IDLE;
     current_tilt = 1.0;
     break;
+  case ELERO_STATE_TOP_TILT:
+    pos = COVER_OPEN;
+    op = COVER_OPERATION_IDLE;
+    current_tilt = 1.0;
+    break;
+  case ELERO_STATE_BOTTOM_TILT: // also ELERO_STATE_OFF (0x0f)
+    pos = COVER_CLOSED;
+    op = COVER_OPERATION_IDLE;
+    current_tilt = 1.0;
+    break;
   case ELERO_STATE_STOPPED:
     op = COVER_OPERATION_IDLE;
     current_tilt = 0.0;
+    break;
+  case ELERO_STATE_BLOCKING:
+    ESP_LOGW(TAG, "Blind 0x%06x reports BLOCKING", this->command_.blind_addr);
+    op = COVER_OPERATION_IDLE;
+    break;
+  case ELERO_STATE_OVERHEATED:
+    ESP_LOGW(TAG, "Blind 0x%06x reports OVERHEATED", this->command_.blind_addr);
+    op = COVER_OPERATION_IDLE;
+    break;
+  case ELERO_STATE_TIMEOUT:
+    ESP_LOGW(TAG, "Blind 0x%06x reports TIMEOUT", this->command_.blind_addr);
+    op = COVER_OPERATION_IDLE;
     break;
   default:
     op = COVER_OPERATION_IDLE;
@@ -204,9 +242,6 @@ void EleroCover::control(const cover::CoverCall &call) {
   }
 }
 
-// FIXME: Most of this should probably be moved to the
-// handle_commands function to only publish a new state
-// if at least the transmission was successful
 void EleroCover::start_movement(CoverOperation dir) {
   switch(dir) {
     case COVER_OPERATION_OPENING:
@@ -241,7 +276,6 @@ void EleroCover::recompute_position() {
   if(this->current_operation == COVER_OPERATION_IDLE)
     return;
 
-
   float dir;
   float action_dur;
   switch (this->current_operation) {
@@ -262,7 +296,6 @@ void EleroCover::recompute_position() {
   this->position = clamp(this->position, 0.0f, 1.0f);
 
   this->last_recompute_time_ = now;
-
 }
 
 } // namespace elero

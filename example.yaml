@@ -19,3 +19,26 @@ cover:
     channel: 4
     remote_address: 0xf0d008
     name: Schlafzimmer
+    open_duration: 25s
+    close_duration: 22s
+
+# RSSI sensor - reports signal strength for a specific blind
+sensor:
+  - platform: elero
+    blind_address: 0xa831e5
+    name: "Schlafzimmer RSSI"
+
+# Text sensor - reports blind state as text (top, bottom, moving_up, etc.)
+text_sensor:
+  - platform: elero
+    blind_address: 0xa831e5
+    name: "Schlafzimmer Status"
+
+# Buttons for RF discovery scan
+button:
+  - platform: elero
+    name: "Elero Start Scan"
+    scan_start: true
+  - platform: elero
+    name: "Elero Stop Scan"
+    scan_start: false

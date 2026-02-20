@@ -25,7 +25,7 @@ If you like my work, consider sponsoring this project via [Github Sponsors](http
 
 See the provided [example file](example.yaml) for the minimum configuration required to configure a blind. Some optional parameters can also be set that allow the tuning of your system:
 
-```
+```yaml
 external_components:
   - source: github://andyboeh/esphome-elero
 
@@ -61,6 +61,27 @@ cover:
     command_up: 0x20
     command_down: 0x40
     command_tilt: 0x24
+
+# Optional: RSSI signal strength sensor
+sensor:
+  - platform: elero
+    blind_address: 0xa831e5
+    name: "Schlafzimmer RSSI"
+
+# Optional: Blind state as text sensor
+text_sensor:
+  - platform: elero
+    blind_address: 0xa831e5
+    name: "Schlafzimmer Status"
+
+# Optional: RF discovery scan buttons
+button:
+  - platform: elero
+    name: "Elero Start Scan"
+    scan_start: true
+  - platform: elero
+    name: "Elero Stop Scan"
+    scan_start: false
 ```
 
 ### Section spi
@@ -95,6 +116,26 @@ cover:
   * `command_down`: Configure the command sent for closing the blind if different from `0x40` (Optional)
   * `command_tilt`: Configure the command sent for tilting the blind if different from `0x24` (Optional)
 
+### Section sensor (RSSI)
+
+Reports the signal strength (RSSI in dBm) of the last received message from a specific blind. Useful for diagnosing communication quality.
+
+  * `blind_address`: The address of the blind to monitor
+  * `name`: The name of the sensor in Home Assistant
+
+### Section text_sensor (State)
+
+Reports the current state of a blind as a human-readable string. Possible values: `top`, `bottom`, `intermediate`, `tilt`, `top_tilt`, `bottom_tilt`, `moving_up`, `moving_down`, `start_moving_up`, `start_moving_down`, `stopped`, `blocking`, `overheated`, `timeout`, `on`, `unknown`.
+
+  * `blind_address`: The address of the blind to monitor
+  * `name`: The name of the text sensor in Home Assistant
+
+### Section button (RF Scan)
+
+Provides buttons to start and stop an RF discovery scan. During a scan, all received Elero messages are logged and tracked. After stopping the scan, discovered devices are printed to the log with their address, remote address, channel, RSSI, state, and how many times they were seen.
+
+  * `scan_start`: Set to `true` for a "Start Scan" button, `false` for a "Stop Scan" button (Optional, default: `true`)
+
 ## Getting the blind address and other values
 
 You need to have an existing remote control configure and connected to to your blind. This component only supports faking an existing blind, it is not possible to learn it as a new remote. In order to accomplish this, start out with an empty configuration **and add a fake cover** (otherwise, you get a compile error). Then, enable logging and listen to your blind communication. Do the following:
@@ -104,7 +145,7 @@ You need to have an existing remote control configure and connected to to your b
   len=29, cnt=45, typ=0x6a, typ2=0x00, hop=0a, syst=01, chl=09, src=0x908bef, bwd=0x908bef, fwd=0x908bef, #dst=01, dst=e039c9, rssi=-84.0, lqi=47, crc= 1, payload=[0x00 0x04 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
   ```
 
-  2. Look at the lines. You now know: 
+  2. Look at the lines. You now know:
     - `pck_inf1`=`0x6a`
     - `pck_inf2` = `0x00`
     - `hop` = `0x0a`
@@ -122,6 +163,8 @@ You need to have an existing remote control configure and connected to to your b
 
   4. Add all required information to the configuration file and check. Your blinds should start moving.
 
+Alternatively, you can use the **RF Scan** buttons to discover blinds on the airwaves. Press "Start Scan", trigger your blinds (e.g., press buttons on the physical remote), then press "Stop Scan". Check the ESPHome log for a list of all discovered device addresses, channels, and signal strengths.
+
 ## Position Control
 
 This implementation does not support intermediate positions. However, by estimating the time the cover is travelling, the cover can be stopped in any desired position. This feature is experimental and it might be off.
@@ -134,6 +177,8 @@ Any tilt value > 0 will send out the tilt command. At the moment, setting tilt t
 
   1. No log output when pressing buttons: Check that the wiring is correct. If that's fine, your frequency might have an offset. I had to set my module to the values `0xc0`, `0x71` and `0x21` whereas the default is `0x7a`, `0x71` and `0x21`.
   2. Blind control doesn't work: Carefully check all values and compare with the real remote. Apart from the `cnt` value, all values need to match!
+  3. Weak signal / unreliable control: Add a `sensor` platform entry for your blind address and monitor the RSSI value. Values above -70 dBm are typically good. Consider repositioning the CC1101 antenna.
+  4. Blind reports BLOCKING or OVERHEATED: These are error states from the blind motor. Check the blind physically. The component will log warnings for these states.
 
 ## Tested configurations
 
