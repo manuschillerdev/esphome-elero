@@ -93,6 +93,35 @@ void EleroWebServer::setup() {
     this->handle_options(request);
   });
 
+  // --- Packet dump API ---
+  server->on("/elero/api/dump/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
+    this->handle_packet_dump_start(request);
+  });
+  server->on("/elero/api/dump/start", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
+    this->handle_options(request);
+  });
+
+  server->on("/elero/api/dump/stop", HTTP_POST, [this](AsyncWebServerRequest *request) {
+    this->handle_packet_dump_stop(request);
+  });
+  server->on("/elero/api/dump/stop", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
+    this->handle_options(request);
+  });
+
+  server->on("/elero/api/packets", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    this->handle_get_packets(request);
+  });
+  server->on("/elero/api/packets", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
+    this->handle_options(request);
+  });
+
+  server->on("/elero/api/packets/clear", HTTP_POST, [this](AsyncWebServerRequest *request) {
+    this->handle_clear_packets(request);
+  });
+  server->on("/elero/api/packets/clear", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
+    this->handle_options(request);
+  });
+
   ESP_LOGI(TAG, "Elero Web UI available at /elero");
 }
 
@@ -265,6 +294,83 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
 
   AsyncWebServerResponse *response =
       request->beginResponse(200, "text/plain; charset=utf-8", yaml.c_str());
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+void EleroWebServer::handle_packet_dump_start(AsyncWebServerRequest *request) {
+  if (this->parent_->is_packet_dump_active()) {
+    this->send_json_error(request, 409, "Packet dump already running");
+    return;
+  }
+  this->parent_->clear_raw_packets();
+  this->parent_->start_packet_dump();
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", "{\"status\":\"dumping\"}");
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+void EleroWebServer::handle_packet_dump_stop(AsyncWebServerRequest *request) {
+  if (!this->parent_->is_packet_dump_active()) {
+    this->send_json_error(request, 409, "No packet dump running");
+    return;
+  }
+  this->parent_->stop_packet_dump();
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", "{\"status\":\"stopped\"}");
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
+  const auto &packets = this->parent_->get_raw_packets();
+
+  std::string json = "{\"dump_active\":";
+  json += this->parent_->is_packet_dump_active() ? "true" : "false";
+  json += ",\"count\":";
+  char cnt_buf[12];
+  snprintf(cnt_buf, sizeof(cnt_buf), "%d", (int)packets.size());
+  json += cnt_buf;
+  json += ",\"packets\":[";
+
+  bool first = true;
+  for (const auto &pkt : packets) {
+    if (!first) json += ",";
+    first = false;
+
+    // Build hex string: "xx xx xx ..."
+    char hex_buf[CC1101_FIFO_LENGTH * 3 + 1];
+    hex_buf[0] = '\0';
+    for (int i = 0; i < pkt.fifo_len && i < CC1101_FIFO_LENGTH; i++) {
+      char byte_buf[4];
+      snprintf(byte_buf, sizeof(byte_buf), i == 0 ? "%02x" : " %02x", pkt.data[i]);
+      strncat(hex_buf, byte_buf, sizeof(hex_buf) - strlen(hex_buf) - 1);
+    }
+
+    char entry_buf[320];
+    snprintf(entry_buf, sizeof(entry_buf),
+      "{\"t\":%lu,\"len\":%d,\"valid\":%s,\"reason\":\"%s\",\"hex\":\"%s\"}",
+      (unsigned long)pkt.timestamp_ms,
+      pkt.fifo_len,
+      pkt.valid ? "true" : "false",
+      pkt.reject_reason,
+      hex_buf
+    );
+    json += entry_buf;
+  }
+
+  json += "]}";
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", json.c_str());
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+void EleroWebServer::handle_clear_packets(AsyncWebServerRequest *request) {
+  this->parent_->clear_raw_packets();
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", "{\"status\":\"cleared\"}");
   this->add_cors_headers(response);
   request->send(response);
 }

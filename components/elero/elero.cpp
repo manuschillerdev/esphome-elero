@@ -1,6 +1,8 @@
 #include "elero.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
+#include <cstring>
+#include <algorithm>
 
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
@@ -48,15 +50,30 @@ void Elero::loop() {
       return;
     }
     if(len & 0x7F) { // bytes available
+      uint8_t fifo_count;
       if((len & 0x7F) > CC1101_FIFO_LENGTH) {
         ESP_LOGV(TAG, "Received more bytes than FIFO length - wtf?");
         this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
+        fifo_count = CC1101_FIFO_LENGTH;
       } else {
-        this->read_buf(CC1101_RXFIFO, this->msg_rx_, (len & 0x7f));
+        fifo_count = (len & 0x7f);
+        this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
+      }
+      // Log raw bytes at VERBOSE level for analysis
+      ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
+               format_hex_pretty(this->msg_rx_, fifo_count).c_str());
+      // Capture to ring buffer if dump mode is active
+      this->packet_dump_pending_update_ = false;
+      if (this->packet_dump_mode_) {
+        this->capture_raw_packet_(fifo_count);
+        this->packet_dump_pending_update_ = true;
       }
       // Sanity check
-      if(this->msg_rx_[0] + 3 <= (len & 0x7f)) {
+      if(this->msg_rx_[0] + 3 <= fifo_count) {
         this->interpret_msg();
+      } else if (this->packet_dump_pending_update_) {
+        this->mark_last_raw_packet_(false, "short_read");
+        this->packet_dump_pending_update_ = false;
       }
     }
   }
@@ -437,7 +454,14 @@ void Elero::interpret_msg() {
   uint8_t length = this->msg_rx_[0];
   // Sanity check
   if(length > ELERO_MAX_PACKET_SIZE) {
+    uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - 3)) ? (length + 3) : CC1101_FIFO_LENGTH;
     ESP_LOGE(TAG, "Received invalid packet: too long (%d)", length);
+    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", dump_len,
+             format_hex_pretty(this->msg_rx_, dump_len).c_str());
+    if (this->packet_dump_pending_update_) {
+      this->mark_last_raw_packet_(false, "too_long");
+      this->packet_dump_pending_update_ = false;
+    }
     return;
   }
 
@@ -457,6 +481,12 @@ void Elero::interpret_msg() {
   // Validate destination count before multiplication to prevent overflow
   if (num_dests > 20) {
     ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
+    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
+             format_hex_pretty(this->msg_rx_, length + 3).c_str());
+    if (this->packet_dump_pending_update_) {
+      this->mark_last_raw_packet_(false, "too_many_dests");
+      this->packet_dump_pending_update_ = false;
+    }
     return;
   }
 
@@ -473,12 +503,24 @@ void Elero::interpret_msg() {
   // the packet (length) and the FIFO buffer.
   if(26 + dests_len > length || 26 + dests_len >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
+    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
+             format_hex_pretty(this->msg_rx_, length + 3).c_str());
+    if (this->packet_dump_pending_update_) {
+      this->mark_last_raw_packet_(false, "dests_len_too_long");
+      this->packet_dump_pending_update_ = false;
+    }
     return;
   }
 
   // RSSI and LQI are appended by CC1101 after packet data at indices length+1 and length+2
   if (length + 2 >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
+    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
+             format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
+    if (this->packet_dump_pending_update_) {
+      this->mark_last_raw_packet_(false, "rssi_oob");
+      this->packet_dump_pending_update_ = false;
+    }
     return;
   }
 
@@ -493,6 +535,10 @@ void Elero::interpret_msg() {
     rssi = (float)((this->msg_rx_[length+1])/2-74);
   uint8_t *payload = &this->msg_rx_[19 + dests_len];
   msg_decode(payload);
+  if (this->packet_dump_pending_update_) {
+    this->mark_last_raw_packet_(true, nullptr);
+    this->packet_dump_pending_update_ = false;
+  }
   ESP_LOGD(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
 
   // Update RSSI sensor for any message from a known blind
@@ -551,6 +597,49 @@ void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sens
   this->address_to_text_sensor_[address] = sensor;
 }
 #endif
+
+void Elero::start_packet_dump() {
+  packet_dump_mode_ = true;
+  ESP_LOGI(TAG, "Packet dump mode started");
+}
+
+void Elero::stop_packet_dump() {
+  packet_dump_mode_ = false;
+  ESP_LOGI(TAG, "Packet dump mode stopped");
+}
+
+void Elero::clear_raw_packets() {
+  raw_packets_.clear();
+  raw_packet_write_idx_ = 0;
+}
+
+void Elero::capture_raw_packet_(uint8_t fifo_len) {
+  uint8_t actual_len = (fifo_len > CC1101_FIFO_LENGTH) ? CC1101_FIFO_LENGTH : fifo_len;
+  RawPacket pkt{};
+  pkt.timestamp_ms = millis();
+  pkt.fifo_len = actual_len;
+  memcpy(pkt.data, this->msg_rx_, actual_len);
+  pkt.valid = false;
+  pkt.reject_reason[0] = '\0';
+
+  if (raw_packets_.size() < ELERO_MAX_RAW_PACKETS) {
+    raw_packets_.push_back(pkt);
+    raw_packet_write_idx_ = (uint8_t)(raw_packets_.size() - 1);
+  } else {
+    raw_packet_write_idx_ = (raw_packet_write_idx_ + 1) % ELERO_MAX_RAW_PACKETS;
+    raw_packets_[raw_packet_write_idx_] = pkt;
+  }
+}
+
+void Elero::mark_last_raw_packet_(bool valid, const char *reason) {
+  if (raw_packets_.empty()) return;
+  auto &pkt = raw_packets_[raw_packet_write_idx_];
+  pkt.valid = valid;
+  if (!valid && reason != nullptr) {
+    strncpy(pkt.reject_reason, reason, sizeof(pkt.reject_reason) - 1);
+    pkt.reject_reason[sizeof(pkt.reject_reason) - 1] = '\0';
+  }
+}
 
 void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel,
                                     uint8_t pck_inf0, uint8_t pck_inf1, uint8_t hop,
