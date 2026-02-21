@@ -229,9 +229,26 @@ elero_web:
 | `/elero` | GET | Web-UI (HTML) |
 | `/elero/api/scan/start` | POST | RF-Scan starten |
 | `/elero/api/scan/stop` | POST | RF-Scan stoppen |
-| `/elero/api/discovered` | GET | Gefundene Geräte (JSON) |
+| `/elero/api/discovered` | GET | Gefundene Geraete (JSON) |
 | `/elero/api/configured` | GET | Konfigurierte Covers (JSON) |
-| `/elero/api/yaml` | GET | YAML-Export für entdeckte Blinds |
+| `/elero/api/yaml` | GET | YAML-Export fuer entdeckte Blinds |
+
+**HTTP-Fehlercodes:**
+
+| Code | Bedeutung | Wann |
+|---|---|---|
+| 200 | OK | Erfolgreiche Anfrage |
+| 409 | Conflict | Scan starten wenn bereits laeuft, oder Scan stoppen wenn keiner laeuft |
+
+Fehlerantworten werden als JSON zurueckgegeben: `{"error": "Beschreibung"}`
+
+**CORS-Unterstuetzung:**
+
+Alle API-Endpoints unterstuetzen Cross-Origin-Zugriff (CORS):
+- `Access-Control-Allow-Origin: *`
+- `Access-Control-Allow-Methods: GET, POST, OPTIONS`
+- `Access-Control-Allow-Headers: Content-Type`
+- Preflight-Requests (OPTIONS) werden auf allen API-Endpoints unterstuetzt
 
 ---
 

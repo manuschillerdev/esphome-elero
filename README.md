@@ -38,6 +38,7 @@
 | RSSI-Signalstärke als Sensor | Stabil |
 | Blind-Status als Text-Sensor | Stabil |
 | RF-Discovery (Blinds finden) | Stabil |
+| Web-UI fuer Discovery und YAML-Export | Stabil |
 | Mehrere Blinds gleichzeitig | Stabil |
 | TempoTel 2 Kompatibilität | Getestet |
 
@@ -483,6 +484,27 @@ button:
 4. Ergebnisse im ESPHome-Log ablesen
 
 Pro entdecktem Gerät werden protokolliert: Adresse, Remote-Adresse, Kanal, RSSI, Status, Häufigkeit.
+
+### Web-UI (Alternative zum Log)
+
+Fuer eine komfortablere Geräteerkennung steht eine optionale Web-Oberflaeche bereit:
+
+```yaml
+# Web-Server aktivieren (Voraussetzung)
+web_server:
+
+# Elero Web-UI aktivieren
+elero_web:
+```
+
+Danach ist die Oberflaeche unter `http://<device-ip>/elero` erreichbar. Funktionen:
+
+- **RF-Scan steuern** - Scan starten/stoppen direkt im Browser
+- **Gefundene Geraete anzeigen** - Adresse, Kanal, Remote, RSSI, Status, Hop
+- **Konfigurierte Covers anzeigen** - Name, Position, Betriebszustand
+- **YAML exportieren** - Generiert Copy-Paste-fertige YAML-Konfiguration
+
+Die Web-UI bietet zudem eine REST-API unter `/elero/api/*` mit CORS-Unterstuetzung fuer Cross-Origin-Zugriff.
 
 ---
 

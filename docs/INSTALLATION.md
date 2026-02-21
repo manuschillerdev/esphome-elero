@@ -210,13 +210,35 @@ Flashe erneut und teste. Gängige Kombinationen:
 
 ## 5. Blind-Adressen herausfinden
 
-Wenn die Kommunikation funktioniert, kannst du die Adressen deiner Rollläden ermitteln.
+Wenn die Kommunikation funktioniert, kannst du die Adressen deiner Rollladen ermitteln. Es gibt zwei Wege: per **Web-UI** (empfohlen) oder per **Log-Analyse**.
+
+### Option A: Web-UI (empfohlen)
+
+Fuege folgendes zu deiner Konfiguration hinzu:
+
+```yaml
+web_server:
+
+elero_web:
+```
+
+Flashe erneut und oeffne im Browser `http://<device-ip>/elero`. Die Web-UI ermoeglicht:
+
+1. Klicke **Scan starten**
+2. Betaetige die Fernbedienung (Hoch/Runter/Stopp fuer jeden Rollladen)
+3. Die gefundenen Geraete erscheinen live in der Liste
+4. Klicke **Scan stoppen**
+5. Klicke **YAML exportieren** - die fertige Konfiguration kann direkt kopiert werden
+
+> **Tipp:** Die Web-UI zeigt auch bereits konfigurierte Covers mit Position und Status an.
+
+### Option B: Log-Analyse
 
 ### Schritt 5.1: Scan starten
 
-1. Öffne den ESPHome-Log
-2. Drücke den "Start Scan"-Button in Home Assistant (oder per Log beobachten)
-3. Betätige die Fernbedienung: Wähle einen Rollladen aus und drücke Hoch/Runter
+1. Oeffne den ESPHome-Log
+2. Druecke den "Start Scan"-Button in Home Assistant (oder per Log beobachten)
+3. Betaetige die Fernbedienung: Waehle einen Rollladen aus und druecke Hoch/Runter
 
 ### Schritt 5.2: Log-Ausgabe lesen
 
