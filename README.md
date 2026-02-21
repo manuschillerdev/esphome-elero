@@ -132,7 +132,7 @@ ota:
 
 # Externe Elero-Komponente laden
 external_components:
-  - source: github://andyboeh/esphome-elero
+  - source: github://pfriedrich84/esphome-elero
 
 # SPI-Bus konfigurieren
 spi:

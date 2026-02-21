@@ -258,7 +258,7 @@ Eine vollständige Konfiguration mit allen Plattformen:
 
 ```yaml
 external_components:
-  - source: github://andyboeh/esphome-elero
+  - source: github://pfriedrich84/esphome-elero
 
 spi:
   clk_pin: GPIO18

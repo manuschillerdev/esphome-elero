@@ -130,7 +130,7 @@ ota:
 
 # Externe Elero-Komponente
 external_components:
-  - source: github://andyboeh/esphome-elero
+  - source: github://pfriedrich84/esphome-elero
 
 # SPI-Bus
 spi:
@@ -328,7 +328,7 @@ ota:
     password: !secret ota_password
 
 external_components:
-  - source: github://andyboeh/esphome-elero
+  - source: github://pfriedrich84/esphome-elero
 
 spi:
   clk_pin: GPIO18
