@@ -203,6 +203,38 @@ button:
 
 ---
 
+## Web-UI: `elero_web`
+
+Optionale Web-Oberfläche zur Geräteerkennung und YAML-Generierung. Erreichbar unter `http://<device-ip>/elero`.
+
+```yaml
+web_server:
+
+elero_web:
+```
+
+**Voraussetzungen:**
+- Die ESPHome `web_server` Komponente (oder eine andere Komponente die `web_server_base` bereitstellt) muss konfiguriert sein.
+
+**Funktionen:**
+- **RF-Scan steuern** – Scan starten/stoppen direkt im Browser
+- **Gefundene Geräte anzeigen** – Adresse, Kanal, Remote, RSSI, Status, Hop
+- **Konfigurierte Covers anzeigen** – Name, Position, Betriebszustand
+- **YAML exportieren** – Generiert Copy-Paste-fertige YAML-Konfiguration für entdeckte Blinds
+
+**REST-API Endpoints:**
+
+| Endpoint | Methode | Beschreibung |
+|---|---|---|
+| `/elero` | GET | Web-UI (HTML) |
+| `/elero/api/scan/start` | POST | RF-Scan starten |
+| `/elero/api/scan/stop` | POST | RF-Scan stoppen |
+| `/elero/api/discovered` | GET | Gefundene Geräte (JSON) |
+| `/elero/api/configured` | GET | Konfigurierte Covers (JSON) |
+| `/elero/api/yaml` | GET | YAML-Export für entdeckte Blinds |
+
+---
+
 ## Vollständiges Beispiel
 
 Eine vollständige Konfiguration mit allen Plattformen:
@@ -258,6 +290,11 @@ button:
   - platform: elero
     name: "Elero Stop Scan"
     scan_start: false
+
+# Web UI for discovery and YAML export
+web_server:
+
+elero_web:
 ```
 
 Siehe auch: [Installationsanleitung](INSTALLATION.md) | [README](../README.md) | [Beispiel-YAML](../example.yaml)

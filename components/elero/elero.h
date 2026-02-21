@@ -134,6 +134,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   size_t get_discovered_count() const { return discovered_blinds_.size(); }
   void clear_discovered() { discovered_blinds_.clear(); }
 
+  // Cover access for web server
+  bool is_cover_configured(uint32_t address) const {
+    return address_to_cover_mapping_.find(address) != address_to_cover_mapping_.end();
+  }
+  const std::map<uint32_t, EleroCover *> &get_configured_covers() const { return address_to_cover_mapping_; }
+
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }

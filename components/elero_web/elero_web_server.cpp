@@ -1,0 +1,191 @@
+#include "elero_web_server.h"
+#include "elero_web_ui.h"
+#include "esphome/core/log.h"
+#include "esphome/core/application.h"
+
+namespace esphome {
+namespace elero {
+
+static const char *const TAG = "elero.web_server";
+
+void EleroWebServer::setup() {
+  this->base_->init();
+
+  auto *server = this->base_->get_server();
+
+  server->on("/elero", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    this->handle_index(request);
+  });
+
+  server->on("/elero/api/scan/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
+    this->handle_scan_start(request);
+  });
+
+  server->on("/elero/api/scan/stop", HTTP_POST, [this](AsyncWebServerRequest *request) {
+    this->handle_scan_stop(request);
+  });
+
+  server->on("/elero/api/discovered", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    this->handle_get_discovered(request);
+  });
+
+  server->on("/elero/api/configured", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    this->handle_get_configured(request);
+  });
+
+  server->on("/elero/api/yaml", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    this->handle_get_yaml(request);
+  });
+
+  ESP_LOGI(TAG, "Elero Web UI available at /elero");
+}
+
+void EleroWebServer::dump_config() {
+  ESP_LOGCONFIG(TAG, "Elero Web Server:");
+  ESP_LOGCONFIG(TAG, "  URL: /elero");
+}
+
+void EleroWebServer::handle_index(AsyncWebServerRequest *request) {
+  request->send_P(200, "text/html", ELERO_WEB_UI_HTML);
+}
+
+void EleroWebServer::handle_scan_start(AsyncWebServerRequest *request) {
+  this->parent_->clear_discovered();
+  this->parent_->start_scan();
+  request->send(200, "application/json", "{\"status\":\"scanning\"}");
+}
+
+void EleroWebServer::handle_scan_stop(AsyncWebServerRequest *request) {
+  this->parent_->stop_scan();
+  request->send(200, "application/json", "{\"status\":\"stopped\"}");
+}
+
+void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
+  std::string json = "{\"scanning\":";
+  json += this->parent_->is_scanning() ? "true" : "false";
+  json += ",\"blinds\":[";
+
+  const auto &blinds = this->parent_->get_discovered_blinds();
+  bool first = true;
+  for (const auto &blind : blinds) {
+    if (!first) json += ",";
+    first = false;
+
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+      "{\"blind_address\":\"0x%06x\","
+      "\"remote_address\":\"0x%06x\","
+      "\"channel\":%d,"
+      "\"rssi\":%.1f,"
+      "\"last_state\":\"%s\","
+      "\"times_seen\":%d,"
+      "\"hop\":\"0x%02x\","
+      "\"payload_1\":\"0x%02x\","
+      "\"payload_2\":\"0x%02x\","
+      "\"pck_inf1\":\"0x%02x\","
+      "\"pck_inf2\":\"0x%02x\","
+      "\"already_configured\":%s}",
+      blind.blind_address,
+      blind.remote_address,
+      blind.channel,
+      blind.rssi,
+      elero_state_to_string(blind.last_state),
+      blind.times_seen,
+      blind.hop,
+      blind.payload_1,
+      blind.payload_2,
+      blind.pck_inf[0],
+      blind.pck_inf[1],
+      this->parent_->is_cover_configured(blind.blind_address) ? "true" : "false"
+    );
+    json += buf;
+  }
+
+  json += "]}";
+  request->send(200, "application/json", json.c_str());
+}
+
+void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
+  std::string json = "{\"covers\":[";
+
+  const auto &covers = this->parent_->get_configured_covers();
+  bool first = true;
+  for (const auto &pair : covers) {
+    if (!first) json += ",";
+    first = false;
+
+    auto *cover = pair.second;
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+      "{\"blind_address\":\"0x%06x\","
+      "\"name\":\"%s\","
+      "\"position\":%.2f,"
+      "\"operation\":\"%s\"}",
+      pair.first,
+      cover->get_name().c_str(),
+      cover->position,
+      cover->current_operation == cover::COVER_OPERATION_IDLE ? "idle" :
+      cover->current_operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing"
+    );
+    json += buf;
+  }
+
+  json += "]}";
+  request->send(200, "application/json", json.c_str());
+}
+
+void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
+  const auto &blinds = this->parent_->get_discovered_blinds();
+  if (blinds.empty()) {
+    request->send(200, "text/plain; charset=utf-8",
+      "# No discovered blinds.\n# Start a scan and press buttons on your remote.\n");
+    return;
+  }
+
+  std::string yaml = "# Auto-generated YAML from Elero RF discovery\n";
+  yaml += "# Copy this into your ESPHome configuration.\n\n";
+  yaml += "cover:\n";
+
+  int idx = 0;
+  for (const auto &blind : blinds) {
+    if (this->parent_->is_cover_configured(blind.blind_address))
+      continue;
+
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+      "  - platform: elero\n"
+      "    blind_address: 0x%06x\n"
+      "    channel: %d\n"
+      "    remote_address: 0x%06x\n"
+      "    name: \"Discovered Blind %d\"\n"
+      "    # open_duration: 25s\n"
+      "    # close_duration: 22s\n"
+      "    # Detected RF parameters:\n"
+      "    hop: 0x%02x\n"
+      "    payload_1: 0x%02x\n"
+      "    payload_2: 0x%02x\n"
+      "    pck_inf1: 0x%02x\n"
+      "    pck_inf2: 0x%02x\n"
+      "\n",
+      blind.blind_address,
+      blind.channel,
+      blind.remote_address,
+      ++idx,
+      blind.hop,
+      blind.payload_1,
+      blind.payload_2,
+      blind.pck_inf[0],
+      blind.pck_inf[1]
+    );
+    yaml += buf;
+  }
+
+  if (idx == 0) {
+    yaml += "  # All discovered blinds are already configured.\n";
+  }
+
+  request->send(200, "text/plain; charset=utf-8", yaml.c_str());
+}
+
+}  // namespace elero
+}  // namespace esphome

@@ -42,3 +42,10 @@ button:
   - platform: elero
     name: "Elero Stop Scan"
     scan_start: false
+
+# Web UI for blind discovery and management
+# Access at http://<device-ip>/elero
+web_server:
+
+elero_web:
+  id: elero_web_ui
