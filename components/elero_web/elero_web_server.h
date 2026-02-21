@@ -7,7 +7,7 @@
 namespace esphome {
 namespace elero {
 
-class EleroWebServer : public Component {
+class EleroWebServer : public Component, public AsyncWebHandler {
  public:
   void setup() override;
   void dump_config() override;
@@ -15,6 +15,9 @@ class EleroWebServer : public Component {
 
   void set_elero_parent(Elero *parent) { this->parent_ = parent; }
   void set_web_server(web_server_base::WebServerBase *base) { this->base_ = base; }
+
+  bool canHandle(AsyncWebServerRequest *request) override;
+  void handleRequest(AsyncWebServerRequest *request) override;
 
  protected:
   void handle_index(AsyncWebServerRequest *request);

@@ -24,7 +24,7 @@ void EleroWebServer::send_json_error(AsyncWebServerRequest *request, int code, c
 }
 
 void EleroWebServer::handle_options(AsyncWebServerRequest *request) {
-  AsyncWebServerResponse *response = request->beginResponse(204);
+  AsyncWebServerResponse *response = request->beginResponse(204, "text/plain", "");
   this->add_cors_headers(response);
   response->addHeader("Access-Control-Max-Age", "86400");
   request->send(response);
@@ -51,76 +51,9 @@ void EleroWebServer::setup() {
     return;
   }
 
-  // --- HTML UI ---
-  server->on("/elero", HTTP_GET, [this](AsyncWebServerRequest *request) {
-    this->handle_index(request);
-  });
-
-  // --- Scan API ---
-  server->on("/elero/api/scan/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_scan_start(request);
-  });
-  server->on("/elero/api/scan/start", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
-    this->handle_options(request);
-  });
-
-  server->on("/elero/api/scan/stop", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_scan_stop(request);
-  });
-  server->on("/elero/api/scan/stop", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
-    this->handle_options(request);
-  });
-
-  // --- Data API ---
-  server->on("/elero/api/discovered", HTTP_GET, [this](AsyncWebServerRequest *request) {
-    this->handle_get_discovered(request);
-  });
-  server->on("/elero/api/discovered", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
-    this->handle_options(request);
-  });
-
-  server->on("/elero/api/configured", HTTP_GET, [this](AsyncWebServerRequest *request) {
-    this->handle_get_configured(request);
-  });
-  server->on("/elero/api/configured", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
-    this->handle_options(request);
-  });
-
-  server->on("/elero/api/yaml", HTTP_GET, [this](AsyncWebServerRequest *request) {
-    this->handle_get_yaml(request);
-  });
-  server->on("/elero/api/yaml", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
-    this->handle_options(request);
-  });
-
-  // --- Packet dump API ---
-  server->on("/elero/api/dump/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_packet_dump_start(request);
-  });
-  server->on("/elero/api/dump/start", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
-    this->handle_options(request);
-  });
-
-  server->on("/elero/api/dump/stop", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_packet_dump_stop(request);
-  });
-  server->on("/elero/api/dump/stop", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
-    this->handle_options(request);
-  });
-
-  server->on("/elero/api/packets", HTTP_GET, [this](AsyncWebServerRequest *request) {
-    this->handle_get_packets(request);
-  });
-  server->on("/elero/api/packets", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
-    this->handle_options(request);
-  });
-
-  server->on("/elero/api/packets/clear", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_clear_packets(request);
-  });
-  server->on("/elero/api/packets/clear", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
-    this->handle_options(request);
-  });
+  // Register ourselves as the handler for all /elero/* routes.
+  // canHandle() filters by URL prefix; handleRequest() does the routing.
+  server->addHandler(this);
 
   ESP_LOGI(TAG, "Elero Web UI available at /elero");
 }
@@ -131,8 +64,51 @@ void EleroWebServer::dump_config() {
   ESP_LOGCONFIG(TAG, "  API: /elero/api/*");
 }
 
+bool EleroWebServer::canHandle(AsyncWebServerRequest *request) {
+  const std::string &url = request->url();
+  return url.size() >= 6 && url.substr(0, 6) == "/elero";
+}
+
+void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
+  const std::string url = request->url();
+  const auto method = request->method();
+
+  if (url == "/elero" && method == HTTP_GET) {
+    handle_index(request);
+  } else if (url == "/elero/api/scan/start") {
+    if (method == HTTP_POST) handle_scan_start(request);
+    else if (method == HTTP_OPTIONS) handle_options(request);
+  } else if (url == "/elero/api/scan/stop") {
+    if (method == HTTP_POST) handle_scan_stop(request);
+    else if (method == HTTP_OPTIONS) handle_options(request);
+  } else if (url == "/elero/api/discovered") {
+    if (method == HTTP_GET) handle_get_discovered(request);
+    else if (method == HTTP_OPTIONS) handle_options(request);
+  } else if (url == "/elero/api/configured") {
+    if (method == HTTP_GET) handle_get_configured(request);
+    else if (method == HTTP_OPTIONS) handle_options(request);
+  } else if (url == "/elero/api/yaml") {
+    if (method == HTTP_GET) handle_get_yaml(request);
+    else if (method == HTTP_OPTIONS) handle_options(request);
+  } else if (url == "/elero/api/dump/start") {
+    if (method == HTTP_POST) handle_packet_dump_start(request);
+    else if (method == HTTP_OPTIONS) handle_options(request);
+  } else if (url == "/elero/api/dump/stop") {
+    if (method == HTTP_POST) handle_packet_dump_stop(request);
+    else if (method == HTTP_OPTIONS) handle_options(request);
+  } else if (url == "/elero/api/packets") {
+    if (method == HTTP_GET) handle_get_packets(request);
+    else if (method == HTTP_OPTIONS) handle_options(request);
+  } else if (url == "/elero/api/packets/clear") {
+    if (method == HTTP_POST) handle_clear_packets(request);
+    else if (method == HTTP_OPTIONS) handle_options(request);
+  } else {
+    request->send(404, "text/plain", "Not Found");
+  }
+}
+
 void EleroWebServer::handle_index(AsyncWebServerRequest *request) {
-  request->send_P(200, "text/html", ELERO_WEB_UI_HTML);
+  request->send(200, "text/html", ELERO_WEB_UI_HTML);
 }
 
 void EleroWebServer::handle_scan_start(AsyncWebServerRequest *request) {
