@@ -604,7 +604,4 @@ Dieses Projekt basiert auf der Arbeit von:
 
 - [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT) - Verschlüsselungs-/Entschlüsselungsstrukturen
 - [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3) - Fernbedienungs-Handling
-
-### Maintainer gesucht
-
-Dieses Projekt sucht einen neuen Maintainer. Die kabelgebundene Variante für Elero RolTop-J ist verfügbar unter [esphome-elero_wired](https://github.com/andyboeh/esphome-elero_wired).
+- [andyboeh/esphome-elero](https://github.com/andyboeh/esphome-elero)
