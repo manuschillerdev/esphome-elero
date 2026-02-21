@@ -42,6 +42,11 @@ void Elero::loop() {
     ESP_LOGVV(TAG, "loop says \"received\"");
     this->received_ = false;
     uint8_t len = this->read_status(CC1101_RXBYTES);
+    if(len & 0x80) { // overflow - FIFO data unreliable
+      ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
+      this->flush_and_rx();
+      return;
+    }
     if(len & 0x7F) { // bytes available
       if((len & 0x7F) > CC1101_FIFO_LENGTH) {
         ESP_LOGV(TAG, "Received more bytes than FIFO length - wtf?");
@@ -53,10 +58,6 @@ void Elero::loop() {
       if(this->msg_rx_[0] + 3 <= (len & 0x7f)) {
         this->interpret_msg();
       }
-    }
-    if(len & 0x80) { // overflow
-      ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
-      this->flush_and_rx();
     }
   }
 }
@@ -470,7 +471,7 @@ void Elero::interpret_msg() {
   // Sanity check: msg_decode accesses 8 bytes at msg_rx_[19 + dests_len],
   // so the highest index touched is 26 + dests_len. This must be within both
   // the packet (length) and the FIFO buffer.
-  if(26 + dests_len > length || 26 + dests_len > CC1101_FIFO_LENGTH) {
+  if(26 + dests_len > length || 26 + dests_len >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
     return;
   }
