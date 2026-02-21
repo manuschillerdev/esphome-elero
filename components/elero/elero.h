@@ -62,6 +62,7 @@ static const uint8_t ELERO_SEND_RETRIES = 3;
 static const uint8_t ELERO_SEND_PACKETS = 2;
 
 static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to track
+static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
 
 typedef struct {
   uint8_t counter;
@@ -72,6 +73,14 @@ typedef struct {
   uint8_t hop;
   uint8_t payload[10];
 } t_elero_command;
+
+struct RawPacket {
+  uint32_t timestamp_ms;            // millis() when captured
+  uint8_t  fifo_len;                // bytes actually read from CC1101 FIFO
+  uint8_t  data[CC1101_FIFO_LENGTH];
+  bool     valid;                   // true = passed all validation and decoded
+  char     reject_reason[32];       // empty when valid
+};
 
 struct DiscoveredBlind {
   uint32_t blind_address;
@@ -153,6 +162,13 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   }
   const std::map<uint32_t, EleroBlindBase *> &get_configured_covers() const { return address_to_cover_mapping_; }
 
+  // Packet dump mode: capture every received FIFO read into a ring buffer
+  void start_packet_dump();
+  void stop_packet_dump();
+  bool is_packet_dump_active() const { return packet_dump_mode_; }
+  const std::vector<RawPacket> &get_raw_packets() const { return raw_packets_; }
+  void clear_raw_packets();
+
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }
@@ -173,6 +189,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
                               uint8_t pck_inf0, uint8_t pck_inf1, uint8_t hop,
                               uint8_t payload_1, uint8_t payload_2,
                               float rssi, uint8_t state);
+  void capture_raw_packet_(uint8_t fifo_len);
+  void mark_last_raw_packet_(bool valid, const char *reason);
 
   volatile bool received_{false};
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
@@ -190,6 +208,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #endif
   std::vector<DiscoveredBlind> discovered_blinds_;
   bool scan_mode_{false};
+  bool packet_dump_mode_{false};
+  bool packet_dump_pending_update_{false};
+  std::vector<RawPacket> raw_packets_;
+  uint8_t raw_packet_write_idx_{0};
 };
 
 }  // namespace elero

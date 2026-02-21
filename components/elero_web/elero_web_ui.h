@@ -70,6 +70,17 @@ header h1{font-size:1.2em;font-weight:600}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 20px;border-radius:8px;font-size:.9em;z-index:200;opacity:0;transition:opacity .3s}
 .toast.show{opacity:1}
 .toast.error{background:#d32f2f}
+.badge-dump{background:#fff3e0;color:#e65100}
+.badge-dumping{background:#e8f5e9;color:#2e7d32}
+.pkt-table{width:100%;border-collapse:collapse;font-size:.8em}
+.pkt-table th{background:#f8f9fa;padding:5px 8px;text-align:left;border-bottom:2px solid #e0e0e0;font-weight:600;white-space:nowrap}
+.pkt-table td{padding:4px 8px;border-bottom:1px solid #f0f0f0;vertical-align:top}
+.pkt-table tr.pkt-ok{background:#f1f8f4}
+.pkt-table tr.pkt-err{background:#fff5f5}
+.pkt-hex{font-family:monospace;font-size:.85em;word-break:break-all;color:#333}
+.pkt-ok-badge{color:#2e7d32;font-weight:600}
+.pkt-err-badge{color:#c62828;font-weight:600}
+.dump-wrap{overflow-x:auto;max-height:380px;overflow-y:auto;margin-top:12px}
 </style>
 </head>
 <body>
@@ -114,6 +125,27 @@ header h1{font-size:1.2em;font-weight:600}
     </div>
     <div class="card-body" id="configured-list">
       <div class="empty">Keine Covers konfiguriert.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span>Packet-Dump</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="dump-badge" class="badge badge-dump">Inaktiv</span>
+        <span id="dump-count" class="badge badge-count">0</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="btn-dump-start" class="btn btn-primary" onclick="startDump()">Dump starten</button>
+        <button id="btn-dump-stop" class="btn btn-danger" onclick="stopDump()" disabled>Stoppen</button>
+        <button id="btn-dump-clear" class="btn btn-outline" onclick="clearDump()">Leeren</button>
+      </div>
+      <p class="refresh-hint">Zeichnet alle empfangenen HF-Pakete auf (max. 50). Gueltige Pakete = gruen, abgelehnte = rot.</p>
+      <div id="dump-list" class="dump-wrap">
+        <div class="empty">Kein Dump aktiv.</div>
+      </div>
     </div>
   </div>
 
@@ -313,8 +345,86 @@ function copyYaml(){
   });
 }
 
+var dumpRefreshTimer=null;
+var dumping=false;
+
+function startDump(){
+  fetch('/elero/api/dump/start',{method:'POST'})
+    .then(handleResponse)
+    .then(function(){
+      dumping=true;
+      updateDumpUI();
+      if(!dumpRefreshTimer) dumpRefreshTimer=setInterval(refreshDump,2000);
+      refreshDump();
+    })
+    .catch(function(e){showToast('Dump-Start fehlgeschlagen: '+e.message,true);});
+}
+
+function stopDump(){
+  fetch('/elero/api/dump/stop',{method:'POST'})
+    .then(handleResponse)
+    .then(function(){
+      dumping=false;
+      updateDumpUI();
+      if(dumpRefreshTimer){clearInterval(dumpRefreshTimer);dumpRefreshTimer=null;}
+    })
+    .catch(function(e){showToast('Dump-Stopp fehlgeschlagen: '+e.message,true);refreshDump();});
+}
+
+function clearDump(){
+  fetch('/elero/api/packets/clear',{method:'POST'})
+    .then(handleResponse)
+    .then(function(){
+      document.getElementById('dump-list').innerHTML='<div class="empty">Geleert.</div>';
+      document.getElementById('dump-count').textContent='0';
+    })
+    .catch(function(e){showToast('Leeren fehlgeschlagen: '+e.message,true);});
+}
+
+function updateDumpUI(){
+  var badge=document.getElementById('dump-badge');
+  var btnS=document.getElementById('btn-dump-start');
+  var btnX=document.getElementById('btn-dump-stop');
+  if(dumping){
+    badge.className='badge badge-dumping';badge.textContent='Aktiv';
+    btnS.disabled=true;btnX.disabled=false;
+  }else{
+    badge.className='badge badge-dump';badge.textContent='Inaktiv';
+    btnS.disabled=false;btnX.disabled=true;
+  }
+}
+
+function refreshDump(){
+  fetch('/elero/api/packets').then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(d){
+    dumping=d.dump_active;
+    updateDumpUI();
+    if(dumping&&!dumpRefreshTimer) dumpRefreshTimer=setInterval(refreshDump,2000);
+    if(!dumping&&dumpRefreshTimer){clearInterval(dumpRefreshTimer);dumpRefreshTimer=null;}
+    document.getElementById('dump-count').textContent=d.count;
+    var el=document.getElementById('dump-list');
+    if(!d.count){
+      el.innerHTML='<div class="empty">Keine Pakete gespeichert.</div>';
+      return;
+    }
+    var pkts=d.packets.slice().sort(function(a,b){return b.t-a.t;});
+    var html='<table class="pkt-table"><thead><tr><th>Zeit(ms)</th><th>Len</th><th>Status</th><th>Ursache</th><th>Hex</th></tr></thead><tbody>';
+    for(var i=0;i<pkts.length;i++){
+      var p=pkts[i];
+      var rc=p.valid?'pkt-ok':'pkt-err';
+      var sb=p.valid?'<span class="pkt-ok-badge">OK</span>':'<span class="pkt-err-badge">ERR</span>';
+      html+='<tr class="'+rc+'"><td>'+p.t+'</td><td>'+p.len+'</td><td>'+sb+'</td><td>'+(p.reason||'')+'</td><td class="pkt-hex">'+p.hex+'</td></tr>';
+    }
+    html+='</tbody></table>';
+    el.innerHTML=html;
+  }).catch(function(e){console.error('Refresh dump failed:',e);});
+}
+
 // Initial load
 startRefresh();
+refreshDump();
 </script>
 </body>
 </html>)rawliteral";
