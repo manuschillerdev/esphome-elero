@@ -604,4 +604,4 @@ Dieses Projekt basiert auf der Arbeit von:
 
 - [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT) - Verschlüsselungs-/Entschlüsselungsstrukturen
 - [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3) - Fernbedienungs-Handling
-- [andyboeh/esphome-elero](https://github.com/andyboeh/esphome-elero)
+- [andyboeh/esphome-elero](https://github.com/andyboeh/esphome-elero) - Grundlage für diese Steuerung,eigenes Repository da nicht mehr gepflegt
