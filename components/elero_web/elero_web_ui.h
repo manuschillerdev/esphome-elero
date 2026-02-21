@@ -1,6 +1,10 @@
 #pragma once
 
+#ifdef __AVR__
 #include <pgmspace.h>
+#elif !defined(PROGMEM)
+#define PROGMEM
+#endif
 
 namespace esphome {
 namespace elero {
