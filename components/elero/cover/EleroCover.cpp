@@ -24,6 +24,11 @@ void EleroCover::dump_config() {
 }
 
 void EleroCover::setup() {
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(TAG, "Elero parent not configured");
+    this->mark_failed();
+    return;
+  }
   this->parent_->register_cover(this);
   auto restore = this->restore_state_();
   if (restore.has_value()) {

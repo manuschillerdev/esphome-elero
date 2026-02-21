@@ -67,6 +67,9 @@ header h1{font-size:1.2em;font-weight:600}
 .cover-pos{width:100%;height:4px;background:#e0e0e0;border-radius:2px;overflow:hidden;margin-top:4px}
 .cover-pos-bar{height:100%;background:#1a73e8;transition:width .3s}
 .refresh-hint{font-size:.8em;color:#999;margin-top:8px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 20px;border-radius:8px;font-size:.9em;z-index:200;opacity:0;transition:opacity .3s}
+.toast.show{opacity:1}
+.toast.error{background:#d32f2f}
 </style>
 </head>
 <body>
@@ -136,23 +139,55 @@ header h1{font-size:1.2em;font-weight:600}
   </div>
 </div>
 
+<div id="toast" class="toast"></div>
+
 <script>
 var refreshTimer=null;
 var scanning=false;
+var toastTimer=null;
 
-function startScan(){
-  fetch('/elero/api/scan/start',{method:'POST'}).then(function(r){return r.json();}).then(function(){
-    scanning=true;
-    updateScanUI();
-    startRefresh();
+function showToast(msg,isError){
+  var t=document.getElementById('toast');
+  t.textContent=msg;
+  t.className=isError?'toast error show':'toast show';
+  if(toastTimer) clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){t.className='toast';},4000);
+}
+
+function handleResponse(r){
+  if(r.ok) return r.json();
+  return r.json().then(function(d){
+    throw new Error(d.error||('HTTP '+r.status));
+  },function(){
+    throw new Error('HTTP '+r.status);
   });
 }
 
+function startScan(){
+  fetch('/elero/api/scan/start',{method:'POST'})
+    .then(handleResponse)
+    .then(function(){
+      scanning=true;
+      updateScanUI();
+      startRefresh();
+    })
+    .catch(function(e){
+      showToast('Scan-Start fehlgeschlagen: '+e.message,true);
+      refresh();
+    });
+}
+
 function stopScan(){
-  fetch('/elero/api/scan/stop',{method:'POST'}).then(function(r){return r.json();}).then(function(){
-    scanning=false;
-    updateScanUI();
-  });
+  fetch('/elero/api/scan/stop',{method:'POST'})
+    .then(handleResponse)
+    .then(function(){
+      scanning=false;
+      updateScanUI();
+    })
+    .catch(function(e){
+      showToast('Scan-Stopp fehlgeschlagen: '+e.message,true);
+      refresh();
+    });
 }
 
 function updateScanUI(){
@@ -190,7 +225,10 @@ function stateClass(s){
 }
 
 function refresh(){
-  fetch('/elero/api/discovered').then(function(r){return r.json();}).then(function(d){
+  fetch('/elero/api/discovered').then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(d){
     scanning=d.scanning;
     updateScanUI();
     var el=document.getElementById('discovered-list');
@@ -217,9 +255,14 @@ function refresh(){
       html+='</div></div>';
     }
     el.innerHTML=html;
-  }).catch(function(){});
+  }).catch(function(e){
+    console.error('Refresh discovered failed:',e);
+  });
 
-  fetch('/elero/api/configured').then(function(r){return r.json();}).then(function(d){
+  fetch('/elero/api/configured').then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(d){
     var el=document.getElementById('configured-list');
     document.getElementById('conf-count').textContent=d.covers.length;
     if(!d.covers.length){
@@ -240,13 +283,20 @@ function refresh(){
       html+='</div>';
     }
     el.innerHTML=html;
-  }).catch(function(){});
+  }).catch(function(e){
+    console.error('Refresh configured failed:',e);
+  });
 }
 
 function showYaml(){
-  fetch('/elero/api/yaml').then(function(r){return r.text();}).then(function(t){
+  fetch('/elero/api/yaml').then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.text();
+  }).then(function(t){
     document.getElementById('yaml-content').textContent=t;
     document.getElementById('yaml-modal').classList.add('active');
+  }).catch(function(e){
+    showToast('YAML-Export fehlgeschlagen: '+e.message,true);
   });
 }
 

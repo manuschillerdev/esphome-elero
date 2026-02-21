@@ -12,6 +12,10 @@ void EleroScanButton::dump_config() {
 }
 
 void EleroScanButton::press_action() {
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(TAG, "Elero parent not configured");
+    return;
+  }
   if (this->scan_start_) {
     ESP_LOGI(TAG, "Starting Elero RF scan...");
     this->parent_->clear_discovered();

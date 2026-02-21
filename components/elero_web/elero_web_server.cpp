@@ -2,39 +2,95 @@
 #include "elero_web_ui.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
+#include <cstdio>
 
 namespace esphome {
 namespace elero {
 
 static const char *const TAG = "elero.web_server";
 
+void EleroWebServer::add_cors_headers(AsyncWebServerResponse *response) {
+  response->addHeader("Access-Control-Allow-Origin", "*");
+  response->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  response->addHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+void EleroWebServer::send_json_error(AsyncWebServerRequest *request, int code, const char *message) {
+  char buf[128];
+  snprintf(buf, sizeof(buf), "{\"error\":\"%s\"}", message);
+  AsyncWebServerResponse *response = request->beginResponse(code, "application/json", buf);
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+void EleroWebServer::handle_options(AsyncWebServerRequest *request) {
+  AsyncWebServerResponse *response = request->beginResponse(204);
+  this->add_cors_headers(response);
+  response->addHeader("Access-Control-Max-Age", "86400");
+  request->send(response);
+}
+
 void EleroWebServer::setup() {
+  if (this->base_ == nullptr) {
+    ESP_LOGE(TAG, "web_server_base not set, cannot start Elero Web UI");
+    this->mark_failed();
+    return;
+  }
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(TAG, "Elero parent not set, cannot start Elero Web UI");
+    this->mark_failed();
+    return;
+  }
+
   this->base_->init();
 
   auto *server = this->base_->get_server();
+  if (server == nullptr) {
+    ESP_LOGE(TAG, "Failed to get web server instance");
+    this->mark_failed();
+    return;
+  }
 
+  // --- HTML UI ---
   server->on("/elero", HTTP_GET, [this](AsyncWebServerRequest *request) {
     this->handle_index(request);
   });
 
+  // --- Scan API ---
   server->on("/elero/api/scan/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
     this->handle_scan_start(request);
+  });
+  server->on("/elero/api/scan/start", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
+    this->handle_options(request);
   });
 
   server->on("/elero/api/scan/stop", HTTP_POST, [this](AsyncWebServerRequest *request) {
     this->handle_scan_stop(request);
   });
+  server->on("/elero/api/scan/stop", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
+    this->handle_options(request);
+  });
 
+  // --- Data API ---
   server->on("/elero/api/discovered", HTTP_GET, [this](AsyncWebServerRequest *request) {
     this->handle_get_discovered(request);
+  });
+  server->on("/elero/api/discovered", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
+    this->handle_options(request);
   });
 
   server->on("/elero/api/configured", HTTP_GET, [this](AsyncWebServerRequest *request) {
     this->handle_get_configured(request);
   });
+  server->on("/elero/api/configured", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
+    this->handle_options(request);
+  });
 
   server->on("/elero/api/yaml", HTTP_GET, [this](AsyncWebServerRequest *request) {
     this->handle_get_yaml(request);
+  });
+  server->on("/elero/api/yaml", HTTP_OPTIONS, [this](AsyncWebServerRequest *request) {
+    this->handle_options(request);
   });
 
   ESP_LOGI(TAG, "Elero Web UI available at /elero");
@@ -43,6 +99,7 @@ void EleroWebServer::setup() {
 void EleroWebServer::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero Web Server:");
   ESP_LOGCONFIG(TAG, "  URL: /elero");
+  ESP_LOGCONFIG(TAG, "  API: /elero/api/*");
 }
 
 void EleroWebServer::handle_index(AsyncWebServerRequest *request) {
@@ -50,14 +107,28 @@ void EleroWebServer::handle_index(AsyncWebServerRequest *request) {
 }
 
 void EleroWebServer::handle_scan_start(AsyncWebServerRequest *request) {
+  if (this->parent_->is_scanning()) {
+    this->send_json_error(request, 409, "Scan already running");
+    return;
+  }
   this->parent_->clear_discovered();
   this->parent_->start_scan();
-  request->send(200, "application/json", "{\"status\":\"scanning\"}");
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", "{\"status\":\"scanning\"}");
+  this->add_cors_headers(response);
+  request->send(response);
 }
 
 void EleroWebServer::handle_scan_stop(AsyncWebServerRequest *request) {
+  if (!this->parent_->is_scanning()) {
+    this->send_json_error(request, 409, "No scan running");
+    return;
+  }
   this->parent_->stop_scan();
-  request->send(200, "application/json", "{\"status\":\"stopped\"}");
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", "{\"status\":\"stopped\"}");
+  this->add_cors_headers(response);
+  request->send(response);
 }
 
 void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
@@ -102,7 +173,10 @@ void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
   }
 
   json += "]}";
-  request->send(200, "application/json", json.c_str());
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", json.c_str());
+  this->add_cors_headers(response);
+  request->send(response);
 }
 
 void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
@@ -131,14 +205,20 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
   }
 
   json += "]}";
-  request->send(200, "application/json", json.c_str());
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", json.c_str());
+  this->add_cors_headers(response);
+  request->send(response);
 }
 
 void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
   const auto &blinds = this->parent_->get_discovered_blinds();
   if (blinds.empty()) {
-    request->send(200, "text/plain; charset=utf-8",
-      "# No discovered blinds.\n# Start a scan and press buttons on your remote.\n");
+    AsyncWebServerResponse *response = request->beginResponse(
+        200, "text/plain; charset=utf-8",
+        "# No discovered blinds.\n# Start a scan and press buttons on your remote.\n");
+    this->add_cors_headers(response);
+    request->send(response);
     return;
   }
 
@@ -184,7 +264,10 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
     yaml += "  # All discovered blinds are already configured.\n";
   }
 
-  request->send(200, "text/plain; charset=utf-8", yaml.c_str());
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "text/plain; charset=utf-8", yaml.c_str());
+  this->add_cors_headers(response);
+  request->send(response);
 }
 
 }  // namespace elero

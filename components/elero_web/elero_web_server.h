@@ -25,6 +25,10 @@ class EleroWebServer : public Component {
   void handle_get_configured(AsyncWebServerRequest *request);
   void handle_get_yaml(AsyncWebServerRequest *request);
 
+  void add_cors_headers(AsyncWebServerResponse *response);
+  void send_json_error(AsyncWebServerRequest *request, int code, const char *message);
+  void handle_options(AsyncWebServerRequest *request);
+
   Elero *parent_{nullptr};
   web_server_base::WebServerBase *base_{nullptr};
 };
