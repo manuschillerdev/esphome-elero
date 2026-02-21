@@ -3,12 +3,40 @@
 #include "esphome/core/helpers.h"
 #include "esphome/components/elero/cover/EleroCover.h"
 
+#ifdef USE_SENSOR
+#include "esphome/components/sensor/sensor.h"
+#endif
+#ifdef USE_TEXT_SENSOR
+#include "esphome/components/text_sensor/text_sensor.h"
+#endif
+
 namespace esphome {
 namespace elero {
 
 static const char *TAG = "elero";
 static const uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
 static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
+
+const char *elero_state_to_string(uint8_t state) {
+  switch (state) {
+    case ELERO_STATE_TOP: return "top";
+    case ELERO_STATE_BOTTOM: return "bottom";
+    case ELERO_STATE_INTERMEDIATE: return "intermediate";
+    case ELERO_STATE_TILT: return "tilt";
+    case ELERO_STATE_BLOCKING: return "blocking";
+    case ELERO_STATE_OVERHEATED: return "overheated";
+    case ELERO_STATE_TIMEOUT: return "timeout";
+    case ELERO_STATE_START_MOVING_UP: return "start_moving_up";
+    case ELERO_STATE_START_MOVING_DOWN: return "start_moving_down";
+    case ELERO_STATE_MOVING_UP: return "moving_up";
+    case ELERO_STATE_MOVING_DOWN: return "moving_down";
+    case ELERO_STATE_STOPPED: return "stopped";
+    case ELERO_STATE_TOP_TILT: return "top_tilt";
+    case ELERO_STATE_BOTTOM_TILT: return "bottom_tilt"; // also ELERO_STATE_OFF (0x0f)
+    case ELERO_STATE_ON: return "on";
+    default: return "unknown";
+  }
+}
 
 void Elero::loop() {
   if(this->received_) {
@@ -43,14 +71,16 @@ void IRAM_ATTR Elero::set_received() {
 }
 
 void Elero::dump_config() {
-  ESP_LOGCONFIG(TAG, "Elero Config: ");
+  ESP_LOGCONFIG(TAG, "Elero CC1101:");
+  LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
+  ESP_LOGCONFIG(TAG, "  FREQ: 0x%02x 0x%02x 0x%02x", this->freq2_, this->freq1_, this->freq0_);
+  ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
 }
 
 void Elero::setup() {
   ESP_LOGI(TAG, "Setting up Elero Component...");
   this->spi_setup();
   this->gdo0_pin_->setup();
-  this->gdo0_irq_pin_ = this->gdo0_pin_->to_isr();
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
   this->init();
@@ -69,7 +99,7 @@ void Elero::flush_and_rx() {
 void Elero::reset() {
   // We don't do a hardware reset as we can't read
   // the MISO pin directly. Rely on software-reset only.
-  
+
   this->enable();
   this->write_byte(CC1101_SRES);
   delay_microseconds_safe(50);
@@ -88,7 +118,7 @@ void Elero::init() {
   this->write_reg(CC1101_FREQ0, this->freq0_);
   this->write_reg(CC1101_MDMCFG4, 0x7B);
   this->write_reg(CC1101_MDMCFG3, 0x83);
-  this->write_reg(CC1101_MDMCFG2, 0x13); 
+  this->write_reg(CC1101_MDMCFG2, 0x13);
   this->write_reg(CC1101_MDMCFG1, 0x52);
   this->write_reg(CC1101_MDMCFG0, 0xF8);
   this->write_reg(CC1101_CHANNR, 0x00);
@@ -111,7 +141,7 @@ void Elero::init() {
   this->write_reg(CC1101_TEST1, 0x35);
   this->write_reg(CC1101_TEST0, 0x09);
   this->write_reg(CC1101_IOCFG0, 0x06);
-  this->write_reg(CC1101_PKTCTRL1, 0x8C);  
+  this->write_reg(CC1101_PKTCTRL1, 0x8C);
   this->write_reg(CC1101_PKTCTRL0, 0x45);
   this->write_reg(CC1101_ADDR, 0x00);
   this->write_reg(CC1101_PKTLEN, 0x3C);
@@ -153,7 +183,7 @@ bool Elero::wait_rx() {
   while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_RX) && (--timeout != 0)) {
     delay_microseconds_safe(200);
   }
-  
+
   if(timeout > 0)
     return true;
   ESP_LOGE(TAG, "Timed out waiting for RX: 0x%02x", this->read_status(CC1101_MARCSTATE));
@@ -166,7 +196,7 @@ bool Elero::wait_idle() {
   while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_IDLE) && (--timeout != 0)) {
     delay_microseconds_safe(200);
   }
-  
+
   if(timeout > 0)
     return true;
   ESP_LOGE(TAG, "Timed out waiting for Idle: 0x%02x", this->read_status(CC1101_MARCSTATE));
@@ -190,8 +220,7 @@ bool Elero::wait_tx() {
 bool Elero::wait_tx_done() {
   ESP_LOGVV(TAG, "wait_tx_done");
   uint8_t timeout = 200;
-  
-  //while (((this->read_status(CC1101_TXBYTES) & 0x7f) != 0) && (--timeout != 0)) {
+
   while((!this->received_) && (--timeout != 0)) {
     delay_microseconds_safe(200);
   }
@@ -204,7 +233,6 @@ bool Elero::wait_tx_done() {
 
 bool Elero::transmit() {
   ESP_LOGVV(TAG, "transmit called for %d data bytes", this->msg_tx_[0]);
-  //this->flush_and_rx();
   this->write_cmd(CC1101_SRX);
   if(!this->wait_rx()) {
     return false;
@@ -237,8 +265,10 @@ uint8_t Elero::read_reg(uint8_t addr) {
   uint8_t data;
 
   this->enable();
-  this->write_byte(addr);
+  this->write_byte(addr | CC1101_READ_SINGLE);
   data = this->read_byte();
+  this->disable();
+  delay_microseconds_safe(15);
   return data;
 }
 
@@ -303,7 +333,7 @@ void Elero::add_r20_to_nibbles(uint8_t* msg, uint8_t r20, uint8_t start, uint8_t
 {
   uint8_t i;
 
-  for( i = 0; i < 8; i++ )
+  for( i = start; i < length; i++ )
   {
     uint8_t d = msg[i];
 
@@ -423,17 +453,32 @@ void Elero::interpret_msg() {
   uint8_t num_dests = this->msg_rx_[16];
   uint32_t dst;
   uint8_t dests_len;
+
+  // Validate destination count before multiplication to prevent overflow
+  if (num_dests > 20) {
+    ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
+    return;
+  }
+
   if(typ > 0x60) {
-    dests_len = this->msg_rx_[16] * 3;
+    dests_len = num_dests * 3;
     dst = ((uint32_t)this->msg_rx_[17] << 16) | ((uint32_t)this->msg_rx_[18] << 8) | (this->msg_rx_[19]);
   } else {
-    dests_len = this->msg_rx_[16];
+    dests_len = num_dests;
     dst = this->msg_rx_[17];
   }
 
-  // Sanity check
-  if(dests_len + 15 > CC1101_FIFO_LENGTH) {
-    ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d)", dests_len);
+  // Sanity check: msg_decode accesses 8 bytes at msg_rx_[19 + dests_len],
+  // so the highest index touched is 26 + dests_len. This must be within both
+  // the packet (length) and the FIFO buffer.
+  if(27 + dests_len > length || 27 + dests_len > CC1101_FIFO_LENGTH) {
+    ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
+    return;
+  }
+
+  // RSSI and LQI are appended by CC1101 after packet data at indices length+1 and length+2
+  if (length + 2 >= CC1101_FIFO_LENGTH) {
+    ESP_LOGE(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
     return;
   }
 
@@ -450,9 +495,34 @@ void Elero::interpret_msg() {
   msg_decode(payload);
   ESP_LOGD(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
 
+  // Update RSSI sensor for any message from a known blind
+#ifdef USE_SENSOR
+  {
+    auto rssi_it = this->address_to_rssi_sensor_.find(src);
+    if (rssi_it != this->address_to_rssi_sensor_.end()) {
+      rssi_it->second->publish_state(rssi);
+    }
+  }
+#endif
+
+  // Track in discovery mode (any received message)
+  if (this->scan_mode_) {
+    uint8_t state = ((typ == 0xca) || (typ == 0xc9)) ? payload[6] : 0;
+    this->track_discovered_blind(src, fwd, chl, typ, typ2, hop, payload1, payload2, rssi, state);
+  }
+
   if((typ == 0xca) || (typ == 0xc9)) { // Status message from a blind
+    // Update text sensor
+#ifdef USE_TEXT_SENSOR
+    {
+      auto text_it = this->address_to_text_sensor_.find(src);
+      if (text_it != this->address_to_text_sensor_.end()) {
+        text_it->second->publish_state(elero_state_to_string(payload[6]));
+      }
+    }
+#endif
+
     // Check if we know the blind
-    // status = payload[6]
     auto search = this->address_to_cover_mapping_.find(src);
     if(search != this->address_to_cover_mapping_.end()) {
       search->second->set_rx_state(payload[6]);
@@ -468,6 +538,53 @@ void Elero::register_cover(EleroCover *cover) {
   }
   this->address_to_cover_mapping_.insert({address, cover});
   cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * 5000);
+}
+
+#ifdef USE_SENSOR
+void Elero::register_rssi_sensor(uint32_t address, sensor::Sensor *sensor) {
+  this->address_to_rssi_sensor_[address] = sensor;
+}
+#endif
+
+#ifdef USE_TEXT_SENSOR
+void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor) {
+  this->address_to_text_sensor_[address] = sensor;
+}
+#endif
+
+void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel,
+                                    uint8_t pck_inf0, uint8_t pck_inf1, uint8_t hop,
+                                    uint8_t payload_1, uint8_t payload_2,
+                                    float rssi, uint8_t state) {
+  // Check if already tracked
+  for (auto &blind : this->discovered_blinds_) {
+    if (blind.blind_address == src) {
+      blind.rssi = rssi;
+      blind.last_seen = millis();
+      blind.last_state = state;
+      blind.times_seen++;
+      return;
+    }
+  }
+  // Add new entry
+  if (this->discovered_blinds_.size() < ELERO_MAX_DISCOVERED) {
+    DiscoveredBlind blind{};
+    blind.blind_address = src;
+    blind.remote_address = remote;
+    blind.channel = channel;
+    blind.pck_inf[0] = pck_inf0;
+    blind.pck_inf[1] = pck_inf1;
+    blind.hop = hop;
+    blind.payload_1 = payload_1;
+    blind.payload_2 = payload_2;
+    blind.rssi = rssi;
+    blind.last_seen = millis();
+    blind.last_state = state;
+    blind.times_seen = 1;
+    this->discovered_blinds_.push_back(blind);
+    ESP_LOGI(TAG, "Discovered new device: addr=0x%06x, remote=0x%06x, ch=%d, rssi=%.1f",
+             src, remote, channel, rssi);
+  }
 }
 
 bool Elero::send_command(t_elero_command *cmd) {
