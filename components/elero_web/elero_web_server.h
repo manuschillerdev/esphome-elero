@@ -2,8 +2,8 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/web_server_base/web_server_base.h"
-#include "esphome/components/elero/elero.h"
-#include "esphome/components/elero/cover/EleroCover.h"
+#include "../elero/elero.h"
+#include "../elero/cover/EleroCover.h"
 
 namespace esphome {
 namespace elero {

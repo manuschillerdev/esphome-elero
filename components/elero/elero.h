@@ -3,7 +3,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/preferences.h"
 #include "esphome/components/spi/spi.h"
-#include "esphome/components/elero/cc1101.h"
+#include "cc1101.h"
 #include <vector>
 #include <map>
 

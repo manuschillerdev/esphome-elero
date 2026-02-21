@@ -2,7 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/button/button.h"
-#include "esphome/components/elero/elero.h"
+#include "../elero.h"
 
 namespace esphome {
 namespace elero {

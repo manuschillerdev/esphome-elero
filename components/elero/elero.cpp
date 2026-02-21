@@ -1,7 +1,7 @@
 #include "elero.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
-#include "esphome/components/elero/cover/EleroCover.h"
+#include "cover/EleroCover.h"
 
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
