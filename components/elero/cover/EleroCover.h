@@ -9,7 +9,7 @@
 namespace esphome {
 namespace elero {
 
-class EleroCover : public cover::Cover, public Component {
+class EleroCover : public cover::Cover, public Component, public EleroBlindBase {
  public:
   void setup() override;
   void loop() override;
@@ -32,13 +32,20 @@ class EleroCover : public cover::Cover, public Component {
   void set_command_stop(uint8_t cmd) { this->command_stop_ = cmd; }
   void set_command_check(uint8_t cmd) { this->command_check_ = cmd; }
   void set_command_tilt(uint8_t cmd) { this->command_tilt_ = cmd; }
-  void set_poll_offset(uint32_t offset) { this->poll_offset_ = offset; }
+  void set_poll_offset(uint32_t offset) override { this->poll_offset_ = offset; }
   void set_close_duration(uint32_t dur) { this->close_duration_ = dur; }
   void set_open_duration(uint32_t dur) { this->open_duration_ = dur; }
   void set_poll_interval(uint32_t intvl) { this->poll_intvl_ = intvl; }
-  uint32_t get_blind_address() { return this->command_.blind_addr; }
+  uint32_t get_blind_address() override { return this->command_.blind_addr; }
   void set_supports_tilt(bool tilt) { this->supports_tilt_ = tilt; }
-  void set_rx_state(uint8_t state);
+  void set_rx_state(uint8_t state) override;
+  // EleroBlindBase web API helpers
+  std::string get_blind_name() const override { return std::string(this->get_name().c_str()); }
+  float get_cover_position() const override { return this->position; }
+  const char *get_operation_str() const override {
+    return this->current_operation == cover::COVER_OPERATION_IDLE ? "idle" :
+           this->current_operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing";
+  }
   void handle_commands(uint32_t now);
   void recompute_position();
   void start_movement(cover::CoverOperation op);

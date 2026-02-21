@@ -3,7 +3,6 @@
 #include "esphome/core/component.h"
 #include "esphome/components/web_server_base/web_server_base.h"
 #include "../elero/elero.h"
-#include "../elero/cover/EleroCover.h"
 
 namespace esphome {
 namespace elero {

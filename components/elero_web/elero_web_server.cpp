@@ -188,7 +188,7 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
     if (!first) json += ",";
     first = false;
 
-    auto *cover = pair.second;
+    auto *blind = pair.second;
     char buf[256];
     snprintf(buf, sizeof(buf),
       "{\"blind_address\":\"0x%06x\","
@@ -196,10 +196,9 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
       "\"position\":%.2f,"
       "\"operation\":\"%s\"}",
       pair.first,
-      cover->get_name().c_str(),
-      cover->position,
-      cover->current_operation == cover::COVER_OPERATION_IDLE ? "idle" :
-      cover->current_operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing"
+      blind->get_blind_name().c_str(),
+      blind->get_cover_position(),
+      blind->get_operation_str()
     );
     json += buf;
   }

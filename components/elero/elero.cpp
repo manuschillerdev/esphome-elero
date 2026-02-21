@@ -1,7 +1,6 @@
 #include "elero.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
-#include "cover/EleroCover.h"
 
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
@@ -530,7 +529,7 @@ void Elero::interpret_msg() {
   }
 }
 
-void Elero::register_cover(EleroCover *cover) {
+void Elero::register_cover(EleroBlindBase *cover) {
   uint32_t address = cover->get_blind_address();
   if(this->address_to_cover_mapping_.find(address) != this->address_to_cover_mapping_.end()) {
     ESP_LOGE(TAG, "A blind with this address is already registered - this is currently not supported");

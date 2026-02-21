@@ -4,6 +4,7 @@
 #include "esphome/core/preferences.h"
 #include "esphome/components/spi/spi.h"
 #include "cc1101.h"
+#include <string>
 #include <vector>
 #include <map>
 
@@ -88,7 +89,19 @@ struct DiscoveredBlind {
 
 const char *elero_state_to_string(uint8_t state);
 
-class EleroCover;
+/// Abstract base class for blinds registered with the Elero hub.
+/// EleroCover inherits from this so the hub never needs the cover header.
+class EleroBlindBase {
+ public:
+  virtual ~EleroBlindBase() = default;
+  virtual void set_rx_state(uint8_t state) = 0;
+  virtual uint32_t get_blind_address() = 0;
+  virtual void set_poll_offset(uint32_t offset) = 0;
+  // Web API helpers
+  virtual std::string get_blind_name() const = 0;
+  virtual float get_cover_position() const = 0;
+  virtual const char *get_operation_str() const = 0;
+};
 
 class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
                                     spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ>,
@@ -116,7 +129,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
   void flush_and_rx();
   void interpret_msg();
-  void register_cover(EleroCover *cover);
+  void register_cover(EleroBlindBase *cover);
   bool send_command(t_elero_command *cmd);
 
 #ifdef USE_SENSOR
@@ -138,7 +151,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool is_cover_configured(uint32_t address) const {
     return address_to_cover_mapping_.find(address) != address_to_cover_mapping_.end();
   }
-  const std::map<uint32_t, EleroCover *> &get_configured_covers() const { return address_to_cover_mapping_; }
+  const std::map<uint32_t, EleroBlindBase *> &get_configured_covers() const { return address_to_cover_mapping_; }
 
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
@@ -168,7 +181,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t freq1_{0x71};
   uint8_t freq2_{0x21};
   InternalGPIOPin *gdo0_pin_{nullptr};
-  std::map<uint32_t, EleroCover*> address_to_cover_mapping_;
+  std::map<uint32_t, EleroBlindBase*> address_to_cover_mapping_;
 #ifdef USE_SENSOR
   std::map<uint32_t, sensor::Sensor*> address_to_rssi_sensor_;
 #endif
