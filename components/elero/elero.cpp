@@ -470,7 +470,7 @@ void Elero::interpret_msg() {
   // Sanity check: msg_decode accesses 8 bytes at msg_rx_[19 + dests_len],
   // so the highest index touched is 26 + dests_len. This must be within both
   // the packet (length) and the FIFO buffer.
-  if(27 + dests_len > length || 27 + dests_len > CC1101_FIFO_LENGTH) {
+  if(26 + dests_len > length || 26 + dests_len > CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
     return;
   }
