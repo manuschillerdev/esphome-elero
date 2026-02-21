@@ -3,7 +3,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
 #include "esphome/components/cover/cover.h"
-#include "esphome/components/elero/elero.h"
+#include "../elero.h"
 #include <queue>
 
 namespace esphome {
