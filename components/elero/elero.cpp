@@ -40,6 +40,29 @@ const char *elero_state_to_string(uint8_t state) {
 }
 
 void Elero::loop() {
+  // Drain command queues for runtime-adopted blinds
+  for (auto &rb : this->runtime_blinds_) {
+    if (!rb.command_queue.empty()) {
+      uint8_t cmd_byte = rb.command_queue.front();
+      t_elero_command cmd{};
+      cmd.counter = rb.cmd_counter;
+      cmd.blind_addr = rb.blind_address;
+      cmd.remote_addr = rb.remote_address;
+      cmd.channel = rb.channel;
+      cmd.pck_inf[0] = rb.pck_inf[0];
+      cmd.pck_inf[1] = rb.pck_inf[1];
+      cmd.hop = rb.hop;
+      cmd.payload[0] = rb.payload_1;
+      cmd.payload[1] = rb.payload_2;
+      cmd.payload[8] = cmd_byte;
+      if (this->send_command(&cmd)) {
+        rb.command_queue.pop();
+        rb.cmd_counter++;
+        if (rb.cmd_counter > 255) rb.cmd_counter = 1;
+      }
+    }
+  }
+
   if(this->received_) {
     ESP_LOGVV(TAG, "loop says \"received\"");
     this->received_ = false;
@@ -578,10 +601,34 @@ void Elero::interpret_msg() {
     }
 #endif
 
-    // Check if we know the blind
+    // Check if we know the blind (configured ESPHome cover)
     auto search = this->address_to_cover_mapping_.find(src);
     if(search != this->address_to_cover_mapping_.end()) {
+      search->second->notify_rx_meta(millis(), rssi);
       search->second->set_rx_state(payload[6]);
+    }
+
+    // Update runtime adopted blinds
+    for (auto &rb : this->runtime_blinds_) {
+      if (rb.blind_address == src) {
+        rb.last_seen_ms = millis();
+        rb.last_rssi = rssi;
+        rb.last_state = payload[6];
+        break;
+      }
+    }
+  } else {
+    // Non-status packets: still update RSSI/last_seen for any known blind
+    auto search = this->address_to_cover_mapping_.find(src);
+    if(search != this->address_to_cover_mapping_.end()) {
+      search->second->notify_rx_meta(millis(), rssi);
+    }
+    for (auto &rb : this->runtime_blinds_) {
+      if (rb.blind_address == src) {
+        rb.last_seen_ms = millis();
+        rb.last_rssi = rssi;
+        break;
+      }
     }
   }
 }
@@ -719,6 +766,93 @@ bool Elero::send_command(t_elero_command *cmd) {
 
   ESP_LOGV(TAG, "send: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%02x%02x%02x, bwd=0x%02x%02x%02x, fwd=0x%02x%02x%02x, #dst=%02d, dst=0x%02x%02x%02x, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2], this->msg_tx_[3], this->msg_tx_[4], this->msg_tx_[5], this->msg_tx_[6], this->msg_tx_[7], this->msg_tx_[8], this->msg_tx_[9], this->msg_tx_[10], this->msg_tx_[11], this->msg_tx_[12], this->msg_tx_[13], this->msg_tx_[14], this->msg_tx_[15], this->msg_tx_[16], this->msg_tx_[17], this->msg_tx_[18], this->msg_tx_[19], this->msg_tx_[20], this->msg_tx_[21], this->msg_tx_[22], this->msg_tx_[23], this->msg_tx_[24], this->msg_tx_[25], this->msg_tx_[26], this->msg_tx_[27], this->msg_tx_[28], this->msg_tx_[29]);
   return transmit();
+}
+
+// ─── Runtime blind adoption ───────────────────────────────────────────────
+
+bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &name) {
+  if (this->is_cover_configured(discovered.blind_address))
+    return false;
+  if (this->is_blind_adopted(discovered.blind_address))
+    return false;
+  RuntimeBlind rb{};
+  rb.blind_address = discovered.blind_address;
+  rb.remote_address = discovered.remote_address;
+  rb.channel = discovered.channel;
+  rb.pck_inf[0] = discovered.pck_inf[0];
+  rb.pck_inf[1] = discovered.pck_inf[1];
+  rb.hop = discovered.hop;
+  rb.payload_1 = discovered.payload_1;
+  rb.payload_2 = discovered.payload_2;
+  rb.name = name.empty() ? "Adopted" : name;
+  rb.last_seen_ms = discovered.last_seen;
+  rb.last_rssi = discovered.rssi;
+  rb.last_state = discovered.last_state;
+  this->runtime_blinds_.push_back(std::move(rb));
+  ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"",
+           discovered.blind_address, this->runtime_blinds_.back().name.c_str());
+  return true;
+}
+
+bool Elero::remove_runtime_blind(uint32_t addr) {
+  for (auto it = this->runtime_blinds_.begin(); it != this->runtime_blinds_.end(); ++it) {
+    if (it->blind_address == addr) {
+      ESP_LOGI(TAG, "Removed runtime blind 0x%06x", addr);
+      this->runtime_blinds_.erase(it);
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Elero::send_runtime_command(uint32_t addr, uint8_t cmd_byte) {
+  for (auto &rb : this->runtime_blinds_) {
+    if (rb.blind_address == addr) {
+      rb.command_queue.push(cmd_byte);
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
+                                          uint32_t close_dur_ms, uint32_t poll_intvl_ms) {
+  for (auto &rb : this->runtime_blinds_) {
+    if (rb.blind_address == addr) {
+      rb.open_duration_ms = open_dur_ms;
+      rb.close_duration_ms = close_dur_ms;
+      rb.poll_intvl_ms = poll_intvl_ms;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Elero::is_blind_adopted(uint32_t addr) const {
+  for (const auto &rb : this->runtime_blinds_) {
+    if (rb.blind_address == addr) return true;
+  }
+  return false;
+}
+
+// ─── Log buffer ───────────────────────────────────────────────────────────
+
+void Elero::append_log(uint8_t level, const char *tag, const char *fmt, ...) {
+  if (!this->log_capture_) return;
+  LogEntry entry{};
+  entry.timestamp_ms = millis();
+  entry.level = level;
+  strncpy(entry.tag, tag, sizeof(entry.tag) - 1);
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(entry.message, sizeof(entry.message), fmt, args);
+  va_end(args);
+  if (this->log_entries_.size() < ELERO_LOG_BUFFER_SIZE) {
+    this->log_entries_.push_back(entry);
+  } else {
+    this->log_entries_[this->log_write_idx_] = entry;
+    this->log_write_idx_ = (this->log_write_idx_ + 1) % ELERO_LOG_BUFFER_SIZE;
+  }
 }
 
 }  // namespace elero

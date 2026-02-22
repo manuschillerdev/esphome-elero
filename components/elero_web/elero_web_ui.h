@@ -6,505 +6,366 @@
 #define PROGMEM
 #endif
 
+// AUTO-GENERATED FILE — do not edit by hand.
+// To rebuild: cd components/elero_web/frontend && npm run build
+
 namespace esphome {
 namespace elero {
 
 const char ELERO_WEB_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Elero Blind Manager</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f5f5;color:#333;line-height:1.5}
-.container{max-width:720px;margin:0 auto;padding:16px}
-header{background:#1a73e8;color:#fff;padding:16px;margin-bottom:16px;border-radius:8px;display:flex;align-items:center;gap:12px}
-header h1{font-size:1.2em;font-weight:600}
-.card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.12);margin-bottom:16px;overflow:hidden}
-.card-header{padding:12px 16px;background:#f8f9fa;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:.95em}
-.card-body{padding:16px}
-.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.75em;font-weight:600}
-.badge-scan{background:#e8f5e9;color:#2e7d32}
-.badge-idle{background:#f5f5f5;color:#757575}
-.badge-count{background:#e3f2fd;color:#1565c0}
-.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:none;border-radius:6px;font-size:.9em;cursor:pointer;font-weight:500;transition:background .2s}
-.btn-primary{background:#1a73e8;color:#fff}
-.btn-primary:hover{background:#1557b0}
-.btn-danger{background:#d32f2f;color:#fff}
-.btn-danger:hover{background:#b71c1c}
-.btn-outline{background:#fff;color:#1a73e8;border:1px solid #1a73e8}
-.btn-outline:hover{background:#e3f2fd}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.device{border:1px solid #e0e0e0;border-radius:8px;padding:12px;margin-bottom:8px;transition:border-color .2s}
-.device:hover{border-color:#1a73e8}
-.device-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
-.device-addr{font-family:monospace;font-weight:600;font-size:.95em}
-.device-details{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:4px;font-size:.85em;color:#666}
-.device-details span{display:flex;gap:4px}
-.device-details .label{color:#999}
-.state{display:inline-block;padding:1px 6px;border-radius:4px;font-size:.8em;font-weight:500}
-.state-top{background:#e8f5e9;color:#2e7d32}
-.state-bottom{background:#fce4ec;color:#c62828}
-.state-moving_up,.state-start_moving_up,.state-opening{background:#fff3e0;color:#e65100}
-.state-moving_down,.state-start_moving_down,.state-closing{background:#fff3e0;color:#e65100}
-.state-idle{background:#f5f5f5;color:#757575}
-.state-intermediate,.state-stopped{background:#e3f2fd;color:#1565c0}
-.state-blocking,.state-overheated,.state-timeout{background:#ffebee;color:#c62828}
-.configured-tag{font-size:.75em;color:#2e7d32;font-weight:600}
-.empty{text-align:center;padding:24px;color:#999;font-size:.9em}
-.modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center}
-.modal-overlay.active{display:flex}
-.modal{background:#fff;border-radius:12px;width:90%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.2)}
-.modal-header{padding:16px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center}
-.modal-header h3{font-size:1em}
-.modal-close{background:none;border:none;font-size:1.4em;cursor:pointer;color:#999;padding:0 4px}
-.modal-close:hover{color:#333}
-.modal-body{padding:16px}
-.modal-footer{padding:12px 16px;border-top:1px solid #e0e0e0;display:flex;justify-content:flex-end;gap:8px}
-.yaml-box{background:#263238;color:#e0e0e0;border-radius:6px;padding:12px;font-family:monospace;font-size:.82em;white-space:pre;overflow-x:auto;line-height:1.6;max-height:400px;overflow-y:auto}
-.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.status-dot.scanning{background:#4caf50;animation:pulse 1s infinite}
-.status-dot.idle{background:#9e9e9e}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.scan-status{display:flex;align-items:center;gap:8px;margin-bottom:12px}
-.cover-pos{width:100%;height:4px;background:#e0e0e0;border-radius:2px;overflow:hidden;margin-top:4px}
-.cover-pos-bar{height:100%;background:#1a73e8;transition:width .3s}
-.refresh-hint{font-size:.8em;color:#999;margin-top:8px}
-.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 20px;border-radius:8px;font-size:.9em;z-index:200;opacity:0;transition:opacity .3s}
-.toast.show{opacity:1}
-.toast.error{background:#d32f2f}
-.badge-dump{background:#fff3e0;color:#e65100}
-.badge-dumping{background:#e8f5e9;color:#2e7d32}
-.pkt-table{width:100%;border-collapse:collapse;font-size:.8em}
-.pkt-table th{background:#f8f9fa;padding:5px 8px;text-align:left;border-bottom:2px solid #e0e0e0;font-weight:600;white-space:nowrap}
-.pkt-table td{padding:4px 8px;border-bottom:1px solid #f0f0f0;vertical-align:top}
-.pkt-table tr.pkt-ok{background:#f1f8f4}
-.pkt-table tr.pkt-err{background:#fff5f5}
-.pkt-hex{font-family:monospace;font-size:.85em;word-break:break-all;color:#333}
-.pkt-ok-badge{color:#2e7d32;font-weight:600}
-.pkt-err-badge{color:#c62828;font-weight:600}
-.dump-wrap{overflow-x:auto;max-height:380px;overflow-y:auto;margin-top:12px}
-.freq-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
-.freq-label{font-size:.85em;color:#555;min-width:48px}
-.freq-input{width:80px;padding:6px 8px;border:1px solid #ccc;border-radius:6px;font-family:monospace;font-size:.9em}
-.freq-input:focus{outline:none;border-color:#1a73e8}
-.freq-preset{padding:6px 10px;border:1px solid #ccc;border-radius:6px;font-size:.85em;background:#fff}
-</style>
+  <script type="module" crossorigin>(function(){const t=document.createElement("link").relList;if(t&&t.supports&&t.supports("modulepreload"))return;for(const i of document.querySelectorAll('link[rel="modulepreload"]'))n(i);new MutationObserver(i=>{for(const s of i)if(s.type==="childList")for(const o of s.addedNodes)o.tagName==="LINK"&&o.rel==="modulepreload"&&n(o)}).observe(document,{childList:!0,subtree:!0});function r(i){const s={};return i.integrity&&(s.integrity=i.integrity),i.referrerPolicy&&(s.referrerPolicy=i.referrerPolicy),i.crossOrigin==="use-credentials"?s.credentials="include":i.crossOrigin==="anonymous"?s.credentials="omit":s.credentials="same-origin",s}function n(i){if(i.ep)return;i.ep=!0;const s=r(i);fetch(i.href,s)}})();var Le=!1,qe=!1,N=[],Re=-1,Je=!1;function Vr(e){Zr(e)}function Yr(){Je=!0}function Xr(){Je=!1,It()}function Zr(e){N.includes(e)||N.push(e),It()}function Qr(e){let t=N.indexOf(e);t!==-1&&t>Re&&N.splice(t,1)}function It(){if(!qe&&!Le){if(Je)return;Le=!0,queueMicrotask(en)}}function en(){Le=!1,qe=!0;for(let e=0;e<N.length;e++)N[e](),Re=e;N.length=0,Re=-1,qe=!1}var Y,z,X,Lt,je=!0;function tn(e){je=!1,e(),je=!0}function rn(e){Y=e.reactive,X=e.release,z=t=>e.effect(t,{scheduler:r=>{je?Vr(r):r()}}),Lt=e.raw}function yt(e){z=e}function nn(e){let t=()=>{};return[n=>{let i=z(n);return e._x_effects||(e._x_effects=new Set,e._x_runEffects=()=>{e._x_effects.forEach(s=>s())}),e._x_effects.add(i),t=()=>{i!==void 0&&(e._x_effects.delete(i),X(i))},i},()=>{t()}]}function qt(e,t){let r=!0,n,i=z(()=>{let s=e();if(JSON.stringify(s),!r&&(typeof s=="object"||s!==n)){let o=n;queueMicrotask(()=>{t(s,o)})}n=s,r=!1});return()=>X(i)}async function sn(e){Yr();try{await e(),await Promise.resolve()}finally{Xr()}}var Rt=[],jt=[],Nt=[];function on(e){Nt.push(e)}function Ve(e,t){typeof t=="function"?(e._x_cleanups||(e._x_cleanups=[]),e._x_cleanups.push(t)):(t=e,jt.push(t))}function Ft(e){Rt.push(e)}function kt(e,t,r){e._x_attributeCleanups||(e._x_attributeCleanups={}),e._x_attributeCleanups[t]||(e._x_attributeCleanups[t]=[]),e._x_attributeCleanups[t].push(r)}function Dt(e,t){e._x_attributeCleanups&&Object.entries(e._x_attributeCleanups).forEach(([r,n])=>{(t===void 0||t.includes(r))&&(n.forEach(i=>i()),delete e._x_attributeCleanups[r])})}function an(e){var t,r;for((t=e._x_effects)==null||t.forEach(Qr);(r=e._x_cleanups)!=null&&r.length;)e._x_cleanups.pop()()}var Ye=new MutationObserver(et),Xe=!1;function Ze(){Ye.observe(document,{subtree:!0,childList:!0,attributes:!0,attributeOldValue:!0}),Xe=!0}function Bt(){cn(),Ye.disconnect(),Xe=!1}var re=[];function cn(){let e=Ye.takeRecords();re.push(()=>e.length>0&&et(e));let t=re.length;queueMicrotask(()=>{if(re.length===t)for(;re.length>0;)re.shift()()})}function g(e){if(!Xe)return e();Bt();let t=e();return Ze(),t}var Qe=!1,ve=[];function ln(){Qe=!0}function un(){Qe=!1,et(ve),ve=[]}function et(e){if(Qe){ve=ve.concat(e);return}let t=[],r=new Set,n=new Map,i=new Map;for(let s=0;s<e.length;s++)if(!e[s].target._x_ignoreMutationObserver&&(e[s].type==="childList"&&(e[s].removedNodes.forEach(o=>{o.nodeType===1&&o._x_marker&&r.add(o)}),e[s].addedNodes.forEach(o=>{if(o.nodeType===1){if(r.has(o)){r.delete(o);return}o._x_marker||t.push(o)}})),e[s].type==="attributes")){let o=e[s].target,a=e[s].attributeName,c=e[s].oldValue,l=()=>{n.has(o)||n.set(o,[]),n.get(o).push({name:a,value:o.getAttribute(a)})},u=()=>{i.has(o)||i.set(o,[]),i.get(o).push(a)};o.hasAttribute(a)&&c===null?l():o.hasAttribute(a)?(u(),l()):u()}i.forEach((s,o)=>{Dt(o,s)}),n.forEach((s,o)=>{Rt.forEach(a=>a(o,s))});for(let s of r)t.some(o=>o.contains(s))||jt.forEach(o=>o(s));for(let s of t)s.isConnected&&Nt.forEach(o=>o(s));t=null,r=null,n=null,i=null}function Kt(e){return K(B(e))}function fe(e,t,r){return e._x_dataStack=[t,...B(r||e)],()=>{e._x_dataStack=e._x_dataStack.filter(n=>n!==t)}}function B(e){return e._x_dataStack?e._x_dataStack:typeof ShadowRoot=="function"&&e instanceof ShadowRoot?B(e.host):e.parentNode?B(e.parentNode):[]}function K(e){return new Proxy({objects:e},fn)}var fn={ownKeys({objects:e}){return Array.from(new Set(e.flatMap(t=>Object.keys(t))))},has({objects:e},t){return t==Symbol.unscopables?!1:e.some(r=>Object.prototype.hasOwnProperty.call(r,t)||Reflect.has(r,t))},get({objects:e},t,r){return t=="toJSON"?dn:Reflect.get(e.find(n=>Reflect.has(n,t))||{},t,r)},set({objects:e},t,r,n){const i=e.find(o=>Object.prototype.hasOwnProperty.call(o,t))||e[e.length-1],s=Object.getOwnPropertyDescriptor(i,t);return s!=null&&s.set&&(s!=null&&s.get)?s.set.call(n,r)||!0:Reflect.set(i,t,r)}};function dn(){return Reflect.ownKeys(this).reduce((t,r)=>(t[r]=Reflect.get(this,r),t),{})}function tt(e){let t=n=>typeof n=="object"&&!Array.isArray(n)&&n!==null,r=(n,i="")=>{Object.entries(Object.getOwnPropertyDescriptors(n)).forEach(([s,{value:o,enumerable:a}])=>{if(a===!1||o===void 0||typeof o=="object"&&o!==null&&o.__v_skip)return;let c=i===""?s:`${i}.${s}`;typeof o=="object"&&o!==null&&o._x_interceptor?n[s]=o.initialize(e,c,s):t(o)&&o!==n&&!(o instanceof Element)&&r(o,c)})};return r(e)}function Ut(e,t=()=>{}){let r={initialValue:void 0,_x_interceptor:!0,initialize(n,i,s){return e(this.initialValue,()=>pn(n,i),o=>Ne(n,i,o),i,s)}};return t(r),n=>{if(typeof n=="object"&&n!==null&&n._x_interceptor){let i=r.initialize.bind(r);r.initialize=(s,o,a)=>{let c=n.initialize(s,o,a);return r.initialValue=c,i(s,o,a)}}else r.initialValue=n;return r}}function pn(e,t){return t.split(".").reduce((r,n)=>r[n],e)}function Ne(e,t,r){if(typeof t=="string"&&(t=t.split(".")),t.length===1)e[t[0]]=r;else{if(t.length===0)throw error;return e[t[0]]||(e[t[0]]={}),Ne(e[t[0]],t.slice(1),r)}}var Ht={};function C(e,t){Ht[e]=t}function ce(e,t){let r=hn(t);return Object.entries(Ht).forEach(([n,i])=>{Object.defineProperty(e,`$${n}`,{get(){return i(t,r)},enumerable:!1})}),e}function hn(e){let[t,r]=Zt(e),n={interceptor:Ut,...t};return Ve(e,r),n}function _n(e,t,r,...n){try{return r(...n)}catch(i){le(i,e,t)}}function le(...e){return zt(...e)}var zt=mn;function gn(e){zt=e}function mn(e,t,r=void 0){e=Object.assign(e??{message:"No error message given."},{el:t,expression:r}),console.warn(`Alpine Expression Error: ${e.message}
+
+${r?'Expression: "'+r+`"
+
+`:""}`,t),setTimeout(()=>{throw e},0)}var J=!0;function Wt(e){let t=J;J=!1;let r=e();return J=t,r}function F(e,t,r={}){let n;return b(e,t)(i=>n=i,r),n}function b(...e){return Gt(...e)}var Gt=Vt;function yn(e){Gt=e}var Jt;function vn(e){Jt=e}function Vt(e,t){let r={};ce(r,e);let n=[r,...B(e)],i=typeof t=="function"?xn(n,t):bn(n,t,e);return _n.bind(null,e,t,i)}function xn(e,t){return(r=()=>{},{scope:n={},params:i=[],context:s}={})=>{if(!J){ue(r,t,K([n,...e]),i);return}let o=t.apply(K([n,...e]),i);ue(r,o)}}var $e={};function wn(e,t){if($e[e])return $e[e];let r=Object.getPrototypeOf(async function(){}).constructor,n=/^[\n\s]*if.*\(.*\)/.test(e.trim())||/^(let|const)\s/.test(e.trim())?`(async()=>{ ${e} })()`:e,s=(()=>{try{let o=new r(["__self","scope"],`with (scope) { __self.result = ${n} }; __self.finished = true; return __self.result;`);return Object.defineProperty(o,"name",{value:`[Alpine] ${e}`}),o}catch(o){return le(o,t,e),Promise.resolve()}})();return $e[e]=s,s}function bn(e,t,r){let n=wn(t,r);return(i=()=>{},{scope:s={},params:o=[],context:a}={})=>{n.result=void 0,n.finished=!1;let c=K([s,...e]);if(typeof n=="function"){let l=n.call(a,n,c).catch(u=>le(u,r,t));n.finished?(ue(i,n.result,c,o,r),n.result=void 0):l.then(u=>{ue(i,u,c,o,r)}).catch(u=>le(u,r,t)).finally(()=>n.result=void 0)}}}function ue(e,t,r,n,i){if(J&&typeof t=="function"){let s=t.apply(r,n);s instanceof Promise?s.then(o=>ue(e,o,r,n)).catch(o=>le(o,i,t)):e(s)}else typeof t=="object"&&t instanceof Promise?t.then(s=>e(s)):e(t)}function Sn(...e){return Jt(...e)}function En(e,t,r={}){let n={};ce(n,e);let i=[n,...B(e)],s=K([r.scope??{},...i]),o=r.params??[];if(t.includes("await")){let a=Object.getPrototypeOf(async function(){}).constructor,c=/^[\n\s]*if.*\(.*\)/.test(t.trim())||/^(let|const)\s/.test(t.trim())?`(async()=>{ ${t} })()`:t;return new a(["scope"],`with (scope) { let __result = ${c}; return __result }`).call(r.context,s)}else{let a=/^[\n\s]*if.*\(.*\)/.test(t.trim())||/^(let|const)\s/.test(t.trim())?`(()=>{ ${t} })()`:t,l=new Function(["scope"],`with (scope) { let __result = ${a}; return __result }`).call(r.context,s);return typeof l=="function"&&J?l.apply(s,o):l}}var rt="x-";function Z(e=""){return rt+e}function An(e){rt=e}var xe={};function y(e,t){return xe[e]=t,{before(r){if(!xe[r]){console.warn(String.raw`Cannot find directive \`${r}\`. \`${e}\` will use the default order of execution`);return}const n=j.indexOf(r);j.splice(n>=0?n:j.indexOf("DEFAULT"),0,e)}}}function Tn(e){return Object.keys(xe).includes(e)}function nt(e,t,r){if(t=Array.from(t),e._x_virtualDirectives){let s=Object.entries(e._x_virtualDirectives).map(([a,c])=>({name:a,value:c})),o=Yt(s);s=s.map(a=>o.find(c=>c.name===a.name)?{name:`x-bind:${a.name}`,value:`"${a.value}"`}:a),t=t.concat(s)}let n={};return t.map(tr((s,o)=>n[s]=o)).filter(nr).map($n(n,r)).sort(Mn).map(s=>Cn(e,s))}function Yt(e){return Array.from(e).map(tr()).filter(t=>!nr(t))}var Fe=!1,se=new Map,Xt=Symbol();function On(e){Fe=!0;let t=Symbol();Xt=t,se.set(t,[]);let r=()=>{for(;se.get(t).length;)se.get(t).shift()();se.delete(t)},n=()=>{Fe=!1,r()};e(r),n()}function Zt(e){let t=[],r=a=>t.push(a),[n,i]=nn(e);return t.push(i),[{Alpine:ee,effect:n,cleanup:r,evaluateLater:b.bind(b,e),evaluate:F.bind(F,e)},()=>t.forEach(a=>a())]}function Cn(e,t){let r=()=>{},n=xe[t.type]||r,[i,s]=Zt(e);kt(e,t.original,s);let o=()=>{e._x_ignore||e._x_ignoreSelf||(n.inline&&n.inline(e,t,i),n=n.bind(n,e,t,i),Fe?se.get(Xt).push(n):n())};return o.runCleanups=s,o}var Qt=(e,t)=>({name:r,value:n})=>(r.startsWith(e)&&(r=r.replace(e,t)),{name:r,value:n}),er=e=>e;function tr(e=()=>{}){return({name:t,value:r})=>{let{name:n,value:i}=rr.reduce((s,o)=>o(s),{name:t,value:r});return n!==t&&e(n,t),{name:n,value:i}}}var rr=[];function it(e){rr.push(e)}function nr({name:e}){return ir().test(e)}var ir=()=>new RegExp(`^${rt}([^:^.]+)\\b`);function $n(e,t){return({name:r,value:n})=>{r===n&&(n="");let i=r.match(ir()),s=r.match(/:([a-zA-Z0-9\-_:]+)/),o=r.match(/\.[^.\]]+(?=[^\]]*$)/g)||[],a=t||e[r]||r;return{type:i?i[1]:null,value:s?s[1]:null,modifiers:o.map(c=>c.replace(".","")),expression:n,original:a}}}var ke="DEFAULT",j=["ignore","ref","data","id","anchor","bind","init","for","model","modelable","transition","show","if",ke,"teleport"];function Mn(e,t){let r=j.indexOf(e.type)===-1?ke:e.type,n=j.indexOf(t.type)===-1?ke:t.type;return j.indexOf(r)-j.indexOf(n)}function oe(e,t,r={}){e.dispatchEvent(new CustomEvent(t,{detail:r,bubbles:!0,composed:!0,cancelable:!0}))}function U(e,t){if(typeof ShadowRoot=="function"&&e instanceof ShadowRoot){Array.from(e.children).forEach(i=>U(i,t));return}let r=!1;if(t(e,()=>r=!0),r)return;let n=e.firstElementChild;for(;n;)U(n,t),n=n.nextElementSibling}function A(e,...t){console.warn(`Alpine Warning: ${e}`,...t)}var vt=!1;function Pn(){vt&&A("Alpine has already been initialized on this page. Calling Alpine.start() more than once can cause problems."),vt=!0,document.body||A("Unable to initialize. Trying to load Alpine before `<body>` is available. Did you forget to add `defer` in Alpine's `<script>` tag?"),oe(document,"alpine:init"),oe(document,"alpine:initializing"),Ze(),on(t=>M(t,U)),Ve(t=>Q(t)),Ft((t,r)=>{nt(t,r).forEach(n=>n())});let e=t=>!be(t.parentElement,!0);Array.from(document.querySelectorAll(ar().join(","))).filter(e).forEach(t=>{M(t)}),oe(document,"alpine:initialized"),setTimeout(()=>{Rn()})}var st=[],sr=[];function or(){return st.map(e=>e())}function ar(){return st.concat(sr).map(e=>e())}function cr(e){st.push(e)}function lr(e){sr.push(e)}function be(e,t=!1){return H(e,r=>{if((t?ar():or()).some(i=>r.matches(i)))return!0})}function H(e,t){if(e){if(t(e))return e;if(e._x_teleportBack&&(e=e._x_teleportBack),e.parentNode instanceof ShadowRoot)return H(e.parentNode.host,t);if(e.parentElement)return H(e.parentElement,t)}}function In(e){return or().some(t=>e.matches(t))}var ur=[];function Ln(e){ur.push(e)}var qn=1;function M(e,t=U,r=()=>{}){H(e,n=>n._x_ignore)||On(()=>{t(e,(n,i)=>{n._x_marker||(r(n,i),ur.forEach(s=>s(n,i)),nt(n,n.attributes).forEach(s=>s()),n._x_ignore||(n._x_marker=qn++),n._x_ignore&&i())})})}function Q(e,t=U){t(e,r=>{an(r),Dt(r),delete r._x_marker})}function Rn(){[["ui","dialog",["[x-dialog], [x-popover]"]],["anchor","anchor",["[x-anchor]"]],["sort","sort",["[x-sort]"]]].forEach(([t,r,n])=>{Tn(r)||n.some(i=>{if(document.querySelector(i))return A(`found "${i}", but missing ${t} plugin`),!0})})}var De=[],ot=!1;function at(e=()=>{}){return queueMicrotask(()=>{ot||setTimeout(()=>{Be()})}),new Promise(t=>{De.push(()=>{e(),t()})})}function Be(){for(ot=!1;De.length;)De.shift()()}function jn(){ot=!0}function ct(e,t){return Array.isArray(t)?xt(e,t.join(" ")):typeof t=="object"&&t!==null?Nn(e,t):typeof t=="function"?ct(e,t()):xt(e,t)}function xt(e,t){let r=i=>i.split(" ").filter(s=>!e.classList.contains(s)).filter(Boolean),n=i=>(e.classList.add(...i),()=>{e.classList.remove(...i)});return t=t===!0?t="":t||"",n(r(t))}function Nn(e,t){let r=a=>a.split(" ").filter(Boolean),n=Object.entries(t).flatMap(([a,c])=>c?r(a):!1).filter(Boolean),i=Object.entries(t).flatMap(([a,c])=>c?!1:r(a)).filter(Boolean),s=[],o=[];return i.forEach(a=>{e.classList.contains(a)&&(e.classList.remove(a),o.push(a))}),n.forEach(a=>{e.classList.contains(a)||(e.classList.add(a),s.push(a))}),()=>{o.forEach(a=>e.classList.add(a)),s.forEach(a=>e.classList.remove(a))}}function Se(e,t){return typeof t=="object"&&t!==null?Fn(e,t):kn(e,t)}function Fn(e,t){let r={};return Object.entries(t).forEach(([n,i])=>{r[n]=e.style[n],n.startsWith("--")||(n=Dn(n)),e.style.setProperty(n,i)}),setTimeout(()=>{e.style.length===0&&e.removeAttribute("style")}),()=>{Se(e,r)}}function kn(e,t){let r=e.getAttribute("style",t);return e.setAttribute("style",t),()=>{e.setAttribute("style",r||"")}}function Dn(e){return e.replace(/([a-z])([A-Z])/g,"$1-$2").toLowerCase()}function Ke(e,t=()=>{}){let r=!1;return function(){r?t.apply(this,arguments):(r=!0,e.apply(this,arguments))}}y("transition",(e,{value:t,modifiers:r,expression:n},{evaluate:i})=>{typeof n=="function"&&(n=i(n)),n!==!1&&(!n||typeof n=="boolean"?Kn(e,r,t):Bn(e,n,t))});function Bn(e,t,r){fr(e,ct,""),{enter:i=>{e._x_transition.enter.during=i},"enter-start":i=>{e._x_transition.enter.start=i},"enter-end":i=>{e._x_transition.enter.end=i},leave:i=>{e._x_transition.leave.during=i},"leave-start":i=>{e._x_transition.leave.start=i},"leave-end":i=>{e._x_transition.leave.end=i}}[r](t)}function Kn(e,t,r){fr(e,Se);let n=!t.includes("in")&&!t.includes("out")&&!r,i=n||t.includes("in")||["enter"].includes(r),s=n||t.includes("out")||["leave"].includes(r);t.includes("in")&&!n&&(t=t.filter((d,m)=>m<t.indexOf("out"))),t.includes("out")&&!n&&(t=t.filter((d,m)=>m>t.indexOf("out")));let o=!t.includes("opacity")&&!t.includes("scale"),a=o||t.includes("opacity"),c=o||t.includes("scale"),l=a?0:1,u=c?ne(t,"scale",95)/100:1,p=ne(t,"delay",0)/1e3,w=ne(t,"origin","center"),S="opacity, transform",T=ne(t,"duration",150)/1e3,h=ne(t,"duration",75)/1e3,f="cubic-bezier(0.4, 0.0, 0.2, 1)";i&&(e._x_transition.enter.during={transformOrigin:w,transitionDelay:`${p}s`,transitionProperty:S,transitionDuration:`${T}s`,transitionTimingFunction:f},e._x_transition.enter.start={opacity:l,transform:`scale(${u})`},e._x_transition.enter.end={opacity:1,transform:"scale(1)"}),s&&(e._x_transition.leave.during={transformOrigin:w,transitionDelay:`${p}s`,transitionProperty:S,transitionDuration:`${h}s`,transitionTimingFunction:f},e._x_transition.leave.start={opacity:1,transform:"scale(1)"},e._x_transition.leave.end={opacity:l,transform:`scale(${u})`})}function fr(e,t,r={}){e._x_transition||(e._x_transition={enter:{during:r,start:r,end:r},leave:{during:r,start:r,end:r},in(n=()=>{},i=()=>{}){Ue(e,t,{during:this.enter.during,start:this.enter.start,end:this.enter.end},n,i)},out(n=()=>{},i=()=>{}){Ue(e,t,{during:this.leave.during,start:this.leave.start,end:this.leave.end},n,i)}})}window.Element.prototype._x_toggleAndCascadeWithTransitions=function(e,t,r,n){const i=document.visibilityState==="visible"?requestAnimationFrame:setTimeout;let s=()=>i(r);if(t){e._x_transition&&(e._x_transition.enter||e._x_transition.leave)?e._x_transition.enter&&(Object.entries(e._x_transition.enter.during).length||Object.entries(e._x_transition.enter.start).length||Object.entries(e._x_transition.enter.end).length)?e._x_transition.in(r):s():e._x_transition?e._x_transition.in(r):s();return}e._x_hidePromise=e._x_transition?new Promise((o,a)=>{e._x_transition.out(()=>{},()=>o(n)),e._x_transitioning&&e._x_transitioning.beforeCancel(()=>a({isFromCancelledTransition:!0}))}):Promise.resolve(n),queueMicrotask(()=>{let o=dr(e);o?(o._x_hideChildren||(o._x_hideChildren=[]),o._x_hideChildren.push(e)):i(()=>{let a=c=>{let l=Promise.all([c._x_hidePromise,...(c._x_hideChildren||[]).map(a)]).then(([u])=>u==null?void 0:u());return delete c._x_hidePromise,delete c._x_hideChildren,l};a(e).catch(c=>{if(!c.isFromCancelledTransition)throw c})})})};function dr(e){let t=e.parentNode;if(t)return t._x_hidePromise?t:dr(t)}function Ue(e,t,{during:r,start:n,end:i}={},s=()=>{},o=()=>{}){if(e._x_transitioning&&e._x_transitioning.cancel(),Object.keys(r).length===0&&Object.keys(n).length===0&&Object.keys(i).length===0){s(),o();return}let a,c,l;Un(e,{start(){a=t(e,n)},during(){c=t(e,r)},before:s,end(){a(),l=t(e,i)},after:o,cleanup(){c(),l()}})}function Un(e,t){let r,n,i,s=Ke(()=>{g(()=>{r=!0,n||t.before(),i||(t.end(),Be()),t.after(),e.isConnected&&t.cleanup(),delete e._x_transitioning})});e._x_transitioning={beforeCancels:[],beforeCancel(o){this.beforeCancels.push(o)},cancel:Ke(function(){for(;this.beforeCancels.length;)this.beforeCancels.shift()();s()}),finish:s},g(()=>{t.start(),t.during()}),jn(),requestAnimationFrame(()=>{if(r)return;let o=Number(getComputedStyle(e).transitionDuration.replace(/,.*/,"").replace("s",""))*1e3,a=Number(getComputedStyle(e).transitionDelay.replace(/,.*/,"").replace("s",""))*1e3;o===0&&(o=Number(getComputedStyle(e).animationDuration.replace("s",""))*1e3),g(()=>{t.before()}),n=!0,requestAnimationFrame(()=>{r||(g(()=>{t.end()}),Be(),setTimeout(e._x_transitioning.finish,o+a),i=!0)})})}function ne(e,t,r){if(e.indexOf(t)===-1)return r;const n=e[e.indexOf(t)+1];if(!n||t==="scale"&&isNaN(n))return r;if(t==="duration"||t==="delay"){let i=n.match(/([0-9]+)ms/);if(i)return i[1]}return t==="origin"&&["top","right","left","center","bottom"].includes(e[e.indexOf(t)+2])?[n,e[e.indexOf(t)+2]].join(" "):n}var I=!1;function q(e,t=()=>{}){return(...r)=>I?t(...r):e(...r)}function Hn(e){return(...t)=>I&&e(...t)}var pr=[];function Ee(e){pr.push(e)}function zn(e,t){pr.forEach(r=>r(e,t)),I=!0,hr(()=>{M(t,(r,n)=>{n(r,()=>{})})}),I=!1}var He=!1;function Wn(e,t){t._x_dataStack||(t._x_dataStack=e._x_dataStack),I=!0,He=!0,hr(()=>{Gn(t)}),I=!1,He=!1}function Gn(e){let t=!1;M(e,(n,i)=>{U(n,(s,o)=>{if(t&&In(s))return o();t=!0,i(s,o)})})}function hr(e){let t=z;yt((r,n)=>{let i=t(r);return X(i),()=>{}}),e(),yt(t)}function _r(e,t,r,n=[]){switch(e._x_bindings||(e._x_bindings=Y({})),e._x_bindings[t]=r,t=n.includes("camel")?ti(t):t,t){case"value":Jn(e,r);break;case"style":Yn(e,r);break;case"class":Vn(e,r);break;case"selected":case"checked":Xn(e,t,r);break;default:gr(e,t,r);break}}function Jn(e,t){if(vr(e))e.attributes.value===void 0&&(e.value=t),window.fromModel&&(typeof t=="boolean"?e.checked=ye(e.value)===t:e.checked=wt(e.value,t));else if(lt(e))Number.isInteger(t)?e.value=t:!Array.isArray(t)&&typeof t!="boolean"&&![null,void 0].includes(t)?e.value=String(t):Array.isArray(t)?e.checked=t.some(r=>wt(r,e.value)):e.checked=!!t;else if(e.tagName==="SELECT")ei(e,t);else{if(e.value===t)return;e.value=t===void 0?"":t}}function Vn(e,t){e._x_undoAddedClasses&&e._x_undoAddedClasses(),e._x_undoAddedClasses=ct(e,t)}function Yn(e,t){e._x_undoAddedStyles&&e._x_undoAddedStyles(),e._x_undoAddedStyles=Se(e,t)}function Xn(e,t,r){gr(e,t,r),Qn(e,t,r)}function gr(e,t,r){[null,void 0,!1].includes(r)&&ni(t)?e.removeAttribute(t):(mr(t)&&(r=t),Zn(e,t,r))}function Zn(e,t,r){e.getAttribute(t)!=r&&e.setAttribute(t,r)}function Qn(e,t,r){e[t]!==r&&(e[t]=r)}function ei(e,t){const r=[].concat(t).map(n=>n+"");Array.from(e.options).forEach(n=>{n.selected=r.includes(n.value)})}function ti(e){return e.toLowerCase().replace(/-(\w)/g,(t,r)=>r.toUpperCase())}function wt(e,t){return e==t}function ye(e){return[1,"1","true","on","yes",!0].includes(e)?!0:[0,"0","false","off","no",!1].includes(e)?!1:e?!!e:null}var ri=new Set(["allowfullscreen","async","autofocus","autoplay","checked","controls","default","defer","disabled","formnovalidate","inert","ismap","itemscope","loop","multiple","muted","nomodule","novalidate","open","playsinline","readonly","required","reversed","selected","shadowrootclonable","shadowrootdelegatesfocus","shadowrootserializable"]);function mr(e){return ri.has(e)}function ni(e){return!["aria-pressed","aria-checked","aria-expanded","aria-selected"].includes(e)}function ii(e,t,r){return e._x_bindings&&e._x_bindings[t]!==void 0?e._x_bindings[t]:yr(e,t,r)}function si(e,t,r,n=!0){if(e._x_bindings&&e._x_bindings[t]!==void 0)return e._x_bindings[t];if(e._x_inlineBindings&&e._x_inlineBindings[t]!==void 0){let i=e._x_inlineBindings[t];return i.extract=n,Wt(()=>F(e,i.expression))}return yr(e,t,r)}function yr(e,t,r){let n=e.getAttribute(t);return n===null?typeof r=="function"?r():r:n===""?!0:mr(t)?!![t,"true"].includes(n):n}function lt(e){return e.type==="checkbox"||e.localName==="ui-checkbox"||e.localName==="ui-switch"}function vr(e){return e.type==="radio"||e.localName==="ui-radio"}function xr(e,t){let r;return function(){const n=this,i=arguments,s=function(){r=null,e.apply(n,i)};clearTimeout(r),r=setTimeout(s,t)}}function wr(e,t){let r;return function(){let n=this,i=arguments;r||(e.apply(n,i),r=!0,setTimeout(()=>r=!1,t))}}function br({get:e,set:t},{get:r,set:n}){let i=!0,s,o=z(()=>{let a=e(),c=r();if(i)n(Me(a)),i=!1;else{let l=JSON.stringify(a),u=JSON.stringify(c);l!==s?n(Me(a)):l!==u&&t(Me(c))}s=JSON.stringify(e()),JSON.stringify(r())});return()=>{X(o)}}function Me(e){return typeof e=="object"?JSON.parse(JSON.stringify(e)):e}function oi(e){(Array.isArray(e)?e:[e]).forEach(r=>r(ee))}var R={},bt=!1;function ai(e,t){if(bt||(R=Y(R),bt=!0),t===void 0)return R[e];R[e]=t,tt(R[e]),typeof t=="object"&&t!==null&&t.hasOwnProperty("init")&&typeof t.init=="function"&&R[e].init()}function ci(){return R}var Sr={};function li(e,t){let r=typeof t!="function"?()=>t:t;return e instanceof Element?Er(e,r()):(Sr[e]=r,()=>{})}function ui(e){return Object.entries(Sr).forEach(([t,r])=>{Object.defineProperty(e,t,{get(){return(...n)=>r(...n)}})}),e}function Er(e,t,r){let n=[];for(;n.length;)n.pop()();let i=Object.entries(t).map(([o,a])=>({name:o,value:a})),s=Yt(i);return i=i.map(o=>s.find(a=>a.name===o.name)?{name:`x-bind:${o.name}`,value:`"${o.value}"`}:o),nt(e,i,r).map(o=>{n.push(o.runCleanups),o()}),()=>{for(;n.length;)n.pop()()}}var Ar={};function fi(e,t){Ar[e]=t}function di(e,t){return Object.entries(Ar).forEach(([r,n])=>{Object.defineProperty(e,r,{get(){return(...i)=>n.bind(t)(...i)},enumerable:!1})}),e}var pi={get reactive(){return Y},get release(){return X},get effect(){return z},get raw(){return Lt},get transaction(){return sn},version:"3.15.8",flushAndStopDeferringMutations:un,dontAutoEvaluateFunctions:Wt,disableEffectScheduling:tn,startObservingMutations:Ze,stopObservingMutations:Bt,setReactivityEngine:rn,onAttributeRemoved:kt,onAttributesAdded:Ft,closestDataStack:B,skipDuringClone:q,onlyDuringClone:Hn,addRootSelector:cr,addInitSelector:lr,setErrorHandler:gn,interceptClone:Ee,addScopeToNode:fe,deferMutations:ln,mapAttributes:it,evaluateLater:b,interceptInit:Ln,initInterceptors:tt,injectMagics:ce,setEvaluator:yn,setRawEvaluator:vn,mergeProxies:K,extractProp:si,findClosest:H,onElRemoved:Ve,closestRoot:be,destroyTree:Q,interceptor:Ut,transition:Ue,setStyles:Se,mutateDom:g,directive:y,entangle:br,throttle:wr,debounce:xr,evaluate:F,evaluateRaw:Sn,initTree:M,nextTick:at,prefixed:Z,prefix:An,plugin:oi,magic:C,store:ai,start:Pn,clone:Wn,cloneNode:zn,bound:ii,$data:Kt,watch:qt,walk:U,data:fi,bind:li},ee=pi;function hi(e,t){const r=Object.create(null),n=e.split(",");for(let i=0;i<n.length;i++)r[n[i]]=!0;return i=>!!r[i]}var _i=Object.freeze({}),gi=Object.prototype.hasOwnProperty,Ae=(e,t)=>gi.call(e,t),k=Array.isArray,ae=e=>Tr(e)==="[object Map]",mi=e=>typeof e=="string",ut=e=>typeof e=="symbol",Te=e=>e!==null&&typeof e=="object",yi=Object.prototype.toString,Tr=e=>yi.call(e),Or=e=>Tr(e).slice(8,-1),ft=e=>mi(e)&&e!=="NaN"&&e[0]!=="-"&&""+parseInt(e,10)===e,vi=e=>{const t=Object.create(null);return r=>t[r]||(t[r]=e(r))},xi=vi(e=>e.charAt(0).toUpperCase()+e.slice(1)),Cr=(e,t)=>e!==t&&(e===e||t===t),ze=new WeakMap,ie=[],$,D=Symbol("iterate"),We=Symbol("Map key iterate");function wi(e){return e&&e._isEffect===!0}function bi(e,t=_i){wi(e)&&(e=e.raw);const r=Ai(e,t);return t.lazy||r(),r}function Si(e){e.active&&($r(e),e.options.onStop&&e.options.onStop(),e.active=!1)}var Ei=0;function Ai(e,t){const r=function(){if(!r.active)return e();if(!ie.includes(r)){$r(r);try{return Oi(),ie.push(r),$=r,e()}finally{ie.pop(),Mr(),$=ie[ie.length-1]}}};return r.id=Ei++,r.allowRecurse=!!t.allowRecurse,r._isEffect=!0,r.active=!0,r.raw=e,r.deps=[],r.options=t,r}function $r(e){const{deps:t}=e;if(t.length){for(let r=0;r<t.length;r++)t[r].delete(e);t.length=0}}var V=!0,dt=[];function Ti(){dt.push(V),V=!1}function Oi(){dt.push(V),V=!0}function Mr(){const e=dt.pop();V=e===void 0?!0:e}function O(e,t,r){if(!V||$===void 0)return;let n=ze.get(e);n||ze.set(e,n=new Map);let i=n.get(r);i||n.set(r,i=new Set),i.has($)||(i.add($),$.deps.push(i),$.options.onTrack&&$.options.onTrack({effect:$,target:e,type:t,key:r}))}function L(e,t,r,n,i,s){const o=ze.get(e);if(!o)return;const a=new Set,c=u=>{u&&u.forEach(p=>{(p!==$||p.allowRecurse)&&a.add(p)})};if(t==="clear")o.forEach(c);else if(r==="length"&&k(e))o.forEach((u,p)=>{(p==="length"||p>=n)&&c(u)});else switch(r!==void 0&&c(o.get(r)),t){case"add":k(e)?ft(r)&&c(o.get("length")):(c(o.get(D)),ae(e)&&c(o.get(We)));break;case"delete":k(e)||(c(o.get(D)),ae(e)&&c(o.get(We)));break;case"set":ae(e)&&c(o.get(D));break}const l=u=>{u.options.onTrigger&&u.options.onTrigger({effect:u,target:e,key:r,type:t,newValue:n,oldValue:i,oldTarget:s}),u.options.scheduler?u.options.scheduler(u):u()};a.forEach(l)}var Ci=hi("__proto__,__v_isRef,__isVue"),Pr=new Set(Object.getOwnPropertyNames(Symbol).map(e=>Symbol[e]).filter(ut)),$i=Ir(),Mi=Ir(!0),St=Pi();function Pi(){const e={};return["includes","indexOf","lastIndexOf"].forEach(t=>{e[t]=function(...r){const n=_(this);for(let s=0,o=this.length;s<o;s++)O(n,"get",s+"");const i=n[t](...r);return i===-1||i===!1?n[t](...r.map(_)):i}}),["push","pop","shift","unshift","splice"].forEach(t=>{e[t]=function(...r){Ti();const n=_(this)[t].apply(this,r);return Mr(),n}}),e}function Ir(e=!1,t=!1){return function(n,i,s){if(i==="__v_isReactive")return!e;if(i==="__v_isReadonly")return e;if(i==="__v_raw"&&s===(e?t?zi:jr:t?Hi:Rr).get(n))return n;const o=k(n);if(!e&&o&&Ae(St,i))return Reflect.get(St,i,s);const a=Reflect.get(n,i,s);return(ut(i)?Pr.has(i):Ci(i))||(e||O(n,"get",i),t)?a:Ge(a)?!o||!ft(i)?a.value:a:Te(a)?e?Nr(a):gt(a):a}}var Ii=Li();function Li(e=!1){return function(r,n,i,s){let o=r[n];if(!e&&(i=_(i),o=_(o),!k(r)&&Ge(o)&&!Ge(i)))return o.value=i,!0;const a=k(r)&&ft(n)?Number(n)<r.length:Ae(r,n),c=Reflect.set(r,n,i,s);return r===_(s)&&(a?Cr(i,o)&&L(r,"set",n,i,o):L(r,"add",n,i)),c}}function qi(e,t){const r=Ae(e,t),n=e[t],i=Reflect.deleteProperty(e,t);return i&&r&&L(e,"delete",t,void 0,n),i}function Ri(e,t){const r=Reflect.has(e,t);return(!ut(t)||!Pr.has(t))&&O(e,"has",t),r}function ji(e){return O(e,"iterate",k(e)?"length":D),Reflect.ownKeys(e)}var Ni={get:$i,set:Ii,deleteProperty:qi,has:Ri,ownKeys:ji},Fi={get:Mi,set(e,t){return console.warn(`Set operation on key "${String(t)}" failed: target is readonly.`,e),!0},deleteProperty(e,t){return console.warn(`Delete operation on key "${String(t)}" failed: target is readonly.`,e),!0}},pt=e=>Te(e)?gt(e):e,ht=e=>Te(e)?Nr(e):e,_t=e=>e,Oe=e=>Reflect.getPrototypeOf(e);function de(e,t,r=!1,n=!1){e=e.__v_raw;const i=_(e),s=_(t);t!==s&&!r&&O(i,"get",t),!r&&O(i,"get",s);const{has:o}=Oe(i),a=n?_t:r?ht:pt;if(o.call(i,t))return a(e.get(t));if(o.call(i,s))return a(e.get(s));e!==i&&e.get(t)}function pe(e,t=!1){const r=this.__v_raw,n=_(r),i=_(e);return e!==i&&!t&&O(n,"has",e),!t&&O(n,"has",i),e===i?r.has(e):r.has(e)||r.has(i)}function he(e,t=!1){return e=e.__v_raw,!t&&O(_(e),"iterate",D),Reflect.get(e,"size",e)}function Et(e){e=_(e);const t=_(this);return Oe(t).has.call(t,e)||(t.add(e),L(t,"add",e,e)),this}function At(e,t){t=_(t);const r=_(this),{has:n,get:i}=Oe(r);let s=n.call(r,e);s?qr(r,n,e):(e=_(e),s=n.call(r,e));const o=i.call(r,e);return r.set(e,t),s?Cr(t,o)&&L(r,"set",e,t,o):L(r,"add",e,t),this}function Tt(e){const t=_(this),{has:r,get:n}=Oe(t);let i=r.call(t,e);i?qr(t,r,e):(e=_(e),i=r.call(t,e));const s=n?n.call(t,e):void 0,o=t.delete(e);return i&&L(t,"delete",e,void 0,s),o}function Ot(){const e=_(this),t=e.size!==0,r=ae(e)?new Map(e):new Set(e),n=e.clear();return t&&L(e,"clear",void 0,void 0,r),n}function _e(e,t){return function(n,i){const s=this,o=s.__v_raw,a=_(o),c=t?_t:e?ht:pt;return!e&&O(a,"iterate",D),o.forEach((l,u)=>n.call(i,c(l),c(u),s))}}function ge(e,t,r){return function(...n){const i=this.__v_raw,s=_(i),o=ae(s),a=e==="entries"||e===Symbol.iterator&&o,c=e==="keys"&&o,l=i[e](...n),u=r?_t:t?ht:pt;return!t&&O(s,"iterate",c?We:D),{next(){const{value:p,done:w}=l.next();return w?{value:p,done:w}:{value:a?[u(p[0]),u(p[1])]:u(p),done:w}},[Symbol.iterator](){return this}}}}function P(e){return function(...t){{const r=t[0]?`on key "${t[0]}" `:"";console.warn(`${xi(e)} operation ${r}failed: target is readonly.`,_(this))}return e==="delete"?!1:this}}function ki(){const e={get(s){return de(this,s)},get size(){return he(this)},has:pe,add:Et,set:At,delete:Tt,clear:Ot,forEach:_e(!1,!1)},t={get(s){return de(this,s,!1,!0)},get size(){return he(this)},has:pe,add:Et,set:At,delete:Tt,clear:Ot,forEach:_e(!1,!0)},r={get(s){return de(this,s,!0)},get size(){return he(this,!0)},has(s){return pe.call(this,s,!0)},add:P("add"),set:P("set"),delete:P("delete"),clear:P("clear"),forEach:_e(!0,!1)},n={get(s){return de(this,s,!0,!0)},get size(){return he(this,!0)},has(s){return pe.call(this,s,!0)},add:P("add"),set:P("set"),delete:P("delete"),clear:P("clear"),forEach:_e(!0,!0)};return["keys","values","entries",Symbol.iterator].forEach(s=>{e[s]=ge(s,!1,!1),r[s]=ge(s,!0,!1),t[s]=ge(s,!1,!0),n[s]=ge(s,!0,!0)}),[e,r,t,n]}var[Di,Bi]=ki();function Lr(e,t){const r=e?Bi:Di;return(n,i,s)=>i==="__v_isReactive"?!e:i==="__v_isReadonly"?e:i==="__v_raw"?n:Reflect.get(Ae(r,i)&&i in n?r:n,i,s)}var Ki={get:Lr(!1)},Ui={get:Lr(!0)};function qr(e,t,r){const n=_(r);if(n!==r&&t.call(e,n)){const i=Or(e);console.warn(`Reactive ${i} contains both the raw and reactive versions of the same object${i==="Map"?" as keys":""}, which can lead to inconsistencies. Avoid differentiating between the raw and reactive versions of an object and only use the reactive version if possible.`)}}var Rr=new WeakMap,Hi=new WeakMap,jr=new WeakMap,zi=new WeakMap;function Wi(e){switch(e){case"Object":case"Array":return 1;case"Map":case"Set":case"WeakMap":case"WeakSet":return 2;default:return 0}}function Gi(e){return e.__v_skip||!Object.isExtensible(e)?0:Wi(Or(e))}function gt(e){return e&&e.__v_isReadonly?e:Fr(e,!1,Ni,Ki,Rr)}function Nr(e){return Fr(e,!0,Fi,Ui,jr)}function Fr(e,t,r,n,i){if(!Te(e))return console.warn(`value cannot be made reactive: ${String(e)}`),e;if(e.__v_raw&&!(t&&e.__v_isReactive))return e;const s=i.get(e);if(s)return s;const o=Gi(e);if(o===0)return e;const a=new Proxy(e,o===2?n:r);return i.set(e,a),a}function _(e){return e&&_(e.__v_raw)||e}function Ge(e){return!!(e&&e.__v_isRef===!0)}C("nextTick",()=>at);C("dispatch",e=>oe.bind(oe,e));C("watch",(e,{evaluateLater:t,cleanup:r})=>(n,i)=>{let s=t(n),a=qt(()=>{let c;return s(l=>c=l),c},i);r(a)});C("store",ci);C("data",e=>Kt(e));C("root",e=>be(e));C("refs",e=>(e._x_refs_proxy||(e._x_refs_proxy=K(Ji(e))),e._x_refs_proxy));function Ji(e){let t=[];return H(e,r=>{r._x_refs&&t.push(r._x_refs)}),t}var Pe={};function kr(e){return Pe[e]||(Pe[e]=0),++Pe[e]}function Vi(e,t){return H(e,r=>{if(r._x_ids&&r._x_ids[t])return!0})}function Yi(e,t){e._x_ids||(e._x_ids={}),e._x_ids[t]||(e._x_ids[t]=kr(t))}C("id",(e,{cleanup:t})=>(r,n=null)=>{let i=`${r}${n?`-${n}`:""}`;return Xi(e,i,t,()=>{let s=Vi(e,r),o=s?s._x_ids[r]:kr(r);return n?`${r}-${o}-${n}`:`${r}-${o}`})});Ee((e,t)=>{e._x_id&&(t._x_id=e._x_id)});function Xi(e,t,r,n){if(e._x_id||(e._x_id={}),e._x_id[t])return e._x_id[t];let i=n();return e._x_id[t]=i,r(()=>{delete e._x_id[t]}),i}C("el",e=>e);Dr("Focus","focus","focus");Dr("Persist","persist","persist");function Dr(e,t,r){C(t,n=>A(`You can't use [$${t}] without first installing the "${e}" plugin here: https://alpinejs.dev/plugins/${r}`,n))}y("modelable",(e,{expression:t},{effect:r,evaluateLater:n,cleanup:i})=>{let s=n(t),o=()=>{let u;return s(p=>u=p),u},a=n(`${t} = __placeholder`),c=u=>a(()=>{},{scope:{__placeholder:u}}),l=o();c(l),queueMicrotask(()=>{if(!e._x_model)return;e._x_removeModelListeners.default();let u=e._x_model.get,p=e._x_model.set,w=br({get(){return u()},set(S){p(S)}},{get(){return o()},set(S){c(S)}});i(w)})});y("teleport",(e,{modifiers:t,expression:r},{cleanup:n})=>{e.tagName.toLowerCase()!=="template"&&A("x-teleport can only be used on a <template> tag",e);let i=Ct(r),s=e.content.cloneNode(!0).firstElementChild;e._x_teleport=s,s._x_teleportBack=e,e.setAttribute("data-teleport-template",!0),s.setAttribute("data-teleport-target",!0),e._x_forwardEvents&&e._x_forwardEvents.forEach(a=>{s.addEventListener(a,c=>{c.stopPropagation(),e.dispatchEvent(new c.constructor(c.type,c))})}),fe(s,{},e);let o=(a,c,l)=>{l.includes("prepend")?c.parentNode.insertBefore(a,c):l.includes("append")?c.parentNode.insertBefore(a,c.nextSibling):c.appendChild(a)};g(()=>{o(s,i,t),q(()=>{M(s)})()}),e._x_teleportPutBack=()=>{let a=Ct(r);g(()=>{o(e._x_teleport,a,t)})},n(()=>g(()=>{s.remove(),Q(s)}))});var Zi=document.createElement("div");function Ct(e){let t=q(()=>document.querySelector(e),()=>Zi)();return t||A(`Cannot find x-teleport element for selector: "${e}"`),t}var Br=()=>{};Br.inline=(e,{modifiers:t},{cleanup:r})=>{t.includes("self")?e._x_ignoreSelf=!0:e._x_ignore=!0,r(()=>{t.includes("self")?delete e._x_ignoreSelf:delete e._x_ignore})};y("ignore",Br);y("effect",q((e,{expression:t},{effect:r})=>{r(b(e,t))}));function G(e,t,r,n){let i=e,s=c=>n(c),o={},a=(c,l)=>u=>l(c,u);if(r.includes("dot")&&(t=Qi(t)),r.includes("camel")&&(t=es(t)),r.includes("passive")&&(o.passive=!0),r.includes("capture")&&(o.capture=!0),r.includes("window")&&(i=window),r.includes("document")&&(i=document),r.includes("debounce")){let c=r[r.indexOf("debounce")+1]||"invalid-wait",l=we(c.split("ms")[0])?Number(c.split("ms")[0]):250;s=xr(s,l)}if(r.includes("throttle")){let c=r[r.indexOf("throttle")+1]||"invalid-wait",l=we(c.split("ms")[0])?Number(c.split("ms")[0]):250;s=wr(s,l)}return r.includes("prevent")&&(s=a(s,(c,l)=>{l.preventDefault(),c(l)})),r.includes("stop")&&(s=a(s,(c,l)=>{l.stopPropagation(),c(l)})),r.includes("once")&&(s=a(s,(c,l)=>{c(l),i.removeEventListener(t,s,o)})),(r.includes("away")||r.includes("outside"))&&(i=document,s=a(s,(c,l)=>{e.contains(l.target)||l.target.isConnected!==!1&&(e.offsetWidth<1&&e.offsetHeight<1||e._x_isShown!==!1&&c(l))})),r.includes("self")&&(s=a(s,(c,l)=>{l.target===e&&c(l)})),t==="submit"&&(s=a(s,(c,l)=>{l.target._x_pendingModelUpdates&&l.target._x_pendingModelUpdates.forEach(u=>u()),c(l)})),(rs(t)||Kr(t))&&(s=a(s,(c,l)=>{ns(l,r)||c(l)})),i.addEventListener(t,s,o),()=>{i.removeEventListener(t,s,o)}}function Qi(e){return e.replace(/-/g,".")}function es(e){return e.toLowerCase().replace(/-(\w)/g,(t,r)=>r.toUpperCase())}function we(e){return!Array.isArray(e)&&!isNaN(e)}function ts(e){return[" ","_"].includes(e)?e:e.replace(/([a-z])([A-Z])/g,"$1-$2").replace(/[_\s]/,"-").toLowerCase()}function rs(e){return["keydown","keyup"].includes(e)}function Kr(e){return["contextmenu","click","mouse"].some(t=>e.includes(t))}function ns(e,t){let r=t.filter(s=>!["window","document","prevent","stop","once","capture","self","away","outside","passive","preserve-scroll","blur","change","lazy"].includes(s));if(r.includes("debounce")){let s=r.indexOf("debounce");r.splice(s,we((r[s+1]||"invalid-wait").split("ms")[0])?2:1)}if(r.includes("throttle")){let s=r.indexOf("throttle");r.splice(s,we((r[s+1]||"invalid-wait").split("ms")[0])?2:1)}if(r.length===0||r.length===1&&$t(e.key).includes(r[0]))return!1;const i=["ctrl","shift","alt","meta","cmd","super"].filter(s=>r.includes(s));return r=r.filter(s=>!i.includes(s)),!(i.length>0&&i.filter(o=>((o==="cmd"||o==="super")&&(o="meta"),e[`${o}Key`])).length===i.length&&(Kr(e.type)||$t(e.key).includes(r[0])))}function $t(e){if(!e)return[];e=ts(e);let t={ctrl:"control",slash:"/",space:" ",spacebar:" ",cmd:"meta",esc:"escape",up:"arrow-up",down:"arrow-down",left:"arrow-left",right:"arrow-right",period:".",comma:",",equal:"=",minus:"-",underscore:"_"};return t[e]=e,Object.keys(t).map(r=>{if(t[r]===e)return r}).filter(r=>r)}y("model",(e,{modifiers:t,expression:r},{effect:n,cleanup:i})=>{let s=e;t.includes("parent")&&(s=e.parentNode);let o=b(s,r),a;typeof r=="string"?a=b(s,`${r} = __placeholder`):typeof r=="function"&&typeof r()=="string"?a=b(s,`${r()} = __placeholder`):a=()=>{};let c=()=>{let h;return o(f=>h=f),Mt(h)?h.get():h},l=h=>{let f;o(d=>f=d),Mt(f)?f.set(h):a(()=>{},{scope:{__placeholder:h}})};typeof r=="string"&&e.type==="radio"&&g(()=>{e.hasAttribute("name")||e.setAttribute("name",r)});let u=t.includes("change")||t.includes("lazy"),p=t.includes("blur"),w=t.includes("enter"),S=u||p||w,T;if(I)T=()=>{};else if(S){let h=[],f=d=>l(me(e,t,d,c()));if(u&&h.push(G(e,"change",t,f)),p&&(h.push(G(e,"blur",t,f)),e.form)){let d=()=>f({target:e});e.form._x_pendingModelUpdates||(e.form._x_pendingModelUpdates=[]),e.form._x_pendingModelUpdates.push(d),i(()=>e.form._x_pendingModelUpdates.splice(e.form._x_pendingModelUpdates.indexOf(d),1))}w&&h.push(G(e,"keydown",t,d=>{d.key==="Enter"&&f(d)})),T=()=>h.forEach(d=>d())}else{let h=e.tagName.toLowerCase()==="select"||["checkbox","radio"].includes(e.type)?"change":"input";T=G(e,h,t,f=>{l(me(e,t,f,c()))})}if(t.includes("fill")&&([void 0,null,""].includes(c())||lt(e)&&Array.isArray(c())||e.tagName.toLowerCase()==="select"&&e.multiple)&&l(me(e,t,{target:e},c())),e._x_removeModelListeners||(e._x_removeModelListeners={}),e._x_removeModelListeners.default=T,i(()=>e._x_removeModelListeners.default()),e.form){let h=G(e.form,"reset",[],f=>{at(()=>e._x_model&&e._x_model.set(me(e,t,{target:e},c())))});i(()=>h())}e._x_model={get(){return c()},set(h){l(h)}},e._x_forceModelUpdate=h=>{h===void 0&&typeof r=="string"&&r.match(/\./)&&(h=""),window.fromModel=!0,g(()=>_r(e,"value",h)),delete window.fromModel},n(()=>{let h=c();t.includes("unintrusive")&&document.activeElement.isSameNode(e)||e._x_forceModelUpdate(h)})});function me(e,t,r,n){return g(()=>{if(r instanceof CustomEvent&&r.detail!==void 0)return r.detail!==null&&r.detail!==void 0?r.detail:r.target.value;if(lt(e))if(Array.isArray(n)){let i=null;return t.includes("number")?i=Ie(r.target.value):t.includes("boolean")?i=ye(r.target.value):i=r.target.value,r.target.checked?n.includes(i)?n:n.concat([i]):n.filter(s=>!is(s,i))}else return r.target.checked;else{if(e.tagName.toLowerCase()==="select"&&e.multiple)return t.includes("number")?Array.from(r.target.selectedOptions).map(i=>{let s=i.value||i.text;return Ie(s)}):t.includes("boolean")?Array.from(r.target.selectedOptions).map(i=>{let s=i.value||i.text;return ye(s)}):Array.from(r.target.selectedOptions).map(i=>i.value||i.text);{let i;return vr(e)?r.target.checked?i=r.target.value:i=n:i=r.target.value,t.includes("number")?Ie(i):t.includes("boolean")?ye(i):t.includes("trim")?i.trim():i}}})}function Ie(e){let t=e?parseFloat(e):null;return ss(t)?t:e}function is(e,t){return e==t}function ss(e){return!Array.isArray(e)&&!isNaN(e)}function Mt(e){return e!==null&&typeof e=="object"&&typeof e.get=="function"&&typeof e.set=="function"}y("cloak",e=>queueMicrotask(()=>g(()=>e.removeAttribute(Z("cloak")))));lr(()=>`[${Z("init")}]`);y("init",q((e,{expression:t},{evaluate:r})=>typeof t=="string"?!!t.trim()&&r(t,{},!1):r(t,{},!1)));y("text",(e,{expression:t},{effect:r,evaluateLater:n})=>{let i=n(t);r(()=>{i(s=>{g(()=>{e.textContent=s})})})});y("html",(e,{expression:t},{effect:r,evaluateLater:n})=>{let i=n(t);r(()=>{i(s=>{g(()=>{e.innerHTML=s,e._x_ignoreSelf=!0,M(e),delete e._x_ignoreSelf})})})});it(Qt(":",er(Z("bind:"))));var Ur=(e,{value:t,modifiers:r,expression:n,original:i},{effect:s,cleanup:o})=>{if(!t){let c={};ui(c),b(e,n)(u=>{Er(e,u,i)},{scope:c});return}if(t==="key")return os(e,n);if(e._x_inlineBindings&&e._x_inlineBindings[t]&&e._x_inlineBindings[t].extract)return;let a=b(e,n);s(()=>a(c=>{c===void 0&&typeof n=="string"&&n.match(/\./)&&(c=""),g(()=>_r(e,t,c,r))})),o(()=>{e._x_undoAddedClasses&&e._x_undoAddedClasses(),e._x_undoAddedStyles&&e._x_undoAddedStyles()})};Ur.inline=(e,{value:t,modifiers:r,expression:n})=>{t&&(e._x_inlineBindings||(e._x_inlineBindings={}),e._x_inlineBindings[t]={expression:n,extract:!1})};y("bind",Ur);function os(e,t){e._x_keyExpression=t}cr(()=>`[${Z("data")}]`);y("data",(e,{expression:t},{cleanup:r})=>{if(as(e))return;t=t===""?"{}":t;let n={};ce(n,e);let i={};di(i,n);let s=F(e,t,{scope:i});(s===void 0||s===!0)&&(s={}),ce(s,e);let o=Y(s);tt(o);let a=fe(e,o);o.init&&F(e,o.init),r(()=>{o.destroy&&F(e,o.destroy),a()})});Ee((e,t)=>{e._x_dataStack&&(t._x_dataStack=e._x_dataStack,t.setAttribute("data-has-alpine-state",!0))});function as(e){return I?He?!0:e.hasAttribute("data-has-alpine-state"):!1}y("show",(e,{modifiers:t,expression:r},{effect:n})=>{let i=b(e,r);e._x_doHide||(e._x_doHide=()=>{g(()=>{e.style.setProperty("display","none",t.includes("important")?"important":void 0)})}),e._x_doShow||(e._x_doShow=()=>{g(()=>{e.style.length===1&&e.style.display==="none"?e.removeAttribute("style"):e.style.removeProperty("display")})});let s=()=>{e._x_doHide(),e._x_isShown=!1},o=()=>{e._x_doShow(),e._x_isShown=!0},a=()=>setTimeout(o),c=Ke(p=>p?o():s(),p=>{typeof e._x_toggleAndCascadeWithTransitions=="function"?e._x_toggleAndCascadeWithTransitions(e,p,o,s):p?a():s()}),l,u=!0;n(()=>i(p=>{!u&&p===l||(t.includes("immediate")&&(p?a():s()),c(p),l=p,u=!1)}))});y("for",(e,{expression:t},{effect:r,cleanup:n})=>{let i=ls(t),s=b(e,i.items),o=b(e,e._x_keyExpression||"index");e._x_prevKeys=[],e._x_lookup={},r(()=>cs(e,i,s,o)),n(()=>{Object.values(e._x_lookup).forEach(a=>g(()=>{Q(a),a.remove()})),delete e._x_prevKeys,delete e._x_lookup})});function cs(e,t,r,n){let i=o=>typeof o=="object"&&!Array.isArray(o),s=e;r(o=>{us(o)&&o>=0&&(o=Array.from(Array(o).keys(),f=>f+1)),o===void 0&&(o=[]);let a=e._x_lookup,c=e._x_prevKeys,l=[],u=[];if(i(o))o=Object.entries(o).map(([f,d])=>{let m=Pt(t,d,f,o);n(x=>{u.includes(x)&&A("Duplicate key on x-for",e),u.push(x)},{scope:{index:f,...m}}),l.push(m)});else for(let f=0;f<o.length;f++){let d=Pt(t,o[f],f,o);n(m=>{u.includes(m)&&A("Duplicate key on x-for",e),u.push(m)},{scope:{index:f,...d}}),l.push(d)}let p=[],w=[],S=[],T=[];for(let f=0;f<c.length;f++){let d=c[f];u.indexOf(d)===-1&&S.push(d)}c=c.filter(f=>!S.includes(f));let h="template";for(let f=0;f<u.length;f++){let d=u[f],m=c.indexOf(d);if(m===-1)c.splice(f,0,d),p.push([h,f]);else if(m!==f){let x=c.splice(f,1)[0],E=c.splice(m-1,1)[0];c.splice(f,0,E),c.splice(m,0,x),w.push([x,E])}else T.push(d);h=d}for(let f=0;f<S.length;f++){let d=S[f];d in a&&(g(()=>{Q(a[d]),a[d].remove()}),delete a[d])}for(let f=0;f<w.length;f++){let[d,m]=w[f],x=a[d],E=a[m],W=document.createElement("div");g(()=>{E||A('x-for ":key" is undefined or invalid',s,m,a),E.after(W),x.after(E),E._x_currentIfEl&&E.after(E._x_currentIfEl),W.before(x),x._x_currentIfEl&&x.after(x._x_currentIfEl),W.remove()}),E._x_refreshXForScope(l[u.indexOf(m)])}for(let f=0;f<p.length;f++){let[d,m]=p[f],x=d==="template"?s:a[d];x._x_currentIfEl&&(x=x._x_currentIfEl);let E=l[m],W=u[m],te=document.importNode(s.content,!0).firstElementChild,mt=Y(E);fe(te,mt,s),te._x_refreshXForScope=Wr=>{Object.entries(Wr).forEach(([Gr,Jr])=>{mt[Gr]=Jr})},g(()=>{x.after(te),q(()=>M(te))()}),typeof W=="object"&&A("x-for key cannot be an object, it must be a string or an integer",s),a[W]=te}for(let f=0;f<T.length;f++)a[T[f]]._x_refreshXForScope(l[u.indexOf(T[f])]);s._x_prevKeys=u})}function ls(e){let t=/,([^,\}\]]*)(?:,([^,\}\]]*))?$/,r=/^\s*\(|\)\s*$/g,n=/([\s\S]*?)\s+(?:in|of)\s+([\s\S]*)/,i=e.match(n);if(!i)return;let s={};s.items=i[2].trim();let o=i[1].replace(r,"").trim(),a=o.match(t);return a?(s.item=o.replace(t,"").trim(),s.index=a[1].trim(),a[2]&&(s.collection=a[2].trim())):s.item=o,s}function Pt(e,t,r,n){let i={};return/^\[.*\]$/.test(e.item)&&Array.isArray(t)?e.item.replace("[","").replace("]","").split(",").map(o=>o.trim()).forEach((o,a)=>{i[o]=t[a]}):/^\{.*\}$/.test(e.item)&&!Array.isArray(t)&&typeof t=="object"?e.item.replace("{","").replace("}","").split(",").map(o=>o.trim()).forEach(o=>{i[o]=t[o]}):i[e.item]=t,e.index&&(i[e.index]=r),e.collection&&(i[e.collection]=n),i}function us(e){return!Array.isArray(e)&&!isNaN(e)}function Hr(){}Hr.inline=(e,{expression:t},{cleanup:r})=>{let n=be(e);n._x_refs||(n._x_refs={}),n._x_refs[t]=e,r(()=>delete n._x_refs[t])};y("ref",Hr);y("if",(e,{expression:t},{effect:r,cleanup:n})=>{e.tagName.toLowerCase()!=="template"&&A("x-if can only be used on a <template> tag",e);let i=b(e,t),s=()=>{if(e._x_currentIfEl)return e._x_currentIfEl;let a=e.content.cloneNode(!0).firstElementChild;return fe(a,{},e),g(()=>{e.after(a),q(()=>M(a))()}),e._x_currentIfEl=a,e._x_undoIf=()=>{g(()=>{Q(a),a.remove()}),delete e._x_currentIfEl},a},o=()=>{e._x_undoIf&&(e._x_undoIf(),delete e._x_undoIf)};r(()=>i(a=>{a?s():o()})),n(()=>e._x_undoIf&&e._x_undoIf())});y("id",(e,{expression:t},{evaluate:r})=>{r(t).forEach(i=>Yi(e,i))});Ee((e,t)=>{e._x_ids&&(t._x_ids=e._x_ids)});it(Qt("@",er(Z("on:"))));y("on",q((e,{value:t,modifiers:r,expression:n},{cleanup:i})=>{let s=n?b(e,n):()=>{};e.tagName.toLowerCase()==="template"&&(e._x_forwardEvents||(e._x_forwardEvents=[]),e._x_forwardEvents.includes(t)||e._x_forwardEvents.push(t));let o=G(e,t,r,a=>{s(()=>{},{scope:{$event:a},params:[a]})});i(()=>o())}));Ce("Collapse","collapse","collapse");Ce("Intersect","intersect","intersect");Ce("Focus","trap","focus");Ce("Mask","mask","mask");function Ce(e,t,r){y(t,n=>A(`You can't use [x-${t}] without first installing the "${e}" plugin here: https://alpinejs.dev/plugins/${r}`,n))}ee.setEvaluator(Vt);ee.setRawEvaluator(En);ee.setReactivityEngine({reactive:gt,effect:bi,release:Si,raw:_});var fs=ee,zr=fs;const ds={top:"Top",bottom:"Bottom",intermediate:"Intermediate",tilt:"Tilt",blocking:"Blocking",overheated:"Overheated",timeout:"Timeout",start_moving_up:"Starting Up",start_moving_down:"Starting Down",moving_up:"Moving Up",moving_down:"Moving Down",stopped:"Stopped",top_tilt:"Top (Tilt)",bottom_tilt:"Bottom (Tilt)",unknown:"Unknown",on:"On",off:"Off"};async function v(e,t,r={}){const n=Object.keys(r).length?"?"+new URLSearchParams(r).toString():"",i=await fetch(t+n,{method:e});if(!i.ok){let o=`HTTP ${i.status}`;try{o=(await i.json()).error||o}catch{}throw new Error(o)}return(i.headers.get("content-type")||"").includes("application/json")?i.json():i.text()}function ps(e){if(!e)return"never";const t=Math.floor((Date.now()-e)/1e3);return t<5?"just now":t<60?`${t}s ago`:t<3600?`${Math.floor(t/60)}m ago`:`${Math.floor(t/3600)}h ago`}function hs(e){const t=Math.floor(e/1e3),r=Math.floor(t/3600)%24,n=Math.floor(t/60)%60,i=t%60;return`${String(r).padStart(2,"0")}:${String(n).padStart(2,"0")}:${String(i).padStart(2,"0")}`}function _s(e){if(!e)return"";const t=Math.floor(e/1e3),r=Math.floor(t/3600),n=Math.floor(t%3600/60),i=t%60;return r>0?`${r}h ${n}m ${i}s`:n>0?`${n}m ${i}s`:`${i}s`}function gs(e){return e>=-65?"▂▄█ "+e.toFixed(1)+" dBm":e>=-80?"▂▄░ "+e.toFixed(1)+" dBm":"▂░░ "+e.toFixed(1)+" dBm"}document.addEventListener("alpine:init",()=>{zr.data("app",()=>({tab:"devices",deviceName:"",uptimeMs:0,get uptimeStr(){return _s(this.uptimeMs)},covers:[],settingsOpen:null,scanning:!1,allDiscovered:[],get discoveredNew(){return this.allDiscovered.filter(e=>!e.already_configured&&!e.already_adopted)},get discoveredKnown(){return this.allDiscovered.filter(e=>e.already_configured||e.already_adopted)},adoptTarget:null,adoptName:"",yamlContent:null,logCapture:!1,logLevel:"3",logAutoScroll:!0,logEntries:[],logLastTs:0,get filteredLog(){return this.logEntries.filter(e=>e.level<=parseInt(this.logLevel))},freq:{freq2:"",freq1:"",freq0:""},freqStatus:"",dumpActive:!1,dumpPackets:[],toast:{show:!1,error:!1,msg:""},_toastTimer:null,_pollCovers:null,_pollDisc:null,_pollLog:null,_pollDump:null,async init(){await this.refreshInfo(),await this.refreshCovers(),await this.loadFrequency(),this._pollCovers=setInterval(()=>this.refreshCovers(),3e3),this._pollDisc=setInterval(()=>this.refreshDiscovered(),3e3),this._pollDump=setInterval(()=>this.refreshDump(),2e3),this._pollLog=setInterval(()=>this.refreshLog(),1500)},showToast(e,t=!1){this._toastTimer&&clearTimeout(this._toastTimer),this.toast={show:!0,error:t,msg:e},this._toastTimer=setTimeout(()=>{this.toast.show=!1},3500)},async refreshInfo(){try{const e=await v("GET","/elero/api/info");this.deviceName=e.device_name||"",this.uptimeMs=e.uptime_ms||0,this.freq.freq2=e.freq2||this.freq.freq2,this.freq.freq1=e.freq1||this.freq.freq1,this.freq.freq0=e.freq0||this.freq.freq0}catch{}},async refreshCovers(){try{const e=await v("GET","/elero/api/configured");this.covers=e.covers.map(t=>({...t,_edit:{open_duration_ms:t.open_duration_ms,close_duration_ms:t.close_duration_ms,poll_interval_ms:t.poll_interval_ms}})),this.uptimeMs+=3e3}catch{}},toggleSettings(e){this.settingsOpen=this.settingsOpen===e.blind_address?null:e.blind_address},async coverCmd(e,t){try{await v("POST",`/elero/api/covers/${e.blind_address}/command`,{cmd:t}),this.showToast(`${e.name}: ${t} sent`)}catch(r){this.showToast(`Command failed: ${r.message}`,!0)}},async saveSettings(e){try{await v("POST",`/elero/api/covers/${e.blind_address}/settings`,{open_duration:e._edit.open_duration_ms,close_duration:e._edit.close_duration_ms,poll_interval:e._edit.poll_interval_ms}),this.showToast(`${e.name}: settings saved`),this.settingsOpen=null,await this.refreshCovers()}catch(t){this.showToast(`Save failed: ${t.message}`,!0)}},async refreshDiscovered(){try{const e=await v("GET","/elero/api/discovered");this.scanning=e.scanning,this.allDiscovered=e.blinds||[]}catch{}},async startScan(){try{await v("POST","/elero/api/scan/start"),this.scanning=!0,this.showToast("Scan started")}catch(e){this.showToast(`Scan start failed: ${e.message}`,!0)}},async stopScan(){try{await v("POST","/elero/api/scan/stop"),this.scanning=!1,this.showToast("Scan stopped")}catch(e){this.showToast(`Scan stop failed: ${e.message}`,!0)}},startAdopt(e){this.adoptTarget=e,this.adoptName=""},async confirmAdopt(){if(this.adoptTarget)try{await v("POST",`/elero/api/discovered/${this.adoptTarget.blind_address}/adopt`,{name:this.adoptName||this.adoptTarget.blind_address}),this.showToast(`Adopted as "${this.adoptName||this.adoptTarget.blind_address}"`),this.adoptTarget=null,this.tab="devices",await this.refreshCovers(),await this.refreshDiscovered()}catch(e){this.showToast(`Adopt failed: ${e.message}`,!0)}},showYamlBlind(e){this.yamlContent=`cover:
+  - platform: elero
+    blind_address: ${e.blind_address}
+    channel: ${e.channel}
+    remote_address: ${e.remote_address}
+    name: "My Blind"
+    # open_duration: 25s
+    # close_duration: 22s
+    hop: ${e.hop}
+    payload_1: ${e.payload_1}
+    payload_2: ${e.payload_2}
+    pck_inf1: ${e.pck_inf1}
+    pck_inf2: ${e.pck_inf2}
+`},async downloadYaml(){try{const e=await v("GET","/elero/api/yaml"),t=new Blob([e],{type:"text/plain"}),r=URL.createObjectURL(t),n=document.createElement("a");n.href=r,n.download="elero_blinds.yaml",n.click(),URL.revokeObjectURL(r)}catch(e){this.showToast(`YAML download failed: ${e.message}`,!0)}},copyYaml(){var e;(e=navigator.clipboard)==null||e.writeText(this.yamlContent).then(()=>this.showToast("Copied!")).catch(()=>this.showToast("Copy failed",!0))},async startCapture(){try{await v("POST","/elero/api/logs/capture/start"),this.logCapture=!0,this.showToast("Log capture started")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},async stopCapture(){try{await v("POST","/elero/api/logs/capture/stop"),this.logCapture=!1,this.showToast("Log capture stopped")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},async clearLog(){try{await v("POST","/elero/api/logs/clear"),this.logEntries=[],this.logLastTs=0,this.showToast("Log cleared")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},async refreshLog(){try{const e=await v("GET","/elero/api/logs",{since:this.logLastTs});if(this.logCapture=e.capture_active,e.entries&&e.entries.length>0){const t=e.entries.map((r,n)=>({...r,idx:this.logEntries.length+n}));this.logEntries.push(...t),this.logEntries.length>500&&this.logEntries.splice(0,this.logEntries.length-500),this.logLastTs=t[t.length-1].t,this.logAutoScroll&&this.$nextTick(()=>{const r=document.getElementById("log-box");r&&(r.scrollTop=r.scrollHeight)})}}catch{}},linkAddrs(e){if(!e)return"";const t={};for(const n of this.covers)t[n.blind_address]=n.name;return e.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/0x[0-9a-fA-F]{6}/g,n=>{const i=t[n.toLowerCase()]||t[n];return i?`${n}<span class="blind-ref">(${i})</span>`:n})},async loadFrequency(){try{const e=await v("GET","/elero/api/frequency");this.freq={freq2:e.freq2,freq1:e.freq1,freq0:e.freq0}}catch{}},applyPreset(e){if(!e)return;const[t,r,n]=e.split(",");this.freq={freq2:"0x"+t,freq1:"0x"+r,freq0:"0x"+n}},async setFrequency(){this.freqStatus="Applying…";try{const e=await v("POST","/elero/api/frequency/set",this.freq);this.freq={freq2:e.freq2,freq1:e.freq1,freq0:e.freq0},this.freqStatus="",this.showToast(`Frequency set: ${e.freq2} ${e.freq1} ${e.freq0}`)}catch(e){this.freqStatus="",this.showToast(`Failed: ${e.message}`,!0)}},async startDump(){try{await v("POST","/elero/api/dump/start"),this.dumpActive=!0,this.showToast("Packet dump started")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},async stopDump(){try{await v("POST","/elero/api/dump/stop"),this.dumpActive=!1,this.showToast("Packet dump stopped")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},async clearDump(){try{await v("POST","/elero/api/packets/clear"),this.dumpPackets=[],this.showToast("Dump cleared")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},async refreshDump(){try{const e=await v("GET","/elero/api/packets");this.dumpActive=e.dump_active,this.dumpPackets=e.packets||[]}catch{}},stateLabel:e=>ds[e]||e||"Unknown",relTime:ps,fmtTs:hs,rssiIcon:gs}))});zr.start();</script>
+  <style rel="stylesheet" crossorigin>*,*:before,*:after{box-sizing:border-box;margin:0;padding:0}:root{--blue: #1a73e8;--blue-dk: #1557b0;--red: #d32f2f;--red-dk: #b71c1c;--green: #2e7d32;--amber: #e65100;--bg: #f0f2f5;--surface: #ffffff;--border: #e0e0e0;--muted: #757575;--text: #212121;--radius: 8px;--shadow: 0 1px 4px rgba(0,0,0,.12)}body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;font-size:14px}[x-cloak]{display:none!important}#app{max-width:760px;margin:0 auto;padding:12px 12px 40px}.header{display:flex;align-items:center;gap:10px;background:var(--blue);color:#fff;padding:14px 16px;border-radius:var(--radius);margin-bottom:10px}.header h1{font-size:1.1em;font-weight:600;flex:1}.header-right{font-size:.8em;opacity:.8}.uptime{font-size:.78em;opacity:.75}.tabs{display:flex;background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden}.tab-btn{flex:1;padding:10px 4px;border:none;background:none;font-size:.85em;font-weight:500;color:var(--muted);cursor:pointer;transition:color .15s,border-bottom .15s;border-bottom:3px solid transparent;display:flex;align-items:center;justify-content:center;gap:4px}.tab-btn.active{color:var(--blue);border-bottom-color:var(--blue)}.tab-btn:hover:not(.active){color:var(--text);background:#f8f9fa}.tab-badge{display:inline-flex;align-items:center;justify-content:center;background:var(--blue);color:#fff;border-radius:10px;font-size:.7em;min-width:18px;height:18px;padding:0 4px;font-weight:700}.tab-badge.log-badge{background:var(--amber)}.tab-content{min-height:200px}.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden}.card-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#f8f9fa;border-bottom:1px solid var(--border);font-weight:600;font-size:.9em}.card-body{padding:14px}.btn{display:inline-flex;align-items:center;gap:4px;padding:7px 14px;border:none;border-radius:6px;font-size:.85em;font-weight:500;cursor:pointer;transition:background .15s;white-space:nowrap}.btn:disabled{opacity:.45;cursor:not-allowed}.btn-primary{background:var(--blue);color:#fff}.btn-primary:hover:not(:disabled){background:var(--blue-dk)}.btn-danger{background:var(--red);color:#fff}.btn-danger:hover:not(:disabled){background:var(--red-dk)}.btn-outline{background:#fff;color:var(--blue);border:1px solid var(--blue)}.btn-outline:hover:not(:disabled){background:#e8f0fe}.btn-open{background:#e8f5e9;color:var(--green);border:1px solid #a5d6a7}.btn-close{background:#fce4ec;color:var(--red);border:1px solid #f48fb1}.btn-stop{background:#f5f5f5;color:#424242;border:1px solid #bdbdbd}.btn-tilt{background:#e3f2fd;color:var(--blue);border:1px solid #90caf9}.btn-sm{padding:4px 10px;font-size:.8em}.btn-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.cover-card{padding:14px}.cover-header{display:flex;justify-content:space-between;align-items:flex-start}.cover-name{font-weight:600;font-size:.95em}.cover-meta{font-size:.8em;color:var(--muted);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}.cover-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.pos-bar{height:6px;background:#e0e0e0;border-radius:3px;overflow:hidden;margin:8px 0 2px}.pos-fill{height:100%;background:var(--blue);transition:width .4s}.pos-label{font-size:.8em;color:var(--muted)}.last-seen{font-size:.78em;color:var(--muted);margin-top:4px}.settings-btn{margin-left:auto}.settings-panel{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}.settings-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:.85em}.settings-row label{min-width:140px;color:var(--muted)}.settings-row input{border:1px solid #ccc;border-radius:6px;padding:5px 8px;font-size:.9em;width:130px}.settings-row input:focus{outline:none;border-color:var(--blue)}.settings-footer{display:flex;justify-content:flex-end;margin-top:4px}.state-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.76em;font-weight:600;white-space:nowrap}.state-top{background:#e8f5e9;color:var(--green)}.state-bottom{background:#fce4ec;color:var(--red)}.state-moving_up,.state-start_moving_up,.state-opening,.state-moving_down,.state-start_moving_down,.state-closing{background:#fff3e0;color:var(--amber)}.state-intermediate,.state-stopped{background:#e3f2fd;color:#1565c0}.state-idle,.state-unknown{background:#f5f5f5;color:var(--muted)}.state-blocking,.state-overheated,.state-timeout{background:#ffebee;color:var(--red)}.state-tilt,.state-top_tilt,.state-bottom_tilt{background:#f3e5f5;color:#6a1b9a}.adopted-tag{font-size:.72em;color:var(--blue);border:1px solid var(--blue);border-radius:4px;padding:1px 5px}.configured-tag{font-size:.76em;color:var(--green);font-weight:600}.disc-card{padding:12px 14px}.disc-card.known{opacity:.7}.disc-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}.disc-meta{display:flex;flex-wrap:wrap;gap:10px;font-size:.82em;color:var(--muted)}.scan-status{display:flex;align-items:center;gap:6px;font-size:.85em}.status-dot{width:8px;height:8px;border-radius:50%;background:#9e9e9e}.status-dot.scanning{background:#4caf50;animation:pulse 1s infinite}@keyframes pulse{0%,to{opacity:1}50%{opacity:.3}}.hint{font-size:.8em;color:var(--muted);margin-top:8px}.log-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:.85em}.level-select{border:1px solid #ccc;border-radius:6px;padding:4px 6px;font-size:.85em}.check-label{display:flex;align-items:center;gap:4px;font-size:.82em}.log-box{max-height:420px;overflow-y:auto;font-family:Menlo,Consolas,monospace;font-size:.78em;line-height:1.6;padding:8px;background:#1e1e2e;border-radius:6px;margin-top:10px}.log-line{display:flex;gap:8px;padding:1px 0}.log-ts{color:#888;min-width:60px}.log-level{min-width:48px;font-weight:700}.log-tag{color:#7dcfff;min-width:96px}.log-msg{color:#cdd6f4;word-break:break-all}.blind-ref{color:#a6e3a1;font-weight:700}.log-error .log-level{color:#f38ba8}.log-warn .log-level{color:#fab387}.log-info .log-level{color:#a6e3a1}.log-debug .log-level{color:#89b4fa}.log-verbose .log-level{color:#6c7086}.freq-row{margin-bottom:10px}.freq-preset{border:1px solid #ccc;border-radius:6px;padding:6px 8px;font-size:.85em}.freq-inputs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}.freq-field{display:flex;flex-direction:column;gap:2px}.freq-field label{font-size:.78em;color:var(--muted)}.freq-input{width:90px;border:1px solid #ccc;border-radius:6px;padding:6px 8px;font-size:.9em}.freq-input:focus{outline:none;border-color:var(--blue)}.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.75em;font-weight:600}.badge-active{background:#e8f5e9;color:var(--green)}.badge-idle{background:#f5f5f5;color:var(--muted)}.badge-count{background:#e3f2fd;color:#1565c0}.dump-wrap{overflow-x:auto;max-height:360px;overflow-y:auto;margin-top:10px}.pkt-table{width:100%;border-collapse:collapse;font-size:.78em}.pkt-table th{background:#f8f9fa;padding:5px 8px;text-align:left;border-bottom:2px solid var(--border);font-weight:600;white-space:nowrap}.pkt-table td{padding:4px 8px;border-bottom:1px solid #f0f0f0;vertical-align:top}.pkt-ok{background:#f1f8f4}.pkt-err{background:#fff5f5}.pkt-hex{font-family:monospace;font-size:.85em;word-break:break-all}.pkt-ok-badge{color:var(--green);font-weight:700}.pkt-err-badge{color:var(--red);font-weight:700}.info-grid{display:grid;grid-template-columns:130px 1fr;gap:6px 10px;font-size:.87em}.info-label{color:var(--muted);font-weight:500}.modal-overlay{display:none;position:fixed;top:0;right:0;bottom:0;left:0;background:#00000080;z-index:100;align-items:center;justify-content:center}.modal-overlay.active{display:flex}.modal{background:#fff;border-radius:12px;width:90%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px #0003}.modal-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}.modal-header h3{font-size:.95em}.modal-close{background:none;border:none;font-size:1.4em;cursor:pointer;color:var(--muted)}.modal-close:hover{color:var(--text)}.modal-body{padding:14px}.modal-footer{padding:10px 14px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}.yaml-box{background:#263238;color:#e0e0e0;border-radius:6px;padding:12px;font-family:monospace;font-size:.8em;white-space:pre;overflow-x:auto;line-height:1.6;max-height:360px;overflow-y:auto}.toast{position:fixed;bottom:24px;left:50%;transform:translate(-50%);background:#333;color:#fff;padding:10px 20px;border-radius:8px;font-size:.88em;z-index:200;opacity:0;pointer-events:none;transition:opacity .25s;white-space:nowrap}.toast.show{opacity:1}.toast.error{background:var(--red)}.mono{font-family:monospace}.empty{text-align:center;padding:28px;color:var(--muted);font-size:.9em}</style>
 </head>
 <body>
-<div class="container">
-  <header>
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
-    <h1>Elero Blind Manager</h1>
+<div id="app" x-data="app()" x-init="init()">
+
+  <!-- Header -->
+  <header class="header">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2"/>
+      <line x1="3" y1="9" x2="21" y2="9"/>
+      <line x1="3" y1="15" x2="21" y2="15"/>
+    </svg>
+    <h1 x-text="deviceName || 'Elero Blind Manager'"></h1>
+    <div class="header-right">
+      <span class="uptime" x-text="uptimeStr"></span>
+    </div>
   </header>
 
-  <div class="card">
-    <div class="card-header">
-      <span>RF-Scan</span>
-      <span id="scan-badge" class="badge badge-idle">Inaktiv</span>
-    </div>
-    <div class="card-body">
-      <div class="scan-status">
-        <span id="scan-dot" class="status-dot idle"></span>
-        <span id="scan-text">Bereit zum Scannen</span>
+  <!-- Tab bar -->
+  <nav class="tabs">
+    <button class="tab-btn" :class="{active: tab==='devices'}"    @click="tab='devices'">
+      Devices <span class="tab-badge" x-text="covers.length" x-show="covers.length>0"></span>
+    </button>
+    <button class="tab-btn" :class="{active: tab==='discovery'}"  @click="tab='discovery'">
+      Discovery <span class="tab-badge" x-text="discoveredNew.length" x-show="discoveredNew.length>0"></span>
+    </button>
+    <button class="tab-btn" :class="{active: tab==='log'}"        @click="tab='log'">
+      Log <span class="tab-badge log-badge" x-text="logEntries.length" x-show="logEntries.length>0"></span>
+    </button>
+    <button class="tab-btn" :class="{active: tab==='config'}"     @click="tab='config'">Configuration</button>
+  </nav>
+
+  <div class="tab-content">
+
+    <!-- ══════════════ DEVICES TAB ══════════════ -->
+    <section x-show="tab==='devices'" x-cloak>
+      <template x-if="covers.length === 0">
+        <div class="empty">No covers configured. Add covers in your ESPHome YAML.</div>
+      </template>
+      <template x-for="c in covers" :key="c.blind_address">
+        <div class="card cover-card">
+          <div class="cover-header">
+            <div>
+              <div class="cover-name" x-text="c.name"></div>
+              <div class="cover-meta">
+                <span class="mono" x-text="c.blind_address"></span>
+                <span x-show="c.channel" x-text="'· CH '+c.channel"></span>
+                <span x-show="c.rssi" :title="'RSSI: '+c.rssi.toFixed(1)+' dBm'" x-text="rssiIcon(c.rssi)"></span>
+              </div>
+            </div>
+            <div class="cover-right">
+              <span class="state-badge" :class="'state-'+c.last_state" x-text="stateLabel(c.last_state)"></span>
+              <span class="adopted-tag" x-show="c.adopted">adopted</span>
+            </div>
+          </div>
+
+          <!-- Position bar (only for covers with duration set) -->
+          <template x-if="c.position !== null && c.open_duration_ms > 0">
+            <div>
+              <div class="pos-bar"><div class="pos-fill" :style="'width:'+Math.round(c.position*100)+'%'"></div></div>
+              <div class="pos-label" x-text="Math.round(c.position*100)+'%'"></div>
+            </div>
+          </template>
+
+          <!-- Last seen -->
+          <div class="last-seen" x-text="'Last seen: '+relTime(c.last_seen_ms)"></div>
+
+          <!-- Control buttons -->
+          <div class="btn-row">
+            <button class="btn btn-open"  @click="coverCmd(c, 'open')" title="Open">↑ Open</button>
+            <button class="btn btn-stop"  @click="coverCmd(c, 'stop')" title="Stop">■ Stop</button>
+            <button class="btn btn-close" @click="coverCmd(c, 'close')" title="Close">↓ Close</button>
+            <button class="btn btn-tilt"  @click="coverCmd(c, 'tilt')" title="Tilt" x-show="c.supports_tilt">↔ Tilt</button>
+            <button class="btn btn-outline settings-btn"
+                    @click="toggleSettings(c)"
+                    x-text="settingsOpen===c.blind_address ? '▲ Settings' : '▼ Settings'"></button>
+          </div>
+
+          <!-- Settings (collapsible) -->
+          <div class="settings-panel" x-show="settingsOpen===c.blind_address" x-transition>
+            <div class="settings-row">
+              <label>Open duration (ms)</label>
+              <input type="number" min="0" x-model.number="c._edit.open_duration_ms">
+            </div>
+            <div class="settings-row">
+              <label>Close duration (ms)</label>
+              <input type="number" min="0" x-model.number="c._edit.close_duration_ms">
+            </div>
+            <div class="settings-row">
+              <label>Poll interval (ms)</label>
+              <input type="number" min="0" x-model.number="c._edit.poll_interval_ms">
+            </div>
+            <div class="settings-footer">
+              <button class="btn btn-primary" @click="saveSettings(c)">Save</button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </section>
+
+    <!-- ══════════════ DISCOVERY TAB ══════════════ -->
+    <section x-show="tab==='discovery'" x-cloak>
+      <div class="card">
+        <div class="card-header">
+          <span>RF Scan</span>
+          <div class="scan-status">
+            <span class="status-dot" :class="scanning ? 'scanning' : 'idle'"></span>
+            <span x-text="scanning ? 'Scanning…' : 'Idle'"></span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="btn-row">
+            <button class="btn btn-primary" @click="startScan()" :disabled="scanning">▶ Start Scan</button>
+            <button class="btn btn-danger"  @click="stopScan()"  :disabled="!scanning">■ Stop Scan</button>
+          </div>
+          <p class="hint">Operate your Elero remote during the scan to capture blinds.</p>
+        </div>
       </div>
-      <div style="display:flex;gap:8px">
-        <button id="btn-start" class="btn btn-primary" onclick="startScan()">Scan starten</button>
-        <button id="btn-stop" class="btn btn-danger" onclick="stopScan()" disabled>Scan stoppen</button>
+
+      <!-- New / unconfigured discovered blinds -->
+      <template x-if="discoveredNew.length === 0 && !scanning">
+        <div class="empty">No unconfigured blinds found. Start a scan and press your remote.</div>
+      </template>
+      <template x-for="b in discoveredNew" :key="b.blind_address">
+        <div class="card disc-card">
+          <div class="disc-header">
+            <span class="mono" x-text="b.blind_address"></span>
+            <span class="state-badge" :class="'state-'+b.last_state" x-text="stateLabel(b.last_state)"></span>
+          </div>
+          <div class="disc-meta">
+            <span>CH <span x-text="b.channel"></span></span>
+            <span>Remote <span class="mono" x-text="b.remote_address"></span></span>
+            <span x-text="b.rssi.toFixed(1)+' dBm'"></span>
+            <span x-text="b.times_seen+'× seen'"></span>
+          </div>
+          <div class="last-seen" x-text="'Last seen: '+relTime(b.last_seen_ms)"></div>
+          <div class="btn-row">
+            <button class="btn btn-outline" @click="showYamlBlind(b)">YAML…</button>
+            <button class="btn btn-primary" @click="startAdopt(b)">Adopt → Devices</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Already configured / adopted blinds seen during scan -->
+      <template x-for="b in discoveredKnown" :key="b.blind_address">
+        <div class="card disc-card known">
+          <div class="disc-header">
+            <span class="mono" x-text="b.blind_address"></span>
+            <span class="configured-tag" x-text="b.already_adopted ? '✓ Adopted' : '✓ Configured'"></span>
+          </div>
+          <div class="disc-meta">
+            <span>CH <span x-text="b.channel"></span></span>
+            <span x-text="b.rssi.toFixed(1)+' dBm'"></span>
+            <span x-text="b.times_seen+'× seen'"></span>
+            <span x-text="'Last seen: '+relTime(b.last_seen_ms)"></span>
+          </div>
+        </div>
+      </template>
+
+      <div style="text-align:center;margin-top:12px" x-show="allDiscovered.length>0">
+        <button class="btn btn-outline" @click="downloadYaml()">↓ Download all YAML</button>
       </div>
-      <p class="refresh-hint">Betaetigen Sie waehrend des Scans Ihre Elero-Fernbedienung.</p>
+    </section>
+
+    <!-- ══════════════ LOG TAB ══════════════ -->
+    <section x-show="tab==='log'" x-cloak>
+      <div class="card">
+        <div class="card-header">
+          <div class="log-controls">
+            <span class="status-dot" :class="logCapture ? 'scanning' : 'idle'"></span>
+            <button class="btn btn-sm btn-primary" @click="startCapture()" :disabled="logCapture">Start</button>
+            <button class="btn btn-sm btn-danger"  @click="stopCapture()"  :disabled="!logCapture">Stop</button>
+            Level:
+            <select x-model="logLevel" class="level-select">
+              <option value="5">VERBOSE</option>
+              <option value="4">DEBUG</option>
+              <option value="3" selected>INFO</option>
+              <option value="2">WARN</option>
+              <option value="1">ERROR</option>
+            </select>
+          </div>
+          <div>
+            <label class="check-label">
+              <input type="checkbox" x-model="logAutoScroll"> Auto-scroll
+            </label>
+            <button class="btn btn-sm btn-outline" @click="clearLog()">Clear</button>
+          </div>
+        </div>
+        <div class="log-box" id="log-box">
+          <template x-if="filteredLog.length === 0">
+            <div class="empty">No log entries. <span x-show="!logCapture">Start capture first.</span></div>
+          </template>
+          <template x-for="e in filteredLog" :key="e.t+'_'+e.idx">
+            <div class="log-line" :class="'log-'+e.level_str">
+              <span class="log-ts" x-text="fmtTs(e.t)"></span>
+              <span class="log-level" x-text="e.level_str.toUpperCase().padEnd(5)"></span>
+              <span class="log-tag" x-text="e.tag"></span>
+              <span class="log-msg" x-html="linkAddrs(e.msg)"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ CONFIGURATION TAB ══════════════ -->
+    <section x-show="tab==='config'" x-cloak>
+
+      <!-- Frequency -->
+      <div class="card">
+        <div class="card-header">CC1101 Frequency</div>
+        <div class="card-body">
+          <div class="freq-row">
+            <select class="freq-preset" @change="applyPreset($event.target.value)">
+              <option value="">— Preset —</option>
+              <option value="21,71,7a">868.35 MHz (Standard Elero)</option>
+              <option value="21,65,c0">868.95 MHz (Alternative)</option>
+              <option value="10,A7,62">433.92 MHz</option>
+            </select>
+          </div>
+          <div class="freq-inputs">
+            <div class="freq-field"><label>freq2</label><input class="freq-input mono" x-model="freq.freq2" maxlength="4"></div>
+            <div class="freq-field"><label>freq1</label><input class="freq-input mono" x-model="freq.freq1" maxlength="4"></div>
+            <div class="freq-field"><label>freq0</label><input class="freq-input mono" x-model="freq.freq0" maxlength="4"></div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" @click="setFrequency()">Apply</button>
+            <span class="hint" x-text="freqStatus"></span>
+          </div>
+          <p class="hint">Hex values (e.g. 0x7a or 7a). Changes take effect immediately without reboot.</p>
+        </div>
+      </div>
+
+      <!-- Packet Dump -->
+      <div class="card">
+        <div class="card-header">
+          <span>Packet Dump</span>
+          <div>
+            <span class="badge" :class="dumpActive ? 'badge-active' : 'badge-idle'" x-text="dumpActive ? 'Active' : 'Idle'"></span>
+            <span class="badge badge-count" x-text="dumpPackets.length" x-show="dumpPackets.length>0"></span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="btn-row">
+            <button class="btn btn-primary" @click="startDump()" :disabled="dumpActive">▶ Start Dump</button>
+            <button class="btn btn-danger"  @click="stopDump()"  :disabled="!dumpActive">■ Stop</button>
+            <button class="btn btn-outline" @click="clearDump()">Clear</button>
+          </div>
+          <p class="hint">Records all received RF packets (max 50). Green = valid, red = rejected.</p>
+          <div class="dump-wrap" x-show="dumpPackets.length>0">
+            <table class="pkt-table">
+              <thead><tr><th>Time (ms)</th><th>Len</th><th>Status</th><th>Reason</th><th>Hex</th></tr></thead>
+              <tbody>
+                <template x-for="p in [...dumpPackets].reverse()" :key="p.t">
+                  <tr :class="p.valid ? 'pkt-ok' : 'pkt-err'">
+                    <td x-text="p.t"></td>
+                    <td x-text="p.len"></td>
+                    <td><span :class="p.valid ? 'pkt-ok-badge' : 'pkt-err-badge'" x-text="p.valid ? 'OK' : 'ERR'"></span></td>
+                    <td x-text="p.reason||''"></td>
+                    <td class="pkt-hex" x-text="p.hex"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hardware info -->
+      <div class="card">
+        <div class="card-header">Device Info</div>
+        <div class="card-body info-grid">
+          <span class="info-label">Device</span><span x-text="deviceName||'—'"></span>
+          <span class="info-label">Uptime</span><span x-text="uptimeStr"></span>
+          <span class="info-label">Frequency</span><span class="mono" x-text="freq.freq2+' / '+freq.freq1+' / '+freq.freq0"></span>
+          <span class="info-label">Covers</span><span x-text="covers.filter(c=>!c.adopted).length+' configured, '+covers.filter(c=>c.adopted).length+' adopted'"></span>
+        </div>
+      </div>
+    </section>
+
+  </div><!-- /tab-content -->
+
+  <!-- Toast -->
+  <div id="toast" class="toast" :class="{show: toast.show, error: toast.error}" x-text="toast.msg"></div>
+
+  <!-- Adopt modal -->
+  <div class="modal-overlay" :class="{active: adoptTarget}" @click.self="adoptTarget=null">
+    <div class="modal" x-show="adoptTarget">
+      <div class="modal-header">
+        <h3>Adopt blind <span class="mono" x-text="adoptTarget?.blind_address"></span></h3>
+        <button class="modal-close" @click="adoptTarget=null">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label class="settings-row">
+          Friendly name
+          <input type="text" x-model="adoptName" placeholder="e.g. Balcony" autofocus>
+        </label>
+        <p class="hint" style="margin-top:8px">
+          This blind will appear in the Devices tab and can be controlled from the web UI.
+          It is not a Home Assistant entity — reflash with the YAML below for permanent HA integration.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" @click="adoptTarget=null">Cancel</button>
+        <button class="btn btn-primary" @click="confirmAdopt()">Adopt</button>
+      </div>
     </div>
   </div>
 
-  <div class="card">
-    <div class="card-header">
-      <span>Gefundene Geraete</span>
-      <span id="disc-count" class="badge badge-count">0</span>
-    </div>
-    <div class="card-body" id="discovered-list">
-      <div class="empty">Noch keine Geraete gefunden.</div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header">
-      <span>Konfigurierte Covers</span>
-      <span id="conf-count" class="badge badge-count">0</span>
-    </div>
-    <div class="card-body" id="configured-list">
-      <div class="empty">Keine Covers konfiguriert.</div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header">
-      <span>Packet-Dump</span>
-      <div style="display:flex;gap:8px;align-items:center">
-        <span id="dump-badge" class="badge badge-dump">Inaktiv</span>
-        <span id="dump-count" class="badge badge-count">0</span>
+  <!-- YAML modal -->
+  <div class="modal-overlay" :class="{active: yamlContent}" @click.self="yamlContent=null">
+    <div class="modal" x-show="yamlContent">
+      <div class="modal-header">
+        <h3>YAML Snippet</h3>
+        <button class="modal-close" @click="yamlContent=null">&times;</button>
       </div>
-    </div>
-    <div class="card-body">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button id="btn-dump-start" class="btn btn-primary" onclick="startDump()">Dump starten</button>
-        <button id="btn-dump-stop" class="btn btn-danger" onclick="stopDump()" disabled>Stoppen</button>
-        <button id="btn-dump-clear" class="btn btn-outline" onclick="clearDump()">Leeren</button>
+      <div class="modal-body">
+        <p class="hint" style="margin-bottom:8px">Add this to your ESPHome configuration for permanent HA integration:</p>
+        <pre class="yaml-box" x-text="yamlContent"></pre>
       </div>
-      <p class="refresh-hint">Zeichnet alle empfangenen HF-Pakete auf (max. 50). Gueltige Pakete = gruen, abgelehnte = rot.</p>
-      <div id="dump-list" class="dump-wrap">
-        <div class="empty">Kein Dump aktiv.</div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" @click="copyYaml()">Copy</button>
+        <button class="btn btn-primary" @click="yamlContent=null">Close</button>
       </div>
     </div>
   </div>
 
-  <div class="card">
-    <div class="card-header">
-      <span>CC1101 Frequenz</span>
-    </div>
-    <div class="card-body">
-      <div class="freq-row">
-        <select class="freq-preset" onchange="applyPreset(this.value)">
-          <option value="">-- Preset waehlen --</option>
-          <option value="21,71,7a">868.35 MHz (Standard Elero)</option>
-          <option value="21,65,c0">868.95 MHz (Alternative)</option>
-          <option value="10,A7,62">433.92 MHz</option>
-        </select>
-      </div>
-      <div class="freq-row">
-        <span class="freq-label">freq2:</span>
-        <input id="freq2" class="freq-input" type="text" placeholder="0x21" maxlength="4">
-        <span class="freq-label">freq1:</span>
-        <input id="freq1" class="freq-input" type="text" placeholder="0x71" maxlength="4">
-        <span class="freq-label">freq0:</span>
-        <input id="freq0" class="freq-input" type="text" placeholder="0x7a" maxlength="4">
-      </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-primary" onclick="setFrequency()">Anwenden</button>
-        <span id="freq-status" style="font-size:.85em;color:#666"></span>
-      </div>
-      <p class="refresh-hint">Aendert die CC1101-Registerfrequenz ohne Neustart. Werte als Hex (z.B. 0x7a oder 7a).</p>
-    </div>
-  </div>
-
-  <div style="text-align:center;margin-top:8px">
-    <button class="btn btn-outline" onclick="showYaml()">YAML exportieren</button>
-  </div>
-</div>
-
-<div id="yaml-modal" class="modal-overlay">
-  <div class="modal">
-    <div class="modal-header">
-      <h3>YAML-Export</h3>
-      <button class="modal-close" onclick="closeYaml()">&times;</button>
-    </div>
-    <div class="modal-body">
-      <p style="margin-bottom:12px;font-size:.9em;color:#666">Fuegen Sie folgendes in Ihre ESPHome-Konfiguration ein:</p>
-      <div id="yaml-content" class="yaml-box"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="copyYaml()">In Zwischenablage kopieren</button>
-      <button class="btn btn-primary" onclick="closeYaml()">Schliessen</button>
-    </div>
-  </div>
-</div>
-
-<div id="toast" class="toast"></div>
-
-<script>
-var refreshTimer=null;
-var scanning=false;
-var toastTimer=null;
-
-function showToast(msg,isError){
-  var t=document.getElementById('toast');
-  t.textContent=msg;
-  t.className=isError?'toast error show':'toast show';
-  if(toastTimer) clearTimeout(toastTimer);
-  toastTimer=setTimeout(function(){t.className='toast';},4000);
-}
-
-function handleResponse(r){
-  if(r.ok) return r.json();
-  return r.json().then(function(d){
-    throw new Error(d.error||('HTTP '+r.status));
-  },function(){
-    throw new Error('HTTP '+r.status);
-  });
-}
-
-function startScan(){
-  fetch('/elero/api/scan/start',{method:'POST'})
-    .then(handleResponse)
-    .then(function(){
-      scanning=true;
-      updateScanUI();
-      startRefresh();
-    })
-    .catch(function(e){
-      showToast('Scan-Start fehlgeschlagen: '+e.message,true);
-      refresh();
-    });
-}
-
-function stopScan(){
-  fetch('/elero/api/scan/stop',{method:'POST'})
-    .then(handleResponse)
-    .then(function(){
-      scanning=false;
-      updateScanUI();
-    })
-    .catch(function(e){
-      showToast('Scan-Stopp fehlgeschlagen: '+e.message,true);
-      refresh();
-    });
-}
-
-function updateScanUI(){
-  var dot=document.getElementById('scan-dot');
-  var badge=document.getElementById('scan-badge');
-  var text=document.getElementById('scan-text');
-  var btnStart=document.getElementById('btn-start');
-  var btnStop=document.getElementById('btn-stop');
-  if(scanning){
-    dot.className='status-dot scanning';
-    badge.className='badge badge-scan';
-    badge.textContent='Scanne...';
-    text.textContent='RF-Scan laeuft...';
-    btnStart.disabled=true;
-    btnStop.disabled=false;
-  }else{
-    dot.className='status-dot idle';
-    badge.className='badge badge-idle';
-    badge.textContent='Inaktiv';
-    text.textContent='Scan beendet';
-    btnStart.disabled=false;
-    btnStop.disabled=true;
-  }
-}
-
-function startRefresh(){
-  if(refreshTimer) clearInterval(refreshTimer);
-  refreshTimer=setInterval(refresh,3000);
-  refresh();
-}
-
-function stateClass(s){
-  if(!s||s==='unknown') return 'state-idle';
-  return 'state-'+s;
-}
-
-function refresh(){
-  fetch('/elero/api/discovered').then(function(r){
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
-  }).then(function(d){
-    scanning=d.scanning;
-    updateScanUI();
-    var el=document.getElementById('discovered-list');
-    document.getElementById('disc-count').textContent=d.blinds.length;
-    if(!d.blinds.length){
-      el.innerHTML='<div class="empty">Noch keine Geraete gefunden.</div>';
-      return;
-    }
-    var html='';
-    for(var i=0;i<d.blinds.length;i++){
-      var b=d.blinds[i];
-      html+='<div class="device"><div class="device-header">';
-      html+='<span class="device-addr">'+b.blind_address+'</span>';
-      if(b.already_configured){
-        html+='<span class="configured-tag">Konfiguriert</span>';
-      }
-      html+='</div><div class="device-details">';
-      html+='<span><span class="label">CH:</span> '+b.channel+'</span>';
-      html+='<span><span class="label">Remote:</span> '+b.remote_address+'</span>';
-      html+='<span><span class="label">RSSI:</span> '+b.rssi.toFixed(1)+' dBm</span>';
-      html+='<span><span class="label">Gesehen:</span> '+b.times_seen+'x</span>';
-      html+='<span><span class="label">State:</span> <span class="state '+stateClass(b.last_state)+'">'+b.last_state+'</span></span>';
-      html+='<span><span class="label">Hop:</span> '+b.hop+'</span>';
-      html+='</div></div>';
-    }
-    el.innerHTML=html;
-  }).catch(function(e){
-    console.error('Refresh discovered failed:',e);
-  });
-
-  fetch('/elero/api/configured').then(function(r){
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
-  }).then(function(d){
-    var el=document.getElementById('configured-list');
-    document.getElementById('conf-count').textContent=d.covers.length;
-    if(!d.covers.length){
-      el.innerHTML='<div class="empty">Keine Covers konfiguriert.</div>';
-      return;
-    }
-    var html='';
-    for(var i=0;i<d.covers.length;i++){
-      var c=d.covers[i];
-      html+='<div class="device"><div class="device-header">';
-      html+='<span class="device-addr">'+c.name+'</span>';
-      html+='<span class="state '+stateClass(c.operation)+'">'+c.operation+'</span>';
-      html+='</div><div class="device-details">';
-      html+='<span><span class="label">Adresse:</span> '+c.blind_address+'</span>';
-      html+='<span><span class="label">Position:</span> '+(c.position*100).toFixed(0)+'%</span>';
-      html+='</div>';
-      html+='<div class="cover-pos"><div class="cover-pos-bar" style="width:'+(c.position*100)+'%"></div></div>';
-      html+='</div>';
-    }
-    el.innerHTML=html;
-  }).catch(function(e){
-    console.error('Refresh configured failed:',e);
-  });
-}
-
-function showYaml(){
-  fetch('/elero/api/yaml').then(function(r){
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.text();
-  }).then(function(t){
-    document.getElementById('yaml-content').textContent=t;
-    document.getElementById('yaml-modal').classList.add('active');
-  }).catch(function(e){
-    showToast('YAML-Export fehlgeschlagen: '+e.message,true);
-  });
-}
-
-function closeYaml(){
-  document.getElementById('yaml-modal').classList.remove('active');
-}
-
-function copyYaml(){
-  var text=document.getElementById('yaml-content').textContent;
-  navigator.clipboard.writeText(text).then(function(){
-    var btn=document.querySelector('.modal-footer .btn-outline');
-    btn.textContent='Kopiert!';
-    setTimeout(function(){btn.textContent='In Zwischenablage kopieren';},2000);
-  });
-}
-
-var dumpRefreshTimer=null;
-var dumping=false;
-
-function startDump(){
-  fetch('/elero/api/dump/start',{method:'POST'})
-    .then(handleResponse)
-    .then(function(){
-      dumping=true;
-      updateDumpUI();
-      if(!dumpRefreshTimer) dumpRefreshTimer=setInterval(refreshDump,2000);
-      refreshDump();
-    })
-    .catch(function(e){showToast('Dump-Start fehlgeschlagen: '+e.message,true);});
-}
-
-function stopDump(){
-  fetch('/elero/api/dump/stop',{method:'POST'})
-    .then(handleResponse)
-    .then(function(){
-      dumping=false;
-      updateDumpUI();
-      if(dumpRefreshTimer){clearInterval(dumpRefreshTimer);dumpRefreshTimer=null;}
-    })
-    .catch(function(e){showToast('Dump-Stopp fehlgeschlagen: '+e.message,true);refreshDump();});
-}
-
-function clearDump(){
-  fetch('/elero/api/packets/clear',{method:'POST'})
-    .then(handleResponse)
-    .then(function(){
-      document.getElementById('dump-list').innerHTML='<div class="empty">Geleert.</div>';
-      document.getElementById('dump-count').textContent='0';
-    })
-    .catch(function(e){showToast('Leeren fehlgeschlagen: '+e.message,true);});
-}
-
-function updateDumpUI(){
-  var badge=document.getElementById('dump-badge');
-  var btnS=document.getElementById('btn-dump-start');
-  var btnX=document.getElementById('btn-dump-stop');
-  if(dumping){
-    badge.className='badge badge-dumping';badge.textContent='Aktiv';
-    btnS.disabled=true;btnX.disabled=false;
-  }else{
-    badge.className='badge badge-dump';badge.textContent='Inaktiv';
-    btnS.disabled=false;btnX.disabled=true;
-  }
-}
-
-function refreshDump(){
-  fetch('/elero/api/packets').then(function(r){
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
-  }).then(function(d){
-    dumping=d.dump_active;
-    updateDumpUI();
-    if(dumping&&!dumpRefreshTimer) dumpRefreshTimer=setInterval(refreshDump,2000);
-    if(!dumping&&dumpRefreshTimer){clearInterval(dumpRefreshTimer);dumpRefreshTimer=null;}
-    document.getElementById('dump-count').textContent=d.count;
-    var el=document.getElementById('dump-list');
-    if(!d.count){
-      el.innerHTML='<div class="empty">Keine Pakete gespeichert.</div>';
-      return;
-    }
-    var pkts=d.packets.slice().sort(function(a,b){return b.t-a.t;});
-    var html='<table class="pkt-table"><thead><tr><th>Zeit(ms)</th><th>Len</th><th>Status</th><th>Ursache</th><th>Hex</th></tr></thead><tbody>';
-    for(var i=0;i<pkts.length;i++){
-      var p=pkts[i];
-      var rc=p.valid?'pkt-ok':'pkt-err';
-      var sb=p.valid?'<span class="pkt-ok-badge">OK</span>':'<span class="pkt-err-badge">ERR</span>';
-      html+='<tr class="'+rc+'"><td>'+p.t+'</td><td>'+p.len+'</td><td>'+sb+'</td><td>'+(p.reason||'')+'</td><td class="pkt-hex">'+p.hex+'</td></tr>';
-    }
-    html+='</tbody></table>';
-    el.innerHTML=html;
-  }).catch(function(e){console.error('Refresh dump failed:',e);});
-}
-
-function loadFrequency(){
-  fetch('/elero/api/frequency').then(function(r){
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
-  }).then(function(d){
-    document.getElementById('freq2').value=d.freq2;
-    document.getElementById('freq1').value=d.freq1;
-    document.getElementById('freq0').value=d.freq0;
-  }).catch(function(e){console.error('Load freq failed:',e);});
-}
-
-function applyPreset(v){
-  if(!v) return;
-  var p=v.split(',');
-  document.getElementById('freq2').value='0x'+p[0];
-  document.getElementById('freq1').value='0x'+p[1];
-  document.getElementById('freq0').value='0x'+p[2];
-}
-
-function setFrequency(){
-  var f2=encodeURIComponent(document.getElementById('freq2').value.trim());
-  var f1=encodeURIComponent(document.getElementById('freq1').value.trim());
-  var f0=encodeURIComponent(document.getElementById('freq0').value.trim());
-  if(!f2||!f1||!f0){showToast('Bitte alle drei Frequenzwerte angeben',true);return;}
-  var status=document.getElementById('freq-status');
-  status.textContent='Wird angewendet...';
-  fetch('/elero/api/frequency/set?freq2='+f2+'&freq1='+f1+'&freq0='+f0,{method:'POST'})
-    .then(handleResponse)
-    .then(function(d){
-      document.getElementById('freq2').value=d.freq2;
-      document.getElementById('freq1').value=d.freq1;
-      document.getElementById('freq0').value=d.freq0;
-      status.textContent='';
-      showToast('Frequenz gesetzt: freq2='+d.freq2+' freq1='+d.freq1+' freq0='+d.freq0,false);
-    })
-    .catch(function(e){status.textContent='';showToast('Fehler: '+e.message,true);});
-}
-
-// Initial load
-startRefresh();
-refreshDump();
-loadFrequency();
-</script>
+</div><!-- /app -->
 </body>
-</html>)rawliteral";
+</html>
+)rawliteral";
 
 }  // namespace elero
 }  // namespace esphome

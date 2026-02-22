@@ -49,3 +49,11 @@ web_server:
 
 elero_web:
   id: elero_web_ui
+
+# Home Assistant switch to enable / disable the web UI at runtime.
+# When off, all /elero routes return 503 and no RF state is served.
+switch:
+  - platform: elero_web
+    name: "Elero Web UI"
+    id: elero_web_switch
+    restore_mode: RESTORE_DEFAULT_ON
