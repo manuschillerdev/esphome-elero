@@ -8,6 +8,8 @@ from esphome.components.elero import elero_ns, elero, CONF_ELERO_ID
 DEPENDENCIES = ["elero"]
 AUTO_LOAD = ["web_server_base"]
 
+# Exported so the switch sub-platform can reference the web server class
+CONF_ELERO_WEB_ID = "elero_web_id"
 EleroWebServer = elero_ns.class_("EleroWebServer", cg.Component)
 
 CONFIG_SCHEMA = (

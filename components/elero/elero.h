@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <queue>
+#include <cstdarg>
 
 // All encryption/decryption structures copied from https://github.com/QuadCorei8085/elero_protocol/ (MIT)
 // All remote handling based on code from https://github.com/stanleypa/eleropy (GPLv3)
@@ -96,6 +98,25 @@ struct DiscoveredBlind {
   uint16_t times_seen;
 };
 
+struct RuntimeBlind {
+  uint32_t blind_address;
+  uint32_t remote_address;
+  uint8_t channel;
+  uint8_t pck_inf[2];
+  uint8_t hop;
+  uint8_t payload_1;
+  uint8_t payload_2;
+  std::string name;
+  uint32_t open_duration_ms{0};
+  uint32_t close_duration_ms{0};
+  uint32_t poll_intvl_ms{300000};
+  uint32_t last_seen_ms{0};
+  float last_rssi{0.0f};
+  uint8_t last_state{ELERO_STATE_UNKNOWN};
+  uint8_t cmd_counter{1};
+  std::queue<uint8_t> command_queue;
+};
+
 const char *elero_state_to_string(uint8_t state);
 
 /// Abstract base class for blinds registered with the Elero hub.
@@ -106,10 +127,27 @@ class EleroBlindBase {
   virtual void set_rx_state(uint8_t state) = 0;
   virtual uint32_t get_blind_address() = 0;
   virtual void set_poll_offset(uint32_t offset) = 0;
-  // Web API helpers
+  // Called by the hub whenever a packet arrives from this blind
+  virtual void notify_rx_meta(uint32_t ms, float rssi) {}  // default no-op
+  // Web API helpers — identity & state
   virtual std::string get_blind_name() const = 0;
   virtual float get_cover_position() const = 0;
   virtual const char *get_operation_str() const = 0;
+  virtual uint32_t get_last_seen_ms() const = 0;
+  virtual float get_last_rssi() const = 0;
+  virtual uint8_t get_last_state_raw() const = 0;
+  // Web API helpers — configuration
+  virtual uint8_t get_channel() const = 0;
+  virtual uint32_t get_remote_address() const = 0;
+  virtual uint32_t get_poll_interval_ms() const = 0;
+  virtual uint32_t get_open_duration_ms() const = 0;
+  virtual uint32_t get_close_duration_ms() const = 0;
+  virtual bool get_supports_tilt() const = 0;
+  // Web API commands
+  virtual void enqueue_command(uint8_t cmd_byte) = 0;
+  virtual void apply_runtime_settings(uint32_t open_dur_ms,
+                                      uint32_t close_dur_ms,
+                                      uint32_t poll_intvl_ms) = 0;
 };
 
 class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
@@ -169,6 +207,29 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   const std::vector<RawPacket> &get_raw_packets() const { return raw_packets_; }
   void clear_raw_packets();
 
+  // Runtime adopted blinds (controllable from web UI without reflashing)
+  bool adopt_blind(const DiscoveredBlind &discovered, const std::string &name);
+  bool remove_runtime_blind(uint32_t addr);
+  bool send_runtime_command(uint32_t addr, uint8_t cmd_byte);
+  bool update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
+                                     uint32_t close_dur_ms, uint32_t poll_intvl_ms);
+  const std::vector<RuntimeBlind> &get_runtime_blinds() const { return runtime_blinds_; }
+  bool is_blind_adopted(uint32_t addr) const;
+
+  // Log buffer
+  static const uint8_t ELERO_LOG_BUFFER_SIZE = 200;
+  struct LogEntry {
+    uint32_t timestamp_ms;
+    uint8_t level;
+    char tag[24];
+    char message[160];
+  };
+  void append_log(uint8_t level, const char *tag, const char *fmt, ...);
+  void clear_log_entries() { log_entries_.clear(); log_write_idx_ = 0; }
+  const std::vector<LogEntry> &get_log_entries() const { return log_entries_; }
+  void set_log_capture(bool en) { log_capture_ = en; }
+  bool is_log_capture_active() const { return log_capture_; }
+
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }
@@ -216,6 +277,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool packet_dump_pending_update_{false};
   std::vector<RawPacket> raw_packets_;
   uint8_t raw_packet_write_idx_{0};
+  std::vector<RuntimeBlind> runtime_blinds_;
+  // Log buffer
+  bool log_capture_{false};
+  std::vector<LogEntry> log_entries_;
+  uint8_t log_write_idx_{0};
 };
 
 }  // namespace elero

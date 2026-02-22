@@ -129,6 +129,7 @@ cover::CoverTraits EleroCover::get_traits() {
 }
 
 void EleroCover::set_rx_state(uint8_t state) {
+  this->last_state_raw_ = state;
   ESP_LOGV(TAG, "Got state: 0x%02x (%s) for blind 0x%06x", state, elero_state_to_string(state), this->command_.blind_addr);
   float pos = this->position;
   float current_tilt = this->tilt;

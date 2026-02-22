@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Elero Blind Manager</title>
+<script type="module" src="/src/main.js"></script>
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<div id="app" x-data="app()" x-init="init()">
+
+  <!-- Header -->
+  <header class="header">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2"/>
+      <line x1="3" y1="9" x2="21" y2="9"/>
+      <line x1="3" y1="15" x2="21" y2="15"/>
+    </svg>
+    <h1 x-text="deviceName || 'Elero Blind Manager'"></h1>
+    <div class="header-right">
+      <span class="uptime" x-text="uptimeStr"></span>
+    </div>
+  </header>
+
+  <!-- Tab bar -->
+  <nav class="tabs">
+    <button class="tab-btn" :class="{active: tab==='devices'}"    @click="tab='devices'">
+      Devices <span class="tab-badge" x-text="covers.length" x-show="covers.length>0"></span>
+    </button>
+    <button class="tab-btn" :class="{active: tab==='discovery'}"  @click="tab='discovery'">
+      Discovery <span class="tab-badge" x-text="discoveredNew.length" x-show="discoveredNew.length>0"></span>
+    </button>
+    <button class="tab-btn" :class="{active: tab==='log'}"        @click="tab='log'">
+      Log <span class="tab-badge log-badge" x-text="logEntries.length" x-show="logEntries.length>0"></span>
+    </button>
+    <button class="tab-btn" :class="{active: tab==='config'}"     @click="tab='config'">Configuration</button>
+  </nav>
+
+  <div class="tab-content">
+
+    <!-- ══════════════ DEVICES TAB ══════════════ -->
+    <section x-show="tab==='devices'" x-cloak>
+      <template x-if="covers.length === 0">
+        <div class="empty">No covers configured. Add covers in your ESPHome YAML.</div>
+      </template>
+      <template x-for="c in covers" :key="c.blind_address">
+        <div class="card cover-card">
+          <div class="cover-header">
+            <div>
+              <div class="cover-name" x-text="c.name"></div>
+              <div class="cover-meta">
+                <span class="mono" x-text="c.blind_address"></span>
+                <span x-show="c.channel" x-text="'· CH '+c.channel"></span>
+                <span x-show="c.rssi" :title="'RSSI: '+c.rssi.toFixed(1)+' dBm'" x-text="rssiIcon(c.rssi)"></span>
+              </div>
+            </div>
+            <div class="cover-right">
+              <span class="state-badge" :class="'state-'+c.last_state" x-text="stateLabel(c.last_state)"></span>
+              <span class="adopted-tag" x-show="c.adopted">adopted</span>
+            </div>
+          </div>
+
+          <!-- Position bar (only for covers with duration set) -->
+          <template x-if="c.position !== null && c.open_duration_ms > 0">
+            <div>
+              <div class="pos-bar"><div class="pos-fill" :style="'width:'+Math.round(c.position*100)+'%'"></div></div>
+              <div class="pos-label" x-text="Math.round(c.position*100)+'%'"></div>
+            </div>
+          </template>
+
+          <!-- Last seen -->
+          <div class="last-seen" x-text="'Last seen: '+relTime(c.last_seen_ms)"></div>
+
+          <!-- Control buttons -->
+          <div class="btn-row">
+            <button class="btn btn-open"  @click="coverCmd(c, 'open')" title="Open">↑ Open</button>
+            <button class="btn btn-stop"  @click="coverCmd(c, 'stop')" title="Stop">■ Stop</button>
+            <button class="btn btn-close" @click="coverCmd(c, 'close')" title="Close">↓ Close</button>
+            <button class="btn btn-tilt"  @click="coverCmd(c, 'tilt')" title="Tilt" x-show="c.supports_tilt">↔ Tilt</button>
+            <button class="btn btn-outline settings-btn"
+                    @click="toggleSettings(c)"
+                    x-text="settingsOpen===c.blind_address ? '▲ Settings' : '▼ Settings'"></button>
+          </div>
+
+          <!-- Settings (collapsible) -->
+          <div class="settings-panel" x-show="settingsOpen===c.blind_address" x-transition>
+            <div class="settings-row">
+              <label>Open duration (ms)</label>
+              <input type="number" min="0" x-model.number="c._edit.open_duration_ms">
+            </div>
+            <div class="settings-row">
+              <label>Close duration (ms)</label>
+              <input type="number" min="0" x-model.number="c._edit.close_duration_ms">
+            </div>
+            <div class="settings-row">
+              <label>Poll interval (ms)</label>
+              <input type="number" min="0" x-model.number="c._edit.poll_interval_ms">
+            </div>
+            <div class="settings-footer">
+              <button class="btn btn-primary" @click="saveSettings(c)">Save</button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </section>
+
+    <!-- ══════════════ DISCOVERY TAB ══════════════ -->
+    <section x-show="tab==='discovery'" x-cloak>
+      <div class="card">
+        <div class="card-header">
+          <span>RF Scan</span>
+          <div class="scan-status">
+            <span class="status-dot" :class="scanning ? 'scanning' : 'idle'"></span>
+            <span x-text="scanning ? 'Scanning…' : 'Idle'"></span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="btn-row">
+            <button class="btn btn-primary" @click="startScan()" :disabled="scanning">▶ Start Scan</button>
+            <button class="btn btn-danger"  @click="stopScan()"  :disabled="!scanning">■ Stop Scan</button>
+          </div>
+          <p class="hint">Operate your Elero remote during the scan to capture blinds.</p>
+        </div>
+      </div>
+
+      <!-- New / unconfigured discovered blinds -->
+      <template x-if="discoveredNew.length === 0 && !scanning">
+        <div class="empty">No unconfigured blinds found. Start a scan and press your remote.</div>
+      </template>
+      <template x-for="b in discoveredNew" :key="b.blind_address">
+        <div class="card disc-card">
+          <div class="disc-header">
+            <span class="mono" x-text="b.blind_address"></span>
+            <span class="state-badge" :class="'state-'+b.last_state" x-text="stateLabel(b.last_state)"></span>
+          </div>
+          <div class="disc-meta">
+            <span>CH <span x-text="b.channel"></span></span>
+            <span>Remote <span class="mono" x-text="b.remote_address"></span></span>
+            <span x-text="b.rssi.toFixed(1)+' dBm'"></span>
+            <span x-text="b.times_seen+'× seen'"></span>
+          </div>
+          <div class="last-seen" x-text="'Last seen: '+relTime(b.last_seen_ms)"></div>
+          <div class="btn-row">
+            <button class="btn btn-outline" @click="showYamlBlind(b)">YAML…</button>
+            <button class="btn btn-primary" @click="startAdopt(b)">Adopt → Devices</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Already configured / adopted blinds seen during scan -->
+      <template x-for="b in discoveredKnown" :key="b.blind_address">
+        <div class="card disc-card known">
+          <div class="disc-header">
+            <span class="mono" x-text="b.blind_address"></span>
+            <span class="configured-tag" x-text="b.already_adopted ? '✓ Adopted' : '✓ Configured'"></span>
+          </div>
+          <div class="disc-meta">
+            <span>CH <span x-text="b.channel"></span></span>
+            <span x-text="b.rssi.toFixed(1)+' dBm'"></span>
+            <span x-text="b.times_seen+'× seen'"></span>
+            <span x-text="'Last seen: '+relTime(b.last_seen_ms)"></span>
+          </div>
+        </div>
+      </template>
+
+      <div style="text-align:center;margin-top:12px" x-show="allDiscovered.length>0">
+        <button class="btn btn-outline" @click="downloadYaml()">↓ Download all YAML</button>
+      </div>
+    </section>
+
+    <!-- ══════════════ LOG TAB ══════════════ -->
+    <section x-show="tab==='log'" x-cloak>
+      <div class="card">
+        <div class="card-header">
+          <div class="log-controls">
+            <span class="status-dot" :class="logCapture ? 'scanning' : 'idle'"></span>
+            <button class="btn btn-sm btn-primary" @click="startCapture()" :disabled="logCapture">Start</button>
+            <button class="btn btn-sm btn-danger"  @click="stopCapture()"  :disabled="!logCapture">Stop</button>
+            Level:
+            <select x-model="logLevel" class="level-select">
+              <option value="5">VERBOSE</option>
+              <option value="4">DEBUG</option>
+              <option value="3" selected>INFO</option>
+              <option value="2">WARN</option>
+              <option value="1">ERROR</option>
+            </select>
+          </div>
+          <div>
+            <label class="check-label">
+              <input type="checkbox" x-model="logAutoScroll"> Auto-scroll
+            </label>
+            <button class="btn btn-sm btn-outline" @click="clearLog()">Clear</button>
+          </div>
+        </div>
+        <div class="log-box" id="log-box">
+          <template x-if="filteredLog.length === 0">
+            <div class="empty">No log entries. <span x-show="!logCapture">Start capture first.</span></div>
+          </template>
+          <template x-for="e in filteredLog" :key="e.t+'_'+e.idx">
+            <div class="log-line" :class="'log-'+e.level_str">
+              <span class="log-ts" x-text="fmtTs(e.t)"></span>
+              <span class="log-level" x-text="e.level_str.toUpperCase().padEnd(5)"></span>
+              <span class="log-tag" x-text="e.tag"></span>
+              <span class="log-msg" x-html="linkAddrs(e.msg)"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ CONFIGURATION TAB ══════════════ -->
+    <section x-show="tab==='config'" x-cloak>
+
+      <!-- Frequency -->
+      <div class="card">
+        <div class="card-header">CC1101 Frequency</div>
+        <div class="card-body">
+          <div class="freq-row">
+            <select class="freq-preset" @change="applyPreset($event.target.value)">
+              <option value="">— Preset —</option>
+              <option value="21,71,7a">868.35 MHz (Standard Elero)</option>
+              <option value="21,65,c0">868.95 MHz (Alternative)</option>
+              <option value="10,A7,62">433.92 MHz</option>
+            </select>
+          </div>
+          <div class="freq-inputs">
+            <div class="freq-field"><label>freq2</label><input class="freq-input mono" x-model="freq.freq2" maxlength="4"></div>
+            <div class="freq-field"><label>freq1</label><input class="freq-input mono" x-model="freq.freq1" maxlength="4"></div>
+            <div class="freq-field"><label>freq0</label><input class="freq-input mono" x-model="freq.freq0" maxlength="4"></div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" @click="setFrequency()">Apply</button>
+            <span class="hint" x-text="freqStatus"></span>
+          </div>
+          <p class="hint">Hex values (e.g. 0x7a or 7a). Changes take effect immediately without reboot.</p>
+        </div>
+      </div>
+
+      <!-- Packet Dump -->
+      <div class="card">
+        <div class="card-header">
+          <span>Packet Dump</span>
+          <div>
+            <span class="badge" :class="dumpActive ? 'badge-active' : 'badge-idle'" x-text="dumpActive ? 'Active' : 'Idle'"></span>
+            <span class="badge badge-count" x-text="dumpPackets.length" x-show="dumpPackets.length>0"></span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="btn-row">
+            <button class="btn btn-primary" @click="startDump()" :disabled="dumpActive">▶ Start Dump</button>
+            <button class="btn btn-danger"  @click="stopDump()"  :disabled="!dumpActive">■ Stop</button>
+            <button class="btn btn-outline" @click="clearDump()">Clear</button>
+          </div>
+          <p class="hint">Records all received RF packets (max 50). Green = valid, red = rejected.</p>
+          <div class="dump-wrap" x-show="dumpPackets.length>0">
+            <table class="pkt-table">
+              <thead><tr><th>Time (ms)</th><th>Len</th><th>Status</th><th>Reason</th><th>Hex</th></tr></thead>
+              <tbody>
+                <template x-for="p in [...dumpPackets].reverse()" :key="p.t">
+                  <tr :class="p.valid ? 'pkt-ok' : 'pkt-err'">
+                    <td x-text="p.t"></td>
+                    <td x-text="p.len"></td>
+                    <td><span :class="p.valid ? 'pkt-ok-badge' : 'pkt-err-badge'" x-text="p.valid ? 'OK' : 'ERR'"></span></td>
+                    <td x-text="p.reason||''"></td>
+                    <td class="pkt-hex" x-text="p.hex"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hardware info -->
+      <div class="card">
+        <div class="card-header">Device Info</div>
+        <div class="card-body info-grid">
+          <span class="info-label">Device</span><span x-text="deviceName||'—'"></span>
+          <span class="info-label">Uptime</span><span x-text="uptimeStr"></span>
+          <span class="info-label">Frequency</span><span class="mono" x-text="freq.freq2+' / '+freq.freq1+' / '+freq.freq0"></span>
+          <span class="info-label">Covers</span><span x-text="covers.filter(c=>!c.adopted).length+' configured, '+covers.filter(c=>c.adopted).length+' adopted'"></span>
+        </div>
+      </div>
+    </section>
+
+  </div><!-- /tab-content -->
+
+  <!-- Toast -->
+  <div id="toast" class="toast" :class="{show: toast.show, error: toast.error}" x-text="toast.msg"></div>
+
+  <!-- Adopt modal -->
+  <div class="modal-overlay" :class="{active: adoptTarget}" @click.self="adoptTarget=null">
+    <div class="modal" x-show="adoptTarget">
+      <div class="modal-header">
+        <h3>Adopt blind <span class="mono" x-text="adoptTarget?.blind_address"></span></h3>
+        <button class="modal-close" @click="adoptTarget=null">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label class="settings-row">
+          Friendly name
+          <input type="text" x-model="adoptName" placeholder="e.g. Balcony" autofocus>
+        </label>
+        <p class="hint" style="margin-top:8px">
+          This blind will appear in the Devices tab and can be controlled from the web UI.
+          It is not a Home Assistant entity — reflash with the YAML below for permanent HA integration.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" @click="adoptTarget=null">Cancel</button>
+        <button class="btn btn-primary" @click="confirmAdopt()">Adopt</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- YAML modal -->
+  <div class="modal-overlay" :class="{active: yamlContent}" @click.self="yamlContent=null">
+    <div class="modal" x-show="yamlContent">
+      <div class="modal-header">
+        <h3>YAML Snippet</h3>
+        <button class="modal-close" @click="yamlContent=null">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint" style="margin-bottom:8px">Add this to your ESPHome configuration for permanent HA integration:</p>
+        <pre class="yaml-box" x-text="yamlContent"></pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" @click="copyYaml()">Copy</button>
+        <button class="btn btn-primary" @click="yamlContent=null">Close</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /app -->
+</body>
+</html>

@@ -39,13 +39,36 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint32_t get_blind_address() override { return this->command_.blind_addr; }
   void set_supports_tilt(bool tilt) { this->supports_tilt_ = tilt; }
   void set_rx_state(uint8_t state) override;
-  // EleroBlindBase web API helpers
+  void notify_rx_meta(uint32_t ms, float rssi) override {
+    this->last_seen_ms_ = ms;
+    this->last_rssi_ = rssi;
+  }
+  // EleroBlindBase web API helpers — identity & state
   std::string get_blind_name() const override { return std::string(this->get_name().c_str()); }
   float get_cover_position() const override { return this->position; }
   const char *get_operation_str() const override {
     return this->current_operation == cover::COVER_OPERATION_IDLE ? "idle" :
            this->current_operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing";
   }
+  uint32_t get_last_seen_ms() const override { return this->last_seen_ms_; }
+  float get_last_rssi() const override { return this->last_rssi_; }
+  uint8_t get_last_state_raw() const override { return this->last_state_raw_; }
+  // EleroBlindBase web API helpers — configuration
+  uint8_t get_channel() const override { return this->command_.channel; }
+  uint32_t get_remote_address() const override { return this->command_.remote_addr; }
+  uint32_t get_poll_interval_ms() const override { return this->poll_intvl_; }
+  uint32_t get_open_duration_ms() const override { return this->open_duration_; }
+  uint32_t get_close_duration_ms() const override { return this->close_duration_; }
+  bool get_supports_tilt() const override { return this->supports_tilt_; }
+  // EleroBlindBase web API commands
+  void enqueue_command(uint8_t cmd_byte) override { this->commands_to_send_.push(cmd_byte); }
+  void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms,
+                              uint32_t poll_intvl_ms) override {
+    this->open_duration_ = open_dur_ms;
+    this->close_duration_ = close_dur_ms;
+    this->poll_intvl_ = poll_intvl_ms;
+  }
+
   void handle_commands(uint32_t now);
   void recompute_position();
   void start_movement(cover::CoverOperation op);
@@ -70,6 +93,9 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint32_t poll_intvl_{0};
   float target_position_{0};
   bool supports_tilt_{false};
+  uint32_t last_seen_ms_{0};
+  float last_rssi_{0.0f};
+  uint8_t last_state_raw_{ELERO_STATE_UNKNOWN};
   uint8_t command_up_{0x20};
   uint8_t command_down_{0x40};
   uint8_t command_check_{0x00};

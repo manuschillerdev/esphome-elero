@@ -1,0 +1,17 @@
+{
+  "name": "elero-web-ui",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Web UI for esphome-elero — built with Vite and Alpine.js, embedded into elero_web_ui.h",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/generate_header.mjs"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "vite-plugin-singlefile": "^2.0.0"
+  },
+  "dependencies": {
+    "alpinejs": "^3.13.0"
+  }
+}
