@@ -26,7 +26,7 @@ external_components:
 **Upstream credits:**
 - Encryption/decryption: [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT)
 - Remote handling: [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3)
-- Based on the no-longer-maintained [andyboeh/esphome-elero](https://github.com/andyboeh/esphome-elero)
+- Based on the no-longer-maintained [andyboeh/esphome-elero](https://github.com/pfriedrich84/esphome-elero)
 
 ---
 
