@@ -37,41 +37,73 @@ CONF_STATUS_SENSOR = "status_sensor"
 
 EleroCover = elero_ns.class_("EleroCover", cover.Cover, cg.Component)
 
+_RSSI_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
+    accuracy_decimals=1,
+    device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
+    state_class=STATE_CLASS_MEASUREMENT,
+)
+_STATUS_SENSOR_SCHEMA = text_sensor.text_sensor_schema()
+
+
 def poll_interval(value):
     if value == "never":
         return 4294967295  # uint32_t max
     return cv.positive_time_period_milliseconds(value)
 
-CONFIG_SCHEMA = cover.cover_schema(EleroCover).extend(
-    {
-        cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
-        cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xffffff),
-        cv.Required(CONF_CHANNEL): cv.int_range(min=0, max=255),
-        cv.Required(CONF_REMOTE_ADDRESS): cv.hex_int_range(min=0x0, max=0xffffff),
-        cv.Optional(CONF_POLL_INTERVAL, default="5min"): poll_interval,
-        cv.Optional(CONF_OPEN_DURATION, default="0s"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_CLOSE_DURATION, default="0s"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_PAYLOAD_1, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
-        cv.Optional(CONF_PAYLOAD_2, default=0x04): cv.hex_int_range(min=0x0, max=0xff),
-        cv.Optional(CONF_PCKINF_1, default=0x6a): cv.hex_int_range(min=0x0, max=0xff),
-        cv.Optional(CONF_PCKINF_2, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
-        cv.Optional(CONF_HOP, default=0x0a): cv.hex_int_range(min=0x0, max=0xff),
-        cv.Optional(CONF_COMMAND_UP, default=0x20): cv.hex_int_range(min=0x0, max=0xff),
-        cv.Optional(CONF_COMMAND_DOWN, default=0x40): cv.hex_int_range(min=0x0, max=0xff),
-        cv.Optional(CONF_COMMAND_STOP, default=0x10): cv.hex_int_range(min=0x0, max=0xff),
-        cv.Optional(CONF_COMMAND_CHECK, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
-        cv.Optional(CONF_COMMAND_TILT, default=0x24): cv.hex_int_range(min=0x0, max=0xff),
-        cv.Optional(CONF_SUPPORTS_TILT, default=False): cv.boolean,
-        cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
-        cv.Optional(CONF_RSSI_SENSOR): sensor.sensor_schema(
-            unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
-            accuracy_decimals=1,
-            device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
-            state_class=STATE_CLASS_MEASUREMENT,
-        ),
-        cv.Optional(CONF_STATUS_SENSOR): text_sensor.text_sensor_schema(),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+
+def _auto_sensor_validator(config):
+    """At validation time, inject auto-sensor sub-configs when auto_sensors=True.
+
+    Running this at validation time (not inside to_code) ensures that
+    cv.declare_id() / CORE.register_id() are called in the correct phase and
+    auto-generated IDs never collide with IDs from the validation phase.
+    """
+    if not config.get(CONF_AUTO_SENSORS, True):
+        return config
+    cover_name = config.get(CONF_NAME, "Elero Cover")
+    result = dict(config)
+    if CONF_RSSI_SENSOR not in result:
+        result[CONF_RSSI_SENSOR] = _RSSI_SENSOR_SCHEMA(
+            {CONF_NAME: f"{cover_name} RSSI"}
+        )
+    if CONF_STATUS_SENSOR not in result:
+        result[CONF_STATUS_SENSOR] = _STATUS_SENSOR_SCHEMA(
+            {CONF_NAME: f"{cover_name} Status"}
+        )
+    return result
+
+
+CONFIG_SCHEMA = cv.All(
+    cover.cover_schema(EleroCover)
+    .extend(
+        {
+            cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
+            cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xffffff),
+            cv.Required(CONF_CHANNEL): cv.int_range(min=0, max=255),
+            cv.Required(CONF_REMOTE_ADDRESS): cv.hex_int_range(min=0x0, max=0xffffff),
+            cv.Optional(CONF_POLL_INTERVAL, default="5min"): poll_interval,
+            cv.Optional(CONF_OPEN_DURATION, default="0s"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_CLOSE_DURATION, default="0s"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_PAYLOAD_1, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_PAYLOAD_2, default=0x04): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_PCKINF_1, default=0x6a): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_PCKINF_2, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_HOP, default=0x0a): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_COMMAND_UP, default=0x20): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_COMMAND_DOWN, default=0x40): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_COMMAND_STOP, default=0x10): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_COMMAND_CHECK, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_COMMAND_TILT, default=0x24): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_SUPPORTS_TILT, default=False): cv.boolean,
+            cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
+            cv.Optional(CONF_RSSI_SENSOR): _RSSI_SENSOR_SCHEMA,
+            cv.Optional(CONF_STATUS_SENSOR): _STATUS_SENSOR_SCHEMA,
+        }
+    )
+    .extend(cv.COMPONENT_SCHEMA),
+    _auto_sensor_validator,
+)
 
 
 async def to_code(config):
@@ -99,29 +131,13 @@ async def to_code(config):
     cg.add(var.set_supports_tilt(config[CONF_SUPPORTS_TILT]))
 
     addr = config[CONF_BLIND_ADDRESS]
-    cover_name = config[CONF_NAME]
 
-    # RSSI sensor: use explicit inline config if provided, else auto-create when auto_sensors=true
+    # RSSI sensor — present when explicitly configured or auto_sensors=True
     if CONF_RSSI_SENSOR in config:
         rssi_var = await sensor.new_sensor(config[CONF_RSSI_SENSOR])
         cg.add(parent.register_rssi_sensor(addr, rssi_var))
-    elif config[CONF_AUTO_SENSORS]:
-        auto_rssi_schema = sensor.sensor_schema(
-            unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
-            accuracy_decimals=1,
-            device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
-            state_class=STATE_CLASS_MEASUREMENT,
-        )
-        auto_rssi_config = auto_rssi_schema({CONF_NAME: f"{cover_name} RSSI"})
-        rssi_var = await sensor.new_sensor(auto_rssi_config)
-        cg.add(parent.register_rssi_sensor(addr, rssi_var))
 
-    # Status text sensor: use explicit inline config if provided, else auto-create when auto_sensors=true
+    # Status text sensor — present when explicitly configured or auto_sensors=True
     if CONF_STATUS_SENSOR in config:
         status_var = await text_sensor.new_text_sensor(config[CONF_STATUS_SENSOR])
-        cg.add(parent.register_text_sensor(addr, status_var))
-    elif config[CONF_AUTO_SENSORS]:
-        auto_status_schema = text_sensor.text_sensor_schema()
-        auto_status_config = auto_status_schema({CONF_NAME: f"{cover_name} Status"})
-        status_var = await text_sensor.new_text_sensor(auto_status_config)
         cg.add(parent.register_text_sensor(addr, status_var))
