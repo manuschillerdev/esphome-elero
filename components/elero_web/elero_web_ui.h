@@ -85,6 +85,11 @@ header h1{font-size:1.2em;font-weight:600}
 .pkt-ok-badge{color:#2e7d32;font-weight:600}
 .pkt-err-badge{color:#c62828;font-weight:600}
 .dump-wrap{overflow-x:auto;max-height:380px;overflow-y:auto;margin-top:12px}
+.freq-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.freq-label{font-size:.85em;color:#555;min-width:48px}
+.freq-input{width:80px;padding:6px 8px;border:1px solid #ccc;border-radius:6px;font-family:monospace;font-size:.9em}
+.freq-input:focus{outline:none;border-color:#1a73e8}
+.freq-preset{padding:6px 10px;border:1px solid #ccc;border-radius:6px;font-size:.85em;background:#fff}
 </style>
 </head>
 <body>
@@ -150,6 +155,35 @@ header h1{font-size:1.2em;font-weight:600}
       <div id="dump-list" class="dump-wrap">
         <div class="empty">Kein Dump aktiv.</div>
       </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span>CC1101 Frequenz</span>
+    </div>
+    <div class="card-body">
+      <div class="freq-row">
+        <select class="freq-preset" onchange="applyPreset(this.value)">
+          <option value="">-- Preset waehlen --</option>
+          <option value="21,71,7a">868.35 MHz (Standard Elero)</option>
+          <option value="21,65,c0">868.95 MHz (Alternative)</option>
+          <option value="10,A7,62">433.92 MHz</option>
+        </select>
+      </div>
+      <div class="freq-row">
+        <span class="freq-label">freq2:</span>
+        <input id="freq2" class="freq-input" type="text" placeholder="0x21" maxlength="4">
+        <span class="freq-label">freq1:</span>
+        <input id="freq1" class="freq-input" type="text" placeholder="0x71" maxlength="4">
+        <span class="freq-label">freq0:</span>
+        <input id="freq0" class="freq-input" type="text" placeholder="0x7a" maxlength="4">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary" onclick="setFrequency()">Anwenden</button>
+        <span id="freq-status" style="font-size:.85em;color:#666"></span>
+      </div>
+      <p class="refresh-hint">Aendert die CC1101-Registerfrequenz ohne Neustart. Werte als Hex (z.B. 0x7a oder 7a).</p>
     </div>
   </div>
 
@@ -426,9 +460,48 @@ function refreshDump(){
   }).catch(function(e){console.error('Refresh dump failed:',e);});
 }
 
+function loadFrequency(){
+  fetch('/elero/api/frequency').then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(d){
+    document.getElementById('freq2').value=d.freq2;
+    document.getElementById('freq1').value=d.freq1;
+    document.getElementById('freq0').value=d.freq0;
+  }).catch(function(e){console.error('Load freq failed:',e);});
+}
+
+function applyPreset(v){
+  if(!v) return;
+  var p=v.split(',');
+  document.getElementById('freq2').value='0x'+p[0];
+  document.getElementById('freq1').value='0x'+p[1];
+  document.getElementById('freq0').value='0x'+p[2];
+}
+
+function setFrequency(){
+  var f2=encodeURIComponent(document.getElementById('freq2').value.trim());
+  var f1=encodeURIComponent(document.getElementById('freq1').value.trim());
+  var f0=encodeURIComponent(document.getElementById('freq0').value.trim());
+  if(!f2||!f1||!f0){showToast('Bitte alle drei Frequenzwerte angeben',true);return;}
+  var status=document.getElementById('freq-status');
+  status.textContent='Wird angewendet...';
+  fetch('/elero/api/frequency/set?freq2='+f2+'&freq1='+f1+'&freq0='+f0,{method:'POST'})
+    .then(handleResponse)
+    .then(function(d){
+      document.getElementById('freq2').value=d.freq2;
+      document.getElementById('freq1').value=d.freq1;
+      document.getElementById('freq0').value=d.freq0;
+      status.textContent='';
+      showToast('Frequenz gesetzt: freq2='+d.freq2+' freq1='+d.freq1+' freq0='+d.freq0,false);
+    })
+    .catch(function(e){status.textContent='';showToast('Fehler: '+e.message,true);});
+}
+
 // Initial load
 startRefresh();
 refreshDump();
+loadFrequency();
 </script>
 </body>
 </html>)rawliteral";

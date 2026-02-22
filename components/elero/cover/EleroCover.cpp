@@ -14,7 +14,7 @@ void EleroCover::dump_config() {
   ESP_LOGCONFIG(TAG, "  Remote Address: 0x%06x", this->command_.remote_addr);
   ESP_LOGCONFIG(TAG, "  Channel: %d", this->command_.channel);
   ESP_LOGCONFIG(TAG, "  Hop: 0x%02x", this->command_.hop);
-  ESP_LOGCONFIG(TAG, "  Pck Inf: 0x%02x 0x%02x", this->command_.pck_inf[0], this->command_.pck_inf[1]);
+  ESP_LOGCONFIG(TAG, "  pck_inf1: 0x%02x, pck_inf2: 0x%02x", this->command_.pck_inf[0], this->command_.pck_inf[1]);
   if (this->open_duration_ > 0)
     ESP_LOGCONFIG(TAG, "  Open Duration: %dms", this->open_duration_);
   if (this->close_duration_ > 0)

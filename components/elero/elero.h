@@ -173,6 +173,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }
   void set_freq2(uint8_t freq) { freq2_ = freq; }
+  void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
+  uint8_t get_freq0() const { return freq0_; }
+  uint8_t get_freq1() const { return freq1_; }
+  uint8_t get_freq2() const { return freq2_; }
 
  private:
   uint8_t count_bits(uint8_t byte);
