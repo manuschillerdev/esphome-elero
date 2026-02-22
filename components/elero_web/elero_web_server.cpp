@@ -97,7 +97,7 @@ void EleroWebServer::dump_config() {
 
 // ─── Routing ──────────────────────────────────────────────────────────────────
 
-bool EleroWebServer::canHandle(AsyncWebServerRequest *request) {
+bool EleroWebServer::canHandle(AsyncWebServerRequest *request) const {
   if (!this->enabled_) return false;
   const std::string &url = request->url();
   return url.size() >= 6 && url.substr(0, 6) == "/elero";
