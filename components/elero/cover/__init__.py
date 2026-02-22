@@ -1,12 +1,21 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import cover
-
-from esphome.const import CONF_ID, CONF_NAME, CONF_CHANNEL, CONF_OPEN_DURATION, CONF_CLOSE_DURATION
+from esphome.components import cover, sensor, text_sensor
+from esphome.const import (
+    CONF_ID,
+    CONF_NAME,
+    CONF_CHANNEL,
+    CONF_OPEN_DURATION,
+    CONF_CLOSE_DURATION,
+    UNIT_DECIBEL_MILLIWATT,
+    DEVICE_CLASS_SIGNAL_STRENGTH,
+    STATE_CLASS_MEASUREMENT,
+)
 from .. import elero_ns, elero, CONF_ELERO_ID
 
 DEPENDENCIES = ["elero"]
 CODEOWNERS = ["@andyboeh"]
+AUTO_LOAD = ["sensor", "text_sensor"]
 
 CONF_BLIND_ADDRESS = "blind_address"
 CONF_REMOTE_ADDRESS = "remote_address"
@@ -22,6 +31,9 @@ CONF_COMMAND_CHECK = "command_check"
 CONF_COMMAND_TILT = "command_tilt"
 CONF_POLL_INTERVAL = "poll_interval"
 CONF_SUPPORTS_TILT = "supports_tilt"
+CONF_AUTO_SENSORS = "auto_sensors"
+CONF_RSSI_SENSOR = "rssi_sensor"
+CONF_STATUS_SENSOR = "status_sensor"
 
 EleroCover = elero_ns.class_("EleroCover", cover.Cover, cg.Component)
 
@@ -50,6 +62,14 @@ CONFIG_SCHEMA = cover.cover_schema(EleroCover).extend(
         cv.Optional(CONF_COMMAND_CHECK, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
         cv.Optional(CONF_COMMAND_TILT, default=0x24): cv.hex_int_range(min=0x0, max=0xff),
         cv.Optional(CONF_SUPPORTS_TILT, default=False): cv.boolean,
+        cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
+        cv.Optional(CONF_RSSI_SENSOR): sensor.sensor_schema(
+            unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
+            accuracy_decimals=1,
+            device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
+            state_class=STATE_CLASS_MEASUREMENT,
+        ),
+        cv.Optional(CONF_STATUS_SENSOR): text_sensor.text_sensor_schema(),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -77,3 +97,31 @@ async def to_code(config):
     cg.add(var.set_command_tilt(config[CONF_COMMAND_TILT]))
     cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
     cg.add(var.set_supports_tilt(config[CONF_SUPPORTS_TILT]))
+
+    addr = config[CONF_BLIND_ADDRESS]
+    cover_name = config[CONF_NAME]
+
+    # RSSI sensor: use explicit inline config if provided, else auto-create when auto_sensors=true
+    if CONF_RSSI_SENSOR in config:
+        rssi_var = await sensor.new_sensor(config[CONF_RSSI_SENSOR])
+        cg.add(parent.register_rssi_sensor(addr, rssi_var))
+    elif config[CONF_AUTO_SENSORS]:
+        auto_rssi_schema = sensor.sensor_schema(
+            unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
+            accuracy_decimals=1,
+            device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
+            state_class=STATE_CLASS_MEASUREMENT,
+        )
+        auto_rssi_config = auto_rssi_schema({CONF_NAME: f"{cover_name} RSSI"})
+        rssi_var = await sensor.new_sensor(auto_rssi_config)
+        cg.add(parent.register_rssi_sensor(addr, rssi_var))
+
+    # Status text sensor: use explicit inline config if provided, else auto-create when auto_sensors=true
+    if CONF_STATUS_SENSOR in config:
+        status_var = await text_sensor.new_text_sensor(config[CONF_STATUS_SENSOR])
+        cg.add(parent.register_text_sensor(addr, status_var))
+    elif config[CONF_AUTO_SENSORS]:
+        auto_status_schema = text_sensor.text_sensor_schema()
+        auto_status_config = auto_status_schema({CONF_NAME: f"{cover_name} Status"})
+        status_var = await text_sensor.new_text_sensor(auto_status_config)
+        cg.add(parent.register_text_sensor(addr, status_var))

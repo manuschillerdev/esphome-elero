@@ -30,6 +30,8 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void handle_packet_dump_stop(AsyncWebServerRequest *request);
   void handle_get_packets(AsyncWebServerRequest *request);
   void handle_clear_packets(AsyncWebServerRequest *request);
+  void handle_get_frequency(AsyncWebServerRequest *request);
+  void handle_set_frequency(AsyncWebServerRequest *request);
 
   void add_cors_headers(AsyncWebServerResponse *response);
   void send_json_error(AsyncWebServerRequest *request, int code, const char *message);

@@ -102,6 +102,12 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   } else if (url == "/elero/api/packets/clear") {
     if (method == HTTP_POST) handle_clear_packets(request);
     else if (method == HTTP_OPTIONS) handle_options(request);
+  } else if (url == "/elero/api/frequency") {
+    if (method == HTTP_GET) handle_get_frequency(request);
+    else if (method == HTTP_OPTIONS) handle_options(request);
+  } else if (url == "/elero/api/frequency/set") {
+    if (method == HTTP_POST) handle_set_frequency(request);
+    else if (method == HTTP_OPTIONS) handle_options(request);
   } else {
     request->send(404, "text/plain", "Not Found");
   }
@@ -347,6 +353,48 @@ void EleroWebServer::handle_clear_packets(AsyncWebServerRequest *request) {
   this->parent_->clear_raw_packets();
   AsyncWebServerResponse *response =
       request->beginResponse(200, "application/json", "{\"status\":\"cleared\"}");
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+void EleroWebServer::handle_get_frequency(AsyncWebServerRequest *request) {
+  char buf[80];
+  snprintf(buf, sizeof(buf),
+    "{\"freq2\":\"0x%02x\",\"freq1\":\"0x%02x\",\"freq0\":\"0x%02x\"}",
+    this->parent_->get_freq2(),
+    this->parent_->get_freq1(),
+    this->parent_->get_freq0());
+  AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
+  if (!request->hasParam("freq2") || !request->hasParam("freq1") || !request->hasParam("freq0")) {
+    this->send_json_error(request, 400, "Missing freq2, freq1 or freq0 parameters");
+    return;
+  }
+  // Accept hex (0x...) or decimal values
+  auto parse_byte = [](const char *s, uint8_t &out) -> bool {
+    char *end;
+    unsigned long v = strtoul(s, &end, 0);
+    if (end == s || v > 0xFF) return false;
+    out = (uint8_t)v;
+    return true;
+  };
+  uint8_t f2, f1, f0;
+  if (!parse_byte(request->getParam("freq2")->value().c_str(), f2) ||
+      !parse_byte(request->getParam("freq1")->value().c_str(), f1) ||
+      !parse_byte(request->getParam("freq0")->value().c_str(), f0)) {
+    this->send_json_error(request, 400, "Invalid frequency value (0x00-0xFF)");
+    return;
+  }
+  this->parent_->reinit_frequency(f2, f1, f0);
+  char buf[96];
+  snprintf(buf, sizeof(buf),
+    "{\"status\":\"ok\",\"freq2\":\"0x%02x\",\"freq1\":\"0x%02x\",\"freq0\":\"0x%02x\"}",
+    f2, f1, f0);
+  AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
   this->add_cors_headers(response);
   request->send(response);
 }

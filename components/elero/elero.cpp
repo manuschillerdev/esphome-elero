@@ -90,7 +90,7 @@ void IRAM_ATTR Elero::set_received() {
 void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero CC1101:");
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
-  ESP_LOGCONFIG(TAG, "  FREQ: 0x%02x 0x%02x 0x%02x", this->freq2_, this->freq1_, this->freq0_);
+  ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
 }
 
@@ -101,6 +101,16 @@ void Elero::setup() {
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
   this->init();
+}
+
+void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
+  this->received_ = false;
+  this->freq2_ = freq2;
+  this->freq1_ = freq1;
+  this->freq0_ = freq0;
+  this->reset();
+  this->init();
+  ESP_LOGI(TAG, "CC1101 re-initialised: freq2=0x%02x freq1=0x%02x freq0=0x%02x", freq2, freq1, freq0);
 }
 
 void Elero::flush_and_rx() {
