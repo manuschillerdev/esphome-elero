@@ -48,8 +48,10 @@ void EleroCover::loop() {
   }
 
   if((now > this->poll_offset_) && (now - this->poll_offset_ - this->last_poll_) > intvl) {
-    this->commands_to_send_.push(this->command_check_);
-    this->last_poll_ = now - this->poll_offset_;
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+      this->commands_to_send_.push(this->command_check_);
+      this->last_poll_ = now - this->poll_offset_;
+    }
   }
 
   this->handle_commands(now);
@@ -57,9 +59,11 @@ void EleroCover::loop() {
   if((this->current_operation != COVER_OPERATION_IDLE) && (this->open_duration_ > 0) && (this->close_duration_ > 0)) {
     this->recompute_position();
     if(this->is_at_target()) {
-      this->commands_to_send_.push(this->command_stop_);
-      this->current_operation = COVER_OPERATION_IDLE;
-      this->target_position_ = COVER_OPEN;
+      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+        this->commands_to_send_.push(this->command_stop_);
+        this->current_operation = COVER_OPERATION_IDLE;
+        this->target_position_ = COVER_OPEN;
+      }
     }
 
     // Publish position every second
@@ -227,8 +231,10 @@ void EleroCover::control(const cover::CoverCall &call) {
   if (call.get_tilt().has_value()) {
     auto tilt = *call.get_tilt();
     if(tilt > 0) {
-      this->commands_to_send_.push(this->command_tilt_);
-      this->tilt = 1.0;
+      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+        this->commands_to_send_.push(this->command_tilt_);
+        this->tilt = 1.0;
+      }
     } else {
       this->tilt = 0.0;
     }
@@ -252,20 +258,25 @@ void EleroCover::start_movement(CoverOperation dir) {
   switch(dir) {
     case COVER_OPERATION_OPENING:
       ESP_LOGV(TAG, "Sending OPEN command");
-      this->commands_to_send_.push(this->command_up_);
-      // Reset tilt state on movement
-      this->tilt = 0.0;
-      this->last_operation_ = COVER_OPERATION_OPENING;
+      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+        this->commands_to_send_.push(this->command_up_);
+        // Reset tilt state on movement
+        this->tilt = 0.0;
+        this->last_operation_ = COVER_OPERATION_OPENING;
+      }
     break;
     case COVER_OPERATION_CLOSING:
       ESP_LOGV(TAG, "Sending CLOSE command");
-      this->commands_to_send_.push(this->command_down_);
-      // Reset tilt state on movement
-      this->tilt = 0.0;
-      this->last_operation_ = COVER_OPERATION_CLOSING;
+      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+        this->commands_to_send_.push(this->command_down_);
+        // Reset tilt state on movement
+        this->tilt = 0.0;
+        this->last_operation_ = COVER_OPERATION_CLOSING;
+      }
     break;
     case COVER_OPERATION_IDLE:
-      this->commands_to_send_.push(this->command_stop_);
+      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+        this->commands_to_send_.push(this->command_stop_);
     break;
   }
 

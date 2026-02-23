@@ -850,8 +850,11 @@ bool Elero::remove_runtime_blind(uint32_t addr) {
 bool Elero::send_runtime_command(uint32_t addr, uint8_t cmd_byte) {
   for (auto &rb : this->runtime_blinds_) {
     if (rb.blind_address == addr) {
-      rb.command_queue.push(cmd_byte);
-      return true;
+      if (rb.command_queue.size() < ELERO_MAX_COMMAND_QUEUE) {
+        rb.command_queue.push(cmd_byte);
+        return true;
+      }
+      return false;  // Queue full
     }
   }
   return false;

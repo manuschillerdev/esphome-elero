@@ -9,6 +9,7 @@
 #include <map>
 #include <queue>
 #include <cstdarg>
+#include <atomic>
 
 // All encryption/decryption structures copied from https://github.com/QuadCorei8085/elero_protocol/ (MIT)
 // All remote handling based on code from https://github.com/stanleypa/eleropy (GPLv3)
@@ -62,6 +63,7 @@ static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two min
 
 static const uint8_t ELERO_SEND_RETRIES = 3;
 static const uint8_t ELERO_SEND_PACKETS = 2;
+static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
 
 static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to track
 static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
@@ -261,7 +263,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void capture_raw_packet_(uint8_t fifo_len);
   void mark_last_raw_packet_(bool valid, const char *reason);
 
-  volatile bool received_{false};
+  std::atomic<bool> received_{false};
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
   uint8_t freq0_{0x7a};
