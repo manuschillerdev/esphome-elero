@@ -632,6 +632,13 @@ void Elero::interpret_msg() {
       search->second->set_rx_state(payload[6]);
     }
 
+    // Check if we know the address as a configured ESPHome light
+    auto light_search = this->address_to_light_mapping_.find(src);
+    if(light_search != this->address_to_light_mapping_.end()) {
+      light_search->second->notify_rx_meta(millis(), rssi);
+      light_search->second->set_rx_state(payload[6]);
+    }
+
     // Update runtime adopted blinds
     for (auto &rb : this->runtime_blinds_) {
       if (rb.blind_address == src) {
@@ -646,6 +653,10 @@ void Elero::interpret_msg() {
     auto search = this->address_to_cover_mapping_.find(src);
     if(search != this->address_to_cover_mapping_.end()) {
       search->second->notify_rx_meta(millis(), rssi);
+    }
+    auto light_search = this->address_to_light_mapping_.find(src);
+    if(light_search != this->address_to_light_mapping_.end()) {
+      light_search->second->notify_rx_meta(millis(), rssi);
     }
     for (auto &rb : this->runtime_blinds_) {
       if (rb.blind_address == src) {
@@ -665,6 +676,15 @@ void Elero::register_cover(EleroBlindBase *cover) {
   }
   this->address_to_cover_mapping_.insert({address, cover});
   cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * 5000);
+}
+
+void Elero::register_light(EleroLightBase *light) {
+  uint32_t address = light->get_blind_address();
+  if(this->address_to_light_mapping_.find(address) != this->address_to_light_mapping_.end()) {
+    ESP_LOGE(TAG, "A light with this address is already registered - this is currently not supported");
+    return;
+  }
+  this->address_to_light_mapping_.insert({address, light});
 }
 
 #ifdef USE_SENSOR
