@@ -219,7 +219,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool send_runtime_command(uint32_t addr, uint8_t cmd_byte);
   bool update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
                                      uint32_t close_dur_ms, uint32_t poll_intvl_ms);
-  const std::vector<RuntimeBlind> &get_runtime_blinds() const { return runtime_blinds_; }
+  const std::map<uint32_t, RuntimeBlind> &get_runtime_blinds() const { return runtime_blinds_; }
   bool is_blind_adopted(uint32_t addr) const;
 
   // Log buffer
@@ -283,7 +283,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool packet_dump_pending_update_{false};
   std::vector<RawPacket> raw_packets_;
   uint8_t raw_packet_write_idx_{0};
-  std::vector<RuntimeBlind> runtime_blinds_;
+  std::map<uint32_t, RuntimeBlind> runtime_blinds_;
   // Log buffer
   bool log_capture_{false};
   std::vector<LogEntry> log_entries_;

@@ -314,7 +314,8 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
   }
 
   // Runtime adopted blinds (mixed in as "covers" with adopted=true)
-  for (const auto &rb : this->parent_->get_runtime_blinds()) {
+  for (const auto &entry : this->parent_->get_runtime_blinds()) {
+    const auto &rb = entry.second;
     if (!first) json += ",";
     first = false;
     char buf[512];
@@ -498,7 +499,8 @@ void EleroWebServer::handle_adopt_discovered(AsyncWebServerRequest *request, uin
 void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
   std::string json = "{\"blinds\":[";
   bool first = true;
-  for (const auto &rb : this->parent_->get_runtime_blinds()) {
+  for (const auto &entry : this->parent_->get_runtime_blinds()) {
+    const auto &rb = entry.second;
     if (!first) json += ",";
     first = false;
     char buf[384];

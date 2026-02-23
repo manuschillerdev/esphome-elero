@@ -41,7 +41,8 @@ const char *elero_state_to_string(uint8_t state) {
 
 void Elero::loop() {
   // Drain command queues for runtime-adopted blinds
-  for (auto &rb : this->runtime_blinds_) {
+  for (auto &entry : this->runtime_blinds_) {
+    auto &rb = entry.second;
     if (!rb.command_queue.empty()) {
       uint8_t cmd_byte = rb.command_queue.front();
       t_elero_command cmd{};
@@ -633,13 +634,11 @@ void Elero::interpret_msg() {
     }
 
     // Update runtime adopted blinds
-    for (auto &rb : this->runtime_blinds_) {
-      if (rb.blind_address == src) {
-        rb.last_seen_ms = millis();
-        rb.last_rssi = rssi;
-        rb.last_state = payload[6];
-        break;
-      }
+    auto it = this->runtime_blinds_.find(src);
+    if (it != this->runtime_blinds_.end()) {
+      it->second.last_seen_ms = millis();
+      it->second.last_rssi = rssi;
+      it->second.last_state = payload[6];
     }
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
@@ -647,12 +646,10 @@ void Elero::interpret_msg() {
     if(search != this->address_to_cover_mapping_.end()) {
       search->second->notify_rx_meta(millis(), rssi);
     }
-    for (auto &rb : this->runtime_blinds_) {
-      if (rb.blind_address == src) {
-        rb.last_seen_ms = millis();
-        rb.last_rssi = rssi;
-        break;
-      }
+    auto it = this->runtime_blinds_.find(src);
+    if (it != this->runtime_blinds_.end()) {
+      it->second.last_seen_ms = millis();
+      it->second.last_rssi = rssi;
     }
   }
 }
@@ -830,54 +827,48 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   rb.last_seen_ms = discovered.last_seen;
   rb.last_rssi = discovered.rssi;
   rb.last_state = discovered.last_state;
-  this->runtime_blinds_.push_back(std::move(rb));
+  this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
   ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"",
-           discovered.blind_address, this->runtime_blinds_.back().name.c_str());
+           discovered.blind_address, rb.name.c_str());
   return true;
 }
 
 bool Elero::remove_runtime_blind(uint32_t addr) {
-  for (auto it = this->runtime_blinds_.begin(); it != this->runtime_blinds_.end(); ++it) {
-    if (it->blind_address == addr) {
-      ESP_LOGI(TAG, "Removed runtime blind 0x%06x", addr);
-      this->runtime_blinds_.erase(it);
-      return true;
-    }
+  auto it = this->runtime_blinds_.find(addr);
+  if (it != this->runtime_blinds_.end()) {
+    ESP_LOGI(TAG, "Removed runtime blind 0x%06x", addr);
+    this->runtime_blinds_.erase(it);
+    return true;
   }
   return false;
 }
 
 bool Elero::send_runtime_command(uint32_t addr, uint8_t cmd_byte) {
-  for (auto &rb : this->runtime_blinds_) {
-    if (rb.blind_address == addr) {
-      if (rb.command_queue.size() < ELERO_MAX_COMMAND_QUEUE) {
-        rb.command_queue.push(cmd_byte);
-        return true;
-      }
-      return false;  // Queue full
+  auto it = this->runtime_blinds_.find(addr);
+  if (it != this->runtime_blinds_.end()) {
+    if (it->second.command_queue.size() < ELERO_MAX_COMMAND_QUEUE) {
+      it->second.command_queue.push(cmd_byte);
+      return true;
     }
+    return false;  // Queue full
   }
   return false;
 }
 
 bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
                                           uint32_t close_dur_ms, uint32_t poll_intvl_ms) {
-  for (auto &rb : this->runtime_blinds_) {
-    if (rb.blind_address == addr) {
-      rb.open_duration_ms = open_dur_ms;
-      rb.close_duration_ms = close_dur_ms;
-      rb.poll_intvl_ms = poll_intvl_ms;
-      return true;
-    }
+  auto it = this->runtime_blinds_.find(addr);
+  if (it != this->runtime_blinds_.end()) {
+    it->second.open_duration_ms = open_dur_ms;
+    it->second.close_duration_ms = close_dur_ms;
+    it->second.poll_intvl_ms = poll_intvl_ms;
+    return true;
   }
   return false;
 }
 
 bool Elero::is_blind_adopted(uint32_t addr) const {
-  for (const auto &rb : this->runtime_blinds_) {
-    if (rb.blind_address == addr) return true;
-  }
-  return false;
+  return this->runtime_blinds_.find(addr) != this->runtime_blinds_.end();
 }
 
 // ─── Log buffer ───────────────────────────────────────────────────────────
