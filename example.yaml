@@ -43,9 +43,10 @@ button:
     name: "Elero Stop Scan"
     scan_start: false
 
-# Web UI for blind discovery and management
-# Access at http://<device-ip>/elero
-web_server:
+# HTTP server (auto-loaded by elero_web; no default ESPHome UI, only /elero is served)
+# Do NOT use web_server: here — it would re-enable the unwanted default UI at /
+web_server_base:
+  port: 80
 
 elero_web:
   id: elero_web_ui

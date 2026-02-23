@@ -208,13 +208,16 @@ button:
 Optionale Web-Oberfläche zur Geräteerkennung und YAML-Generierung. Erreichbar unter `http://<device-ip>/elero`.
 
 ```yaml
-web_server:
+# web_server_base wird von elero_web automatisch geladen.
+# Explizit angeben um den Port zu konfigurieren:
+web_server_base:
+  port: 80
 
 elero_web:
 ```
 
 **Voraussetzungen:**
-- Die ESPHome `web_server` Komponente (oder eine andere Komponente die `web_server_base` bereitstellt) muss konfiguriert sein.
+- `web_server_base` wird automatisch von `elero_web` geladen. **Nicht** `web_server:` verwenden – das aktiviert die Standard-ESPHome-UI unter `/` wieder. Zugriff auf `/` leitet automatisch zu `/elero` weiter.
 
 **Funktionen:**
 - **RF-Scan steuern** – Scan starten/stoppen direkt im Browser
