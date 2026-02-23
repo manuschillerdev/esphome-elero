@@ -43,7 +43,7 @@ void EleroCover::loop() {
   uint32_t intvl = this->poll_intvl_;
   uint32_t now = millis();
   if(this->current_operation != COVER_OPERATION_IDLE) {
-    if((now - ELERO_TIMEOUT_MOVEMENT) < this->movement_start_) // do not poll frequently for an extended period of time
+    if((now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT)  // Poll frequently while moving (up to 2 min timeout)
       intvl = ELERO_POLL_INTERVAL_MOVING;
   }
 
@@ -307,6 +307,10 @@ void EleroCover::recompute_position() {
     default:
       return;
   }
+
+  // Guard against division by zero (happens if durations not configured)
+  if (action_dur == 0.0f)
+    return;
 
   const uint32_t now = millis();
   this->position += dir * (now - this->last_recompute_time_) / action_dur;

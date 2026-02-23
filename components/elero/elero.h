@@ -68,6 +68,18 @@ static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to 
 static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to track
 static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
 
+// RF protocol encoding/encryption constants (Elero protocol)
+static const uint8_t ELERO_MSG_LENGTH = 0x1d;             // Fixed message length for TX
+static const uint16_t ELERO_CRYPTO_MULT = 0x708f;         // Encryption multiplier for counter-based code
+static const uint16_t ELERO_CRYPTO_MASK = 0xffff;         // Mask for 16-bit encryption code
+static const uint8_t ELERO_SYS_ADDR = 0x01;               // System address in protocol
+static const uint8_t ELERO_DEST_COUNT = 0x01;             // Destination count in command
+
+// RSSI (CC1101 transceiver) constants: RSSI is in dBm, raw value is two's complement encoded
+static const uint8_t ELERO_RSSI_SIGN_BIT = 127;           // Sign bit threshold (values > 127 are negative)
+static const int8_t ELERO_RSSI_OFFSET = -74;              // Constant offset applied in RSSI calculation
+static const int ELERO_RSSI_DIVISOR = 2;                  // Divisor for raw RSSI value
+
 typedef struct {
   uint8_t counter;
   uint32_t blind_addr;
