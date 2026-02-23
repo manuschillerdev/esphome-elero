@@ -684,12 +684,10 @@ void Elero::interpret_msg() {
     if(light_search != this->address_to_light_mapping_.end()) {
       light_search->second->notify_rx_meta(millis(), rssi);
     }
-    for (auto &rb : this->runtime_blinds_) {
-      if (rb.blind_address == src) {
-        rb.last_seen_ms = millis();
-        rb.last_rssi = rssi;
-        break;
-      }
+    auto rb_it = this->runtime_blinds_.find(src);
+    if (rb_it != this->runtime_blinds_.end()) {
+      rb_it->second.last_seen_ms = millis();
+      rb_it->second.last_rssi = rssi;
     }
   }
 }
