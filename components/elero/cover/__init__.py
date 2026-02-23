@@ -58,21 +58,24 @@ def _validate_duration_consistency(config):
     Position tracking requires BOTH open_duration AND close_duration to be non-zero.
     If only one is set, the position estimate will be incorrect.
     """
-    open_dur = config.get(CONF_OPEN_DURATION, 0)
-    close_dur = config.get(CONF_CLOSE_DURATION, 0)
+    open_dur = config.get(CONF_OPEN_DURATION)
+    close_dur = config.get(CONF_CLOSE_DURATION)
+
+    open_ms = open_dur.total_milliseconds if open_dur is not None else 0
+    close_ms = close_dur.total_milliseconds if close_dur is not None else 0
 
     # Both zero = position tracking disabled (OK)
-    if open_dur == 0 and close_dur == 0:
+    if open_ms == 0 and close_ms == 0:
         return config
 
     # Both non-zero = position tracking enabled (OK)
-    if open_dur > 0 and close_dur > 0:
+    if open_ms > 0 and close_ms > 0:
         return config
 
     # One zero, one non-zero = inconsistent configuration (ERROR)
     raise cv.Invalid(
         f"Position tracking requires both open_duration and close_duration to be set. "
-        f"Current values: open_duration={open_dur}ms, close_duration={close_dur}ms. "
+        f"Current values: open_duration={open_ms}ms, close_duration={close_ms}ms. "
         f"Either set both to 0 (disable tracking) or both to non-zero values."
     )
 
