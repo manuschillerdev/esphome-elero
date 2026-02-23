@@ -8,10 +8,21 @@ static const char *const TAG = "elero.button";
 
 void EleroScanButton::dump_config() {
   LOG_BUTTON("", "Elero Scan Button", this);
-  ESP_LOGCONFIG(TAG, "  Action: %s", this->scan_start_ ? "start_scan" : "stop_scan");
+  if (this->light_ != nullptr) {
+    ESP_LOGCONFIG(TAG, "  Action: light_command 0x%02x -> light 0x%06x",
+                  this->command_byte_, this->light_->get_blind_address());
+  } else {
+    ESP_LOGCONFIG(TAG, "  Action: %s", this->scan_start_ ? "start_scan" : "stop_scan");
+  }
 }
 
 void EleroScanButton::press_action() {
+  if (this->light_ != nullptr) {
+    ESP_LOGD(TAG, "Sending command 0x%02x to light 0x%06x",
+             this->command_byte_, this->light_->get_blind_address());
+    this->light_->enqueue_command(this->command_byte_);
+    return;
+  }
   if (this->parent_ == nullptr) {
     ESP_LOGE(TAG, "Elero parent not configured");
     return;

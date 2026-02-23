@@ -137,6 +137,17 @@ struct RuntimeBlind {
 
 const char *elero_state_to_string(uint8_t state);
 
+/// Abstract base class for light actuators registered with the Elero hub.
+/// EleroLight inherits from this so the hub never needs the light header.
+class EleroLightBase {
+ public:
+  virtual ~EleroLightBase() = default;
+  virtual uint32_t get_blind_address() = 0;
+  virtual void set_rx_state(uint8_t state) = 0;
+  virtual void notify_rx_meta(uint32_t ms, float rssi) {}
+  virtual void enqueue_command(uint8_t cmd_byte) = 0;
+};
+
 /// Abstract base class for blinds registered with the Elero hub.
 /// EleroCover inherits from this so the hub never needs the cover header.
 class EleroBlindBase {
@@ -195,6 +206,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void flush_and_rx();
   void interpret_msg();
   void register_cover(EleroBlindBase *cover);
+  void register_light(EleroLightBase *light);
   bool send_command(t_elero_command *cmd);
 
 #ifdef USE_SENSOR
@@ -283,6 +295,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t freq2_{0x21};
   InternalGPIOPin *gdo0_pin_{nullptr};
   std::map<uint32_t, EleroBlindBase*> address_to_cover_mapping_;
+  std::map<uint32_t, EleroLightBase*> address_to_light_mapping_;
 #ifdef USE_SENSOR
   std::map<uint32_t, sensor::Sensor*> address_to_rssi_sensor_;
 #endif
