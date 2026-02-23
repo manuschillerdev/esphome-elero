@@ -287,32 +287,49 @@ bool Elero::wait_tx_done() {
 
 bool Elero::transmit() {
   ESP_LOGVV(TAG, "transmit called for %d data bytes", this->msg_tx_[0]);
-  this->write_cmd(CC1101_SRX);
-  if(!this->wait_rx()) {
-    return false;
-  }
 
-  this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
-  this->write_cmd(CC1101_STX);
-
-  if(!this->wait_tx()) {
+  // Go to IDLE first so the subsequent STX is not subject to CCA.
+  // (STX from RX with MCSM1 CCA_MODE=3 requires a clear channel, which
+  // fails when Elero motors are actively transmitting status replies.)
+  this->write_cmd(CC1101_SIDLE);
+  if (!this->wait_idle()) {
     this->flush_and_rx();
     return false;
   }
-  if(!this->wait_tx_done()) {
+
+  // Flush TX FIFO before loading new data (required from IDLE state)
+  this->write_cmd(CC1101_SFTX);
+  delay_microseconds_safe(100);
+
+  // Load TX FIFO
+  this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
+
+  // Clear received_ so wait_tx_done() waits for the actual TX-end GDO0
+  // falling edge, not a stale flag left over from a previously received packet.
+  this->received_ = false;
+
+  // Trigger TX — no CCA check when issuing STX from IDLE state
+  this->write_cmd(CC1101_STX);
+
+  if (!this->wait_tx()) {
+    this->flush_and_rx();
+    return false;
+  }
+  if (!this->wait_tx_done()) {
     this->flush_and_rx();
     return false;
   }
 
   uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7f;
-  if(bytes != 0) {
+  if (bytes != 0) {
     ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
     this->flush_and_rx();
     return false;
-  } else {
-    ESP_LOGV(TAG, "Transmission successful");
-    return true;
   }
+
+  ESP_LOGV(TAG, "Transmission successful");
+  this->flush_and_rx();  // return chip to clean RX state and clear received_
+  return true;
 }
 
 uint8_t Elero::read_reg(uint8_t addr) {
