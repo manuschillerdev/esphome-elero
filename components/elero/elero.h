@@ -96,6 +96,10 @@ struct DiscoveredBlind {
   uint32_t last_seen;
   uint8_t last_state;
   uint16_t times_seen;
+  // true when params were derived from a command packet (6a/69) — these are
+  // the correct values to use when sending commands to the blind.
+  // false when params came only from a CA/C9 status response (less reliable).
+  bool params_from_command{false};
 };
 
 struct RuntimeBlind {
@@ -253,7 +257,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel,
                               uint8_t pck_inf0, uint8_t pck_inf1, uint8_t hop,
                               uint8_t payload_1, uint8_t payload_2,
-                              float rssi, uint8_t state);
+                              float rssi, uint8_t state, bool from_command);
   void capture_raw_packet_(uint8_t fifo_len);
   void mark_last_raw_packet_(bool valid, const char *reason);
 

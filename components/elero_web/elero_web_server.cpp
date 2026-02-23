@@ -239,6 +239,7 @@ void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
       "\"pck_inf1\":\"0x%02x\","
       "\"pck_inf2\":\"0x%02x\","
       "\"last_seen_ms\":%lu,"
+      "\"params_from_command\":%s,"
       "\"already_configured\":%s,"
       "\"already_adopted\":%s}",
       blind.blind_address,
@@ -253,6 +254,7 @@ void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
       blind.pck_inf[0],
       blind.pck_inf[1],
       (unsigned long)blind.last_seen,
+      blind.params_from_command ? "true" : "false",
       this->parent_->is_cover_configured(blind.blind_address) ? "true" : "false",
       this->parent_->is_blind_adopted(blind.blind_address) ? "true" : "false"
     );
@@ -560,8 +562,9 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
     if (this->parent_->is_cover_configured(blind.blind_address))
       continue;
 
-    char buf[512];
+    char buf[640];
     snprintf(buf, sizeof(buf),
+      "%s"
       "  - platform: elero\n"
       "    blind_address: 0x%06x\n"
       "    channel: %d\n"
@@ -575,6 +578,10 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
       "    pck_inf1: 0x%02x\n"
       "    pck_inf2: 0x%02x\n"
       "\n",
+      blind.params_from_command
+        ? ""
+        : "  # WARNING: params derived from status packet only — press a remote\n"
+          "  # button during scan so command packets can be captured for reliable values.\n",
       blind.blind_address, blind.channel, blind.remote_address, ++idx,
       blind.hop, blind.payload_1, blind.payload_2, blind.pck_inf[0], blind.pck_inf[1]
     );

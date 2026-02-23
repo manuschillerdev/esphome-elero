@@ -584,10 +584,34 @@ void Elero::interpret_msg() {
   }
 #endif
 
-  // Track in discovery mode (any received message)
+  // Track in discovery mode
   if (this->scan_mode_) {
-    uint8_t state = ((typ == 0xca) || (typ == 0xc9)) ? payload[6] : 0;
-    this->track_discovered_blind(src, fwd, chl, typ, typ2, hop, payload1, payload2, rssi, state);
+    if ((typ == 0xca) || (typ == 0xc9)) {
+      // Status response FROM the blind: src = blind addr, fwd = remote addr.
+      // The params here (pck_inf, hop, channel, payload) belong to the blind's
+      // response packet format — not to the command format we need to send.
+      // Store them as a fallback (params_from_command=false); they will be
+      // upgraded automatically once we see a matching 6a/69 command packet.
+      this->track_discovered_blind(src, fwd, chl, typ, typ2, hop,
+                                   payload1, payload2, rssi, payload[6], false);
+    } else if ((typ == 0x6a) || (typ == 0x69)) {
+      // Command FROM remote TO blind(s): src = remote addr.
+      // The channel, pck_inf, hop and payload bytes here are exactly what must
+      // be replicated when we send commands — iterate every destination and
+      // register it as a discovered blind with the correct command params.
+      for (uint8_t i = 0; i < num_dests; i++) {
+        uint32_t dest_addr;
+        if (typ > 0x60) {  // 3-byte addressing
+          dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) |
+                      ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
+                      this->msg_rx_[19 + i * 3];
+        } else {            // 1-byte addressing
+          dest_addr = this->msg_rx_[17 + i];
+        }
+        this->track_discovered_blind(dest_addr, src, chl, typ, typ2, hop,
+                                     payload1, payload2, rssi, 0, true);
+      }
+    }
   }
 
   if((typ == 0xca) || (typ == 0xc9)) { // Status message from a blind
@@ -701,14 +725,31 @@ void Elero::mark_last_raw_packet_(bool valid, const char *reason) {
 void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel,
                                     uint8_t pck_inf0, uint8_t pck_inf1, uint8_t hop,
                                     uint8_t payload_1, uint8_t payload_2,
-                                    float rssi, uint8_t state) {
+                                    float rssi, uint8_t state, bool from_command) {
   // Check if already tracked
   for (auto &blind : this->discovered_blinds_) {
     if (blind.blind_address == src) {
       blind.rssi = rssi;
       blind.last_seen = millis();
-      blind.last_state = state;
+      if (state != 0) blind.last_state = state;
       blind.times_seen++;
+      // Upgrade CA-derived params with command-packet params (higher quality):
+      // a 6a/69 command packet tells us the exact format the remote uses, so
+      // those values must be preferred over what the blind's own CA responses
+      // carry (CA channel/hop/pck_inf describe the response format, not the
+      // command format).
+      if (from_command && !blind.params_from_command) {
+        blind.remote_address = remote;
+        blind.channel = channel;
+        blind.pck_inf[0] = pck_inf0;
+        blind.pck_inf[1] = pck_inf1;
+        blind.hop = hop;
+        blind.payload_1 = payload_1;
+        blind.payload_2 = payload_2;
+        blind.params_from_command = true;
+        ESP_LOGI(TAG, "Upgraded blind 0x%06x params from command packet: ch=%d, pck_inf=0x%02x/0x%02x, hop=0x%02x",
+                 src, channel, pck_inf0, pck_inf1, hop);
+      }
       return;
     }
   }
@@ -727,9 +768,10 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
     blind.last_seen = millis();
     blind.last_state = state;
     blind.times_seen = 1;
+    blind.params_from_command = from_command;
     this->discovered_blinds_.push_back(blind);
-    ESP_LOGI(TAG, "Discovered new device: addr=0x%06x, remote=0x%06x, ch=%d, rssi=%.1f",
-             src, remote, channel, rssi);
+    ESP_LOGI(TAG, "Discovered new device: addr=0x%06x, remote=0x%06x, ch=%d, rssi=%.1f, src=%s",
+             src, remote, channel, rssi, from_command ? "cmd_pkt" : "status_pkt");
   }
 }
 
