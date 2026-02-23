@@ -41,7 +41,8 @@ const char *elero_state_to_string(uint8_t state) {
 
 void Elero::loop() {
   // Drain command queues for runtime-adopted blinds
-  for (auto &rb : this->runtime_blinds_) {
+  for (auto &entry : this->runtime_blinds_) {
+    auto &rb = entry.second;
     if (!rb.command_queue.empty()) {
       uint8_t cmd_byte = rb.command_queue.front();
       t_elero_command cmd{};
@@ -209,6 +210,7 @@ void Elero::write_reg(uint8_t addr, uint8_t data) {
   this->write_byte(data);
   this->disable();
   delay_microseconds_safe(15);
+  // TODO: Add error handling - verify SPI transaction success, handle timeout/CRC errors
 }
 
 void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
@@ -218,6 +220,7 @@ void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
     this->write_byte(data[i]);
   this->disable();
   delay_microseconds_safe(15);
+  // TODO: Add error handling - verify all bytes written, handle partial writes
 }
 
 void Elero::write_cmd(uint8_t cmd) {
@@ -225,6 +228,7 @@ void Elero::write_cmd(uint8_t cmd) {
   this->write_byte(cmd);
   this->disable();
   delay_microseconds_safe(15);
+  // TODO: Add error handling - verify command accepted by CC1101
 }
 
 bool Elero::wait_rx() {
@@ -319,6 +323,7 @@ uint8_t Elero::read_reg(uint8_t addr) {
   data = this->read_byte();
   this->disable();
   delay_microseconds_safe(15);
+  // TODO: Add error handling - validate returned data, detect SPI communication failures
   return data;
 }
 
@@ -561,11 +566,17 @@ void Elero::interpret_msg() {
   uint8_t payload2 = this->msg_rx_[18 + dests_len];
   uint8_t crc = this->msg_rx_[length + 2] >> 7;
   uint8_t lqi = this->msg_rx_[length + 2] & 0x7f;
+
+  // Calculate RSSI in dBm (CC1101 transmits as two's complement encoded value)
   float rssi;
-  if(this->msg_rx_[length+1] > 127)
-    rssi = (float)((this->msg_rx_[length+1]-256)/2-74);
-  else
-    rssi = (float)((this->msg_rx_[length+1])/2-74);
+  uint8_t rssi_raw = this->msg_rx_[length + 1];
+  if (rssi_raw > ELERO_RSSI_SIGN_BIT) {
+    // Negative value (two's complement): convert from two's complement
+    rssi = static_cast<float>(static_cast<int8_t>(rssi_raw)) / ELERO_RSSI_DIVISOR + ELERO_RSSI_OFFSET;
+  } else {
+    // Positive value
+    rssi = static_cast<float>(rssi_raw) / ELERO_RSSI_DIVISOR + ELERO_RSSI_OFFSET;
+  }
   uint8_t *payload = &this->msg_rx_[19 + dests_len];
   msg_decode(payload);
   if (this->packet_dump_pending_update_) {
@@ -640,13 +651,11 @@ void Elero::interpret_msg() {
     }
 
     // Update runtime adopted blinds
-    for (auto &rb : this->runtime_blinds_) {
-      if (rb.blind_address == src) {
-        rb.last_seen_ms = millis();
-        rb.last_rssi = rssi;
-        rb.last_state = payload[6];
-        break;
-      }
+    auto it = this->runtime_blinds_.find(src);
+    if (it != this->runtime_blinds_.end()) {
+      it->second.last_seen_ms = millis();
+      it->second.last_rssi = rssi;
+      it->second.last_state = payload[6];
     }
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
@@ -797,13 +806,13 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 
 bool Elero::send_command(t_elero_command *cmd) {
   ESP_LOGVV(TAG, "send_command called");
-  uint16_t code = (0x00 - (cmd->counter * 0x708f)) & 0xffff;
-  this->msg_tx_[0] = 0x1d; // message length
+  uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
+  this->msg_tx_[0] = ELERO_MSG_LENGTH;
   this->msg_tx_[1] = cmd->counter; // message counter
   this->msg_tx_[2] = cmd->pck_inf[0];
   this->msg_tx_[3] = cmd->pck_inf[1];
   this->msg_tx_[4] = cmd->hop; // hop info
-  this->msg_tx_[5] = 0x01; // sys_addr = 1
+  this->msg_tx_[5] = ELERO_SYS_ADDR;
   this->msg_tx_[6] = cmd->channel; // channel
   this->msg_tx_[7] = ((cmd->remote_addr >> 16) & 0xff); // source address
   this->msg_tx_[8] = ((cmd->remote_addr >> 8) & 0xff);
@@ -814,7 +823,7 @@ bool Elero::send_command(t_elero_command *cmd) {
   this->msg_tx_[13] = ((cmd->remote_addr >> 16) & 0xff); // forward address
   this->msg_tx_[14] = ((cmd->remote_addr >> 8) & 0xff);
   this->msg_tx_[15] =((cmd->remote_addr) & 0xff);
-  this->msg_tx_[16] = 0x01; // destination count
+  this->msg_tx_[16] = ELERO_DEST_COUNT;
   this->msg_tx_[17] = ((cmd->blind_addr >> 16) & 0xff); // blind address
   this->msg_tx_[18] = ((cmd->blind_addr >> 8) & 0xff);
   this->msg_tx_[19] = ((cmd->blind_addr) & 0xff);
@@ -850,51 +859,48 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   rb.last_seen_ms = discovered.last_seen;
   rb.last_rssi = discovered.rssi;
   rb.last_state = discovered.last_state;
-  this->runtime_blinds_.push_back(std::move(rb));
+  this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
   ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"",
-           discovered.blind_address, this->runtime_blinds_.back().name.c_str());
+           discovered.blind_address, rb.name.c_str());
   return true;
 }
 
 bool Elero::remove_runtime_blind(uint32_t addr) {
-  for (auto it = this->runtime_blinds_.begin(); it != this->runtime_blinds_.end(); ++it) {
-    if (it->blind_address == addr) {
-      ESP_LOGI(TAG, "Removed runtime blind 0x%06x", addr);
-      this->runtime_blinds_.erase(it);
-      return true;
-    }
+  auto it = this->runtime_blinds_.find(addr);
+  if (it != this->runtime_blinds_.end()) {
+    ESP_LOGI(TAG, "Removed runtime blind 0x%06x", addr);
+    this->runtime_blinds_.erase(it);
+    return true;
   }
   return false;
 }
 
 bool Elero::send_runtime_command(uint32_t addr, uint8_t cmd_byte) {
-  for (auto &rb : this->runtime_blinds_) {
-    if (rb.blind_address == addr) {
-      rb.command_queue.push(cmd_byte);
+  auto it = this->runtime_blinds_.find(addr);
+  if (it != this->runtime_blinds_.end()) {
+    if (it->second.command_queue.size() < ELERO_MAX_COMMAND_QUEUE) {
+      it->second.command_queue.push(cmd_byte);
       return true;
     }
+    return false;  // Queue full
   }
   return false;
 }
 
 bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
                                           uint32_t close_dur_ms, uint32_t poll_intvl_ms) {
-  for (auto &rb : this->runtime_blinds_) {
-    if (rb.blind_address == addr) {
-      rb.open_duration_ms = open_dur_ms;
-      rb.close_duration_ms = close_dur_ms;
-      rb.poll_intvl_ms = poll_intvl_ms;
-      return true;
-    }
+  auto it = this->runtime_blinds_.find(addr);
+  if (it != this->runtime_blinds_.end()) {
+    it->second.open_duration_ms = open_dur_ms;
+    it->second.close_duration_ms = close_dur_ms;
+    it->second.poll_intvl_ms = poll_intvl_ms;
+    return true;
   }
   return false;
 }
 
 bool Elero::is_blind_adopted(uint32_t addr) const {
-  for (const auto &rb : this->runtime_blinds_) {
-    if (rb.blind_address == addr) return true;
-  }
-  return false;
+  return this->runtime_blinds_.find(addr) != this->runtime_blinds_.end();
 }
 
 // ─── Log buffer ───────────────────────────────────────────────────────────

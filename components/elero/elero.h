@@ -9,6 +9,7 @@
 #include <map>
 #include <queue>
 #include <cstdarg>
+#include <atomic>
 
 // All encryption/decryption structures copied from https://github.com/QuadCorei8085/elero_protocol/ (MIT)
 // All remote handling based on code from https://github.com/stanleypa/eleropy (GPLv3)
@@ -62,9 +63,22 @@ static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two min
 
 static const uint8_t ELERO_SEND_RETRIES = 3;
 static const uint8_t ELERO_SEND_PACKETS = 2;
+static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
 
 static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to track
 static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
+
+// RF protocol encoding/encryption constants (Elero protocol)
+static const uint8_t ELERO_MSG_LENGTH = 0x1d;             // Fixed message length for TX
+static const uint16_t ELERO_CRYPTO_MULT = 0x708f;         // Encryption multiplier for counter-based code
+static const uint16_t ELERO_CRYPTO_MASK = 0xffff;         // Mask for 16-bit encryption code
+static const uint8_t ELERO_SYS_ADDR = 0x01;               // System address in protocol
+static const uint8_t ELERO_DEST_COUNT = 0x01;             // Destination count in command
+
+// RSSI (CC1101 transceiver) constants: RSSI is in dBm, raw value is two's complement encoded
+static const uint8_t ELERO_RSSI_SIGN_BIT = 127;           // Sign bit threshold (values > 127 are negative)
+static const int8_t ELERO_RSSI_OFFSET = -74;              // Constant offset applied in RSSI calculation
+static const int ELERO_RSSI_DIVISOR = 2;                  // Divisor for raw RSSI value
 
 typedef struct {
   uint8_t counter;
@@ -229,7 +243,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool send_runtime_command(uint32_t addr, uint8_t cmd_byte);
   bool update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
                                      uint32_t close_dur_ms, uint32_t poll_intvl_ms);
-  const std::vector<RuntimeBlind> &get_runtime_blinds() const { return runtime_blinds_; }
+  const std::map<uint32_t, RuntimeBlind> &get_runtime_blinds() const { return runtime_blinds_; }
   bool is_blind_adopted(uint32_t addr) const;
 
   // Log buffer
@@ -273,7 +287,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void capture_raw_packet_(uint8_t fifo_len);
   void mark_last_raw_packet_(bool valid, const char *reason);
 
-  volatile bool received_{false};
+  std::atomic<bool> received_{false};
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
   uint8_t freq0_{0x7a};
@@ -294,7 +308,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool packet_dump_pending_update_{false};
   std::vector<RawPacket> raw_packets_;
   uint8_t raw_packet_write_idx_{0};
-  std::vector<RuntimeBlind> runtime_blinds_;
+  std::map<uint32_t, RuntimeBlind> runtime_blinds_;
   // Log buffer
   bool log_capture_{false};
   std::vector<LogEntry> log_entries_;
