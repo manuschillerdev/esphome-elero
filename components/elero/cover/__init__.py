@@ -52,6 +52,31 @@ def poll_interval(value):
     return cv.positive_time_period_milliseconds(value)
 
 
+def _validate_duration_consistency(config):
+    """Validate that if position tracking is enabled, both open and close durations are set.
+
+    Position tracking requires BOTH open_duration AND close_duration to be non-zero.
+    If only one is set, the position estimate will be incorrect.
+    """
+    open_dur = config.get(CONF_OPEN_DURATION, 0)
+    close_dur = config.get(CONF_CLOSE_DURATION, 0)
+
+    # Both zero = position tracking disabled (OK)
+    if open_dur == 0 and close_dur == 0:
+        return config
+
+    # Both non-zero = position tracking enabled (OK)
+    if open_dur > 0 and close_dur > 0:
+        return config
+
+    # One zero, one non-zero = inconsistent configuration (ERROR)
+    raise cv.Invalid(
+        f"Position tracking requires both open_duration and close_duration to be set. "
+        f"Current values: open_duration={open_dur}ms, close_duration={close_dur}ms. "
+        f"Either set both to 0 (disable tracking) or both to non-zero values."
+    )
+
+
 def _auto_sensor_validator(config):
     """At validation time, inject auto-sensor sub-configs when auto_sensors=True.
 
@@ -102,6 +127,7 @@ CONFIG_SCHEMA = cv.All(
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
+    _validate_duration_consistency,
     _auto_sensor_validator,
 )
 

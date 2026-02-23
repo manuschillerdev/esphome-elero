@@ -317,7 +317,8 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
   }
 
   // Runtime adopted blinds (mixed in as "covers" with adopted=true)
-  for (const auto &rb : this->parent_->get_runtime_blinds()) {
+  for (const auto &entry : this->parent_->get_runtime_blinds()) {
+    const auto &rb = entry.second;
     if (!first) json += ",";
     first = false;
     char buf[512];
@@ -364,7 +365,12 @@ void EleroWebServer::handle_cover_command(AsyncWebServerRequest *request, uint32
     this->send_json_error(request, 400, "Missing cmd parameter");
     return;
   }
-  const std::string cmd_str = request->getParam("cmd")->value().c_str();
+  auto cmd_param = request->getParam("cmd");
+  if (cmd_param == nullptr) {
+    this->send_json_error(request, 400, "Missing cmd parameter");
+    return;
+  }
+  const std::string cmd_str = cmd_param->value().c_str();
 
   // Map command string to byte
   auto get_cmd_byte = [&](EleroBlindBase *blind) -> int {
@@ -418,9 +424,11 @@ void EleroWebServer::handle_cover_command(AsyncWebServerRequest *request, uint32
 void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint32_t addr) {
   auto parse_u32 = [](AsyncWebServerRequest *req, const char *name, uint32_t &out) -> bool {
     if (!req->hasParam(name)) return false;
+    auto param = req->getParam(name);
+    if (param == nullptr) return false;
     char *end;
-    unsigned long v = strtoul(req->getParam(name)->value().c_str(), &end, 10);
-    if (end == req->getParam(name)->value().c_str()) return false;
+    unsigned long v = strtoul(param->value().c_str(), &end, 10);
+    if (end == param->value().c_str()) return false;
     out = (uint32_t)v;
     return true;
   };
@@ -464,8 +472,11 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
 
 void EleroWebServer::handle_adopt_discovered(AsyncWebServerRequest *request, uint32_t addr) {
   std::string name;
-  if (request->hasParam("name"))
-    name = request->getParam("name")->value().c_str();
+  if (request->hasParam("name")) {
+    auto name_param = request->getParam("name");
+    if (name_param != nullptr)
+      name = name_param->value().c_str();
+  }
 
   const auto &blinds = this->parent_->get_discovered_blinds();
   for (const auto &blind : blinds) {
@@ -491,7 +502,8 @@ void EleroWebServer::handle_adopt_discovered(AsyncWebServerRequest *request, uin
 void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
   std::string json = "{\"blinds\":[";
   bool first = true;
-  for (const auto &rb : this->parent_->get_runtime_blinds()) {
+  for (const auto &entry : this->parent_->get_runtime_blinds()) {
+    const auto &rb = entry.second;
     if (!first) json += ",";
     first = false;
     char buf[384];
@@ -705,9 +717,13 @@ void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
     return true;
   };
   uint8_t f2, f1, f0;
-  if (!parse_byte(request->getParam("freq2")->value().c_str(), f2) ||
-      !parse_byte(request->getParam("freq1")->value().c_str(), f1) ||
-      !parse_byte(request->getParam("freq0")->value().c_str(), f0)) {
+  auto freq2_param = request->getParam("freq2");
+  auto freq1_param = request->getParam("freq1");
+  auto freq0_param = request->getParam("freq0");
+  if (freq2_param == nullptr || freq1_param == nullptr || freq0_param == nullptr ||
+      !parse_byte(freq2_param->value().c_str(), f2) ||
+      !parse_byte(freq1_param->value().c_str(), f1) ||
+      !parse_byte(freq0_param->value().c_str(), f0)) {
     this->send_json_error(request, 400, "Invalid frequency value (0x00-0xFF)");
     return;
   }
@@ -725,8 +741,11 @@ void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
 
 void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
   uint32_t since_ms = 0;
-  if (request->hasParam("since"))
-    since_ms = (uint32_t)strtoul(request->getParam("since")->value().c_str(), nullptr, 10);
+  if (request->hasParam("since")) {
+    auto since_param = request->getParam("since");
+    if (since_param != nullptr)
+      since_ms = (uint32_t)strtoul(since_param->value().c_str(), nullptr, 10);
+  }
 
   const auto &entries = this->parent_->get_log_entries();
 
@@ -806,8 +825,11 @@ void EleroWebServer::handle_webui_status(AsyncWebServerRequest *request) {
 void EleroWebServer::handle_webui_enable(AsyncWebServerRequest *request) {
   bool en = true;
   if (request->hasParam("enabled")) {
-    const std::string val = request->getParam("enabled")->value().c_str();
-    en = (val != "false" && val != "0");
+    auto enabled_param = request->getParam("enabled");
+    if (enabled_param != nullptr) {
+      const std::string val = enabled_param->value().c_str();
+      en = (val != "false" && val != "0");
+    }
   }
   this->enabled_ = en;
   char buf[32];
