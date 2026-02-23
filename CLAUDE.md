@@ -261,11 +261,17 @@ button:
 ### Web UI
 
 ```yaml
-web_server:          # Must be present
+# Use web_server_base (not web_server) to keep only the /elero UI
+# web_server_base is auto-loaded by elero_web, but you can declare it
+# explicitly to configure the port:
+web_server_base:
+  port: 80
 
 elero_web:
   id: elero_web_ui   # Optional ID
 ```
+
+Navigating to `http://<device-ip>/` will redirect to `/elero` automatically.
 
 ---
 
@@ -335,7 +341,7 @@ There are no automated tests in this repository. Validation is done manually on 
 
 - **Wrong frequency**: Most European Elero motors use 868.35 MHz (`freq0=0x7a`). Some use 868.95 MHz (`freq0=0xc0`). If discovery finds nothing, try the alternate frequency.
 - **SPI conflicts**: The CC1101 CS pin must not be shared with any other SPI device.
-- **Missing `web_server:`**: The `elero_web:` component requires a `web_server:` block to be present; it reuses `web_server_base`.
+- **Using `web_server:` instead of `web_server_base:`**: Adding `web_server:` to your YAML re-enables the default ESPHome entity UI at `/`. Use `web_server_base:` (or rely on its auto-load via `elero_web`) to serve only the Elero UI at `/elero`. Navigating to `/` will redirect automatically to `/elero`.
 - **Position tracking**: Leave `open_duration` and `close_duration` at `0s` if you only need open/close without position — setting incorrect durations causes wrong position estimates.
 - **Poll interval `never`**: Set `poll_interval: never` for blinds that reliably push state updates (avoids unnecessary RF traffic). Internally this maps to `uint32_t` max (4 294 967 295 ms).
 

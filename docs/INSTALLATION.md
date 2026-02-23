@@ -217,7 +217,8 @@ Wenn die Kommunikation funktioniert, kannst du die Adressen deiner Rollladen erm
 Fuege folgendes zu deiner Konfiguration hinzu:
 
 ```yaml
-web_server:
+web_server_base:
+  port: 80
 
 elero_web:
 ```

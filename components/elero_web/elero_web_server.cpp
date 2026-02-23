@@ -100,7 +100,7 @@ void EleroWebServer::dump_config() {
 bool EleroWebServer::canHandle(AsyncWebServerRequest *request) const {
   if (!this->enabled_) return false;
   const std::string &url = request->url();
-  return url.size() >= 6 && url.substr(0, 6) == "/elero";
+  return url == "/" || (url.size() >= 6 && url.substr(0, 6) == "/elero");
 }
 
 void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
@@ -108,6 +108,9 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   const auto method = request->method();
 
   if (method == HTTP_OPTIONS) { handle_options(request); return; }
+
+  // ── Redirect root to /elero ──
+  if (url == "/" && method == HTTP_GET) { request->redirect("/elero"); return; }
 
   // ── Static index ──
   if (url == "/elero" && method == HTTP_GET) { handle_index(request); return; }

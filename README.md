@@ -490,8 +490,10 @@ Pro entdecktem Gerät werden protokolliert: Adresse, Remote-Adresse, Kanal, RSSI
 Fuer eine komfortablere Geräteerkennung steht eine optionale Web-Oberflaeche bereit:
 
 ```yaml
-# Web-Server aktivieren (Voraussetzung)
-web_server:
+# HTTP-Server (wird von elero_web automatisch geladen)
+# Nicht web_server: verwenden – das aktiviert die Standard-UI unter / wieder
+web_server_base:
+  port: 80
 
 # Elero Web-UI aktivieren
 elero_web:
