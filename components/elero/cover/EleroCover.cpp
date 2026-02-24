@@ -94,7 +94,7 @@ bool EleroCover::is_at_target() {
 void EleroCover::handle_commands(uint32_t now) {
   if((now - this->last_command_) > ELERO_DELAY_SEND_PACKETS) {
     if(this->commands_to_send_.size() > 0) {
-      this->command_.payload[4] = this->commands_to_send_.front();
+      this->command_.payload[8] = this->commands_to_send_.front();
       if(this->parent_->send_command(&this->command_)) {
         this->send_packets_++;
         this->send_retries_ = 0;
@@ -275,8 +275,10 @@ void EleroCover::start_movement(CoverOperation dir) {
       }
     break;
     case COVER_OPERATION_IDLE:
-      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
-        this->commands_to_send_.push(this->command_stop_);
+      // Clear any pending movement commands so STOP is sent immediately
+      while (!this->commands_to_send_.empty())
+        this->commands_to_send_.pop();
+      this->commands_to_send_.push(this->command_stop_);
     break;
   }
 
