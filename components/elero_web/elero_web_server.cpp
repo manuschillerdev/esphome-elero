@@ -11,6 +11,22 @@ namespace elero {
 
 static const char *const TAG = "elero.web_server";
 
+// ─── JSON helpers ─────────────────────────────────────────────────────────────
+
+static std::string json_escape(const std::string &s) {
+  std::string out;
+  out.reserve(s.size());
+  for (char c : s) {
+    if      (c == '"')  { out += "\\\""; }
+    else if (c == '\\') { out += "\\\\"; }
+    else if (c == '\n') { out += "\\n";  }
+    else if (c == '\r') { out += "\\r";  }
+    else if (c == '\t') { out += "\\t";  }
+    else { out += c; }
+  }
+  return out;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 void EleroWebServer::add_cors_headers(AsyncWebServerResponse *response) {
@@ -21,7 +37,8 @@ void EleroWebServer::add_cors_headers(AsyncWebServerResponse *response) {
 
 void EleroWebServer::send_json_error(AsyncWebServerRequest *request, int code, const char *message) {
   char buf[128];
-  snprintf(buf, sizeof(buf), "{\"error\":\"%s\"}", message);
+  std::string esc_msg = json_escape(message);
+  snprintf(buf, sizeof(buf), "{\"error\":\"%s\"}", esc_msg.c_str());
   AsyncWebServerResponse *response = request->beginResponse(code, "application/json", buf);
   this->add_cors_headers(response);
   request->send(response);
@@ -283,6 +300,7 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
     if (!first) json += ",";
     first = false;
     auto *blind = pair.second;
+    std::string esc_name = json_escape(blind->get_blind_name());
     char buf[512];
     snprintf(buf, sizeof(buf),
       "{\"blind_address\":\"0x%06x\","
@@ -300,7 +318,7 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
       "\"supports_tilt\":%s,"
       "\"adopted\":false}",
       pair.first,
-      blind->get_blind_name().c_str(),
+      esc_name.c_str(),
       blind->get_cover_position(),
       blind->get_operation_str(),
       elero_state_to_string(blind->get_last_state_raw()),
@@ -321,6 +339,7 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
     const auto &rb = entry.second;
     if (!first) json += ",";
     first = false;
+    std::string esc_name = json_escape(rb.name);
     char buf[512];
     snprintf(buf, sizeof(buf),
       "{\"blind_address\":\"0x%06x\","
@@ -338,7 +357,7 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
       "\"supports_tilt\":false,"
       "\"adopted\":true}",
       rb.blind_address,
-      rb.name.c_str(),
+      esc_name.c_str(),
       elero_state_to_string(rb.last_state),
       (unsigned long)rb.last_seen_ms,
       rb.last_rssi,
@@ -485,9 +504,11 @@ void EleroWebServer::handle_adopt_discovered(AsyncWebServerRequest *request, uin
         this->send_json_error(request, 409, "Already configured or adopted");
         return;
       }
+      std::string display_name = name.empty() ? "Adopted" : name;
+      std::string esc_name = json_escape(display_name);
       char buf[128];
       snprintf(buf, sizeof(buf), "{\"status\":\"adopted\",\"address\":\"0x%06x\",\"name\":\"%s\"}",
-               addr, name.empty() ? "Adopted" : name.c_str());
+               addr, esc_name.c_str());
       AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
       this->add_cors_headers(response);
       request->send(response);
@@ -506,6 +527,7 @@ void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
     const auto &rb = entry.second;
     if (!first) json += ",";
     first = false;
+    std::string esc_name = json_escape(rb.name);
     char buf[384];
     snprintf(buf, sizeof(buf),
       "{\"blind_address\":\"0x%06x\","
@@ -518,7 +540,7 @@ void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
       "\"open_duration_ms\":%lu,"
       "\"close_duration_ms\":%lu,"
       "\"poll_interval_ms\":%lu}",
-      rb.blind_address, rb.name.c_str(), (int)rb.channel,
+      rb.blind_address, esc_name.c_str(), (int)rb.channel,
       rb.remote_address, rb.last_rssi,
       elero_state_to_string(rb.last_state),
       (unsigned long)rb.last_seen_ms,
@@ -763,22 +785,11 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
 
     uint8_t lv = (e.level >= 1 && e.level <= 5) ? e.level : 3;
 
-    // Escape message for JSON
-    char msg_esc[sizeof(e.message) * 2 + 4];
-    size_t j = 0;
-    for (size_t i = 0; i < strlen(e.message) && j < sizeof(msg_esc) - 2; i++) {
-      char c = e.message[i];
-      if (c == '"')  { msg_esc[j++] = '\\'; msg_esc[j++] = '"'; }
-      else if (c == '\\') { msg_esc[j++] = '\\'; msg_esc[j++] = '\\'; }
-      else if (c == '\n') { msg_esc[j++] = '\\'; msg_esc[j++] = 'n'; }
-      else msg_esc[j++] = c;
-    }
-    msg_esc[j] = '\0';
-
+    std::string msg_esc = json_escape(e.message);
     char buf[512];
     snprintf(buf, sizeof(buf),
       "{\"t\":%lu,\"level\":%d,\"level_str\":\"%s\",\"tag\":\"%s\",\"msg\":\"%s\"}",
-      (unsigned long)e.timestamp_ms, lv, level_strs[lv], e.tag, msg_esc);
+      (unsigned long)e.timestamp_ms, lv, level_strs[lv], e.tag, msg_esc.c_str());
     json += buf;
   }
 
@@ -842,6 +853,7 @@ void EleroWebServer::handle_webui_enable(AsyncWebServerRequest *request) {
 // ─── Info ─────────────────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_get_info(AsyncWebServerRequest *request) {
+  std::string esc_app_name = json_escape(App.get_name());
   char buf[256];
   snprintf(buf, sizeof(buf),
     "{\"device_name\":\"%s\","
@@ -850,7 +862,7 @@ void EleroWebServer::handle_get_info(AsyncWebServerRequest *request) {
     "\"freq1\":\"0x%02x\","
     "\"freq0\":\"0x%02x\","
     "\"configured_covers\":%d}",
-    App.get_name().c_str(),
+    esc_app_name.c_str(),
     (unsigned long)millis(),
     this->parent_->get_freq2(),
     this->parent_->get_freq1(),
