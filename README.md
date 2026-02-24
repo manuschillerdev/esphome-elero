@@ -1,6 +1,8 @@
 # Elero Remote Control Component for ESPHome
 
-> Steuere Elero Rollläden bidirektional via ESP32 + CC1101 direkt aus Home Assistant.
+> Steuere Elero Rollläden und Lichter bidirektional via ESP32 + CC1101 direkt aus Home Assistant.
+
+[![Achtung: heavy work in progress! Agentic-Development]]
 
 [![ESPHome](https://img.shields.io/badge/ESPHome-Component-blue)](https://esphome.io/)
 [![License](https://img.shields.io/badge/License-GPLv3-green)](LICENSE)
