@@ -249,8 +249,8 @@ void EleroCover::start_movement(CoverOperation dir) {
     return;
 
   this->current_operation = dir;
+  this->start_position_ = this->position;  // Capture position at movement start
   this->movement_start_ = millis();
-  this->last_recompute_time_ = millis();
   this->publish_state();
 }
 
@@ -265,11 +265,11 @@ void EleroCover::recompute_position() {
   switch (this->current_operation) {
     case COVER_OPERATION_OPENING:
       dir = 1.0f;
-      action_dur = this->open_duration_;
+      action_dur = static_cast<float>(this->open_duration_);
       break;
     case COVER_OPERATION_CLOSING:
       dir = -1.0f;
-      action_dur = this->close_duration_;
+      action_dur = static_cast<float>(this->close_duration_);
       break;
     default:
       return;
@@ -279,11 +279,12 @@ void EleroCover::recompute_position() {
   if (action_dur == 0.0f)
     return;
 
+  // Calculate position based on start position and elapsed time ratio
+  // This avoids cumulative floating-point drift from incremental updates
   const uint32_t now = millis();
-  this->position += dir * (now - this->last_recompute_time_) / action_dur;
+  float elapsed_ratio = static_cast<float>(now - this->movement_start_) / action_dur;
+  this->position = this->start_position_ + dir * elapsed_ratio;
   this->position = clamp(this->position, 0.0f, 1.0f);
-
-  this->last_recompute_time_ = now;
 }
 
 }  // namespace elero

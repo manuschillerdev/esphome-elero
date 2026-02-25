@@ -85,9 +85,9 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint32_t open_duration_{0};
   uint32_t close_duration_{0};
   uint32_t last_publish_{0};
-  uint32_t last_recompute_time_{0};
   uint32_t poll_intvl_{0};
   float target_position_{0};
+  float start_position_{0.0f};  // Position at movement start for precise tracking
   bool supports_tilt_{false};
   uint32_t last_seen_ms_{0};
   float last_rssi_{0.0f};
