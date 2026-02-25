@@ -1,8 +1,8 @@
 # Elero Remote Control Component for ESPHome
 
 > Steuere Elero Rollläden und Lichter bidirektional via ESP32 + CC1101 direkt aus Home Assistant.
-
-[![Achtung: heavy work in progress! Agentic-Development]]
+> Inklusive WebGui für RF-Scan mit Geräteerkennung und YAML-Template für die weitere Nutzung.
+> Zahlreiche Detailverbesserung (Motorquitierung, variabler Poll bei Handbedienung etc.)
 
 [![ESPHome](https://img.shields.io/badge/ESPHome-Component-blue)](https://esphome.io/)
 [![License](https://img.shields.io/badge/License-GPLv3-green)](LICENSE)
@@ -665,4 +665,4 @@ Dieses Projekt basiert auf der Arbeit von:
 
 - [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT) - Verschlüsselungs-/Entschlüsselungsstrukturen
 - [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3) - Fernbedienungs-Handling
-- [andyboeh/esphome-elero](https://github.com/pfriedrich84/esphome-elero) - Grundlage für diese Steuerung,eigenes Repository da nicht mehr gepflegt
+- [andyboeh/esphome-elero](https://github.com/pfriedrich84/esphome-elero) - Grundlage für diese Steuerung, wobei deses Repo ein nahezu vollständiger Rebuild ist
