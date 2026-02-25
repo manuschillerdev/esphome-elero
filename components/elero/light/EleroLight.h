@@ -80,6 +80,9 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   uint32_t last_seen_ms_{0};
   float last_rssi_{0.0f};
 
+  // Prevents feedback loop: set_rx_state() → call.perform() → write_state() → send command
+  bool ignore_write_state_{false};
+
   // Configurable command bytes
   uint8_t command_on_{0x20};
   uint8_t command_off_{0x40};
