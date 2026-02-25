@@ -19,6 +19,7 @@
 - [Blind-Adressen ermitteln](#blind-adressen-ermitteln)
 - [Positionssteuerung](#positionssteuerung)
 - [Tilt-Steuerung](#tilt-steuerung)
+- [Lichtsteuerung](#lichtsteuerung)
 - [Diagnose-Sensoren](#diagnose-sensoren)
 - [RF-Discovery (Scan)](#rf-discovery-scan)
 - [Home Assistant Integration](#home-assistant-integration)
@@ -43,6 +44,7 @@
 | Web-UI fuer Discovery und YAML-Export | Stabil |
 | Mehrere Blinds gleichzeitig | Stabil |
 | TempoTel 2 Kompatibilität | Getestet |
+| Lichter schalten (Ein/Aus und Dimmen) | Stabil |
 
 ## Voraussetzungen
 
@@ -412,6 +414,43 @@ cover:
 
 - Jeder Tilt-Wert > 0 sendet den Tilt-Befehl
 - Tilt auf 0 setzen sendet aktuell keinen Befehl
+
+---
+
+## Lichtsteuerung
+
+Elero-Lichtempfänger werden als `light`-Plattform konfiguriert und erscheinen in Home Assistant als vollständige Licht-Entitäten.
+
+### Einfaches Ein/Aus-Licht
+
+Ohne `dim_duration` (oder `dim_duration: 0s`) wird nur Ein/Aus unterstützt:
+
+```yaml
+light:
+  - platform: elero
+    name: "Hauslicht"
+    blind_address: 0xc41a2b
+    channel: 6
+    remote_address: 0xf0d008
+```
+
+### Dimmbar (Helligkeitssteuerung)
+
+Mit `dim_duration` wird die Zeit angegeben, die der Empfänger benötigt, um von 0 % auf 100 % zu dimmen. Home Assistant zeigt dann einen Helligkeitsregler:
+
+```yaml
+light:
+  - platform: elero
+    name: "Wohnzimmerlicht"
+    blind_address: 0xc41a2b
+    channel: 6
+    remote_address: 0xf0d008
+    dim_duration: 5s
+```
+
+- Der richtige Wert für `dim_duration` hängt vom jeweiligen Empfänger ab — typisch sind 3–8 Sekunden.
+- Alle Protokoll-Parameter (`blind_address`, `channel`, `remote_address`, `payload_*`, `pck_inf*`, `hop`) werden genauso ermittelt wie bei einem Rollladen (via RF-Log oder Web-UI-Discovery).
+- Vollständige Parameterliste: [Konfigurationsreferenz](docs/CONFIGURATION.md#plattform-light)
 
 ---
 

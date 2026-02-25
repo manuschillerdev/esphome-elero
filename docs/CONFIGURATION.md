@@ -105,6 +105,71 @@ Diese Werte werden aus dem Log der echten Fernbedienung ausgelesen. Bei Überein
 
 ---
 
+## Plattform: `light`
+
+Jedes Elero-Licht (z.B. Hauslicht mit Elero-Empfänger) wird als eigener Light-Eintrag konfiguriert. Das Licht erscheint in Home Assistant als vollständige Licht-Entität — mit Ein/Aus und optionaler Helligkeitssteuerung.
+
+```yaml
+light:
+  - platform: elero
+    name: "Wohnzimmerlicht"
+    blind_address: 0xc41a2b
+    channel: 6
+    remote_address: 0xf0d008
+    dim_duration: 5s        # Optional: 0s = nur Ein/Aus, >0 = Helligkeit steuerbar
+    payload_1: 0x00
+    payload_2: 0x04
+    pck_inf1: 0x6a
+    pck_inf2: 0x00
+    hop: 0x0a
+    command_on: 0x20
+    command_off: 0x40
+    command_dim_up: 0x20
+    command_dim_down: 0x40
+    command_stop: 0x10
+    command_check: 0x00
+```
+
+### Pflichtparameter
+
+| Parameter | Typ | Beschreibung |
+|---|---|---|
+| `name` | String | Anzeigename in Home Assistant |
+| `blind_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF-Adresse des Lichts (= `dst` im Log) |
+| `channel` | Integer (0-255) | Funkkanal des Lichts (= `chl` im Log) |
+| `remote_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF-Adresse der zu simulierenden Fernbedienung (= `src`/`bwd`/`fwd` im Log) |
+
+### Optionale Parameter
+
+| Parameter | Typ | Standard | Beschreibung |
+|---|---|---|---|
+| `dim_duration` | Zeitdauer | `0s` | Dimm-Fahrzeit von 0 % auf 100 %. `0s` = nur Ein/Aus (`ColorMode::ON_OFF`); Wert > 0 = Helligkeitssteuerung aktiv (`ColorMode::BRIGHTNESS`). |
+
+### Protokoll-Parameter
+
+Diese Werte werden aus dem Log der echten Fernbedienung ausgelesen (gleiche Bedeutung wie bei `cover`).
+
+| Parameter | Typ | Standard | Log-Feld | Beschreibung |
+|---|---|---|---|---|
+| `payload_1` | Hex (0x00-0xFF) | `0x00` | `payload[0]` | Erstes Payload-Byte |
+| `payload_2` | Hex (0x00-0xFF) | `0x04` | `payload[1]` | Zweites Payload-Byte |
+| `pck_inf1` | Hex (0x00-0xFF) | `0x6a` | `typ` | Erstes Paket-Info-Byte |
+| `pck_inf2` | Hex (0x00-0xFF) | `0x00` | `typ2` | Zweites Paket-Info-Byte |
+| `hop` | Hex (0x00-0xFF) | `0x0a` | `hop` | Hop-Zähler |
+
+### Befehls-Parameter
+
+| Parameter | Typ | Standard | Beschreibung |
+|---|---|---|---|
+| `command_on` | Hex (0x00-0xFF) | `0x20` | Befehlscode: Licht einschalten |
+| `command_off` | Hex (0x00-0xFF) | `0x40` | Befehlscode: Licht ausschalten |
+| `command_dim_up` | Hex (0x00-0xFF) | `0x20` | Befehlscode: Heller dimmen (nur wenn `dim_duration > 0`) |
+| `command_dim_down` | Hex (0x00-0xFF) | `0x40` | Befehlscode: Dunkler dimmen (nur wenn `dim_duration > 0`) |
+| `command_stop` | Hex (0x00-0xFF) | `0x10` | Befehlscode: Dimmen stoppen |
+| `command_check` | Hex (0x00-0xFF) | `0x00` | Befehlscode: Status abfragen |
+
+---
+
 ## Plattform: `sensor` (RSSI)
 
 Zeigt die Empfangsstärke (RSSI) des letzten empfangenen Pakets eines bestimmten Rollladens.
@@ -286,6 +351,14 @@ cover:
     blind_address: 0xb912f3
     channel: 5
     remote_address: 0xf0d008
+
+light:
+  - platform: elero
+    name: "Wohnzimmerlicht"
+    blind_address: 0xc41a2b
+    channel: 6
+    remote_address: 0xf0d008
+    # dim_duration: 5s  # Aktivieren für Helligkeitssteuerung
 
 sensor:
   - platform: elero

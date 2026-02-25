@@ -44,6 +44,7 @@ LightTraits EleroLight::get_traits() {
 }
 
 void EleroLight::write_state(LightState *state) {
+  if (this->ignore_write_state_) return;
   this->state_ = state;
 
   bool new_on = state->current_values.is_on();
@@ -183,11 +184,13 @@ void EleroLight::set_rx_state(uint8_t state) {
       this->is_on_ = true;
       this->brightness_ = 1.0f;
       if (this->state_ != nullptr) {
+        this->ignore_write_state_ = true;
         auto call = this->state_->make_call();
         call.set_state(true);
         if (this->dim_duration_ > 0)
           call.set_brightness(1.0f);
         call.perform();
+        this->ignore_write_state_ = false;
       }
     }
   } else if (state == ELERO_STATE_OFF) {
@@ -195,9 +198,11 @@ void EleroLight::set_rx_state(uint8_t state) {
       this->is_on_ = false;
       this->brightness_ = 0.0f;
       if (this->state_ != nullptr) {
+        this->ignore_write_state_ = true;
         auto call = this->state_->make_call();
         call.set_state(false);
         call.perform();
+        this->ignore_write_state_ = false;
       }
     }
   }
