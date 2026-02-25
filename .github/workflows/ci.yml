@@ -50,6 +50,22 @@ jobs:
           find components -name '*.cpp' -o -name '*.h' | \
             xargs clang-format-14 --dry-run --Werror
 
+  # Unit tests for protocol layer
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -S tests/unit
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
   # Python code validation
   python-lint:
     name: Python Lint
