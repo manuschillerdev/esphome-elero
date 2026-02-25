@@ -94,8 +94,9 @@ void EleroWebServer::setup() {
 
   this->base_->init();
 
-  auto *server = this->base_->get_server();
-  if (server == nullptr) {
+  // ESPHome 2025.6+ returns shared_ptr<AsyncWebServer>
+  auto server = this->base_->get_server();
+  if (!server) {
     ESP_LOGE(TAG, "Failed to get web server instance");
     this->mark_failed();
     return;
@@ -114,14 +115,16 @@ void EleroWebServer::dump_config() {
 
 // ─── Routing ──────────────────────────────────────────────────────────────────
 
-bool EleroWebServer::canHandle(AsyncWebServerRequest *request) const {
+bool EleroWebServer::canHandle(AsyncWebServerRequest *request) {
   if (!this->enabled_) return false;
-  const std::string &url = request->url();
+  // ESPHome 2025.6+: request->url() returns Arduino String, convert to std::string
+  const std::string url = request->url().c_str();
   return url == "/" || (url.size() >= 6 && url.substr(0, 6) == "/elero");
 }
 
 void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
-  const std::string url = request->url();
+  // ESPHome 2025.6+: request->url() returns Arduino String, convert to std::string
+  const std::string url = request->url().c_str();
   const auto method = request->method();
 
   if (method == HTTP_OPTIONS) { handle_options(request); return; }
