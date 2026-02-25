@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(where gh)",
-      "Bash(curl --version)",
-      "WebFetch(domain:github.com)"
-    ]
-  }
-}
