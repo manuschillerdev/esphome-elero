@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ESPHome compile tests for each platform
+  esphome-compile:
+    name: ESPHome Compile (${{ matrix.test }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - test.esp32-ard
+          - test.esp32-idf
+          - test.esp32-c3-ard
+          - test.esp32-c3-idf
+          - test.esp8266-ard
+          - test.rp2040-ard
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ESPHome
+        run: pip install esphome
+
+      - name: Compile ${{ matrix.test }}
+        run: esphome compile tests/${{ matrix.test }}.yaml
+
+  # C++ code style check
+  clang-format:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: sudo apt-get install -y clang-format-14
+
+      - name: Check C++ formatting
+        run: |
+          find components -name '*.cpp' -o -name '*.h' | \
+            xargs clang-format-14 --dry-run --Werror
+
+  # Python code validation
+  python-lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint Python files
+        run: ruff check components/
+
+      - name: Check Python formatting
+        run: ruff format --check components/
