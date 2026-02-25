@@ -275,8 +275,10 @@ void EleroCover::start_movement(CoverOperation dir) {
       }
     break;
     case COVER_OPERATION_IDLE:
-      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
-        this->commands_to_send_.push(this->command_stop_);
+      // Clear any pending movement commands so STOP is sent immediately
+      while (!this->commands_to_send_.empty())
+        this->commands_to_send_.pop();
+      this->commands_to_send_.push(this->command_stop_);
     break;
   }
 

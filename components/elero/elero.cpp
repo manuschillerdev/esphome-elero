@@ -55,7 +55,7 @@ void Elero::loop() {
       cmd.hop = rb.hop;
       cmd.payload[0] = rb.payload_1;
       cmd.payload[1] = rb.payload_2;
-      cmd.payload[8] = cmd_byte;
+      cmd.payload[4] = cmd_byte;
       if (this->send_command(&cmd)) {
         rb.command_queue.pop();
         rb.cmd_counter++;
