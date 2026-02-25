@@ -97,14 +97,17 @@ TEST_F(ProtocolTest, AddR20_KnownValue) {
   buffer[1] = 0x00;
   add_r20_to_nibbles(buffer, 0xFE, 0, 2);
 
-  // First byte: 0x00 + 0xFE (nibble-wise) = 0xFE
-  EXPECT_EQ(buffer[0], 0xEE);  // low nibble: 0+E=E, high nibble: 0+F=F -> but masked
-  // Actually: ln = (0 + 0xE) & 0xF = 0xE, hn = (0 + 0xF0) & 0xFF = 0xF0 -> 0xFE
-  // Wait, let me recalculate: d=0, r20=0xFE
+  // d=0, r20=0xFE
   // ln = (0 + 0xFE) & 0x0F = 0x0E
   // hn = ((0 & 0xF0) + (0xFE & 0xF0)) & 0xFF = (0 + 0xF0) & 0xFF = 0xF0
   // result = 0xF0 | 0x0E = 0xFE
-  // Hmm, my test expectation was wrong. Let me fix it.
+  EXPECT_EQ(buffer[0], 0xFE);
+
+  // Second byte: r20 becomes (0xFE - 0x22) & 0xFF = 0xDC
+  // ln = (0 + 0xDC) & 0x0F = 0x0C
+  // hn = ((0 & 0xF0) + (0xDC & 0xF0)) & 0xFF = 0xD0
+  // result = 0xD0 | 0x0C = 0xDC
+  EXPECT_EQ(buffer[1], 0xDC);
 }
 
 // ============================================================================
