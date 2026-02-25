@@ -1,0 +1,34 @@
+# ESPHome compile test: ESP32 with ESP-IDF framework
+substitutions:
+  spi_clk: GPIO18
+  spi_mosi: GPIO23
+  spi_miso: GPIO19
+  spi_cs: GPIO5
+  gdo0_pin: GPIO26
+
+esphome:
+  name: test-esp32-idf
+  friendly_name: Test ESP32 IDF
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+packages:
+  common: !include common.yaml
+
+# Web UI test (ESP32 IDF supports web_server_base)
+web_server_base:
+  port: 80
+
+elero_web:
+  id: elero_web_ui
+
+switch:
+  - platform: elero_web
+    name: "Test Web UI Switch"
+    restore_mode: RESTORE_DEFAULT_ON
