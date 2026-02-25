@@ -10,6 +10,13 @@
 namespace esphome {
 namespace elero {
 
+/// Direction of dimming operation for EleroLight brightness control.
+enum class DimDirection : uint8_t {
+  NONE,  ///< Not currently dimming
+  UP,    ///< Dimming towards higher brightness
+  DOWN   ///< Dimming towards lower brightness
+};
+
 class EleroLight : public light::LightOutput, public Component, public EleroLightBase {
  public:
   void setup() override;
@@ -59,8 +66,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   float brightness_{0.0f};
   float target_brightness_{0.0f};
   bool is_on_{false};
-  bool is_dimming_{false};
-  bool dim_up_{true};
+  DimDirection dim_direction_{DimDirection::NONE};  ///< Current dimming direction (NONE = not dimming)
   uint32_t dimming_start_{0};
   uint32_t last_recompute_time_{0};
   uint32_t last_publish_{0};

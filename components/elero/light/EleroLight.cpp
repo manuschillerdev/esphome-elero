@@ -53,7 +53,7 @@ void EleroLight::write_state(LightState *state) {
   if (!new_on) {
     this->sender_.enqueue(this->command_off_);
     this->is_on_ = false;
-    this->is_dimming_ = false;
+    this->dim_direction_ = DimDirection::NONE;
     this->brightness_ = 0.0f;
     return;
   }
@@ -70,7 +70,7 @@ void EleroLight::write_state(LightState *state) {
 
   // Brightness control via timing
   this->target_brightness_ = new_brightness;
-  this->is_dimming_ = false;
+  this->dim_direction_ = DimDirection::NONE;
 
   if (new_brightness >= 1.0f) {
     // Full brightness shortcut
@@ -90,16 +90,14 @@ void EleroLight::write_state(LightState *state) {
     ESP_LOGD(TAG, "Dimming up 0x%06x from %.2f to %.2f", this->sender_.command().blind_addr, this->brightness_,
              new_brightness);
     this->sender_.enqueue(this->command_dim_up_);
-    this->is_dimming_ = true;
-    this->dim_up_ = true;
+    this->dim_direction_ = DimDirection::UP;
     this->dimming_start_ = millis();
     this->last_recompute_time_ = millis();
   } else if (new_brightness < this->brightness_ - 0.01f) {
     ESP_LOGD(TAG, "Dimming down 0x%06x from %.2f to %.2f", this->sender_.command().blind_addr, this->brightness_,
              new_brightness);
     this->sender_.enqueue(this->command_dim_down_);
-    this->is_dimming_ = true;
-    this->dim_up_ = false;
+    this->dim_direction_ = DimDirection::DOWN;
     this->dimming_start_ = millis();
     this->last_recompute_time_ = millis();
   }
@@ -111,11 +109,11 @@ void EleroLight::loop() {
 
   this->sender_.process_queue(now, this->parent_, TAG);
 
-  if (this->is_dimming_ && this->dim_duration_ > 0) {
+  if (this->dim_direction_ != DimDirection::NONE && this->dim_duration_ > 0) {
     this->recompute_brightness();
 
     bool at_target;
-    if (this->dim_up_) {
+    if (this->dim_direction_ == DimDirection::UP) {
       at_target = this->brightness_ >= this->target_brightness_;
     } else {
       at_target = this->brightness_ <= this->target_brightness_;
@@ -124,7 +122,7 @@ void EleroLight::loop() {
     if (at_target) {
       this->sender_.enqueue(this->command_stop_);
       this->brightness_ = this->target_brightness_;
-      this->is_dimming_ = false;
+      this->dim_direction_ = DimDirection::NONE;
     }
 
     // Publish estimated brightness every second while dimming
@@ -139,12 +137,12 @@ void EleroLight::loop() {
 void EleroLight::schedule_immediate_poll() { this->sender_.enqueue(this->command_check_); }
 
 void EleroLight::recompute_brightness() {
-  if (!this->is_dimming_)
+  if (this->dim_direction_ == DimDirection::NONE)
     return;
 
   const uint32_t now = millis();
-  float dir = this->dim_up_ ? 1.0f : -1.0f;
-  this->brightness_ += dir * (float) (now - this->last_recompute_time_) / (float) this->dim_duration_;
+  float dir = (this->dim_direction_ == DimDirection::UP) ? 1.0f : -1.0f;
+  this->brightness_ += dir * static_cast<float>(now - this->last_recompute_time_) / static_cast<float>(this->dim_duration_);
   this->brightness_ = clamp(this->brightness_, 0.0f, 1.0f);
   this->last_recompute_time_ = now;
 }
