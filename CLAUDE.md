@@ -28,6 +28,9 @@ external_components:
 - Remote handling: [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3)
 - Based on the no-longer-maintained [andyboeh/esphome-elero](https://github.com/pfriedrich84/esphome-elero)
 
+**Available skills:**
+- `/elero-protocol` — Complete RF protocol reference (packet structure, encryption, commands, state constants)
+
 ---
 
 ## Repository Structure
