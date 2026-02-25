@@ -1,4 +1,5 @@
 #include "elero.h"
+#include "elero_protocol.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -15,8 +16,6 @@ namespace esphome {
 namespace elero {
 
 static const char *TAG = "elero";
-static constexpr uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
-static constexpr uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
 
 // ─── SpiTransaction RAII Implementation ───────────────────────────────────
 SpiTransaction::SpiTransaction(Elero *device) : device_(device) {
@@ -49,6 +48,14 @@ const char *elero_state_to_string(uint8_t state) {
 }
 
 void Elero::loop() {
+  const uint32_t now = millis();
+
+  // Progress TX state machine (non-blocking, must run every loop)
+  if (this->tx_ctx_.state != TxState::IDLE) {
+    this->handle_tx_state_(now);
+    return;  // Don't process RX while TX is in progress
+  }
+
   // Drain command queues for runtime-adopted blinds
   for (auto &entry : this->runtime_blinds_) {
     auto &rb = entry.second;
@@ -73,9 +80,8 @@ void Elero::loop() {
     }
   }
 
-  if(this->received_) {
+  if(this->received_.exchange(false, std::memory_order_acq_rel)) {
     ESP_LOGVV(TAG, "loop says \"received\"");
-    this->received_ = false;
     uint8_t len = this->read_status(CC1101_RXBYTES);
     if(len & 0x80) { // overflow - FIFO data unreliable
       ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
@@ -117,7 +123,7 @@ void IRAM_ATTR Elero::interrupt(Elero *arg) {
 }
 
 void IRAM_ATTR Elero::set_received() {
-  this->received_ = true;
+  this->received_.store(true, std::memory_order_release);
 }
 
 void Elero::dump_config() {
@@ -137,7 +143,7 @@ void Elero::setup() {
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
-  this->received_ = false;
+  this->received_.store(false, std::memory_order_relaxed);
   this->freq2_ = freq2;
   this->freq1_ = freq1;
   this->freq0_ = freq0;
@@ -153,7 +159,7 @@ void Elero::flush_and_rx() {
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SFTX);
   this->write_cmd(CC1101_SRX);
-  this->received_ = false;
+  this->received_.store(false, std::memory_order_relaxed);
 }
 
 void Elero::reset() {
@@ -309,7 +315,7 @@ bool Elero::wait_tx_done() {
   ESP_LOGVV(TAG, "wait_tx_done");
   uint8_t timeout = 200;
 
-  while((!this->received_) && (--timeout != 0)) {
+  while((!this->received_.load(std::memory_order_acquire)) && (--timeout != 0)) {
     delay_microseconds_safe(200);
   }
 
@@ -349,7 +355,7 @@ bool Elero::transmit() {
 
   // Clear received_ so wait_tx_done() waits for the actual TX-end GDO0
   // falling edge, not a stale flag left over from a previously received packet.
-  this->received_ = false;
+  this->received_.store(false, std::memory_order_relaxed);
 
   // Trigger TX — no CCA check when issuing STX from IDLE state
   if (!this->write_cmd(CC1101_STX)) {
@@ -376,6 +382,141 @@ bool Elero::transmit() {
   ESP_LOGV(TAG, "Transmission successful");
   this->flush_and_rx();  // return chip to clean RX state and clear received_
   return true;
+}
+
+// ─── Non-blocking TX State Machine ─────────────────────────────────────────
+
+void Elero::abort_tx_() {
+  ESP_LOGW(TAG, "TX aborted in state %d", static_cast<int>(this->tx_ctx_.state));
+  this->tx_ctx_.state = TxState::IDLE;
+  this->tx_pending_success_ = false;
+  this->flush_and_rx();
+}
+
+bool Elero::start_transmit() {
+  if (this->tx_ctx_.state != TxState::IDLE) {
+    return false;  // Already transmitting
+  }
+
+  ESP_LOGVV(TAG, "start_transmit called for %d data bytes", this->msg_tx_[0]);
+
+  // Begin state machine: go to IDLE first
+  this->tx_ctx_.state = TxState::GOTO_IDLE;
+  this->tx_ctx_.state_enter_time = millis();
+  this->tx_pending_success_ = false;
+
+  // Send SIDLE command
+  if (!this->write_cmd(CC1101_SIDLE)) {
+    this->abort_tx_();
+    return false;
+  }
+
+  return true;
+}
+
+bool Elero::poll_tx_result() {
+  if (this->tx_ctx_.state != TxState::IDLE) {
+    return false;  // Still in progress
+  }
+  return this->tx_pending_success_;
+}
+
+void Elero::handle_tx_state_(uint32_t now) {
+  if (this->tx_ctx_.state == TxState::IDLE) {
+    return;
+  }
+
+  uint32_t elapsed = now - this->tx_ctx_.state_enter_time;
+  uint8_t marcstate;
+
+  switch (this->tx_ctx_.state) {
+    case TxState::GOTO_IDLE:
+      marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      if (marcstate == CC1101_MARCSTATE_IDLE) {
+        // Transition to FLUSH_TX
+        if (!this->write_cmd(CC1101_SFTX)) {
+          this->abort_tx_();
+          return;
+        }
+        this->tx_ctx_.state = TxState::FLUSH_TX;
+        this->tx_ctx_.state_enter_time = now;
+      } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
+        ESP_LOGE(TAG, "TX timeout in GOTO_IDLE, marcstate=0x%02x", marcstate);
+        this->abort_tx_();
+      }
+      break;
+
+    case TxState::FLUSH_TX:
+      // Brief settling time after SFTX (millis() has 1ms resolution)
+      if (elapsed >= 1) {
+        // Load TX FIFO
+        if (!this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1)) {
+          this->abort_tx_();
+          return;
+        }
+        this->tx_ctx_.state = TxState::LOAD_FIFO;
+        this->tx_ctx_.state_enter_time = now;
+      }
+      break;
+
+    case TxState::LOAD_FIFO:
+      // Clear received_ so we can detect TX-end interrupt
+      this->received_.store(false, std::memory_order_relaxed);
+      // Trigger TX
+      if (!this->write_cmd(CC1101_STX)) {
+        this->abort_tx_();
+        return;
+      }
+      this->tx_ctx_.state = TxState::TRIGGER_TX;
+      this->tx_ctx_.state_enter_time = now;
+      break;
+
+    case TxState::TRIGGER_TX:
+      marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      if (marcstate == CC1101_MARCSTATE_TX) {
+        this->tx_ctx_.state = TxState::WAIT_TX_DONE;
+        this->tx_ctx_.state_enter_time = now;
+      } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
+        ESP_LOGE(TAG, "TX timeout in TRIGGER_TX, marcstate=0x%02x", marcstate);
+        this->abort_tx_();
+      }
+      break;
+
+    case TxState::WAIT_TX_DONE:
+      if (this->received_.load(std::memory_order_acquire)) {
+        // GDO0 interrupt fired - TX complete
+        this->tx_ctx_.state = TxState::VERIFY_DONE;
+        this->tx_ctx_.state_enter_time = now;
+      } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
+        ESP_LOGE(TAG, "TX timeout in WAIT_TX_DONE");
+        this->abort_tx_();
+      }
+      break;
+
+    case TxState::VERIFY_DONE: {
+      uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
+      if (bytes != 0) {
+        ESP_LOGE(TAG, "TX error: %d bytes left in FIFO", bytes);
+        this->abort_tx_();
+        return;
+      }
+      ESP_LOGV(TAG, "TX successful (async)");
+      this->tx_ctx_.state = TxState::RETURN_RX;
+      this->tx_ctx_.state_enter_time = now;
+      break;
+    }
+
+    case TxState::RETURN_RX:
+      // Return to RX state
+      this->flush_and_rx();
+      this->tx_pending_success_ = true;
+      this->tx_ctx_.state = TxState::IDLE;
+      break;
+
+    default:
+      this->abort_tx_();
+      break;
+  }
 }
 
 uint8_t Elero::read_reg(uint8_t addr, bool *ok) {
@@ -420,147 +561,6 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
     }
   }  // CS released here
   delay_microseconds_safe(15);
-}
-
-uint8_t Elero::count_bits(uint8_t byte)
-{
-  uint8_t i;
-  uint8_t ones = 0;
-  uint8_t mask = 1;
-
-  for( i = 0; i < 8; i++ )
-  {
-    if( mask & byte )
-    {
-      ones += 1;
-    }
-
-    mask <<= 1;
-  }
-
-  return ones & 0x01;
-}
-
-
-void Elero::calc_parity(uint8_t* msg)
-{
-  uint8_t i;
-  uint8_t p = 0;
-
-  for( i = 0; i < 4; i++ )
-  {
-    uint8_t a = count_bits( msg[0 + i*2] );
-    uint8_t b = count_bits( msg[1 + i*2] );
-
-    p |= a ^ b;
-    p <<= 1;
-  }
-
-  msg[7] = (p << 3);
-}
-
-void Elero::add_r20_to_nibbles(uint8_t* msg, uint8_t r20, uint8_t start, uint8_t length)
-{
-  uint8_t i;
-
-  for( i = start; i < length; i++ )
-  {
-    uint8_t d = msg[i];
-
-    uint8_t ln = (d + r20) & 0x0F;
-    uint8_t hn = ((d & 0xF0) + (r20 & 0xF0)) & 0xFF;
-
-    msg[i] = hn | ln;
-
-    r20 = (r20 - 0x22) & 0xFF;
-  }
-}
-
-void Elero::sub_r20_from_nibbles(uint8_t* msg, uint8_t r20, uint8_t start, uint8_t length)
-{
-  uint8_t i;
-
-  for(i = start; i < length; i++)
-  {
-    uint8_t d = msg[i];
-
-    uint8_t ln = (d - r20) & 0x0F;
-    uint8_t hn = ((d & 0xF0) - (r20 & 0xF0)) & 0xFF;
-
-    msg[i] = hn | ln;
-
-    r20 = (r20 - 0x22) & 0xFF;
-  }
-}
-
-void Elero::xor_2byte_in_array_encode(uint8_t* msg, uint8_t xor0, uint8_t xor1)
-{
-  uint8_t i;
-
-  for( i = 1; i < 4; i++ )
-  {
-    msg[i*2 + 0] = msg[i*2 + 0] ^ xor0;
-    msg[i*2 + 1] = msg[i*2 + 1] ^ xor1;
-  }
-}
-
-void Elero::xor_2byte_in_array_decode(uint8_t* msg, uint8_t xor0, uint8_t xor1)
-{
-  uint8_t i;
-
-  for( i = 0; i < 4; i++ )
-  {
-    msg[i*2 + 0] = msg[i*2 + 0] ^ xor0;
-    msg[i*2 + 1] = msg[i*2 + 1] ^ xor1;
-  }
-}
-
-void Elero::encode_nibbles(uint8_t* msg)
-{
-  uint8_t i;
-
-  for( i = 0; i < 8; i++ )
-  {
-    uint8_t nh = (msg[i] >> 4) & 0x0F;
-    uint8_t nl = msg[i] & 0x0F;
-
-    uint8_t dh = flash_table_encode[nh];
-    uint8_t dl = flash_table_encode[nl];
-
-    msg[i] = ((dh << 4) & 0xFF) | ((dl) & 0xFF);
-  }
-}
-
-void Elero::decode_nibbles(uint8_t* msg, uint8_t len)
-{
-  uint8_t i;
-
-  for( i = 0; i < len; i++ )
-  {
-    uint8_t nh = (msg[i] >> 4) & 0x0F;
-    uint8_t nl = msg[i] & 0x0F;
-
-    uint8_t dh = flash_table_decode[nh];
-    uint8_t dl = flash_table_decode[nl];
-
-    msg[i] = ((dh << 4) & 0xFF) | ((dl) & 0xFF);
-  }
-}
-
-void Elero::msg_decode(uint8_t *msg) {
-  decode_nibbles(msg, 8);
-  sub_r20_from_nibbles(msg, 0xFE, 0, 2);
-  xor_2byte_in_array_decode(msg, msg[0], msg[1]);
-  sub_r20_from_nibbles(msg, 0xBA, 2, 8);
-}
-
-void Elero::msg_encode(uint8_t* msg) {
-  uint8_t xor0 = msg[0];
-  uint8_t xor1 = msg[1];
-  calc_parity(msg);
-  add_r20_to_nibbles(msg, 0xFE, 0, 8);
-  xor_2byte_in_array_encode(msg, xor0, xor1);
-  encode_nibbles(msg);
 }
 
 void Elero::interpret_msg() {
@@ -653,7 +653,7 @@ void Elero::interpret_msg() {
     rssi = static_cast<float>(rssi_raw) / ELERO_RSSI_DIVISOR + ELERO_RSSI_OFFSET;
   }
   uint8_t *payload = &this->msg_rx_[19 + dests_len];
-  msg_decode(payload);
+  protocol::msg_decode(payload);
   if (this->packet_dump_pending_update_) {
     this->mark_last_raw_packet_(true, nullptr);
     this->packet_dump_pending_update_ = false;
@@ -931,7 +931,7 @@ bool Elero::send_command(t_elero_command *cmd) {
   this->msg_tx_[23] = (code & 0xff);
 
   uint8_t *payload = &this->msg_tx_[22];
-  msg_encode(payload);
+  protocol::msg_encode(payload);
 
   ESP_LOGV(TAG, "send: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%02x%02x%02x, bwd=0x%02x%02x%02x, fwd=0x%02x%02x%02x, #dst=%02d, dst=0x%02x%02x%02x, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2], this->msg_tx_[3], this->msg_tx_[4], this->msg_tx_[5], this->msg_tx_[6], this->msg_tx_[7], this->msg_tx_[8], this->msg_tx_[9], this->msg_tx_[10], this->msg_tx_[11], this->msg_tx_[12], this->msg_tx_[13], this->msg_tx_[14], this->msg_tx_[15], this->msg_tx_[16], this->msg_tx_[17], this->msg_tx_[18], this->msg_tx_[19], this->msg_tx_[20], this->msg_tx_[21], this->msg_tx_[22], this->msg_tx_[23], this->msg_tx_[24], this->msg_tx_[25], this->msg_tx_[26], this->msg_tx_[27], this->msg_tx_[28], this->msg_tx_[29]);
   return transmit();

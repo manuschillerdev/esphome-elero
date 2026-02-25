@@ -107,6 +107,24 @@ constexpr uint8_t ELERO_RSSI_SIGN_BIT = 127;      // Sign bit threshold (values 
 constexpr int8_t ELERO_RSSI_OFFSET = -74;         // Constant offset applied in RSSI calculation
 constexpr int ELERO_RSSI_DIVISOR = 2;             // Divisor for raw RSSI value
 
+// ─── TX State Machine ────────────────────────────────────────────────────────
+enum class TxState : uint8_t {
+  IDLE,           // Not transmitting
+  GOTO_IDLE,      // Sent SIDLE, waiting for MARCSTATE_IDLE
+  FLUSH_TX,       // Sent SFTX, brief settling
+  LOAD_FIFO,      // Loaded TX FIFO, preparing STX
+  TRIGGER_TX,     // Sent STX, waiting for MARCSTATE_TX
+  WAIT_TX_DONE,   // TX in progress, waiting for GDO0 interrupt
+  VERIFY_DONE,    // Checking TXBYTES == 0
+  RETURN_RX,      // Returning to RX state
+};
+
+struct TxContext {
+  TxState state{TxState::IDLE};
+  uint32_t state_enter_time{0};
+  static constexpr uint32_t STATE_TIMEOUT_MS = 50;
+};
+
 typedef struct {
   uint8_t counter;
   uint32_t blind_addr;
@@ -253,10 +271,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   [[nodiscard]] bool wait_idle();
   [[nodiscard]] bool transmit();
   uint8_t read_reg(uint8_t addr, bool *ok = nullptr);
-  uint8_t read_status(uint8_t addr);
+  [[nodiscard]] uint8_t read_status(uint8_t addr);
   void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
   void flush_and_rx();
   void interpret_msg();
+
+  // Non-blocking TX state machine
+  [[nodiscard]] bool start_transmit();       // Begin async TX, returns true if started
+  bool is_tx_busy() const { return tx_ctx_.state != TxState::IDLE; }
+  [[nodiscard]] bool poll_tx_result();       // Check if TX completed, get result
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
   [[nodiscard]] bool send_command(t_elero_command *cmd);
@@ -322,24 +345,18 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t get_freq2() const { return freq2_; }
 
  private:
-  uint8_t count_bits(uint8_t byte);
-  void calc_parity(uint8_t* msg);
-  void add_r20_to_nibbles(uint8_t* msg, uint8_t r20, uint8_t start, uint8_t length);
-  void sub_r20_from_nibbles(uint8_t* msg, uint8_t r20, uint8_t start, uint8_t length);
-  void xor_2byte_in_array_encode(uint8_t* msg, uint8_t xor0, uint8_t xor1);
-  void xor_2byte_in_array_decode(uint8_t* msg, uint8_t xor0, uint8_t xor1);
-  void encode_nibbles(uint8_t* msg);
-  void decode_nibbles(uint8_t* msg, uint8_t len);
-  void msg_decode(uint8_t *msg);
-  void msg_encode(uint8_t* msg);
   void track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel,
                               uint8_t pck_inf0, uint8_t pck_inf1, uint8_t hop,
                               uint8_t payload_1, uint8_t payload_2,
                               float rssi, uint8_t state, bool from_command);
   void capture_raw_packet_(uint8_t fifo_len);
   void mark_last_raw_packet_(bool valid, const char *reason);
+  void handle_tx_state_(uint32_t now);       // Progress TX state machine
+  void abort_tx_();                          // Abort TX and return to RX
 
   std::atomic<bool> received_{false};
+  TxContext tx_ctx_;
+  bool tx_pending_success_{false};
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
   uint8_t freq0_{0x7a};
