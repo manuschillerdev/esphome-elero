@@ -15,8 +15,17 @@ namespace esphome {
 namespace elero {
 
 static const char *TAG = "elero";
-static const uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
-static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
+static constexpr uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
+static constexpr uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
+
+// ─── SpiTransaction RAII Implementation ───────────────────────────────────
+SpiTransaction::SpiTransaction(Elero *device) : device_(device) {
+  device_->enable();
+}
+
+SpiTransaction::~SpiTransaction() {
+  device_->disable();
+}
 
 const char *elero_state_to_string(uint8_t state) {
   switch (state) {
@@ -205,10 +214,12 @@ void Elero::init() {
 }
 
 bool Elero::write_reg(uint8_t addr, uint8_t data) {
-  this->enable();
-  uint8_t status = this->transfer_byte(addr);
-  this->write_byte(data);
-  this->disable();
+  uint8_t status;
+  {
+    SpiTransaction txn(this);
+    status = this->transfer_byte(addr);
+    this->write_byte(data);
+  }  // CS released here
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors (bits 6:4 indicate state, bit 7 is RXFIFO overflow)
@@ -220,12 +231,14 @@ bool Elero::write_reg(uint8_t addr, uint8_t data) {
 }
 
 bool Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
-  this->enable();
-  uint8_t status = this->transfer_byte(addr | CC1101_WRITE_BURST);
-  for (int i = 0; i < len; i++) {
-    this->write_byte(data[i]);
-  }
-  this->disable();
+  uint8_t status;
+  {
+    SpiTransaction txn(this);
+    status = this->transfer_byte(addr | CC1101_WRITE_BURST);
+    for (int i = 0; i < len; i++) {
+      this->write_byte(data[i]);
+    }
+  }  // CS released here
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors
@@ -237,9 +250,11 @@ bool Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
 }
 
 bool Elero::write_cmd(uint8_t cmd) {
-  this->enable();
-  uint8_t status = this->transfer_byte(cmd);
-  this->disable();
+  uint8_t status;
+  {
+    SpiTransaction txn(this);
+    status = this->transfer_byte(cmd);
+  }  // CS released here
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors
@@ -310,25 +325,37 @@ bool Elero::transmit() {
   // Go to IDLE first so the subsequent STX is not subject to CCA.
   // (STX from RX with MCSM1 CCA_MODE=3 requires a clear channel, which
   // fails when Elero motors are actively transmitting status replies.)
-  this->write_cmd(CC1101_SIDLE);
+  if (!this->write_cmd(CC1101_SIDLE)) {
+    this->flush_and_rx();
+    return false;
+  }
   if (!this->wait_idle()) {
     this->flush_and_rx();
     return false;
   }
 
   // Flush TX FIFO before loading new data (required from IDLE state)
-  this->write_cmd(CC1101_SFTX);
+  if (!this->write_cmd(CC1101_SFTX)) {
+    this->flush_and_rx();
+    return false;
+  }
   delay_microseconds_safe(100);
 
   // Load TX FIFO
-  this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
+  if (!this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1)) {
+    this->flush_and_rx();
+    return false;
+  }
 
   // Clear received_ so wait_tx_done() waits for the actual TX-end GDO0
   // falling edge, not a stale flag left over from a previously received packet.
   this->received_ = false;
 
   // Trigger TX — no CCA check when issuing STX from IDLE state
-  this->write_cmd(CC1101_STX);
+  if (!this->write_cmd(CC1101_STX)) {
+    this->flush_and_rx();
+    return false;
+  }
 
   if (!this->wait_tx()) {
     this->flush_and_rx();
@@ -352,10 +379,13 @@ bool Elero::transmit() {
 }
 
 uint8_t Elero::read_reg(uint8_t addr, bool *ok) {
-  this->enable();
-  uint8_t status = this->transfer_byte(addr | CC1101_READ_SINGLE);
-  uint8_t data = this->read_byte();
-  this->disable();
+  uint8_t status;
+  uint8_t data;
+  {
+    SpiTransaction txn(this);
+    status = this->transfer_byte(addr | CC1101_READ_SINGLE);
+    data = this->read_byte();
+  }  // CS released here
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors
@@ -372,21 +402,23 @@ uint8_t Elero::read_reg(uint8_t addr, bool *ok) {
 
 uint8_t Elero::read_status(uint8_t addr) {
   uint8_t data;
-
-  this->enable();
-  this->write_byte(addr | CC1101_READ_BURST);
-  data = this->read_byte();
-  this->disable();
+  {
+    SpiTransaction txn(this);
+    this->write_byte(addr | CC1101_READ_BURST);
+    data = this->read_byte();
+  }  // CS released here
   delay_microseconds_safe(15);
   return data;
 }
 
 void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
-  this->enable();
-  this->write_byte(addr | CC1101_READ_BURST);
-  for(uint8_t i=0; i<len; i++)
-    buf[i] = this->read_byte();
-  this->disable();
+  {
+    SpiTransaction txn(this);
+    this->write_byte(addr | CC1101_READ_BURST);
+    for (uint8_t i = 0; i < len; i++) {
+      buf[i] = this->read_byte();
+    }
+  }  // CS released here
   delay_microseconds_safe(15);
 }
 

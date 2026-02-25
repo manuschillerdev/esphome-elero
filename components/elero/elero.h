@@ -29,56 +29,83 @@ class TextSensor;
 
 namespace elero {
 
-static const uint8_t ELERO_COMMAND_COVER_CONTROL = 0x6a;
-static const uint8_t ELERO_COMMAND_COVER_CHECK = 0x00;
-static const uint8_t ELERO_COMMAND_COVER_STOP = 0x10;
-static const uint8_t ELERO_COMMAND_COVER_UP = 0x20;
-static const uint8_t ELERO_COMMAND_COVER_TILT = 0x24;
-static const uint8_t ELERO_COMMAND_COVER_DOWN = 0x40;
-static const uint8_t ELERO_COMMAND_COVER_INT = 0x44;
+// ─── RF Command Bytes ─────────────────────────────────────────────────────
+constexpr uint8_t ELERO_COMMAND_COVER_CONTROL = 0x6a;
+constexpr uint8_t ELERO_COMMAND_COVER_CHECK = 0x00;
+constexpr uint8_t ELERO_COMMAND_COVER_STOP = 0x10;
+constexpr uint8_t ELERO_COMMAND_COVER_UP = 0x20;
+constexpr uint8_t ELERO_COMMAND_COVER_TILT = 0x24;
+constexpr uint8_t ELERO_COMMAND_COVER_DOWN = 0x40;
+constexpr uint8_t ELERO_COMMAND_COVER_INT = 0x44;
 
-static const uint8_t ELERO_STATE_UNKNOWN = 0x00;
-static const uint8_t ELERO_STATE_TOP = 0x01;
-static const uint8_t ELERO_STATE_BOTTOM = 0x02;
-static const uint8_t ELERO_STATE_INTERMEDIATE = 0x03;
-static const uint8_t ELERO_STATE_TILT = 0x04;
-static const uint8_t ELERO_STATE_BLOCKING = 0x05;
-static const uint8_t ELERO_STATE_OVERHEATED = 0x06;
-static const uint8_t ELERO_STATE_TIMEOUT = 0x07;
-static const uint8_t ELERO_STATE_START_MOVING_UP = 0x08;
-static const uint8_t ELERO_STATE_START_MOVING_DOWN = 0x09;
-static const uint8_t ELERO_STATE_MOVING_UP = 0x0a;
-static const uint8_t ELERO_STATE_MOVING_DOWN = 0x0b;
-static const uint8_t ELERO_STATE_STOPPED = 0x0d;
-static const uint8_t ELERO_STATE_TOP_TILT = 0x0e;
-static const uint8_t ELERO_STATE_BOTTOM_TILT = 0x0f;
-static const uint8_t ELERO_STATE_OFF = 0x0f;
-static const uint8_t ELERO_STATE_ON = 0x10;
+// ─── RF State Values ──────────────────────────────────────────────────────
+// State byte received in payload[6] of CA/C9 status response packets.
+//
+// Cover state mapping (EleroCover::set_rx_state):
+//   ELERO_STATE_TOP              → position=1.0, operation=IDLE
+//   ELERO_STATE_BOTTOM           → position=0.0, operation=IDLE
+//   ELERO_STATE_INTERMEDIATE     → position=unchanged, operation=IDLE
+//   ELERO_STATE_TILT             → tilt=1.0, operation=IDLE
+//   ELERO_STATE_TOP_TILT         → position=1.0, tilt=1.0, operation=IDLE
+//   ELERO_STATE_BOTTOM_TILT      → position=0.0, tilt=1.0, operation=IDLE
+//   ELERO_STATE_START_MOVING_UP  → operation=OPENING
+//   ELERO_STATE_MOVING_UP        → operation=OPENING
+//   ELERO_STATE_START_MOVING_DOWN→ operation=CLOSING
+//   ELERO_STATE_MOVING_DOWN      → operation=CLOSING
+//   ELERO_STATE_STOPPED          → operation=IDLE
+//   ELERO_STATE_BLOCKING         → operation=IDLE (logs warning)
+//   ELERO_STATE_OVERHEATED       → operation=IDLE (logs warning)
+//   ELERO_STATE_TIMEOUT          → operation=IDLE (logs warning)
+//
+// Light state mapping (EleroLight::set_rx_state):
+//   ELERO_STATE_ON               → is_on=true, brightness=1.0
+//   ELERO_STATE_OFF              → is_on=false, brightness=0.0
+//
+constexpr uint8_t ELERO_STATE_UNKNOWN = 0x00;
+constexpr uint8_t ELERO_STATE_TOP = 0x01;
+constexpr uint8_t ELERO_STATE_BOTTOM = 0x02;
+constexpr uint8_t ELERO_STATE_INTERMEDIATE = 0x03;
+constexpr uint8_t ELERO_STATE_TILT = 0x04;
+constexpr uint8_t ELERO_STATE_BLOCKING = 0x05;
+constexpr uint8_t ELERO_STATE_OVERHEATED = 0x06;
+constexpr uint8_t ELERO_STATE_TIMEOUT = 0x07;
+constexpr uint8_t ELERO_STATE_START_MOVING_UP = 0x08;
+constexpr uint8_t ELERO_STATE_START_MOVING_DOWN = 0x09;
+constexpr uint8_t ELERO_STATE_MOVING_UP = 0x0a;
+constexpr uint8_t ELERO_STATE_MOVING_DOWN = 0x0b;
+constexpr uint8_t ELERO_STATE_STOPPED = 0x0d;
+constexpr uint8_t ELERO_STATE_TOP_TILT = 0x0e;
+constexpr uint8_t ELERO_STATE_BOTTOM_TILT = 0x0f;
+constexpr uint8_t ELERO_STATE_OFF = 0x0f;
+constexpr uint8_t ELERO_STATE_ON = 0x10;
 
-static const uint8_t ELERO_MAX_PACKET_SIZE = 57; // according to FCC documents
+// ─── Protocol Limits ──────────────────────────────────────────────────────
+constexpr uint8_t ELERO_MAX_PACKET_SIZE = 57;  // according to FCC documents
 
-static const uint32_t ELERO_POLL_INTERVAL_MOVING = 2000;  // poll every two seconds while moving
-static const uint32_t ELERO_DELAY_SEND_PACKETS = 50; // 50ms send delay between repeats
-static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two minutes while moving
+// ─── Timing Constants ─────────────────────────────────────────────────────
+constexpr uint32_t ELERO_POLL_INTERVAL_MOVING = 2000;   // poll every two seconds while moving
+constexpr uint32_t ELERO_DELAY_SEND_PACKETS = 50;       // 50ms send delay between repeats
+constexpr uint32_t ELERO_TIMEOUT_MOVEMENT = 120000;     // poll for up to two minutes while moving
 
-static const uint8_t ELERO_SEND_RETRIES = 3;
-static const uint8_t ELERO_SEND_PACKETS = 2;
-static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
+// ─── Queue/Buffer Limits ──────────────────────────────────────────────────
+constexpr uint8_t ELERO_SEND_RETRIES = 3;
+constexpr uint8_t ELERO_SEND_PACKETS = 2;
+constexpr uint8_t ELERO_MAX_COMMAND_QUEUE = 10;   // max commands per blind to prevent OOM
+constexpr uint8_t ELERO_MAX_DISCOVERED = 20;      // max discovered blinds to track
+constexpr uint8_t ELERO_MAX_RAW_PACKETS = 50;     // max raw packets in dump ring buffer
 
-static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to track
-static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
+// ─── RF Protocol Encoding/Encryption Constants ────────────────────────────
+constexpr uint8_t ELERO_MSG_LENGTH = 0x1d;        // Fixed message length for TX
+constexpr uint16_t ELERO_CRYPTO_MULT = 0x708f;    // Encryption multiplier for counter-based code
+constexpr uint16_t ELERO_CRYPTO_MASK = 0xffff;    // Mask for 16-bit encryption code
+constexpr uint8_t ELERO_SYS_ADDR = 0x01;          // System address in protocol
+constexpr uint8_t ELERO_DEST_COUNT = 0x01;        // Destination count in command
 
-// RF protocol encoding/encryption constants (Elero protocol)
-static const uint8_t ELERO_MSG_LENGTH = 0x1d;             // Fixed message length for TX
-static const uint16_t ELERO_CRYPTO_MULT = 0x708f;         // Encryption multiplier for counter-based code
-static const uint16_t ELERO_CRYPTO_MASK = 0xffff;         // Mask for 16-bit encryption code
-static const uint8_t ELERO_SYS_ADDR = 0x01;               // System address in protocol
-static const uint8_t ELERO_DEST_COUNT = 0x01;             // Destination count in command
-
-// RSSI (CC1101 transceiver) constants: RSSI is in dBm, raw value is two's complement encoded
-static const uint8_t ELERO_RSSI_SIGN_BIT = 127;           // Sign bit threshold (values > 127 are negative)
-static const int8_t ELERO_RSSI_OFFSET = -74;              // Constant offset applied in RSSI calculation
-static const int ELERO_RSSI_DIVISOR = 2;                  // Divisor for raw RSSI value
+// ─── RSSI Calculation Constants ───────────────────────────────────────────
+// CC1101 RSSI is in dBm, raw value is two's complement encoded
+constexpr uint8_t ELERO_RSSI_SIGN_BIT = 127;      // Sign bit threshold (values > 127 are negative)
+constexpr int8_t ELERO_RSSI_OFFSET = -74;         // Constant offset applied in RSSI calculation
+constexpr int ELERO_RSSI_DIVISOR = 2;             // Divisor for raw RSSI value
 
 typedef struct {
   uint8_t counter;
@@ -187,6 +214,21 @@ class EleroBlindBase {
                                       uint32_t poll_intvl_ms) = 0;
 };
 
+class Elero;  // Forward declaration for SpiTransaction
+
+/// RAII guard for SPI transactions. Calls enable() on construction and
+/// disable() on destruction, ensuring CS is always released even on early return.
+class SpiTransaction {
+ public:
+  explicit SpiTransaction(Elero *device);
+  ~SpiTransaction();
+  SpiTransaction(const SpiTransaction &) = delete;
+  SpiTransaction &operator=(const SpiTransaction &) = delete;
+
+ private:
+  Elero *device_;
+};
+
 class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
                                     spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ>,
                                     public Component {
@@ -200,14 +242,16 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   float get_setup_priority() const override { return setup_priority::DATA; }
   void reset();
   void init();
-  bool write_reg(uint8_t addr, uint8_t data);
-  bool write_burst(uint8_t addr, uint8_t *data, uint8_t len);
-  bool write_cmd(uint8_t cmd);
-  bool wait_rx();
-  bool wait_tx();
-  bool wait_tx_done();
-  bool wait_idle();
-  bool transmit();
+
+  // SPI communication methods — return false on CC1101 RXFIFO overflow
+  [[nodiscard]] bool write_reg(uint8_t addr, uint8_t data);
+  [[nodiscard]] bool write_burst(uint8_t addr, uint8_t *data, uint8_t len);
+  [[nodiscard]] bool write_cmd(uint8_t cmd);
+  [[nodiscard]] bool wait_rx();
+  [[nodiscard]] bool wait_tx();
+  [[nodiscard]] bool wait_tx_done();
+  [[nodiscard]] bool wait_idle();
+  [[nodiscard]] bool transmit();
   uint8_t read_reg(uint8_t addr, bool *ok = nullptr);
   uint8_t read_status(uint8_t addr);
   void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
@@ -215,7 +259,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void interpret_msg();
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
-  bool send_command(t_elero_command *cmd);
+  [[nodiscard]] bool send_command(t_elero_command *cmd);
 
 #ifdef USE_SENSOR
   void register_rssi_sensor(uint32_t address, sensor::Sensor *sensor);
