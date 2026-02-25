@@ -22,6 +22,15 @@ cover:
     open_duration: 25s
     close_duration: 22s
 
+# Light - Elero light receiver (on/off or dimmable)
+light:
+  - platform: elero
+    blind_address: 0xc41a2b
+    channel: 6
+    remote_address: 0xf0d008
+    name: "Wohnzimmerlicht"
+    # dim_duration: 5s    # Uncomment for brightness/dimming support
+
 # RSSI sensor - reports signal strength for a specific blind
 sensor:
   - platform: elero
