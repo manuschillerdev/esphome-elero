@@ -146,6 +146,10 @@ class EleroLightBase {
   virtual void set_rx_state(uint8_t state) = 0;
   virtual void notify_rx_meta(uint32_t ms, float rssi) {}
   virtual void enqueue_command(uint8_t cmd_byte) = 0;
+  /// Called by the hub when a remote command packet (0x6a/0x69) targets this
+  /// device, so it can poll the blind immediately instead of waiting for the
+  /// normal poll interval.  Default no-op; concrete classes override.
+  virtual void schedule_immediate_poll() {}
 };
 
 /// Abstract base class for blinds registered with the Elero hub.
@@ -174,6 +178,10 @@ class EleroBlindBase {
   virtual bool get_supports_tilt() const = 0;
   // Web API commands
   virtual void enqueue_command(uint8_t cmd_byte) = 0;
+  /// Called by the hub when a remote command packet (0x6a/0x69) targets this
+  /// blind, so it can poll the blind immediately instead of waiting for the
+  /// normal poll interval.  Default no-op; concrete classes override.
+  virtual void schedule_immediate_poll() {}
   virtual void apply_runtime_settings(uint32_t open_dur_ms,
                                       uint32_t close_dur_ms,
                                       uint32_t poll_intvl_ms) = 0;

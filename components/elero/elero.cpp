@@ -689,6 +689,31 @@ void Elero::interpret_msg() {
       rb_it->second.last_seen_ms = millis();
       rb_it->second.last_rssi = rssi;
     }
+
+    // Remote command packets (0x6a/0x69): src = remote addr, dst = blind addr(s).
+    // Trigger an immediate status poll on each configured blind/light that is
+    // targeted, so HA state updates within ~50 ms instead of waiting for the
+    // normal poll interval.
+    if ((typ == 0x6a) || (typ == 0x69)) {
+      for (uint8_t i = 0; i < num_dests; i++) {
+        uint32_t dest_addr;
+        if (typ > 0x60) {  // 3-byte addressing
+          dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) |
+                      ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
+                      this->msg_rx_[19 + i * 3];
+        } else {            // 1-byte addressing
+          dest_addr = this->msg_rx_[17 + i];
+        }
+        auto c_it = this->address_to_cover_mapping_.find(dest_addr);
+        if (c_it != this->address_to_cover_mapping_.end()) {
+          c_it->second->schedule_immediate_poll();
+        }
+        auto l_it = this->address_to_light_mapping_.find(dest_addr);
+        if (l_it != this->address_to_light_mapping_.end()) {
+          l_it->second->schedule_immediate_poll();
+        }
+      }
+    }
   }
 }
 

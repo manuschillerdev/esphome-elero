@@ -164,6 +164,12 @@ void EleroLight::handle_commands(uint32_t now) {
   }
 }
 
+void EleroLight::schedule_immediate_poll() {
+  if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+    this->commands_to_send_.push(this->command_check_);
+  }
+}
+
 void EleroLight::recompute_brightness() {
   if (!this->is_dimming_)
     return;

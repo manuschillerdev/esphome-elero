@@ -69,6 +69,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
     this->poll_intvl_ = poll_intvl_ms;
   }
 
+  void schedule_immediate_poll() override;
   void handle_commands(uint32_t now);
   void recompute_position();
   void start_movement(cover::CoverOperation op);

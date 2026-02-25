@@ -28,6 +28,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
     this->last_rssi_ = rssi;
   }
   void enqueue_command(uint8_t cmd_byte) override { this->commands_to_send_.push(cmd_byte); }
+  void schedule_immediate_poll() override;
 
   // RF parameter setters
   void set_elero_parent(Elero *parent) { this->parent_ = parent; }

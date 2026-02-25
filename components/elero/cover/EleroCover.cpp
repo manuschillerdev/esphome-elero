@@ -291,6 +291,12 @@ void EleroCover::start_movement(CoverOperation dir) {
   this->publish_state();
 }
 
+void EleroCover::schedule_immediate_poll() {
+  if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+    this->commands_to_send_.push(this->command_check_);
+  }
+}
+
 void EleroCover::recompute_position() {
   if(this->current_operation == COVER_OPERATION_IDLE)
     return;
