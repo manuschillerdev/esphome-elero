@@ -200,15 +200,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   float get_setup_priority() const override { return setup_priority::DATA; }
   void reset();
   void init();
-  void write_reg(uint8_t addr, uint8_t data);
-  void write_burst(uint8_t addr, uint8_t *data, uint8_t len);
-  void write_cmd(uint8_t cmd);
+  bool write_reg(uint8_t addr, uint8_t data);
+  bool write_burst(uint8_t addr, uint8_t *data, uint8_t len);
+  bool write_cmd(uint8_t cmd);
   bool wait_rx();
   bool wait_tx();
   bool wait_tx_done();
   bool wait_idle();
   bool transmit();
-  uint8_t read_reg(uint8_t addr);
+  uint8_t read_reg(uint8_t addr, bool *ok = nullptr);
   uint8_t read_status(uint8_t addr);
   void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
   void flush_and_rx();

@@ -204,31 +204,50 @@ void Elero::init() {
   this->wait_rx();
 }
 
-void Elero::write_reg(uint8_t addr, uint8_t data) {
+bool Elero::write_reg(uint8_t addr, uint8_t data) {
   this->enable();
-  this->write_byte(addr);
+  uint8_t status = this->transfer_byte(addr);
   this->write_byte(data);
   this->disable();
   delay_microseconds_safe(15);
-  // TODO: Add error handling - verify SPI transaction success, handle timeout/CRC errors
+
+  // Check CC1101 status byte for FIFO errors (bits 6:4 indicate state, bit 7 is RXFIFO overflow)
+  if (status & 0x80) {
+    ESP_LOGW(TAG, "SPI write_reg 0x%02x: CC1101 RXFIFO overflow detected", addr);
+    return false;
+  }
+  return true;
 }
 
-void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
+bool Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
   this->enable();
-  this->write_byte(addr | CC1101_WRITE_BURST);
-  for(int i=0; i<len; i++)
+  uint8_t status = this->transfer_byte(addr | CC1101_WRITE_BURST);
+  for (int i = 0; i < len; i++) {
     this->write_byte(data[i]);
+  }
   this->disable();
   delay_microseconds_safe(15);
-  // TODO: Add error handling - verify all bytes written, handle partial writes
+
+  // Check CC1101 status byte for FIFO errors
+  if (status & 0x80) {
+    ESP_LOGW(TAG, "SPI write_burst 0x%02x (%d bytes): CC1101 RXFIFO overflow detected", addr, len);
+    return false;
+  }
+  return true;
 }
 
-void Elero::write_cmd(uint8_t cmd) {
+bool Elero::write_cmd(uint8_t cmd) {
   this->enable();
-  this->write_byte(cmd);
+  uint8_t status = this->transfer_byte(cmd);
   this->disable();
   delay_microseconds_safe(15);
-  // TODO: Add error handling - verify command accepted by CC1101
+
+  // Check CC1101 status byte for FIFO errors
+  if (status & 0x80) {
+    ESP_LOGW(TAG, "SPI write_cmd 0x%02x: CC1101 RXFIFO overflow detected", cmd);
+    return false;
+  }
+  return true;
 }
 
 bool Elero::wait_rx() {
@@ -332,15 +351,22 @@ bool Elero::transmit() {
   return true;
 }
 
-uint8_t Elero::read_reg(uint8_t addr) {
-  uint8_t data;
-
+uint8_t Elero::read_reg(uint8_t addr, bool *ok) {
   this->enable();
-  this->write_byte(addr | CC1101_READ_SINGLE);
-  data = this->read_byte();
+  uint8_t status = this->transfer_byte(addr | CC1101_READ_SINGLE);
+  uint8_t data = this->read_byte();
   this->disable();
   delay_microseconds_safe(15);
-  // TODO: Add error handling - validate returned data, detect SPI communication failures
+
+  // Check CC1101 status byte for FIFO errors
+  if (status & 0x80) {
+    ESP_LOGW(TAG, "SPI read_reg 0x%02x: CC1101 RXFIFO overflow detected", addr);
+    if (ok != nullptr) {
+      *ok = false;
+    }
+  } else if (ok != nullptr) {
+    *ok = true;
+  }
   return data;
 }
 
