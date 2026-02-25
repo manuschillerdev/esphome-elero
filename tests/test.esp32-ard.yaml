@@ -18,12 +18,17 @@ esp32:
 logger:
   level: DEBUG
 
+# Wifi required for web_server_base
+wifi:
+  ssid: "test-network"
+  password: "test-password"
+
 packages:
   common: !include common.yaml
 
 # Web UI test (ESP32 Arduino supports web_server_base)
+# web_server_base port is configured in web_server component
 web_server_base:
-  port: 80
 
 elero_web:
   id: elero_web_ui
