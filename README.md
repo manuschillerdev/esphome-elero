@@ -148,7 +148,9 @@ spi:
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
-  # Frequenz-Register anpassen falls nötig (Standard: 868 MHz)
+  # Frequenz-Register anpassen falls nötig
+  # Standard-Einstellung für 868.35 MHz: freq0: 0x7a, freq1: 0x71, freq2: 0x21
+  # Alternative für 868.95 MHz (falls keine Pakete empfangen): freq0: 0xc0, freq1: 0x71, freq2: 0x21
   # freq0: 0x7a
   # freq1: 0x71
   # freq2: 0x21
@@ -549,6 +551,19 @@ Danach ist die Oberflaeche unter `http://<device-ip>/elero` erreichbar. Funktion
 
 Die Web-UI bietet zudem eine REST-API unter `/elero/api/*` mit CORS-Unterstuetzung fuer Cross-Origin-Zugriff.
 
+#### Web-UI zur Laufzeit deaktivieren
+
+Optional kann die Web-UI zur Laufzeit über einen Switch aktiviert/deaktiviert werden:
+
+```yaml
+switch:
+  - platform: elero_web
+    name: "Elero Web UI"
+    restore_mode: RESTORE_DEFAULT_ON
+```
+
+Wenn der Switch ausgeschaltet ist, antworten alle `/elero`-Endpoints mit HTTP 503. Dies ist nützlich, um unerwünschten Zugriff zu blockieren, ohne die Komponente neu zu flashen.
+
 ---
 
 ## Home Assistant Integration
@@ -584,13 +599,16 @@ entities:
 ### Kein Log-Output beim Drücken der Fernbedienung
 
 - **Verkabelung prüfen**: Alle SPI-Pins korrekt angeschlossen?
-- **Frequenz anpassen**: Manche CC1101-Module brauchen andere FREQ-Werte.
-  Versuche `freq0: 0xc0` statt dem Standard `0x7a`:
+- **Frequenz testen**: Europäische Elero-Module verwenden meist 868 MHz, aber es gibt zwei gängige Varianten:
+  - **Standard (868.35 MHz):** `freq0: 0x7a, freq1: 0x71, freq2: 0x21` ← **versuche zuerst diese**
+  - **Alternative (868.95 MHz):** `freq0: 0xc0, freq1: 0x71, freq2: 0x21` ← falls obige nicht funktioniert
+
+  Beispiel:
   ```yaml
   elero:
     cs_pin: GPIO5
     gdo0_pin: GPIO26
-    freq0: 0xc0    # statt 0x7a
+    freq0: 0xc0    # Alternative wenn Standard nicht funktioniert
     freq1: 0x71
     freq2: 0x21
   ```

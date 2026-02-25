@@ -86,11 +86,14 @@ esphome-elero/
 ```
 Elero (hub, SPIDevice + Component)
 ├── EleroBlindBase (abstract interface)
-│   └── EleroCover (cover::Cover + Component + EleroBlindBase)
+│   ├── EleroCover (cover::Cover + Component + EleroBlindBase)
+│   └── EleroLight (light::LightOutput + Component + EleroBlindBase)
 ├── EleroScanButton (button::Button + Component)
 ├── sensor::Sensor (RSSI, registered per blind address)
 ├── text_sensor::TextSensor (status, registered per blind address)
-└── EleroWebServer (Component, wraps web_server_base)
+├── EleroWebServer (Component, wraps web_server_base)
+│   └── EleroWebSwitch (switch::Switch + Component)
+└── Auto-registered sensors/text sensors per cover (optional)
 ```
 
 The `EleroBlindBase` abstract class decouples the hub (`Elero`) from the cover implementation so `elero.h` never needs to `#include` the cover header. All communication between hub and covers goes through virtual methods.
@@ -143,18 +146,83 @@ Key behaviors:
 - Tracks cover `position` (0.0–1.0) by dead-reckoning against `open_duration_` / `close_duration_` timestamps
 - Supports tilt as a separate operation via `command_tilt_`
 - Staggered poll offsets (`poll_offset_`) prevent all covers from polling simultaneously
+- Auto-generates RSSI and status text sensors unless `auto_sensors: false` is set
 
-### `components/elero/elero_web_server.h` / `elero_web_server.cpp`
+### `components/elero/light/EleroLight.h` / `EleroLight.cpp`
 
-REST endpoints served at `/elero`:
+**Class:** `EleroLight : public light::LightOutput, public Component, public EleroBlindBase`
+
+Key behaviors:
+- Implements on/off and brightness control for Elero wireless lights (dimmers)
+- `dim_duration` parameter controls brightness range: `0s` = on/off only, `>0` = brightness control
+- Shares the same RF protocol and command structure as covers
+- Supports optional status checking via `command_check`
+
+### `components/elero_web/elero_web_server.h` / `elero_web_server.cpp`
+
+**Class:** `EleroWebServer : public Component`
+**Optional sub-platform:** `EleroWebSwitch : public switch::Switch, public Component`
+
+Key behaviors:
+- Hosts the web UI at `http://<device-ip>/elero`
+- Exposes REST API for RF scanning, blind discovery, control, and runtime diagnostics
+- `EleroWebSwitch` allows runtime enable/disable of all `/elero` endpoints (returns 503 when disabled)
+
+### REST API Endpoints
+
+All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 response is returned if the optional `elero_web` switch is disabled.
+
+**Core endpoints:**
 
 | Endpoint | Method | Description |
 |---|---|---|
+| `/` | GET | Redirect to `/elero` |
 | `/elero` | GET | HTML web UI |
-| `/elero/scan/start` | GET | Start RF discovery scan |
-| `/elero/scan/stop` | GET | Stop RF discovery scan |
-| `/elero/blinds` | GET | JSON array of discovered blinds |
-| `/elero/blinds/yaml` | GET | YAML snippet ready to paste into ESPHome config |
+| `/elero/api/scan/start` | POST | Start RF discovery scan |
+| `/elero/api/scan/stop` | POST | Stop RF discovery scan |
+| `/elero/api/discovered` | GET | JSON array of discovered blinds |
+| `/elero/api/configured` | GET | JSON array of configured covers with current state |
+| `/elero/api/yaml` | GET | YAML snippet ready to paste into ESPHome config |
+| `/elero/api/info` | GET | Device info (version, discovery count, etc.) |
+| `/elero/api/runtime` | GET | Runtime status (scan active, blinds count, etc.) |
+
+**Cover/Light control (requires address):**
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/elero/api/covers/0xADDRESS/command` | POST | Send command to cover/light (body: `{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
+| `/elero/api/covers/0xADDRESS/settings` | POST | Update cover settings at runtime (body: JSON with timing/poll settings) |
+| `/elero/api/discovered/0xADDRESS/adopt` | POST | Adopt a discovered blind into configured covers |
+
+**Diagnostics:**
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/elero/api/frequency` | GET | Current CC1101 frequency settings |
+| `/elero/api/frequency/set` | POST | Update CC1101 frequency (body: `{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
+| `/elero/api/logs` | GET | Recent log entries (supports `since` query parameter) |
+| `/elero/api/logs/clear` | POST | Clear captured logs |
+| `/elero/api/logs/capture/start` | POST | Start capturing logs |
+| `/elero/api/logs/capture/stop` | POST | Stop capturing logs |
+| `/elero/api/dump/start` | POST | Start RF packet dump |
+| `/elero/api/dump/stop` | POST | Stop RF packet dump |
+| `/elero/api/packets` | GET | Recent captured RF packets |
+| `/elero/api/packets/clear` | POST | Clear captured packets |
+
+**Web UI state (elero_web switch sub-platform):**
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/elero/api/ui/status` | GET | Get web UI enabled/disabled state |
+| `/elero/api/ui/enable` | POST | Enable/disable web UI (body: `{"enabled": true\|false}`) |
+
+**HTTP Error Codes:**
+
+| Code | Meaning |
+|---|---|
+| 200 | Success |
+| 409 | Conflict (e.g., trying to start scan when one is already running) |
+| 503 | Service Unavailable (returned when web UI is disabled via switch) |
 
 ---
 
@@ -227,10 +295,25 @@ Optional parameters (with defaults):
 - `poll_interval` (default `5min`, or `never`) — how often to query blind status
 - `open_duration` / `close_duration` (default `0s`) — enables position tracking
 - `supports_tilt` (default `false`)
+- `auto_sensors` (default `true`) — auto-generate RSSI and status text sensors for this cover
 - `payload_1` (default `0x00`), `payload_2` (default `0x04`)
 - `pck_inf1` (default `0x6a`), `pck_inf2` (default `0x00`)
 - `hop` (default `0x0a`)
 - `command_up/down/stop/check/tilt` — override RF command bytes if non-standard
+
+### Light (`light: platform: elero`)
+
+Required parameters:
+- `blind_address` — 3-byte hex address of the light receiver (e.g., `0xc41a2b`)
+- `channel` — RF channel number of the light
+- `remote_address` — 3-byte hex address of the remote control paired with the light
+
+Optional parameters (with defaults):
+- `dim_duration` (default `0s`) — time for dimming from 0% to 100%; `0s` = on/off only, `>0` = brightness control
+- `payload_1` (default `0x00`), `payload_2` (default `0x04`)
+- `pck_inf1` (default `0x6a`), `pck_inf2` (default `0x00`)
+- `hop` (default `0x0a`)
+- `command_on/off/dim_up/dim_down/stop/check` — override RF command bytes if non-standard
 
 ### Sensors
 
@@ -258,7 +341,7 @@ button:
     scan_start: false
 ```
 
-### Web UI
+### Web UI (`elero_web`)
 
 ```yaml
 # Use web_server_base (not web_server) to keep only the /elero UI
@@ -272,6 +355,19 @@ elero_web:
 ```
 
 Navigating to `http://<device-ip>/` will redirect to `/elero` automatically.
+
+### Web UI Switch (`switch: platform: elero_web`)
+
+Optional runtime control to enable/disable the web UI:
+
+```yaml
+switch:
+  - platform: elero_web
+    name: "Elero Web UI"
+    restore_mode: RESTORE_DEFAULT_ON
+```
+
+When the switch is OFF, all `/elero` endpoints return HTTP 503 (Service Unavailable).
 
 ---
 

@@ -76,10 +76,11 @@ cover:
 
 | Parameter | Typ | Standard | Beschreibung |
 |---|---|---|---|
-| `open_duration` | Zeitdauer | `0s` | Fahrzeit zum vollständigen Öffnen. Wird für die zeitbasierte Positionssteuerung benötigt. |
-| `close_duration` | Zeitdauer | `0s` | Fahrzeit zum vollständigen Schließen. Wird für die zeitbasierte Positionssteuerung benötigt. |
+| `open_duration` | Zeitdauer | `0s` | Fahrzeit zum vollständigen Öffnen. Wird für die zeitbasierte Positionssteuerung benötigt. Wenn gesetzt, muss auch `close_duration` gesetzt werden. |
+| `close_duration` | Zeitdauer | `0s` | Fahrzeit zum vollständigen Schließen. Wird für die zeitbasierte Positionssteuerung benötigt. Wenn gesetzt, muss auch `open_duration` gesetzt werden. |
 | `poll_interval` | Zeitdauer / `never` | `5min` | Intervall für Status-Abfragen. `never` deaktiviert das Polling. |
 | `supports_tilt` | Boolean | `false` | Aktiviert Tilt/Kipp-Unterstützung (z.B. für Raffstore). |
+| `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI- und Status-Sensoren für diesen Rollladen. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
 
 ### Protokoll-Parameter
 
@@ -292,14 +293,51 @@ elero_web:
 
 **REST-API Endpoints:**
 
+Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
+
+**Kern-Endpoints:**
+
 | Endpoint | Methode | Beschreibung |
 |---|---|---|
+| `/` | GET | Weiterleitung zu `/elero` |
 | `/elero` | GET | Web-UI (HTML) |
 | `/elero/api/scan/start` | POST | RF-Scan starten |
 | `/elero/api/scan/stop` | POST | RF-Scan stoppen |
 | `/elero/api/discovered` | GET | Gefundene Geraete (JSON) |
-| `/elero/api/configured` | GET | Konfigurierte Covers (JSON) |
+| `/elero/api/configured` | GET | Konfigurierte Covers mit aktuellem Status (JSON) |
 | `/elero/api/yaml` | GET | YAML-Export fuer entdeckte Blinds |
+| `/elero/api/info` | GET | Geraete-Informationen (Version, Entdeckungen, etc.) |
+| `/elero/api/runtime` | GET | Laufzeitstatus (Scan aktiv, Blind-Anzahl, etc.) |
+
+**Rollladen-/Licht-Steuerung (erfordert Adresse):**
+
+| Endpoint | Methode | Beschreibung |
+|---|---|---|
+| `/elero/api/covers/0xADDRESS/command` | POST | Befehl an Rollladen/Licht senden (Body: `{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
+| `/elero/api/covers/0xADDRESS/settings` | POST | Einstellungen des Rollladens zur Laufzeit aendern (Body: JSON mit Timing/Poll-Einstellungen) |
+| `/elero/api/discovered/0xADDRESS/adopt` | POST | Entdeckten Rollladen in konfigurierte Covers aufnehmen |
+
+**Diagnose-Endpoints:**
+
+| Endpoint | Methode | Beschreibung |
+|---|---|---|
+| `/elero/api/frequency` | GET | Aktuelle CC1101-Frequenzeinstellungen |
+| `/elero/api/frequency/set` | POST | CC1101-Frequenz aendern (Body: `{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
+| `/elero/api/logs` | GET | Aktuelle Log-Eintraege (unterstützt `since`-Query-Parameter) |
+| `/elero/api/logs/clear` | POST | Erfasste Logs loeschen |
+| `/elero/api/logs/capture/start` | POST | Log-Erfassung starten |
+| `/elero/api/logs/capture/stop` | POST | Log-Erfassung beenden |
+| `/elero/api/dump/start` | POST | RF-Paket-Dump starten |
+| `/elero/api/dump/stop` | POST | RF-Paket-Dump beenden |
+| `/elero/api/packets` | GET | Erfasste RF-Pakete |
+| `/elero/api/packets/clear` | POST | Erfasste Pakete loeschen |
+
+**Web-UI-Zustand (elero_web switch Sub-Plattform):**
+
+| Endpoint | Methode | Beschreibung |
+|---|---|---|
+| `/elero/api/ui/status` | GET | Web-UI aktiviert/deaktiviert Status abrufen |
+| `/elero/api/ui/enable` | POST | Web-UI aktivieren/deaktivieren (Body: `{"enabled": true\|false}`) |
 
 **HTTP-Fehlercodes:**
 
@@ -307,6 +345,7 @@ elero_web:
 |---|---|---|
 | 200 | OK | Erfolgreiche Anfrage |
 | 409 | Conflict | Scan starten wenn bereits laeuft, oder Scan stoppen wenn keiner laeuft |
+| 503 | Service Unavailable | Wenn Web-UI via Switch deaktiviert ist |
 
 Fehlerantworten werden als JSON zurueckgegeben: `{"error": "Beschreibung"}`
 
@@ -317,6 +356,30 @@ Alle API-Endpoints unterstuetzen Cross-Origin-Zugriff (CORS):
 - `Access-Control-Allow-Methods: GET, POST, OPTIONS`
 - `Access-Control-Allow-Headers: Content-Type`
 - Preflight-Requests (OPTIONS) werden auf allen API-Endpoints unterstuetzt
+
+---
+
+## Plattform: `switch` (Web-UI-Steuerung)
+
+Optionale Runtime-Steuerung zum Aktivieren/Deaktivieren der Web-UI. Wenn deaktiviert, antworten alle `/elero`-Endpoints mit HTTP 503.
+
+```yaml
+switch:
+  - platform: elero_web
+    name: "Elero Web UI"
+    id: elero_web_switch
+    restore_mode: RESTORE_DEFAULT_ON
+```
+
+| Parameter | Typ | Pflicht | Standard | Beschreibung |
+|---|---|---|---|---|
+| `name` | String | Ja | - | Anzeigename in Home Assistant |
+| `id` | String | Nein | `elero_web_switch` | Eindeutige Komponenten-ID |
+| `restore_mode` | Enum | Nein | `RESTORE_DEFAULT_ON` | `RESTORE_DEFAULT_ON` oder `RESTORE_DEFAULT_OFF` |
+
+**Voraussetzungen:**
+- `elero_web` muss in der Konfiguration vorhanden sein
+- Dieser Switch ist optional; wenn nicht vorhanden, ist die Web-UI immer aktiv
 
 ---
 
@@ -384,10 +447,17 @@ button:
     name: "Elero Stop Scan"
     scan_start: false
 
-# Web UI for discovery and YAML export
-web_server:
+# Web UI for discovery and YAML export (do NOT use web_server: — use web_server_base: instead)
+web_server_base:
+  port: 80
 
 elero_web:
+
+# Optional: Runtime control to disable/enable the web UI
+switch:
+  - platform: elero_web
+    name: "Elero Web UI"
+    restore_mode: RESTORE_DEFAULT_ON
 ```
 
 Siehe auch: [Installationsanleitung](INSTALLATION.md) | [README](../README.md) | [Beispiel-YAML](../example.yaml)
