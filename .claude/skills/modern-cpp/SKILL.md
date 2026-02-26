@@ -5,9 +5,11 @@ description: C++17 best practices for ESP32/embedded, aligned with Google C++ St
 
 # Modern C++ for ESP32 (C++17)
 
-Guidelines for safe, efficient embedded C++ code based on the Google C++ Style Guide.
+Guidelines for safe, efficient embedded C++ code based on the Google C++ Style Guide, adapted for ESP32/embedded conventions.
 
 **Source:** [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html)
+
+**C++ Version:** C++17 is fully supported on ESP-IDF 4.x+ and Arduino-ESP32 2.x+. See [Tooling](#tooling) section for build configuration.
 
 ---
 
@@ -19,12 +21,14 @@ Guidelines for safe, efficient embedded C++ code based on the Google C++ Style G
 | Variables | snake_case | `table_name`, `num_entries` |
 | Class data members | trailing `_` | `table_name_`, `count_` |
 | Struct data members | no trailing `_` | `x`, `y` |
-| Constants | k + PascalCase | `kMaxRetries`, `kTimeoutMs` |
+| Constants | UPPER_SNAKE with prefix | `ELERO_MAX_RETRIES` |
 | Functions | PascalCase | `ReadSensor()`, `ProcessData()` |
 | Accessors/mutators | snake_case | `count()`, `set_count()` |
 | Namespaces | snake_case | `esphome::elero` |
 | Macros | UPPER_SNAKE with prefix | `ELERO_MAX_SIZE` |
-| Enumerators | k + PascalCase | `kIdle`, `kRunning` |
+| Enumerators | PascalCase or UPPER_SNAKE | `kIdle`, `STATE_IDLE` |
+
+**Note on constants**: Google style uses `kPascalCase`, but ESP-IDF, ESPHome, and Arduino all use `UPPER_SNAKE_CASE` for constants. Follow ecosystem conventions for embedded code.
 
 ```cpp
 class SensorReader {
@@ -32,11 +36,11 @@ class SensorReader {
   void UpdateReading();
   int reading() const { return reading_; }
  private:
-  static constexpr int kMaxRetries = 3;
+  static constexpr int MAX_RETRIES = 3;
   int reading_{0};
 };
 
-enum class State : uint8_t { kIdle, kRunning, kError };
+enum class State : uint8_t { IDLE, RUNNING, ERROR };
 ```
 
 ---
@@ -63,7 +67,7 @@ ESP32/embedded code doesn't use exceptions. Use return values instead.
 [[nodiscard]] bool WriteRegister(uint8_t addr, uint8_t val);
 [[nodiscard]] std::optional<Data> Parse(std::string_view input);
 
-enum class Status { kOk, kInvalidArg, kTimeout };
+enum class Status { OK, INVALID_ARG, TIMEOUT };
 [[nodiscard]] Status Initialize();
 ```
 
@@ -75,14 +79,14 @@ Use `[[nodiscard]]` on functions where ignoring the return value is likely a bug
 
 ```cpp
 // Good: Compile-time constants
-constexpr int kMaxRetries = 3;
-constexpr uint32_t kTimeoutMs = 5000;
-inline constexpr uint8_t kEncodeTable[] = {0x08, 0x02, 0x0d};  // Header-only
+constexpr int MAX_RETRIES = 3;
+constexpr uint32_t TIMEOUT_MS = 5000;
+inline constexpr uint8_t ENCODE_TABLE[] = {0x08, 0x02, 0x0d};  // Header-only
 
 // Avoid
-#define MAX_SIZE 100              // Use constexpr
-const int kMax = ComputeMax();    // Runtime init - use constexpr if possible
-static const uint8_t kTable[] = {...};  // Creates copy per TU - use inline
+#define MAX_SIZE 100                // Use constexpr
+const int MAX = ComputeMax();       // Runtime init - use constexpr if possible
+static const uint8_t TABLE[] = {};  // Creates copy per TU - use inline
 ```
 
 ---
@@ -252,9 +256,9 @@ int value() const { return value_; }      // const methods
 ### Switch
 ```cpp
 switch (state) {
-  case State::kIdle:
+  case State::IDLE:
     break;
-  case State::kRunning:
+  case State::RUNNING:
     [[fallthrough]];  // Explicit fallthrough
   default:
     break;
@@ -263,7 +267,7 @@ switch (state) {
 
 ### Scoped Enums
 ```cpp
-enum class State : uint8_t { kIdle, kRunning };  // Not: enum State { IDLE }
+enum class State : uint8_t { IDLE, RUNNING };  // Not: enum State { ... }
 ```
 
 ### Casting
@@ -283,10 +287,10 @@ static_cast<int>(x);  // Not: (int)x
 ### Inline Variables (C++17)
 ```cpp
 // Good: Single copy in flash
-inline constexpr uint8_t kTable[] = {0x08, 0x02};
+inline constexpr uint8_t ENCODE_TABLE[] = {0x08, 0x02};
 
 // Bad: Copy per translation unit
-static const uint8_t kTable[] = {0x08, 0x02};
+static const uint8_t ENCODE_TABLE[] = {0x08, 0x02};
 ```
 
 ### Forward Declarations
@@ -303,6 +307,100 @@ Use when only pointers/references needed to reduce compile dependencies.
 
 ---
 
+## Tooling
+
+### Compiler Warnings
+
+The compiler is your primary type checker. Use strict flags:
+
+```bash
+# Baseline (always use)
+-Wall -Wextra -Wpedantic
+
+# Recommended additions
+-Wshadow                 # Variable shadowing
+-Wconversion             # Implicit type conversions
+-Wsign-conversion        # Signed/unsigned mismatches
+-Wnull-dereference       # Null pointer dereference
+-Wold-style-cast         # C-style casts
+-Woverloaded-virtual     # Hiding virtual functions
+-Wformat=2               # Format string issues
+-Wdouble-promotion       # Float promoted to double
+
+# For CI/strict builds
+-Werror                  # Treat warnings as errors
+```
+
+### ESP32/ESPHome Configuration
+
+Arduino framework defaults to C++11. Override for C++17:
+
+```yaml
+# ESPHome YAML
+esphome:
+  platformio_options:
+    build_unflags: -std=gnu++11
+    build_flags:
+      - -std=gnu++17
+      - -Wall
+      - -Wextra
+```
+
+```ini
+# platformio.ini
+build_unflags = -std=gnu++11
+build_flags =
+  -std=gnu++17
+  -Wall -Wextra -Wshadow -Wconversion
+```
+
+### Static Analysis
+
+| Tool | Usage |
+|------|-------|
+| **clang-tidy** | Gold standard linter. Use `.clang-tidy` config file |
+| **cppcheck** | Fast, good for CI: `cppcheck --enable=all src/` |
+
+Example `.clang-tidy`:
+```yaml
+Checks: >
+  -*,
+  bugprone-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  -modernize-use-trailing-return-type,
+  -readability-magic-numbers
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*'
+```
+
+Run: `clang-tidy src/*.cpp -- -std=c++17 -I include/`
+
+### Formatting
+
+Use **clang-format** with a `.clang-format` file:
+
+```yaml
+# .clang-format (Google-based for ESP32)
+BasedOnStyle: Google
+IndentWidth: 2
+ColumnLimit: 100
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+```
+
+Run: `clang-format -i src/*.cpp include/*.h`
+
+### IDE Integration
+
+- **VS Code**: clangd extension (provides clang-tidy + format)
+- **CLion**: Built-in clang-tidy and clang-format support
+- **PlatformIO IDE**: Basic integration available
+
+---
+
 ## Anti-Patterns
 
 | Avoid | Prefer |
@@ -310,7 +408,7 @@ Use when only pointers/references needed to reduce compile dependencies.
 | `new`/`delete` | Smart pointers, containers |
 | `(int)x` | `static_cast<int>(x)` |
 | `NULL` | `nullptr` |
-| `#define CONST 5` | `constexpr int kConst = 5` |
+| `#define CONST 5` | `constexpr int CONST = 5` |
 | `typedef` | `using Alias = Type` |
 | `int arr[N]` | `std::array<int, N>` |
 | Output parameters | Return values |
