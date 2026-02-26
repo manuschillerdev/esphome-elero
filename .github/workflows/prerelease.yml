@@ -1,0 +1,98 @@
+name: Pre-Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  prerelease:
+    name: Create Pre-Release
+    runs-on: ubuntu-latest
+    # Only allow from dev branch
+    if: github.ref == 'refs/heads/dev'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest release version
+        id: latest
+        run: |
+          # Get latest release tag, default to 0.0.0 if none exists
+          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          LATEST=${LATEST#v}  # Remove 'v' prefix
+          echo "version=$LATEST" >> $GITHUB_OUTPUT
+          echo "Latest release: $LATEST"
+
+      - name: Calculate next version
+        id: next
+        run: |
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${{ steps.latest.outputs.version }}"
+
+          # Handle pre-release suffix in patch (e.g., 1.2.3-rc.1 -> extract 3)
+          PATCH=${PATCH%%-*}
+
+          case "${{ inputs.version_bump }}" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          # Generate pre-release version with timestamp
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          VERSION="${MAJOR}.${MINOR}.${PATCH}-dev.${TIMESTAMP}+${SHORT_SHA}"
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Next pre-release version: $VERSION"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get commits since last release
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -n "$LATEST_TAG" ]; then
+            COMMITS=$(git log ${LATEST_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          else
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges -20)
+          fi
+
+          # Write to file for multiline output
+          echo "$COMMITS" > changelog.txt
+          echo "Generated changelog with $(echo "$COMMITS" | wc -l) commits"
+
+      - name: Create pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v${{ steps.next.outputs.version }}"
+
+          gh release create "$VERSION" \
+            --title "Pre-release $VERSION" \
+            --notes-file changelog.txt \
+            --prerelease \
+            --target dev
+
+          echo "Created pre-release: $VERSION"
