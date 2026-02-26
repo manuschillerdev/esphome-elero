@@ -183,6 +183,10 @@ struct RuntimeBlind {
 
 const char *elero_state_to_string(uint8_t state);
 
+/// Convert action string ("up", "down", "stop", etc.) to command byte.
+/// Returns 0xFF if action is not recognized.
+uint8_t elero_action_to_command(const char *action);
+
 /// Abstract base class for light actuators registered with the Elero hub.
 /// EleroLight inherits from this so the hub never needs the light header.
 class EleroLightBase {

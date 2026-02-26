@@ -63,6 +63,24 @@ const char *elero_state_to_string(uint8_t state) {
   }
 }
 
+uint8_t elero_action_to_command(const char *action) {
+  if (action == nullptr)
+    return 0xFF;
+  if (strcmp(action, "up") == 0 || strcmp(action, "open") == 0)
+    return ELERO_COMMAND_COVER_UP;
+  if (strcmp(action, "down") == 0 || strcmp(action, "close") == 0)
+    return ELERO_COMMAND_COVER_DOWN;
+  if (strcmp(action, "stop") == 0)
+    return ELERO_COMMAND_COVER_STOP;
+  if (strcmp(action, "check") == 0)
+    return ELERO_COMMAND_COVER_CHECK;
+  if (strcmp(action, "tilt") == 0)
+    return ELERO_COMMAND_COVER_TILT;
+  if (strcmp(action, "int") == 0)
+    return ELERO_COMMAND_COVER_INT;
+  return 0xFF;
+}
+
 void Elero::loop() {
   const uint32_t now = millis();
 
