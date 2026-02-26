@@ -922,8 +922,16 @@ void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sens
 }
 #endif
 
+void Elero::start_scan() {
+  this->discovered_blinds_.clear();
+  this->scan_mode_ = true;
+  ESP_LOGI(TAG, "RF scan started");
+}
+
 void Elero::start_packet_dump() {
-  packet_dump_mode_ = true;
+  this->raw_packets_.clear();
+  this->raw_packet_write_idx_ = 0;
+  this->packet_dump_mode_ = true;
   ESP_LOGI(TAG, "Packet dump mode started");
 }
 
@@ -1065,27 +1073,36 @@ bool Elero::send_command(EleroCommand *cmd) {
 
 // ─── Runtime blind adoption ───────────────────────────────────────────────
 
-bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &name) {
-  if (this->is_cover_configured(discovered.blind_address))
-    return false;
-  if (this->is_blind_adopted(discovered.blind_address))
-    return false;
-  RuntimeBlind rb{};
-  rb.blind_address = discovered.blind_address;
-  rb.remote_address = discovered.remote_address;
-  rb.channel = discovered.channel;
-  rb.pck_inf[0] = discovered.pck_inf[0];
-  rb.pck_inf[1] = discovered.pck_inf[1];
-  rb.hop = discovered.hop;
-  rb.payload_1 = discovered.payload_1;
-  rb.payload_2 = discovered.payload_2;
-  rb.name = name.empty() ? "Adopted" : name;
-  rb.last_seen_ms = discovered.last_seen;
-  rb.last_rssi = discovered.rssi;
-  rb.last_state = discovered.last_state;
-  this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
-  ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"", discovered.blind_address, rb.name.c_str());
-  return true;
+bool Elero::adopt_blind_by_address(uint32_t addr, const std::string &name) {
+  // Find the discovered blind by address
+  for (const auto &discovered : this->discovered_blinds_) {
+    if (discovered.blind_address == addr) {
+      // Found it - now adopt
+      if (this->is_cover_configured(addr))
+        return false;
+      if (this->is_blind_adopted(addr))
+        return false;
+
+      RuntimeBlind rb{};
+      rb.blind_address = discovered.blind_address;
+      rb.remote_address = discovered.remote_address;
+      rb.channel = discovered.channel;
+      rb.pck_inf[0] = discovered.pck_inf[0];
+      rb.pck_inf[1] = discovered.pck_inf[1];
+      rb.hop = discovered.hop;
+      rb.payload_1 = discovered.payload_1;
+      rb.payload_2 = discovered.payload_2;
+      rb.name = name.empty() ? "Adopted" : name;
+      rb.last_seen_ms = discovered.last_seen;
+      rb.last_rssi = discovered.rssi;
+      rb.last_state = discovered.last_state;
+      this->runtime_blinds_.insert({addr, std::move(rb)});
+      ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"", addr, rb.name.c_str());
+      return true;
+    }
+  }
+  // Not found in discovered list
+  return false;
 }
 
 bool Elero::remove_runtime_blind(uint32_t addr) {
@@ -1110,13 +1127,17 @@ bool Elero::send_runtime_command(uint32_t addr, uint8_t cmd_byte) {
   return false;
 }
 
+// Apply runtime settings. Values of 0 mean "keep existing".
 bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms, uint32_t close_dur_ms,
                                           uint32_t poll_intvl_ms) {
   auto it = this->runtime_blinds_.find(addr);
   if (it != this->runtime_blinds_.end()) {
-    it->second.open_duration_ms = open_dur_ms;
-    it->second.close_duration_ms = close_dur_ms;
-    it->second.poll_intvl_ms = poll_intvl_ms;
+    if (open_dur_ms != 0)
+      it->second.open_duration_ms = open_dur_ms;
+    if (close_dur_ms != 0)
+      it->second.close_duration_ms = close_dur_ms;
+    if (poll_intvl_ms != 0)
+      it->second.poll_intvl_ms = poll_intvl_ms;
     return true;
   }
   return false;

@@ -28,8 +28,7 @@ void EleroScanButton::press_action() {
   }
   if (this->scan_start_) {
     ESP_LOGI(TAG, "Starting Elero RF scan...");
-    this->parent_->clear_discovered();
-    this->parent_->start_scan();
+    this->parent_->start_scan();  // Clears discovered + starts
   } else {
     this->parent_->stop_scan();
     ESP_LOGI(TAG, "Stopped Elero RF scan. Discovered %d device(s).", this->parent_->get_discovered_count());

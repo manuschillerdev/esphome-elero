@@ -308,12 +308,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #endif
 
   // Discovery / scan mode
-  void start_scan() { scan_mode_ = true; }
+  void start_scan();
   void stop_scan() { scan_mode_ = false; }
   bool is_scanning() const { return scan_mode_; }
   const std::vector<DiscoveredBlind> &get_discovered_blinds() const { return discovered_blinds_; }
   size_t get_discovered_count() const { return discovered_blinds_.size(); }
-  void clear_discovered() { discovered_blinds_.clear(); }
 
   // Cover access for web server
   bool is_cover_configured(uint32_t address) const {
@@ -322,14 +321,14 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   const std::map<uint32_t, EleroBlindBase *> &get_configured_covers() const { return address_to_cover_mapping_; }
 
   // Packet dump mode: capture every received FIFO read into a ring buffer
-  void start_packet_dump();
+  void start_packet_dump();   // Clears buffer + starts capture
   void stop_packet_dump();
+  void clear_raw_packets();   // Clear without affecting capture state
   bool is_packet_dump_active() const { return packet_dump_mode_; }
   const std::vector<RawPacket> &get_raw_packets() const { return raw_packets_; }
-  void clear_raw_packets();
 
   // Runtime adopted blinds (controllable from web UI without reflashing)
-  bool adopt_blind(const DiscoveredBlind &discovered, const std::string &name);
+  bool adopt_blind_by_address(uint32_t addr, const std::string &name);
   bool remove_runtime_blind(uint32_t addr);
   bool send_runtime_command(uint32_t addr, uint8_t cmd_byte);
   bool update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms, uint32_t close_dur_ms,

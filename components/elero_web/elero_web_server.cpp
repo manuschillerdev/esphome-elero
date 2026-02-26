@@ -254,29 +254,22 @@ void EleroWebServer::handle_ws_message(AsyncWebSocketClient *client, const std::
       return;
     }
 
-    uint32_t addr = (uint32_t)strtoul(address.c_str(), nullptr, 0);
+    uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
     uint32_t open_dur = find_uint("open_duration");
     uint32_t close_dur = find_uint("close_duration");
     uint32_t poll_intvl = find_uint("poll_interval");
 
-    // Try configured cover
+    // Try configured cover first, then runtime blind
+    // Note: apply_runtime_settings treats 0 as "keep existing"
     const auto &covers = this->parent_->get_configured_covers();
     auto it = covers.find(addr);
     if (it != covers.end()) {
-      // Use existing values if not provided
-      if (open_dur == 0)
-        open_dur = it->second->get_open_duration_ms();
-      if (close_dur == 0)
-        close_dur = it->second->get_close_duration_ms();
-      if (poll_intvl == 0)
-        poll_intvl = it->second->get_poll_interval_ms();
       it->second->apply_runtime_settings(open_dur, close_dur, poll_intvl);
       this->send_result(client, id_cstr, true);
       this->notify_covers_changed();
       return;
     }
 
-    // Try runtime blind
     if (this->parent_->update_runtime_blind_settings(addr, open_dur, close_dur, poll_intvl)) {
       this->send_result(client, id_cstr, true);
       this->notify_covers_changed();
@@ -292,8 +285,7 @@ void EleroWebServer::handle_ws_message(AsyncWebSocketClient *client, const std::
       this->send_result(client, id_cstr, false, "Already scanning");
       return;
     }
-    this->parent_->clear_discovered();
-    this->parent_->start_scan();
+    this->parent_->start_scan();  // Clears discovered + starts
     this->send_result(client, id_cstr, true);
     this->notify_scan_status_changed();
     return;
@@ -318,21 +310,14 @@ void EleroWebServer::handle_ws_message(AsyncWebSocketClient *client, const std::
       return;
     }
 
-    uint32_t addr = (uint32_t)strtoul(address.c_str(), nullptr, 0);
-    const auto &blinds = this->parent_->get_discovered_blinds();
-    for (const auto &blind : blinds) {
-      if (blind.blind_address == addr) {
-        if (!this->parent_->adopt_blind(blind, name)) {
-          this->send_result(client, id_cstr, false, "Already configured or adopted");
-          return;
-        }
-        this->send_result(client, id_cstr, true);
-        this->notify_covers_changed();
-        this->notify_discovered_changed();
-        return;
-      }
+    uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
+    if (!this->parent_->adopt_blind_by_address(addr, name)) {
+      this->send_result(client, id_cstr, false, "Not found or already configured");
+      return;
     }
-    this->send_result(client, id_cstr, false, "Not in discovered list");
+    this->send_result(client, id_cstr, true);
+    this->notify_covers_changed();
+    this->notify_discovered_changed();
     return;
   }
 
@@ -378,8 +363,7 @@ void EleroWebServer::handle_ws_message(AsyncWebSocketClient *client, const std::
       this->send_result(client, id_cstr, false, "Dump already running");
       return;
     }
-    this->parent_->clear_raw_packets();
-    this->parent_->start_packet_dump();
+    this->parent_->start_packet_dump();  // Clears + starts
     this->send_result(client, id_cstr, true);
     return;
   }
