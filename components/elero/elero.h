@@ -9,7 +9,6 @@
 #include <map>
 #include <queue>
 #include <cstdarg>
-#include <atomic>
 
 // Elero RF protocol implementation based on reverse-engineered specifications.
 // Protocol documentation: https://github.com/QuadCorei8085/elero_protocol
@@ -355,7 +354,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void handle_tx_state_(uint32_t now);  // Progress TX state machine
   void abort_tx_();                     // Abort TX and return to RX
 
-  std::atomic<bool> received_{false};
+  volatile bool received_{false};
   TxContext tx_ctx_;
   bool tx_pending_success_{false};
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
