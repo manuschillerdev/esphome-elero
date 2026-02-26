@@ -401,6 +401,40 @@ Run: `clang-format -i src/*.cpp include/*.h`
 
 ---
 
+## ESP Platform Constraints
+
+### No std::atomic on ESP8266/RP2040
+
+`std::atomic` causes linker errors (`undefined reference to '__atomic_exchange_1'`) on ESP8266 and RP2040. These platforms lack hardware atomic support for the operations the standard library expects.
+
+**For ISR flags:** Use `volatile` instead. A single bool read/write is inherently atomic on ARM and Xtensa architectures.
+
+```cpp
+// Bad: Fails on ESP8266/RP2040
+std::atomic<bool> received_{false};
+
+// Good: Works on all platforms
+volatile bool received_{false};
+```
+
+**When you actually need atomics (ESP32 only):**
+- Multi-core synchronization (ESP32 has dual cores)
+- Complex read-modify-write operations
+
+For simple ISR-to-loop flag communication, `volatile` is sufficient and portable.
+
+### Memory Constraints
+
+| Platform | RAM | Flash | Notes |
+|----------|-----|-------|-------|
+| ESP8266 | 80KB | 4MB | Very limited, avoid large buffers |
+| ESP32 | 520KB | 4-16MB | Comfortable for most uses |
+| RP2040 | 264KB | 2MB | Moderate constraints |
+
+Prefer stack allocation for small objects, static allocation for fixed buffers.
+
+---
+
 ## Anti-Patterns
 
 | Avoid | Prefer |
@@ -415,3 +449,4 @@ Run: `clang-format -i src/*.cpp include/*.h`
 | `i++` (unused value) | `++i` |
 | `static const` in header | `inline constexpr` |
 | Implicit conversions | `explicit` constructors |
+| `std::atomic` for ISR flags | `volatile bool` (portable) |
