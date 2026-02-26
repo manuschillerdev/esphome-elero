@@ -11,8 +11,9 @@
 #include <cstdarg>
 #include <atomic>
 
-// All encryption/decryption structures copied from https://github.com/QuadCorei8085/elero_protocol/ (MIT)
-// All remote handling based on code from https://github.com/stanleypa/eleropy (GPLv3)
+// Elero RF protocol implementation based on reverse-engineered specifications.
+// Protocol documentation: https://github.com/QuadCorei8085/elero_protocol
+// Additional protocol research: https://github.com/stanleypa/eleropy
 
 namespace esphome {
 

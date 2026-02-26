@@ -9,9 +9,10 @@
 /// without hardware dependencies. They implement the encryption and packet
 /// encoding used by Elero wireless blinds.
 ///
-/// Encryption algorithm based on:
-/// - https://github.com/QuadCorei8085/elero_protocol (MIT)
-/// - https://github.com/stanleypa/eleropy (GPLv3)
+/// Protocol constants and algorithm derived from Elero RF protocol specifications.
+/// References:
+/// - https://github.com/QuadCorei8085/elero_protocol
+/// - https://github.com/stanleypa/eleropy
 
 namespace esphome {
 namespace elero {

@@ -52,8 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for 868.35 MHz and 868.95 MHz frequencies
 
 ### Credits
-- Encryption/decryption based on [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT)
-- Remote handling based on [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3)
+- Protocol implementation based on [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol)
+- Additional protocol research from [stanleypa/eleropy](https://github.com/stanleypa/eleropy)
 - Originally forked from [andyboeh/esphome-elero](https://github.com/andyboeh/esphome-elero)
 
 [Unreleased]: https://github.com/pfriedrich84/esphome-elero/compare/main...HEAD
