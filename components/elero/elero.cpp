@@ -97,7 +97,10 @@ void Elero::loop() {
     }
   }
 
-  if (this->received_.exchange(false, std::memory_order_acq_rel)) {
+  // Check if ISR set the received flag, then clear it
+  bool was_received = this->received_;
+  this->received_ = false;
+  if (was_received) {
     ESP_LOGVV(TAG, "loop says \"received\"");
     uint8_t len = this->read_status(CC1101_RXBYTES);
     if (len & 0x80) {  // overflow - FIFO data unreliable
@@ -139,7 +142,7 @@ void IRAM_ATTR Elero::interrupt(Elero *arg) {
 }
 
 void IRAM_ATTR Elero::set_received() {
-  this->received_.store(true, std::memory_order_release);
+  this->received_ = true;
 }
 
 void Elero::dump_config() {
@@ -159,7 +162,7 @@ void Elero::setup() {
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
-  this->received_.store(false, std::memory_order_relaxed);
+  this->received_ = false;
   this->freq2_ = freq2;
   this->freq1_ = freq1;
   this->freq0_ = freq0;
@@ -175,7 +178,7 @@ void Elero::flush_and_rx() {
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SFTX);
   this->write_cmd(CC1101_SRX);
-  this->received_.store(false, std::memory_order_relaxed);
+  this->received_ = false;
 }
 
 void Elero::reset() {
@@ -331,7 +334,7 @@ bool Elero::wait_tx_done() {
   ESP_LOGVV(TAG, "wait_tx_done");
   uint8_t timeout = 200;
 
-  while ((!this->received_.load(std::memory_order_acquire)) && (--timeout != 0)) {
+  while ((!this->received_) && (--timeout != 0)) {
     delay_microseconds_safe(200);
   }
 
@@ -371,7 +374,7 @@ bool Elero::transmit() {
 
   // Clear received_ so wait_tx_done() waits for the actual TX-end GDO0
   // falling edge, not a stale flag left over from a previously received packet.
-  this->received_.store(false, std::memory_order_relaxed);
+  this->received_ = false;
 
   // Trigger TX — no CCA check when issuing STX from IDLE state
   if (!this->write_cmd(CC1101_STX)) {
@@ -477,7 +480,7 @@ void Elero::handle_tx_state_(uint32_t now) {
 
     case TxState::LOAD_FIFO:
       // Clear received_ so we can detect TX-end interrupt
-      this->received_.store(false, std::memory_order_relaxed);
+      this->received_ = false;
       // Trigger TX
       if (!this->write_cmd(CC1101_STX)) {
         this->abort_tx_();
@@ -499,7 +502,7 @@ void Elero::handle_tx_state_(uint32_t now) {
       break;
 
     case TxState::WAIT_TX_DONE:
-      if (this->received_.load(std::memory_order_acquire)) {
+      if (this->received_) {
         // GDO0 interrupt fired - TX complete
         this->tx_ctx_.state = TxState::VERIFY_DONE;
         this->tx_ctx_.state_enter_time = now;
