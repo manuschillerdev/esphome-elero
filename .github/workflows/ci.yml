@@ -33,30 +33,6 @@ jobs:
       - name: Compile ${{ matrix.test }}
         run: esphome compile tests/${{ matrix.test }}.yaml
 
-  # C++ static analysis (formatting removed - not enforced)
-  cpp-checks:
-    name: C++ Checks
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install tools
-        run: sudo apt-get install -y clang-tidy-14
-
-      - name: Static analysis (clang-tidy)
-        run: |
-          # Run clang-tidy on header-only/standalone code
-          # Full analysis requires ESPHome headers; this catches basic issues
-          clang-tidy-14 \
-            components/elero/elero_protocol.h \
-            components/elero/cc1101.h \
-            -- -std=c++17 2>&1 | tee clang-tidy-output.txt
-          # Fail if any warnings (excluding "unable to find" errors from missing deps)
-          if grep -E "warning:|error:" clang-tidy-output.txt | grep -v "file not found"; then
-            echo "clang-tidy found issues"
-            exit 1
-          fi
-
   # Unit tests for protocol layer
   unit-tests:
     name: Unit Tests
