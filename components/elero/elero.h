@@ -125,7 +125,7 @@ struct TxContext {
   static constexpr uint32_t STATE_TIMEOUT_MS = 50;
 };
 
-typedef struct {
+struct EleroCommand {
   uint8_t counter;
   uint32_t blind_addr;
   uint32_t remote_addr;
@@ -133,7 +133,7 @@ typedef struct {
   uint8_t pck_inf[2];
   uint8_t hop;
   uint8_t payload[10];
-} t_elero_command;
+};
 
 struct RawPacket {
   uint32_t timestamp_ms;            // millis() when captured
@@ -270,7 +270,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   [[nodiscard]] bool wait_tx_done();
   [[nodiscard]] bool wait_idle();
   [[nodiscard]] bool transmit();
-  uint8_t read_reg(uint8_t addr, bool *ok = nullptr);
+  [[nodiscard]] uint8_t read_reg(uint8_t addr, bool *ok = nullptr);
   [[nodiscard]] uint8_t read_status(uint8_t addr);
   void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
   void flush_and_rx();
@@ -282,7 +282,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   [[nodiscard]] bool poll_tx_result();       // Check if TX completed, get result
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
-  [[nodiscard]] bool send_command(t_elero_command *cmd);
+  [[nodiscard]] bool send_command(EleroCommand *cmd);
 
 #ifdef USE_SENSOR
   void register_rssi_sensor(uint32_t address, sensor::Sensor *sensor);

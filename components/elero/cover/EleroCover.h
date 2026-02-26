@@ -62,7 +62,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint32_t get_close_duration_ms() const override { return this->close_duration_; }
   bool get_supports_tilt() const override { return this->supports_tilt_; }
   // EleroBlindBase web API commands
-  void enqueue_command(uint8_t cmd_byte) override { this->sender_.enqueue(cmd_byte); }
+  void enqueue_command(uint8_t cmd_byte) override { (void) this->sender_.enqueue(cmd_byte); }
   void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms, uint32_t poll_intvl_ms) override {
     this->open_duration_ = open_dur_ms;
     this->close_duration_ = close_dur_ms;

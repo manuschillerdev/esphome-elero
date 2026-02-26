@@ -15,7 +15,7 @@
 namespace esphome {
 namespace elero {
 
-static const char *TAG = "elero";
+static const char *const TAG = "elero";
 
 // ─── SpiTransaction RAII Implementation ───────────────────────────────────
 SpiTransaction::SpiTransaction(Elero *device) : device_(device) {
@@ -61,7 +61,7 @@ void Elero::loop() {
     auto &rb = entry.second;
     if (!rb.command_queue.empty()) {
       uint8_t cmd_byte = rb.command_queue.front();
-      t_elero_command cmd{};
+      EleroCommand cmd{};
       cmd.counter = rb.cmd_counter;
       cmd.blind_addr = rb.blind_address;
       cmd.remote_addr = rb.remote_address;
@@ -74,23 +74,23 @@ void Elero::loop() {
       cmd.payload[4] = cmd_byte;
       if (this->send_command(&cmd)) {
         rb.command_queue.pop();
-        rb.cmd_counter++;
+        ++rb.cmd_counter;
         if (rb.cmd_counter > 255) rb.cmd_counter = 1;
       }
     }
   }
 
-  if(this->received_.exchange(false, std::memory_order_acq_rel)) {
+  if (this->received_.exchange(false, std::memory_order_acq_rel)) {
     ESP_LOGVV(TAG, "loop says \"received\"");
     uint8_t len = this->read_status(CC1101_RXBYTES);
-    if(len & 0x80) { // overflow - FIFO data unreliable
+    if (len & 0x80) {  // overflow - FIFO data unreliable
       ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
       this->flush_and_rx();
       return;
     }
-    if(len & 0x7F) { // bytes available
+    if (len & 0x7F) {  // bytes available
       uint8_t fifo_count;
-      if((len & 0x7F) > CC1101_FIFO_LENGTH) {
+      if ((len & 0x7F) > CC1101_FIFO_LENGTH) {
         ESP_LOGV(TAG, "Received more bytes than FIFO length - wtf?");
         this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
         fifo_count = CC1101_FIFO_LENGTH;
@@ -108,7 +108,7 @@ void Elero::loop() {
         this->packet_dump_pending_update_ = true;
       }
       // Sanity check
-      if(this->msg_rx_[0] + 3 <= fifo_count) {
+      if (this->msg_rx_[0] + 3 <= fifo_count) {
         this->interpret_msg();
       } else if (this->packet_dump_pending_update_) {
         this->mark_last_raw_packet_(false, "short_read");
@@ -241,7 +241,7 @@ bool Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
   {
     SpiTransaction txn(this);
     status = this->transfer_byte(addr | CC1101_WRITE_BURST);
-    for (int i = 0; i < len; i++) {
+    for (int i = 0; i < len; ++i) {
       this->write_byte(data[i]);
     }
   }  // CS released here
@@ -278,7 +278,7 @@ bool Elero::wait_rx() {
     delay_microseconds_safe(200);
   }
 
-  if(timeout > 0)
+  if (timeout > 0)
     return true;
   ESP_LOGE(TAG, "Timed out waiting for RX: 0x%02x", this->read_status(CC1101_MARCSTATE));
   return false;
@@ -291,7 +291,7 @@ bool Elero::wait_idle() {
     delay_microseconds_safe(200);
   }
 
-  if(timeout > 0)
+  if (timeout > 0)
     return true;
   ESP_LOGE(TAG, "Timed out waiting for Idle: 0x%02x", this->read_status(CC1101_MARCSTATE));
   return false;
@@ -305,7 +305,7 @@ bool Elero::wait_tx() {
     delay_microseconds_safe(200);
   }
 
-  if(timeout > 0)
+  if (timeout > 0)
     return true;
   ESP_LOGE(TAG, "Timed out waiting for TX: 0x%02x", this->read_status(CC1101_MARCSTATE));
   return false;
@@ -315,11 +315,11 @@ bool Elero::wait_tx_done() {
   ESP_LOGVV(TAG, "wait_tx_done");
   uint8_t timeout = 200;
 
-  while((!this->received_.load(std::memory_order_acquire)) && (--timeout != 0)) {
+  while ((!this->received_.load(std::memory_order_acquire)) && (--timeout != 0)) {
     delay_microseconds_safe(200);
   }
 
-  if(timeout > 0)
+  if (timeout > 0)
     return true;
   ESP_LOGE(TAG, "Timed out waiting for TX Done: 0x%02x", this->read_status(CC1101_MARCSTATE));
   return false;
@@ -556,7 +556,7 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
   {
     SpiTransaction txn(this);
     this->write_byte(addr | CC1101_READ_BURST);
-    for (uint8_t i = 0; i < len; i++) {
+    for (uint8_t i = 0; i < len; ++i) {
       buf[i] = this->read_byte();
     }
   }  // CS released here
@@ -566,7 +566,7 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
 void Elero::interpret_msg() {
   uint8_t length = this->msg_rx_[0];
   // Sanity check
-  if(length > ELERO_MAX_PACKET_SIZE) {
+  if (length > ELERO_MAX_PACKET_SIZE) {
     uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - 3)) ? (length + 3) : CC1101_FIFO_LENGTH;
     ESP_LOGE(TAG, "Received invalid packet: too long (%d)", length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", dump_len,
@@ -603,7 +603,7 @@ void Elero::interpret_msg() {
     return;
   }
 
-  if(typ > 0x60) {
+  if (typ > 0x60) {
     dests_len = num_dests * 3;
     dst = ((uint32_t)this->msg_rx_[17] << 16) | ((uint32_t)this->msg_rx_[18] << 8) | (this->msg_rx_[19]);
   } else {
@@ -614,7 +614,7 @@ void Elero::interpret_msg() {
   // Sanity check: msg_decode accesses 8 bytes at msg_rx_[19 + dests_len],
   // so the highest index touched is 26 + dests_len. This must be within both
   // the packet (length) and the FIFO buffer.
-  if(26 + dests_len > length || 26 + dests_len >= CC1101_FIFO_LENGTH) {
+  if (26 + dests_len > length || 26 + dests_len >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
@@ -700,7 +700,7 @@ void Elero::interpret_msg() {
     }
   }
 
-  if((typ == 0xca) || (typ == 0xc9)) { // Status message from a blind
+  if ((typ == 0xca) || (typ == 0xc9)) {  // Status message from a blind
     // Update text sensor
 #ifdef USE_TEXT_SENSOR
     {
@@ -713,14 +713,14 @@ void Elero::interpret_msg() {
 
     // Check if we know the blind (configured ESPHome cover)
     auto search = this->address_to_cover_mapping_.find(src);
-    if(search != this->address_to_cover_mapping_.end()) {
+    if (search != this->address_to_cover_mapping_.end()) {
       search->second->notify_rx_meta(millis(), rssi);
       search->second->set_rx_state(payload[6]);
     }
 
     // Check if we know the address as a configured ESPHome light
     auto light_search = this->address_to_light_mapping_.find(src);
-    if(light_search != this->address_to_light_mapping_.end()) {
+    if (light_search != this->address_to_light_mapping_.end()) {
       light_search->second->notify_rx_meta(millis(), rssi);
       light_search->second->set_rx_state(payload[6]);
     }
@@ -735,11 +735,11 @@ void Elero::interpret_msg() {
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
     auto search = this->address_to_cover_mapping_.find(src);
-    if(search != this->address_to_cover_mapping_.end()) {
+    if (search != this->address_to_cover_mapping_.end()) {
       search->second->notify_rx_meta(millis(), rssi);
     }
     auto light_search = this->address_to_light_mapping_.find(src);
-    if(light_search != this->address_to_light_mapping_.end()) {
+    if (light_search != this->address_to_light_mapping_.end()) {
       light_search->second->notify_rx_meta(millis(), rssi);
     }
     auto rb_it = this->runtime_blinds_.find(src);
@@ -777,7 +777,7 @@ void Elero::interpret_msg() {
 
 void Elero::register_cover(EleroBlindBase *cover) {
   uint32_t address = cover->get_blind_address();
-  if(this->address_to_cover_mapping_.find(address) != this->address_to_cover_mapping_.end()) {
+  if (this->address_to_cover_mapping_.find(address) != this->address_to_cover_mapping_.end()) {
     ESP_LOGE(TAG, "A blind with this address is already registered - this is currently not supported");
     return;
   }
@@ -787,7 +787,7 @@ void Elero::register_cover(EleroBlindBase *cover) {
 
 void Elero::register_light(EleroLightBase *light) {
   uint32_t address = light->get_blind_address();
-  if(this->address_to_light_mapping_.find(address) != this->address_to_light_mapping_.end()) {
+  if (this->address_to_light_mapping_.find(address) != this->address_to_light_mapping_.end()) {
     ESP_LOGE(TAG, "A light with this address is already registered - this is currently not supported");
     return;
   }
@@ -859,7 +859,7 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
       blind.rssi = rssi;
       blind.last_seen = millis();
       if (state != 0) blind.last_state = state;
-      blind.times_seen++;
+      ++blind.times_seen;
       // Upgrade CA-derived params with command-packet params (higher quality):
       // a 6a/69 command packet tells us the exact format the remote uses, so
       // those values must be preferred over what the blind's own CA responses
@@ -902,7 +902,7 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
   }
 }
 
-bool Elero::send_command(t_elero_command *cmd) {
+bool Elero::send_command(EleroCommand *cmd) {
   ESP_LOGVV(TAG, "send_command called");
   uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
   this->msg_tx_[0] = ELERO_MSG_LENGTH;
@@ -925,7 +925,7 @@ bool Elero::send_command(t_elero_command *cmd) {
   this->msg_tx_[17] = ((cmd->blind_addr >> 16) & 0xff); // blind address
   this->msg_tx_[18] = ((cmd->blind_addr >> 8) & 0xff);
   this->msg_tx_[19] = ((cmd->blind_addr) & 0xff);
-  for(int i=0; i<10; i++)
+  for (int i = 0; i < 10; ++i)
     this->msg_tx_[20 + i] = cmd->payload[i];
   this->msg_tx_[22] = ((code >> 8) & 0xff);
   this->msg_tx_[23] = (code & 0xff);

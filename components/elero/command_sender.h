@@ -23,7 +23,7 @@ class CommandSender {
       if (!command_queue_.empty()) {
         command_.payload[4] = command_queue_.front();
         if (parent->send_command(&command_)) {
-          send_packets_++;
+          ++send_packets_;
           send_retries_ = 0;
           if (send_packets_ >= ELERO_SEND_PACKETS) {
             command_queue_.pop();
@@ -32,7 +32,7 @@ class CommandSender {
           }
         } else {
           ESP_LOGD(tag, "Retry #%d for device 0x%06x", send_retries_, command_.blind_addr);
-          send_retries_++;
+          ++send_retries_;
           if (send_retries_ > ELERO_SEND_RETRIES) {
             ESP_LOGE(tag, "Hit maximum retries for device 0x%06x, giving up.", command_.blind_addr);
             send_retries_ = 0;
@@ -47,7 +47,7 @@ class CommandSender {
   /// Enqueue a command byte for transmission.
   /// @param cmd_byte The command byte to send
   /// @return true if queued successfully, false if queue is full
-  bool enqueue(uint8_t cmd_byte) {
+  [[nodiscard]] bool enqueue(uint8_t cmd_byte) {
     if (command_queue_.size() < ELERO_MAX_COMMAND_QUEUE) {
       command_queue_.push(cmd_byte);
       return true;
@@ -57,9 +57,7 @@ class CommandSender {
 
   /// Clear all pending commands from the queue.
   void clear_queue() {
-    while (!command_queue_.empty()) {
-      command_queue_.pop();
-    }
+    command_queue_ = std::queue<uint8_t>{};
   }
 
   /// Check if there are pending commands.
@@ -69,21 +67,21 @@ class CommandSender {
   size_t queue_size() const { return command_queue_.size(); }
 
   /// Get mutable reference to the command structure for configuration.
-  t_elero_command &command() { return command_; }
+  EleroCommand &command() { return command_; }
 
   /// Get const reference to the command structure.
-  const t_elero_command &command() const { return command_; }
+  const EleroCommand &command() const { return command_; }
 
  private:
   void increase_counter() {
     if (command_.counter == 0xff) {
       command_.counter = 1;
     } else {
-      command_.counter += 1;
+      ++command_.counter;
     }
   }
 
-  t_elero_command command_ = {.counter = 1};
+  EleroCommand command_{1, 0, 0, 0, {0, 0}, 0, {0}};
   std::queue<uint8_t> command_queue_;
   uint32_t last_command_{0};
   uint8_t send_retries_{0};

@@ -28,9 +28,9 @@ inline constexpr uint8_t DECODE_TABLE[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0
 inline uint8_t count_bits(uint8_t byte) {
   uint8_t ones = 0;
   uint8_t mask = 1;
-  for (uint8_t i = 0; i < 8; i++) {
+  for (uint8_t i = 0; i < 8; ++i) {
     if (mask & byte) {
-      ones += 1;
+      ++ones;
     }
     mask <<= 1;
   }
@@ -41,7 +41,7 @@ inline uint8_t count_bits(uint8_t byte) {
 /// Stores result in msg[7].
 inline void calc_parity(uint8_t *msg) {
   uint8_t p = 0;
-  for (uint8_t i = 0; i < 4; i++) {
+  for (uint8_t i = 0; i < 4; ++i) {
     uint8_t a = count_bits(msg[0 + i * 2]);
     uint8_t b = count_bits(msg[1 + i * 2]);
     p |= a ^ b;
@@ -52,7 +52,7 @@ inline void calc_parity(uint8_t *msg) {
 
 /// Add r20 value to nibbles (encoding step).
 inline void add_r20_to_nibbles(uint8_t *msg, uint8_t r20, uint8_t start, uint8_t length) {
-  for (uint8_t i = start; i < length; i++) {
+  for (uint8_t i = start; i < length; ++i) {
     uint8_t d = msg[i];
     uint8_t ln = (d + r20) & 0x0F;
     uint8_t hn = ((d & 0xF0) + (r20 & 0xF0)) & 0xFF;
@@ -63,7 +63,7 @@ inline void add_r20_to_nibbles(uint8_t *msg, uint8_t r20, uint8_t start, uint8_t
 
 /// Subtract r20 value from nibbles (decoding step).
 inline void sub_r20_from_nibbles(uint8_t *msg, uint8_t r20, uint8_t start, uint8_t length) {
-  for (uint8_t i = start; i < length; i++) {
+  for (uint8_t i = start; i < length; ++i) {
     uint8_t d = msg[i];
     uint8_t ln = (d - r20) & 0x0F;
     uint8_t hn = ((d & 0xF0) - (r20 & 0xF0)) & 0xFF;
@@ -74,7 +74,7 @@ inline void sub_r20_from_nibbles(uint8_t *msg, uint8_t r20, uint8_t start, uint8
 
 /// XOR 2-byte pattern across array (encoding).
 inline void xor_2byte_in_array_encode(uint8_t *msg, uint8_t xor0, uint8_t xor1) {
-  for (uint8_t i = 1; i < 4; i++) {
+  for (uint8_t i = 1; i < 4; ++i) {
     msg[i * 2 + 0] = msg[i * 2 + 0] ^ xor0;
     msg[i * 2 + 1] = msg[i * 2 + 1] ^ xor1;
   }
@@ -82,7 +82,7 @@ inline void xor_2byte_in_array_encode(uint8_t *msg, uint8_t xor0, uint8_t xor1) 
 
 /// XOR 2-byte pattern across array (decoding).
 inline void xor_2byte_in_array_decode(uint8_t *msg, uint8_t xor0, uint8_t xor1) {
-  for (uint8_t i = 0; i < 4; i++) {
+  for (uint8_t i = 0; i < 4; ++i) {
     msg[i * 2 + 0] = msg[i * 2 + 0] ^ xor0;
     msg[i * 2 + 1] = msg[i * 2 + 1] ^ xor1;
   }
@@ -90,7 +90,7 @@ inline void xor_2byte_in_array_decode(uint8_t *msg, uint8_t xor0, uint8_t xor1) 
 
 /// Encode nibbles using lookup table.
 inline void encode_nibbles(uint8_t *msg, uint8_t len = 8) {
-  for (uint8_t i = 0; i < len; i++) {
+  for (uint8_t i = 0; i < len; ++i) {
     uint8_t nh = (msg[i] >> 4) & 0x0F;
     uint8_t nl = msg[i] & 0x0F;
     uint8_t dh = ENCODE_TABLE[nh];
@@ -101,7 +101,7 @@ inline void encode_nibbles(uint8_t *msg, uint8_t len = 8) {
 
 /// Decode nibbles using lookup table.
 inline void decode_nibbles(uint8_t *msg, uint8_t len) {
-  for (uint8_t i = 0; i < len; i++) {
+  for (uint8_t i = 0; i < len; ++i) {
     uint8_t nh = (msg[i] >> 4) & 0x0F;
     uint8_t nl = msg[i] & 0x0F;
     uint8_t dh = DECODE_TABLE[nh];
