@@ -1,7 +1,8 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import button
-from .. import elero_ns, elero, CONF_ELERO_ID
+
+from .. import CONF_ELERO_ID, elero, elero_ns
 
 DEPENDENCIES = ["elero"]
 

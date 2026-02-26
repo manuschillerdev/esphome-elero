@@ -1,9 +1,9 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import web_server_base
+from esphome.components.elero import CONF_ELERO_ID, elero, elero_ns
 from esphome.components.web_server_base import CONF_WEB_SERVER_BASE_ID
 from esphome.const import CONF_ID
-from esphome.components.elero import elero_ns, elero, CONF_ELERO_ID
 
 DEPENDENCIES = ["elero"]
 AUTO_LOAD = ["web_server_base"]

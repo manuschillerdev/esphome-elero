@@ -21,7 +21,7 @@ logger:
 # Wifi required for web_server_base
 wifi:
   ssid: "test-network"
-  password: "test-password"
+  password: ""
 
 packages:
   common: !include common.yaml

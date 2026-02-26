@@ -16,6 +16,11 @@ rp2040:
 logger:
   level: DEBUG
 
+# Wifi required for web_server_base
+wifi:
+  ssid: "test-network"
+  password: ""
+
 packages:
   common: !include common.yaml
 

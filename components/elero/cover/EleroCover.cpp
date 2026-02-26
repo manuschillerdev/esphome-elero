@@ -90,7 +90,9 @@ bool EleroCover::is_at_target() {
   }
 }
 
-float EleroCover::get_setup_priority() const { return setup_priority::DATA; }
+float EleroCover::get_setup_priority() const {
+  return setup_priority::DATA;
+}
 
 cover::CoverTraits EleroCover::get_traits() {
   auto traits = cover::CoverTraits();
@@ -254,7 +256,9 @@ void EleroCover::start_movement(CoverOperation dir) {
   this->publish_state();
 }
 
-void EleroCover::schedule_immediate_poll() { this->sender_.enqueue(this->command_check_); }
+void EleroCover::schedule_immediate_poll() {
+  this->sender_.enqueue(this->command_check_);
+}
 
 void EleroCover::recompute_position() {
   if (this->current_operation == COVER_OPERATION_IDLE)

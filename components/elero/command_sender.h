@@ -56,9 +56,7 @@ class CommandSender {
   }
 
   /// Clear all pending commands from the queue.
-  void clear_queue() {
-    command_queue_ = std::queue<uint8_t>{};
-  }
+  void clear_queue() { command_queue_ = std::queue<uint8_t>{}; }
 
   /// Check if there are pending commands.
   bool has_pending_commands() const { return !command_queue_.empty(); }

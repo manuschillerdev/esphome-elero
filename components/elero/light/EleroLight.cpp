@@ -134,7 +134,9 @@ void EleroLight::loop() {
   }
 }
 
-void EleroLight::schedule_immediate_poll() { this->sender_.enqueue(this->command_check_); }
+void EleroLight::schedule_immediate_poll() {
+  this->sender_.enqueue(this->command_check_);
+}
 
 void EleroLight::recompute_brightness() {
   if (this->dim_direction_ == DimDirection::NONE)
@@ -142,7 +144,8 @@ void EleroLight::recompute_brightness() {
 
   const uint32_t now = millis();
   float dir = (this->dim_direction_ == DimDirection::UP) ? 1.0f : -1.0f;
-  this->brightness_ += dir * static_cast<float>(now - this->last_recompute_time_) / static_cast<float>(this->dim_duration_);
+  this->brightness_ +=
+      dir * static_cast<float>(now - this->last_recompute_time_) / static_cast<float>(this->dim_duration_);
   this->brightness_ = clamp(this->brightness_, 0.0f, 1.0f);
   this->last_recompute_time_ = now;
 }

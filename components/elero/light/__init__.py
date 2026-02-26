@@ -5,7 +5,8 @@ from esphome.const import (
     CONF_CHANNEL,
     CONF_OUTPUT_ID,
 )
-from .. import elero_ns, elero, CONF_ELERO_ID
+
+from .. import CONF_ELERO_ID, elero, elero_ns
 
 DEPENDENCIES = ["elero"]
 

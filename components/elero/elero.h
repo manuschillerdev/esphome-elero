@@ -84,40 +84,40 @@ constexpr uint8_t ELERO_STATE_ON = 0x10;
 constexpr uint8_t ELERO_MAX_PACKET_SIZE = 57;  // according to FCC documents
 
 // ─── Timing Constants ─────────────────────────────────────────────────────
-constexpr uint32_t ELERO_POLL_INTERVAL_MOVING = 2000;   // poll every two seconds while moving
-constexpr uint32_t ELERO_DELAY_SEND_PACKETS = 50;       // 50ms send delay between repeats
-constexpr uint32_t ELERO_TIMEOUT_MOVEMENT = 120000;     // poll for up to two minutes while moving
+constexpr uint32_t ELERO_POLL_INTERVAL_MOVING = 2000;  // poll every two seconds while moving
+constexpr uint32_t ELERO_DELAY_SEND_PACKETS = 50;      // 50ms send delay between repeats
+constexpr uint32_t ELERO_TIMEOUT_MOVEMENT = 120000;    // poll for up to two minutes while moving
 
 // ─── Queue/Buffer Limits ──────────────────────────────────────────────────
 constexpr uint8_t ELERO_SEND_RETRIES = 3;
 constexpr uint8_t ELERO_SEND_PACKETS = 2;
-constexpr uint8_t ELERO_MAX_COMMAND_QUEUE = 10;   // max commands per blind to prevent OOM
-constexpr uint8_t ELERO_MAX_DISCOVERED = 20;      // max discovered blinds to track
-constexpr uint8_t ELERO_MAX_RAW_PACKETS = 50;     // max raw packets in dump ring buffer
+constexpr uint8_t ELERO_MAX_COMMAND_QUEUE = 10;  // max commands per blind to prevent OOM
+constexpr uint8_t ELERO_MAX_DISCOVERED = 20;     // max discovered blinds to track
+constexpr uint8_t ELERO_MAX_RAW_PACKETS = 50;    // max raw packets in dump ring buffer
 
 // ─── RF Protocol Encoding/Encryption Constants ────────────────────────────
-constexpr uint8_t ELERO_MSG_LENGTH = 0x1d;        // Fixed message length for TX
-constexpr uint16_t ELERO_CRYPTO_MULT = 0x708f;    // Encryption multiplier for counter-based code
-constexpr uint16_t ELERO_CRYPTO_MASK = 0xffff;    // Mask for 16-bit encryption code
-constexpr uint8_t ELERO_SYS_ADDR = 0x01;          // System address in protocol
-constexpr uint8_t ELERO_DEST_COUNT = 0x01;        // Destination count in command
+constexpr uint8_t ELERO_MSG_LENGTH = 0x1d;      // Fixed message length for TX
+constexpr uint16_t ELERO_CRYPTO_MULT = 0x708f;  // Encryption multiplier for counter-based code
+constexpr uint16_t ELERO_CRYPTO_MASK = 0xffff;  // Mask for 16-bit encryption code
+constexpr uint8_t ELERO_SYS_ADDR = 0x01;        // System address in protocol
+constexpr uint8_t ELERO_DEST_COUNT = 0x01;      // Destination count in command
 
 // ─── RSSI Calculation Constants ───────────────────────────────────────────
 // CC1101 RSSI is in dBm, raw value is two's complement encoded
-constexpr uint8_t ELERO_RSSI_SIGN_BIT = 127;      // Sign bit threshold (values > 127 are negative)
-constexpr int8_t ELERO_RSSI_OFFSET = -74;         // Constant offset applied in RSSI calculation
-constexpr int ELERO_RSSI_DIVISOR = 2;             // Divisor for raw RSSI value
+constexpr uint8_t ELERO_RSSI_SIGN_BIT = 127;  // Sign bit threshold (values > 127 are negative)
+constexpr int8_t ELERO_RSSI_OFFSET = -74;     // Constant offset applied in RSSI calculation
+constexpr int ELERO_RSSI_DIVISOR = 2;         // Divisor for raw RSSI value
 
 // ─── TX State Machine ────────────────────────────────────────────────────────
 enum class TxState : uint8_t {
-  IDLE,           // Not transmitting
-  GOTO_IDLE,      // Sent SIDLE, waiting for MARCSTATE_IDLE
-  FLUSH_TX,       // Sent SFTX, brief settling
-  LOAD_FIFO,      // Loaded TX FIFO, preparing STX
-  TRIGGER_TX,     // Sent STX, waiting for MARCSTATE_TX
-  WAIT_TX_DONE,   // TX in progress, waiting for GDO0 interrupt
-  VERIFY_DONE,    // Checking TXBYTES == 0
-  RETURN_RX,      // Returning to RX state
+  IDLE,          // Not transmitting
+  GOTO_IDLE,     // Sent SIDLE, waiting for MARCSTATE_IDLE
+  FLUSH_TX,      // Sent SFTX, brief settling
+  LOAD_FIFO,     // Loaded TX FIFO, preparing STX
+  TRIGGER_TX,    // Sent STX, waiting for MARCSTATE_TX
+  WAIT_TX_DONE,  // TX in progress, waiting for GDO0 interrupt
+  VERIFY_DONE,   // Checking TXBYTES == 0
+  RETURN_RX,     // Returning to RX state
 };
 
 struct TxContext {
@@ -137,11 +137,11 @@ struct EleroCommand {
 };
 
 struct RawPacket {
-  uint32_t timestamp_ms;            // millis() when captured
-  uint8_t  fifo_len;                // bytes actually read from CC1101 FIFO
-  uint8_t  data[CC1101_FIFO_LENGTH];
-  bool     valid;                   // true = passed all validation and decoded
-  char     reject_reason[32];       // empty when valid
+  uint32_t timestamp_ms;  // millis() when captured
+  uint8_t fifo_len;       // bytes actually read from CC1101 FIFO
+  uint8_t data[CC1101_FIFO_LENGTH];
+  bool valid;              // true = passed all validation and decoded
+  char reject_reason[32];  // empty when valid
 };
 
 struct DiscoveredBlind {
@@ -228,9 +228,7 @@ class EleroBlindBase {
   /// blind, so it can poll the blind immediately instead of waiting for the
   /// normal poll interval.  Default no-op; concrete classes override.
   virtual void schedule_immediate_poll() {}
-  virtual void apply_runtime_settings(uint32_t open_dur_ms,
-                                      uint32_t close_dur_ms,
-                                      uint32_t poll_intvl_ms) = 0;
+  virtual void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms, uint32_t poll_intvl_ms) = 0;
 };
 
 class Elero;  // Forward declaration for SpiTransaction
@@ -248,9 +246,9 @@ class SpiTransaction {
   Elero *device_;
 };
 
-class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                                    spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ>,
-                                    public Component {
+class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW, spi::CLOCK_PHASE_LEADING,
+                                    spi::DATA_RATE_2MHZ>,
+              public Component {
  public:
   void setup() override;
   void loop() override;
@@ -278,9 +276,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void interpret_msg();
 
   // Non-blocking TX state machine
-  [[nodiscard]] bool start_transmit();       // Begin async TX, returns true if started
+  [[nodiscard]] bool start_transmit();  // Begin async TX, returns true if started
   bool is_tx_busy() const { return tx_ctx_.state != TxState::IDLE; }
-  [[nodiscard]] bool poll_tx_result();       // Check if TX completed, get result
+  [[nodiscard]] bool poll_tx_result();  // Check if TX completed, get result
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
   [[nodiscard]] bool send_command(EleroCommand *cmd);
@@ -317,8 +315,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool adopt_blind(const DiscoveredBlind &discovered, const std::string &name);
   bool remove_runtime_blind(uint32_t addr);
   bool send_runtime_command(uint32_t addr, uint8_t cmd_byte);
-  bool update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
-                                     uint32_t close_dur_ms, uint32_t poll_intvl_ms);
+  bool update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms, uint32_t close_dur_ms,
+                                     uint32_t poll_intvl_ms);
   const std::map<uint32_t, RuntimeBlind> &get_runtime_blinds() const { return runtime_blinds_; }
   bool is_blind_adopted(uint32_t addr) const;
 
@@ -331,7 +329,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
     char message[160];
   };
   void append_log(uint8_t level, const char *tag, const char *fmt, ...);
-  void clear_log_entries() { log_entries_.clear(); log_write_idx_ = 0; }
+  void clear_log_entries() {
+    log_entries_.clear();
+    log_write_idx_ = 0;
+  }
   const std::vector<LogEntry> &get_log_entries() const { return log_entries_; }
   void set_log_capture(bool en) { log_capture_ = en; }
   bool is_log_capture_active() const { return log_capture_; }
@@ -346,14 +347,13 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t get_freq2() const { return freq2_; }
 
  private:
-  void track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel,
-                              uint8_t pck_inf0, uint8_t pck_inf1, uint8_t hop,
-                              uint8_t payload_1, uint8_t payload_2,
-                              float rssi, uint8_t state, bool from_command);
+  void track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel, uint8_t pck_inf0, uint8_t pck_inf1,
+                              uint8_t hop, uint8_t payload_1, uint8_t payload_2, float rssi, uint8_t state,
+                              bool from_command);
   void capture_raw_packet_(uint8_t fifo_len);
   void mark_last_raw_packet_(bool valid, const char *reason);
-  void handle_tx_state_(uint32_t now);       // Progress TX state machine
-  void abort_tx_();                          // Abort TX and return to RX
+  void handle_tx_state_(uint32_t now);  // Progress TX state machine
+  void abort_tx_();                     // Abort TX and return to RX
 
   std::atomic<bool> received_{false};
   TxContext tx_ctx_;
@@ -364,13 +364,13 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t freq1_{0x71};
   uint8_t freq2_{0x21};
   InternalGPIOPin *gdo0_pin_{nullptr};
-  std::map<uint32_t, EleroBlindBase*> address_to_cover_mapping_;
-  std::map<uint32_t, EleroLightBase*> address_to_light_mapping_;
+  std::map<uint32_t, EleroBlindBase *> address_to_cover_mapping_;
+  std::map<uint32_t, EleroLightBase *> address_to_light_mapping_;
 #ifdef USE_SENSOR
-  std::map<uint32_t, sensor::Sensor*> address_to_rssi_sensor_;
+  std::map<uint32_t, sensor::Sensor *> address_to_rssi_sensor_;
 #endif
 #ifdef USE_TEXT_SENSOR
-  std::map<uint32_t, text_sensor::TextSensor*> address_to_text_sensor_;
+  std::map<uint32_t, text_sensor::TextSensor *> address_to_text_sensor_;
 #endif
   std::vector<DiscoveredBlind> discovered_blinds_;
   bool scan_mode_{false};

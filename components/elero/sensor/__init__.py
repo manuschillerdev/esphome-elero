@@ -2,12 +2,12 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor
 from esphome.const import (
-    CONF_ID,
-    UNIT_DECIBEL_MILLIWATT,
     DEVICE_CLASS_SIGNAL_STRENGTH,
     STATE_CLASS_MEASUREMENT,
+    UNIT_DECIBEL_MILLIWATT,
 )
-from .. import elero_ns, elero, CONF_ELERO_ID
+
+from .. import CONF_ELERO_ID, elero
 
 DEPENDENCIES = ["elero"]
 
