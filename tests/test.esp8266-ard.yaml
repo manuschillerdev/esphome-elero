@@ -27,7 +27,6 @@ packages:
 
 # Web UI test (ESP8266 supports web_server_base)
 web_server_base:
-  port: 80
 
 elero_web:
   id: elero_web_ui

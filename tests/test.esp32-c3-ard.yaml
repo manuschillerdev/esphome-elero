@@ -28,7 +28,6 @@ packages:
 
 # Web UI test
 web_server_base:
-  port: 80
 
 elero_web:
   id: elero_web_ui

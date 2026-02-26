@@ -125,7 +125,7 @@ void EleroWebServer::dump_config() {
 
 // ─── Routing ──────────────────────────────────────────────────────────────────
 
-bool EleroWebServer::canHandle(AsyncWebServerRequest *request) {
+bool EleroWebServer::canHandle(AsyncWebServerRequest *request) const {
   if (!this->enabled_)
     return false;
   // ESPHome 2025.6+: request->url() returns Arduino String, convert to std::string

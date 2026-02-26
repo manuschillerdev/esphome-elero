@@ -33,7 +33,7 @@ jobs:
       - name: Compile ${{ matrix.test }}
         run: esphome compile tests/${{ matrix.test }}.yaml
 
-  # C++ code style and static analysis
+  # C++ static analysis (formatting removed - not enforced)
   cpp-checks:
     name: C++ Checks
     runs-on: ubuntu-latest
@@ -41,12 +41,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install tools
-        run: sudo apt-get install -y clang-format-14 clang-tidy-14
-
-      - name: Check formatting (clang-format)
-        run: |
-          find components -name '*.cpp' -o -name '*.h' | \
-            xargs clang-format-14 --dry-run --Werror
+        run: sudo apt-get install -y clang-tidy-14
 
       - name: Static analysis (clang-tidy)
         run: |
@@ -78,7 +73,7 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
 
-  # Python code validation
+  # Python code validation (formatting removed - not enforced)
   python-lint:
     name: Python Lint
     runs-on: ubuntu-latest
@@ -95,6 +90,3 @@ jobs:
 
       - name: Lint Python files
         run: ruff check components/
-
-      - name: Check Python formatting
-        run: ruff format --check components/

@@ -20,8 +20,8 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void set_enabled(bool en) { this->enabled_ = en; }
   bool is_enabled() const { return this->enabled_; }
 
-  // AsyncWebHandler interface - note: signature varies by ESPHome/AsyncWebServer version
-  bool canHandle(AsyncWebServerRequest *request) override;
+  // AsyncWebHandler interface
+  bool canHandle(AsyncWebServerRequest *request) const override;
   void handleRequest(AsyncWebServerRequest *request) override;
 
  protected:

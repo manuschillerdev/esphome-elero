@@ -13,19 +13,16 @@ DEPENDENCIES = ["elero"]
 
 CONF_BLIND_ADDRESS = "blind_address"
 
-CONFIG_SCHEMA = (
-    sensor.sensor_schema(
-        unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
-        accuracy_decimals=1,
-        device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
-        state_class=STATE_CLASS_MEASUREMENT,
-    )
-    .extend(
-        {
-            cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
-            cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
-        }
-    )
+CONFIG_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
+    accuracy_decimals=1,
+    device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
+    state_class=STATE_CLASS_MEASUREMENT,
+).extend(
+    {
+        cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
+        cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
+    }
 )
 
 
