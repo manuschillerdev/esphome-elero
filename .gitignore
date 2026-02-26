@@ -1,2 +1,8 @@
 __pycache__/
 *.pyc
+
+# Override global .claude ignore for skills (shareable reference docs)
+!.claude/
+.claude/*
+!.claude/skills/
+build/

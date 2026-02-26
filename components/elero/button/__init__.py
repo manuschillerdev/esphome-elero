@@ -1,7 +1,8 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import button
-from .. import elero_ns, elero, CONF_ELERO_ID
+
+from .. import CONF_ELERO_ID, elero, elero_ns
 
 DEPENDENCIES = ["elero"]
 
@@ -20,9 +21,7 @@ CONFIG_SCHEMA = (
             cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
             cv.Optional(CONF_SCAN_START, default=True): cv.boolean,
             cv.Optional(CONF_LIGHT_ID): cv.use_id(EleroLight),
-            cv.Optional(CONF_COMMAND_BYTE, default=0x44): cv.hex_int_range(
-                min=0x0, max=0xFF
-            ),
+            cv.Optional(CONF_COMMAND_BYTE, default=0x44): cv.hex_int_range(min=0x0, max=0xFF),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)

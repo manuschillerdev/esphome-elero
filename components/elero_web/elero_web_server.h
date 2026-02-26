@@ -20,6 +20,7 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void set_enabled(bool en) { this->enabled_ = en; }
   bool is_enabled() const { return this->enabled_; }
 
+  // AsyncWebHandler interface
   bool canHandle(AsyncWebServerRequest *request) const override;
   void handleRequest(AsyncWebServerRequest *request) override;
 
@@ -61,8 +62,7 @@ class EleroWebServer : public Component, public AsyncWebHandler {
 
   // ── URL parsing helpers ────────────────────────────────────────────────
   // Tries to parse /elero/api/covers/0xABCDEF/command → addr = 0xABCDEF, action = "command"
-  static bool parse_addr_url(const std::string &url, const char *prefix,
-                              uint32_t &addr_out, std::string &action_out);
+  static bool parse_addr_url(const std::string &url, const char *prefix, uint32_t &addr_out, std::string &action_out);
 
   // ── Response helpers ───────────────────────────────────────────────────
   void add_cors_headers(AsyncWebServerResponse *response);

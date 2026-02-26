@@ -2,16 +2,16 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import cover, sensor, text_sensor
 from esphome.const import (
-    CONF_ID,
-    CONF_NAME,
     CONF_CHANNEL,
-    CONF_OPEN_DURATION,
     CONF_CLOSE_DURATION,
-    UNIT_DECIBEL_MILLIWATT,
+    CONF_NAME,
+    CONF_OPEN_DURATION,
     DEVICE_CLASS_SIGNAL_STRENGTH,
     STATE_CLASS_MEASUREMENT,
+    UNIT_DECIBEL_MILLIWATT,
 )
-from .. import elero_ns, elero, CONF_ELERO_ID
+
+from .. import CONF_ELERO_ID, elero, elero_ns
 
 DEPENDENCIES = ["elero"]
 CODEOWNERS = ["@andyboeh"]
@@ -92,13 +92,9 @@ def _auto_sensor_validator(config):
     cover_name = config.get(CONF_NAME, "Elero Cover")
     result = dict(config)
     if CONF_RSSI_SENSOR not in result:
-        result[CONF_RSSI_SENSOR] = _RSSI_SENSOR_SCHEMA(
-            {CONF_NAME: f"{cover_name} RSSI"}
-        )
+        result[CONF_RSSI_SENSOR] = _RSSI_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} RSSI"})
     if CONF_STATUS_SENSOR not in result:
-        result[CONF_STATUS_SENSOR] = _STATUS_SENSOR_SCHEMA(
-            {CONF_NAME: f"{cover_name} Status"}
-        )
+        result[CONF_STATUS_SENSOR] = _STATUS_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Status"})
     return result
 
 
@@ -107,22 +103,22 @@ CONFIG_SCHEMA = cv.All(
     .extend(
         {
             cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
-            cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xffffff),
+            cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
             cv.Required(CONF_CHANNEL): cv.int_range(min=0, max=255),
-            cv.Required(CONF_REMOTE_ADDRESS): cv.hex_int_range(min=0x0, max=0xffffff),
+            cv.Required(CONF_REMOTE_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
             cv.Optional(CONF_POLL_INTERVAL, default="5min"): poll_interval,
             cv.Optional(CONF_OPEN_DURATION, default="0s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_CLOSE_DURATION, default="0s"): cv.positive_time_period_milliseconds,
-            cv.Optional(CONF_PAYLOAD_1, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_PAYLOAD_2, default=0x04): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_PCKINF_1, default=0x6a): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_PCKINF_2, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_HOP, default=0x0a): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_COMMAND_UP, default=0x20): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_COMMAND_DOWN, default=0x40): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_COMMAND_STOP, default=0x10): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_COMMAND_CHECK, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_COMMAND_TILT, default=0x24): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_PAYLOAD_1, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_PAYLOAD_2, default=0x04): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_PCKINF_1, default=0x6A): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_PCKINF_2, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_HOP, default=0x0A): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_COMMAND_UP, default=0x20): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_COMMAND_DOWN, default=0x40): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_COMMAND_STOP, default=0x10): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_COMMAND_CHECK, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_COMMAND_TILT, default=0x24): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_SUPPORTS_TILT, default=False): cv.boolean,
             cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
             cv.Optional(CONF_RSSI_SENSOR): _RSSI_SENSOR_SCHEMA,

@@ -1,0 +1,38 @@
+# ESPHome compile test: ESP32-C3 with Arduino framework
+substitutions:
+  spi_clk: GPIO6
+  spi_mosi: GPIO7
+  spi_miso: GPIO2
+  spi_cs: GPIO10
+  gdo0_pin: GPIO3
+
+esphome:
+  name: test-esp32-c3-ard
+  friendly_name: Test ESP32-C3 Arduino
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+
+# Wifi required for web_server_base
+wifi:
+  ssid: "test-network"
+  password: ""
+
+packages:
+  common: !include common.yaml
+
+# Web UI test
+web_server_base:
+
+elero_web:
+  id: elero_web_ui
+
+switch:
+  - platform: elero_web
+    name: "Test Web UI Switch"
+    restore_mode: RESTORE_DEFAULT_ON

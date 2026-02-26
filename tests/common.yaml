@@ -1,0 +1,63 @@
+# Common test configuration for esphome-elero compile tests
+# Platform-specific tests include this file and add their own esphome: section
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+# SPI bus configuration (pins vary by platform, set in platform-specific files)
+spi:
+  clk_pin: ${spi_clk}
+  mosi_pin: ${spi_mosi}
+  miso_pin: ${spi_miso}
+
+# Elero hub configuration
+elero:
+  cs_pin: ${spi_cs}
+  gdo0_pin: ${gdo0_pin}
+  freq0: 0x7a
+  freq1: 0x71
+  freq2: 0x21
+
+# Cover platform test
+cover:
+  - platform: elero
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+    name: "Test Cover"
+    open_duration: 25s
+    close_duration: 22s
+    supports_tilt: true
+    auto_sensors: false
+
+# Light platform test
+light:
+  - platform: elero
+    blind_address: 0xc41a2b
+    channel: 6
+    remote_address: 0xf0d008
+    name: "Test Light"
+    dim_duration: 5s
+
+# Sensor platform test
+sensor:
+  - platform: elero
+    blind_address: 0xa831e5
+    name: "Test RSSI"
+
+# Text sensor platform test
+text_sensor:
+  - platform: elero
+    blind_address: 0xa831e5
+    name: "Test Status"
+
+# Button platform test
+button:
+  - platform: elero
+    name: "Test Start Scan"
+    scan_start: true
+  - platform: elero
+    name: "Test Stop Scan"
+    scan_start: false

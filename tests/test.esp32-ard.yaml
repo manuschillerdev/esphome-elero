@@ -1,0 +1,39 @@
+# ESPHome compile test: ESP32 with Arduino framework
+substitutions:
+  spi_clk: GPIO18
+  spi_mosi: GPIO23
+  spi_miso: GPIO19
+  spi_cs: GPIO5
+  gdo0_pin: GPIO26
+
+esphome:
+  name: test-esp32-ard
+  friendly_name: Test ESP32 Arduino
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+
+# Wifi required for web_server_base
+wifi:
+  ssid: "test-network"
+  password: ""
+
+packages:
+  common: !include common.yaml
+
+# Web UI test (ESP32 Arduino supports web_server_base)
+# web_server_base port is configured in web_server component
+web_server_base:
+
+elero_web:
+  id: elero_web_ui
+
+switch:
+  - platform: elero_web
+    name: "Test Web UI Switch"
+    restore_mode: RESTORE_DEFAULT_ON

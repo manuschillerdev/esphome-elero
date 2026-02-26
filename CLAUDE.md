@@ -28,6 +28,11 @@ external_components:
 - Remote handling: [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3)
 - Based on the no-longer-maintained [andyboeh/esphome-elero](https://github.com/pfriedrich84/esphome-elero)
 
+**Available skills:**
+- `/elero-protocol` — Complete RF protocol reference (packet structure, encryption, commands, state constants)
+- `/modern-cpp` — C++17/C++20 best practices, RAII patterns, type safety guidelines
+- `/esp32-development` — ESP32 memory management, ISRs, FreeRTOS, power management
+
 ---
 
 ## Repository Structure

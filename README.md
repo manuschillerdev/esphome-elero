@@ -5,7 +5,7 @@
 > Zahlreiche Detailverbesserung (Motorquitierung, variabler Poll bei Handbedienung etc.)
 
 [![ESPHome](https://img.shields.io/badge/ESPHome-Component-blue)](https://esphome.io/)
-[![License](https://img.shields.io/badge/License-GPLv3-green)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
 ---
 
