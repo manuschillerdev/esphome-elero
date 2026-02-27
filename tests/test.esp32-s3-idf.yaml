@@ -1,0 +1,29 @@
+# ESPHome compile test: ESP32-S3 with ESP-IDF framework
+# Target hardware: LilyGo T-Embed CC1101
+# Note: elero_web excluded - ESPAsyncWebServer doesn't support ESP-IDF
+substitutions:
+  spi_clk: GPIO11
+  spi_mosi: GPIO9
+  spi_miso: GPIO10
+  spi_cs: GPIO16
+  gdo0_pin: GPIO17
+
+esphome:
+  name: test-esp32-s3-idf
+  friendly_name: Test ESP32-S3 IDF
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+# Wifi required for OTA
+wifi:
+  ssid: "test-network"
+  password: ""
+
+packages:
+  common: !include common.yaml
