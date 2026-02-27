@@ -33,6 +33,8 @@ async def to_code(config):
     web_server_base_var = await cg.get_variable(config[CONF_WEB_SERVER_BASE_ID])
     cg.add(var.set_web_server(web_server_base_var))
 
-    # ESPAsyncWebServer is provided by web_server_base (AUTO_LOAD includes async_tcp)
-    # Do NOT add the library here - web_server_base uses ESP32Async/ESPAsyncWebServer 3.7.10
+    # Add ESPAsyncWebServer for Arduino builds
+    # Must match the version used by ESPHome's web_server_base (3.7.10 from ESP32Async)
+    if CORE.using_arduino:
+        cg.add_library("ESP32Async/ESPAsyncWebServer", "3.7.10")
 
