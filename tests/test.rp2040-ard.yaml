@@ -1,4 +1,5 @@
 # ESPHome compile test: RP2040 with Arduino framework
+# Note: elero_web not tested here - async_tcp doesn't support RP2040
 substitutions:
   spi_clk: GPIO18
   spi_mosi: GPIO19
@@ -16,21 +17,5 @@ rp2040:
 logger:
   level: DEBUG
 
-# Wifi required for web_server_base
-wifi:
-  ssid: "test-network"
-  password: ""
-
 packages:
   common: !include common.yaml
-
-# Web UI test (RP2040 supports web_server_base)
-web_server_base:
-
-elero_web:
-  id: elero_web_ui
-
-switch:
-  - platform: elero_web
-    name: "Test Web UI Switch"
-    restore_mode: RESTORE_DEFAULT_ON
