@@ -69,6 +69,13 @@ void Elero::loop() {
   // Progress TX state machine (non-blocking, must run every loop)
   if (this->tx_ctx_.state != TxState::IDLE) {
     this->handle_tx_state_(now);
+
+    // Check if TX just completed (for non-blocking API)
+    if (this->tx_ctx_.state == TxState::IDLE && this->tx_owner_ != nullptr) {
+      bool success = this->tx_pending_success_;
+      ESP_LOGV(TAG, "TX complete, notifying owner, success=%d", success);
+      this->notify_tx_owner_(success);
+    }
     return;  // Don't process RX while TX is in progress
   }
 
@@ -162,6 +169,12 @@ void Elero::setup() {
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
+  // Abort any pending TX first (notifies owner with failure)
+  if (this->tx_owner_ != nullptr || this->tx_ctx_.state != TxState::IDLE) {
+    ESP_LOGW(TAG, "reinit_frequency: aborting pending TX");
+    this->abort_tx_();
+  }
+
   this->received_ = false;
   this->freq2_ = freq2;
   this->freq1_ = freq1;
@@ -410,6 +423,74 @@ void Elero::abort_tx_() {
   this->tx_ctx_.state = TxState::IDLE;
   this->tx_pending_success_ = false;
   this->flush_and_rx();
+
+  // Notify owner of failure (must happen after state cleanup)
+  this->notify_tx_owner_(false);
+}
+
+void Elero::notify_tx_owner_(bool success) {
+  if (this->tx_owner_ != nullptr) {
+    TxClient *owner = this->tx_owner_;
+    this->tx_owner_ = nullptr;  // Clear BEFORE callback (re-entrancy safe)
+    owner->on_tx_complete(success);
+  }
+}
+
+void Elero::build_tx_packet_(const EleroCommand &cmd) {
+  uint16_t code = (0x00 - (cmd.counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
+  this->msg_tx_[0] = ELERO_MSG_LENGTH;
+  this->msg_tx_[1] = cmd.counter;
+  this->msg_tx_[2] = cmd.pck_inf[0];
+  this->msg_tx_[3] = cmd.pck_inf[1];
+  this->msg_tx_[4] = cmd.hop;
+  this->msg_tx_[5] = ELERO_SYS_ADDR;
+  this->msg_tx_[6] = cmd.channel;
+  this->msg_tx_[7] = ((cmd.remote_addr >> 16) & 0xff);
+  this->msg_tx_[8] = ((cmd.remote_addr >> 8) & 0xff);
+  this->msg_tx_[9] = ((cmd.remote_addr) & 0xff);
+  this->msg_tx_[10] = ((cmd.remote_addr >> 16) & 0xff);
+  this->msg_tx_[11] = ((cmd.remote_addr >> 8) & 0xff);
+  this->msg_tx_[12] = ((cmd.remote_addr) & 0xff);
+  this->msg_tx_[13] = ((cmd.remote_addr >> 16) & 0xff);
+  this->msg_tx_[14] = ((cmd.remote_addr >> 8) & 0xff);
+  this->msg_tx_[15] = ((cmd.remote_addr) & 0xff);
+  this->msg_tx_[16] = ELERO_DEST_COUNT;
+  this->msg_tx_[17] = ((cmd.blind_addr >> 16) & 0xff);
+  this->msg_tx_[18] = ((cmd.blind_addr >> 8) & 0xff);
+  this->msg_tx_[19] = ((cmd.blind_addr) & 0xff);
+  for (int i = 0; i < 10; ++i)
+    this->msg_tx_[20 + i] = cmd.payload[i];
+  this->msg_tx_[22] = ((code >> 8) & 0xff);
+  this->msg_tx_[23] = (code & 0xff);
+
+  uint8_t *payload = &this->msg_tx_[22];
+  protocol::msg_encode(payload);
+}
+
+bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
+  // Reject if already transmitting or another client owns the TX
+  if (this->tx_owner_ != nullptr || this->tx_ctx_.state != TxState::IDLE) {
+    ESP_LOGVV(TAG, "request_tx rejected: busy");
+    return false;
+  }
+
+  // Build packet
+  this->build_tx_packet_(cmd);
+
+  ESP_LOGV(TAG,
+           "request_tx: len=%02d, cnt=%02d, typ=0x%02x, blind=0x%06x, remote=0x%06x, ch=%d, cmd=0x%02x",
+           this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2],
+           cmd.blind_addr, cmd.remote_addr, cmd.channel, cmd.payload[4]);
+
+  // Start non-blocking TX
+  if (!this->start_transmit()) {
+    ESP_LOGW(TAG, "request_tx: start_transmit failed");
+    return false;
+  }
+
+  // Take ownership
+  this->tx_owner_ = client;
+  return true;
 }
 
 bool Elero::start_transmit() {
