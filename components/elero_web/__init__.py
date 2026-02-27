@@ -32,3 +32,6 @@ async def to_code(config):
     web_server_base_var = await cg.get_variable(config[CONF_WEB_SERVER_BASE_ID])
     cg.add(var.set_web_server(web_server_base_var))
 
+    # ESPAsyncWebServer library (Arduino framework only)
+    cg.add_library("esphome/ESPAsyncWebServer-esphome", "3.2.2")
+
