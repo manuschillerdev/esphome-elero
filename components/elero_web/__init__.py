@@ -35,5 +35,5 @@ async def to_code(config):
 
     # Ensure ESPAsyncWebServer is available (web_server_base may not load it in all cases)
     if CORE.using_arduino:
-        cg.add_library("ESP32Async/ESPAsyncWebServer", "3.7.10")
+        cg.add_library("ESP32Async/ESPAsyncWebServer", None)
 
