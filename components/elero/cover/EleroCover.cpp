@@ -242,7 +242,9 @@ bool EleroCover::perform_action(const char *action) {
   }
   if (strcmp(action, "check") == 0) {
     // Check is Elero-specific status query, use raw command
-    this->sender_.enqueue(this->command_check_);
+    if (!this->sender_.enqueue(this->command_check_)) {
+      ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().blind_addr);
+    }
     return true;
   }
   return false;
@@ -269,7 +271,9 @@ void EleroCover::start_movement(CoverOperation dir) {
     case COVER_OPERATION_IDLE:
       // Clear any pending movement commands so STOP is sent immediately
       this->sender_.clear_queue();
-      this->sender_.enqueue(this->command_stop_);
+      if (!this->sender_.enqueue(this->command_stop_)) {
+        ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().blind_addr);
+      }
       break;
   }
 
@@ -283,7 +287,9 @@ void EleroCover::start_movement(CoverOperation dir) {
 }
 
 void EleroCover::schedule_immediate_poll() {
-  this->sender_.enqueue(this->command_check_);
+  if (!this->sender_.enqueue(this->command_check_)) {
+    ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().blind_addr);
+  }
 }
 
 void EleroCover::recompute_position() {

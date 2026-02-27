@@ -204,11 +204,11 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 
 void Elero::flush_and_rx() {
   ESP_LOGVV(TAG, "flush_and_rx");
-  this->write_cmd(CC1101_SIDLE);
-  this->wait_idle();
-  this->write_cmd(CC1101_SFRX);
-  this->write_cmd(CC1101_SFTX);
-  this->write_cmd(CC1101_SRX);
+  (void) this->write_cmd(CC1101_SIDLE);
+  (void) this->wait_idle();
+  (void) this->write_cmd(CC1101_SFRX);
+  (void) this->write_cmd(CC1101_SFTX);
+  (void) this->write_cmd(CC1101_SRX);
   this->received_ = false;
 }
 
@@ -227,46 +227,48 @@ void Elero::reset() {
 void Elero::init() {
   uint8_t patable_data[] = {0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0};
 
-  this->write_reg(CC1101_FSCTRL1, 0x08);
-  this->write_reg(CC1101_FSCTRL0, 0x00);
-  this->write_reg(CC1101_FREQ2, this->freq2_);
-  this->write_reg(CC1101_FREQ1, this->freq1_);
-  this->write_reg(CC1101_FREQ0, this->freq0_);
-  this->write_reg(CC1101_MDMCFG4, 0x7B);
-  this->write_reg(CC1101_MDMCFG3, 0x83);
-  this->write_reg(CC1101_MDMCFG2, 0x13);
-  this->write_reg(CC1101_MDMCFG1, 0x52);
-  this->write_reg(CC1101_MDMCFG0, 0xF8);
-  this->write_reg(CC1101_CHANNR, 0x00);
-  this->write_reg(CC1101_DEVIATN, 0x43);
-  this->write_reg(CC1101_FREND1, 0xB6);
-  this->write_reg(CC1101_FREND0, 0x10);
-  this->write_reg(CC1101_MCSM0, 0x18);
-  this->write_reg(CC1101_MCSM1, 0x3F);
-  this->write_reg(CC1101_FOCCFG, 0x1D);
-  this->write_reg(CC1101_BSCFG, 0x1F);
-  this->write_reg(CC1101_AGCCTRL2, 0xC7);
-  this->write_reg(CC1101_AGCCTRL1, 0x00);
-  this->write_reg(CC1101_AGCCTRL0, 0xB2);
-  this->write_reg(CC1101_FSCAL3, 0xEA);
-  this->write_reg(CC1101_FSCAL2, 0x2A);
-  this->write_reg(CC1101_FSCAL1, 0x00);
-  this->write_reg(CC1101_FSCAL0, 0x1F);
-  this->write_reg(CC1101_FSTEST, 0x59);
-  this->write_reg(CC1101_TEST2, 0x81);
-  this->write_reg(CC1101_TEST1, 0x35);
-  this->write_reg(CC1101_TEST0, 0x09);
-  this->write_reg(CC1101_IOCFG0, 0x06);
-  this->write_reg(CC1101_PKTCTRL1, 0x8C);
-  this->write_reg(CC1101_PKTCTRL0, 0x45);
-  this->write_reg(CC1101_ADDR, 0x00);
-  this->write_reg(CC1101_PKTLEN, 0x3C);
-  this->write_reg(CC1101_SYNC1, 0xD3);
-  this->write_reg(CC1101_SYNC0, 0x91);
-  this->write_burst(CC1101_PATABLE, patable_data, 8);
+  // Best-effort register writes during init. SPI errors are logged by each
+  // method; no recovery path here - setup() handles marking the component failed.
+  (void) this->write_reg(CC1101_FSCTRL1, 0x08);
+  (void) this->write_reg(CC1101_FSCTRL0, 0x00);
+  (void) this->write_reg(CC1101_FREQ2, this->freq2_);
+  (void) this->write_reg(CC1101_FREQ1, this->freq1_);
+  (void) this->write_reg(CC1101_FREQ0, this->freq0_);
+  (void) this->write_reg(CC1101_MDMCFG4, 0x7B);
+  (void) this->write_reg(CC1101_MDMCFG3, 0x83);
+  (void) this->write_reg(CC1101_MDMCFG2, 0x13);
+  (void) this->write_reg(CC1101_MDMCFG1, 0x52);
+  (void) this->write_reg(CC1101_MDMCFG0, 0xF8);
+  (void) this->write_reg(CC1101_CHANNR, 0x00);
+  (void) this->write_reg(CC1101_DEVIATN, 0x43);
+  (void) this->write_reg(CC1101_FREND1, 0xB6);
+  (void) this->write_reg(CC1101_FREND0, 0x10);
+  (void) this->write_reg(CC1101_MCSM0, 0x18);
+  (void) this->write_reg(CC1101_MCSM1, 0x3F);
+  (void) this->write_reg(CC1101_FOCCFG, 0x1D);
+  (void) this->write_reg(CC1101_BSCFG, 0x1F);
+  (void) this->write_reg(CC1101_AGCCTRL2, 0xC7);
+  (void) this->write_reg(CC1101_AGCCTRL1, 0x00);
+  (void) this->write_reg(CC1101_AGCCTRL0, 0xB2);
+  (void) this->write_reg(CC1101_FSCAL3, 0xEA);
+  (void) this->write_reg(CC1101_FSCAL2, 0x2A);
+  (void) this->write_reg(CC1101_FSCAL1, 0x00);
+  (void) this->write_reg(CC1101_FSCAL0, 0x1F);
+  (void) this->write_reg(CC1101_FSTEST, 0x59);
+  (void) this->write_reg(CC1101_TEST2, 0x81);
+  (void) this->write_reg(CC1101_TEST1, 0x35);
+  (void) this->write_reg(CC1101_TEST0, 0x09);
+  (void) this->write_reg(CC1101_IOCFG0, 0x06);
+  (void) this->write_reg(CC1101_PKTCTRL1, 0x8C);
+  (void) this->write_reg(CC1101_PKTCTRL0, 0x45);
+  (void) this->write_reg(CC1101_ADDR, 0x00);
+  (void) this->write_reg(CC1101_PKTLEN, 0x3C);
+  (void) this->write_reg(CC1101_SYNC1, 0xD3);
+  (void) this->write_reg(CC1101_SYNC0, 0x91);
+  (void) this->write_burst(CC1101_PATABLE, patable_data, 8);
 
-  this->write_cmd(CC1101_SRX);
-  this->wait_rx();
+  (void) this->write_cmd(CC1101_SRX);
+  (void) this->wait_rx();
 }
 
 bool Elero::write_reg(uint8_t addr, uint8_t data) {
