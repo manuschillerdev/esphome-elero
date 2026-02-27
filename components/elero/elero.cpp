@@ -922,22 +922,39 @@ void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sens
 }
 #endif
 
-void Elero::start_scan() {
+bool Elero::start_scan() {
+  if (this->scan_mode_)
+    return false;
   this->discovered_blinds_.clear();
   this->scan_mode_ = true;
   ESP_LOGI(TAG, "RF scan started");
+  return true;
 }
 
-void Elero::start_packet_dump() {
+bool Elero::stop_scan() {
+  if (!this->scan_mode_)
+    return false;
+  this->scan_mode_ = false;
+  ESP_LOGI(TAG, "RF scan stopped, discovered %d device(s)", this->discovered_blinds_.size());
+  return true;
+}
+
+bool Elero::start_packet_dump() {
+  if (this->packet_dump_mode_)
+    return false;
   this->raw_packets_.clear();
   this->raw_packet_write_idx_ = 0;
   this->packet_dump_mode_ = true;
   ESP_LOGI(TAG, "Packet dump mode started");
+  return true;
 }
 
-void Elero::stop_packet_dump() {
-  packet_dump_mode_ = false;
+bool Elero::stop_packet_dump() {
+  if (!this->packet_dump_mode_)
+    return false;
+  this->packet_dump_mode_ = false;
   ESP_LOGI(TAG, "Packet dump mode stopped");
+  return true;
 }
 
 void Elero::clear_raw_packets() {

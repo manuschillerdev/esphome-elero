@@ -285,22 +285,20 @@ void EleroWebServer::handle_ws_message(AsyncWebSocketClient *client, const std::
 
   // ── Discovery ──
   if (cmd == "scan_start") {
-    if (this->parent_->is_scanning()) {
+    if (!this->parent_->start_scan()) {
       this->send_result(client, id_cstr, false, "Already scanning");
       return;
     }
-    this->parent_->start_scan();  // Clears discovered + starts
     this->send_result(client, id_cstr, true);
     this->notify_scan_status_changed();
     return;
   }
 
   if (cmd == "scan_stop") {
-    if (!this->parent_->is_scanning()) {
+    if (!this->parent_->stop_scan()) {
       this->send_result(client, id_cstr, false, "No scan running");
       return;
     }
-    this->parent_->stop_scan();
     this->send_result(client, id_cstr, true);
     this->notify_scan_status_changed();
     return;
@@ -363,21 +361,19 @@ void EleroWebServer::handle_ws_message(AsyncWebSocketClient *client, const std::
   }
 
   if (cmd == "dump_start") {
-    if (this->parent_->is_packet_dump_active()) {
+    if (!this->parent_->start_packet_dump()) {
       this->send_result(client, id_cstr, false, "Dump already running");
       return;
     }
-    this->parent_->start_packet_dump();  // Clears + starts
     this->send_result(client, id_cstr, true);
     return;
   }
 
   if (cmd == "dump_stop") {
-    if (!this->parent_->is_packet_dump_active()) {
+    if (!this->parent_->stop_packet_dump()) {
       this->send_result(client, id_cstr, false, "No dump running");
       return;
     }
-    this->parent_->stop_packet_dump();
     this->send_result(client, id_cstr, true);
     return;
   }

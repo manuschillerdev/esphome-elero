@@ -309,9 +309,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor);
 #endif
 
-  // Discovery / scan mode
-  void start_scan();
-  void stop_scan() { scan_mode_ = false; }
+  // Discovery / scan mode — returns false if already in that state
+  bool start_scan();
+  bool stop_scan();
   bool is_scanning() const { return scan_mode_; }
   const std::vector<DiscoveredBlind> &get_discovered_blinds() const { return discovered_blinds_; }
   size_t get_discovered_count() const { return discovered_blinds_.size(); }
@@ -323,8 +323,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   const std::map<uint32_t, EleroBlindBase *> &get_configured_covers() const { return address_to_cover_mapping_; }
 
   // Packet dump mode: capture every received FIFO read into a ring buffer
-  void start_packet_dump();   // Clears buffer + starts capture
-  void stop_packet_dump();
+  // Returns false if already in that state
+  bool start_packet_dump();   // Clears buffer + starts capture
+  bool stop_packet_dump();
   void clear_raw_packets();   // Clear without affecting capture state
   bool is_packet_dump_active() const { return packet_dump_mode_; }
   const std::vector<RawPacket> &get_raw_packets() const { return raw_packets_; }
