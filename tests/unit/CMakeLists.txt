@@ -16,17 +16,29 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 
-# Include path for elero headers
-include_directories(${CMAKE_SOURCE_DIR}/../../components)
+# Include paths
+include_directories(${CMAKE_SOURCE_DIR}/../../components)  # elero headers
+include_directories(${CMAKE_SOURCE_DIR})                   # test_vectors.h
 
-# Test executable
-add_executable(elero_tests
+# Test executable: Protocol encoding/decoding
+add_executable(test_protocol
   test_protocol.cpp
 )
+target_link_libraries(test_protocol GTest::gtest_main)
 
-target_link_libraries(elero_tests
-  GTest::gtest_main
+# Test executable: Real packet vectors
+add_executable(test_packet_vectors
+  test_packet_vectors.cpp
 )
+target_link_libraries(test_packet_vectors GTest::gtest_main)
 
+# Discover all tests
 include(GoogleTest)
-gtest_discover_tests(elero_tests)
+gtest_discover_tests(test_protocol)
+gtest_discover_tests(test_packet_vectors)
+
+# Combined target for running all tests
+add_custom_target(run_all_tests
+  COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+  DEPENDS test_protocol test_packet_vectors
+)
