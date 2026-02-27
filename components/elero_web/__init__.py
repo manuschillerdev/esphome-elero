@@ -33,7 +33,11 @@ async def to_code(config):
     web_server_base_var = await cg.get_variable(config[CONF_WEB_SERVER_BASE_ID])
     cg.add(var.set_web_server(web_server_base_var))
 
-    # Ensure ESPAsyncWebServer is available (web_server_base may not load it in all cases)
+    # Ensure ESPAsyncWebServer and dependencies are available
     if CORE.using_arduino:
+        if CORE.is_esp32:
+            cg.add_library("WiFi", None)
+            cg.add_library("FS", None)
+            cg.add_library("Update", None)
         cg.add_library("ESP32Async/ESPAsyncWebServer", None)
 
