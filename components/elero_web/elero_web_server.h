@@ -8,12 +8,8 @@
 namespace esphome {
 namespace elero {
 
-// Maximum WebSocket clients (ESPAsyncWebServer default)
-constexpr uint8_t ELERO_WS_MAX_CLIENTS = 4;
-
-// Broadcast intervals (ms)
-constexpr uint32_t ELERO_WS_HEARTBEAT_INTERVAL = 5000;
-constexpr uint32_t ELERO_WS_CLEANUP_INTERVAL = 10000;
+// SSE heartbeat interval (ms)
+constexpr uint32_t ELERO_SSE_HEARTBEAT_INTERVAL = 15000;
 
 class EleroWebServer : public Component {
  public:
@@ -37,19 +33,34 @@ class EleroWebServer : public Component {
   void notify_scan_status_changed();
 
  protected:
-  // WebSocket event handler
-  void on_ws_event(AsyncWebSocket *server, AsyncWebSocketClient *client,
-                   AwsEventType type, void *arg, uint8_t *data, size_t len);
+  // SSE broadcast helper
+  void broadcast_event(const char *event_type, const std::string &json);
 
-  // Message dispatcher
-  void handle_ws_message(AsyncWebSocketClient *client, const std::string &msg);
+  // HTTP response helpers
+  void send_json_ok(AsyncWebServerRequest *request);
+  void send_json_error(AsyncWebServerRequest *request, int code, const char *error);
 
-  // Broadcast helpers
-  void broadcast(const char *type, const std::string &json);
-  void broadcast_full_state();
-  void send_full_state(AsyncWebSocketClient *client);
-  void send_result(AsyncWebSocketClient *client, const char *id, bool ok, const char *error = nullptr);
-  void send_yaml(AsyncWebSocketClient *client, const char *id);
+  // HTTP GET handlers
+  void handle_index(AsyncWebServerRequest *request);
+  void handle_get_state(AsyncWebServerRequest *request);
+  void handle_get_yaml(AsyncWebServerRequest *request);
+
+  // HTTP POST handlers (no body)
+  void handle_post_scan_start(AsyncWebServerRequest *request);
+  void handle_post_scan_stop(AsyncWebServerRequest *request);
+  void handle_post_log_start(AsyncWebServerRequest *request);
+  void handle_post_log_stop(AsyncWebServerRequest *request);
+  void handle_post_log_clear(AsyncWebServerRequest *request);
+  void handle_post_dump_start(AsyncWebServerRequest *request);
+  void handle_post_dump_stop(AsyncWebServerRequest *request);
+  void handle_post_dump_clear(AsyncWebServerRequest *request);
+
+  // HTTP POST handlers (with JSON body) - parse body in callback
+  void handle_post_cover(AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_settings(AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_adopt(AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_runtime_remove(AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_frequency(AsyncWebServerRequest *request, uint8_t *data, size_t len);
 
   // JSON builders
   std::string build_full_state_json();
@@ -59,17 +70,13 @@ class EleroWebServer : public Component {
   std::string build_packets_json();
   std::string build_yaml();
 
-  // HTTP handlers (minimal - just index and redirect)
-  void handle_index(AsyncWebServerRequest *request);
-
   Elero *parent_{nullptr};
   web_server_base::WebServerBase *base_{nullptr};
-  AsyncWebSocket *ws_{nullptr};
+  AsyncEventSource events_{"/elero/events"};
   bool enabled_{true};
 
-  // Timing for heartbeat and cleanup
+  // Timing for heartbeat
   uint32_t last_heartbeat_ms_{0};
-  uint32_t last_cleanup_ms_{0};
 
   // Change tracking for incremental pushes
   bool covers_changed_{false};
