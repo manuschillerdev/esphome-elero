@@ -21,21 +21,6 @@ const STATE_LABELS = {
   off:              'Off',
 }
 
-// ─── API helpers ─────────────────────────────────────────────────────────────
-async function api(method, url, params = {}) {
-  const qs = Object.keys(params).length
-    ? '?' + new URLSearchParams(params).toString()
-    : ''
-  const r = await fetch(url + qs, { method })
-  if (!r.ok) {
-    let msg = `HTTP ${r.status}`
-    try { const d = await r.json(); msg = d.error || msg } catch {}
-    throw new Error(msg)
-  }
-  const ct = r.headers.get('content-type') || ''
-  return ct.includes('application/json') ? r.json() : r.text()
-}
-
 // ─── Utility ─────────────────────────────────────────────────────────────────
 function relTime(ms) {
   if (!ms) return 'never'
@@ -71,11 +56,20 @@ function rssiIcon(rssi) {
   return '▂░░ ' + rssi.toFixed(1) + ' dBm'
 }
 
+function genId() {
+  return Math.random().toString(36).substring(2, 10)
+}
+
 // ─── Alpine app ──────────────────────────────────────────────────────────────
 document.addEventListener('alpine:init', () => {
   Alpine.data('app', () => ({
     // Navigation
     tab: 'devices',
+
+    // WebSocket
+    ws: null,
+    wsConnected: false,
+    wsReconnectTimer: null,
 
     // Device info
     deviceName: '',
@@ -104,7 +98,6 @@ document.addEventListener('alpine:init', () => {
     logLevel: '3',
     logAutoScroll: true,
     logEntries: [],
-    logLastTs: 0,
     get filteredLog() {
       return this.logEntries.filter(e => e.level <= parseInt(this.logLevel))
     },
@@ -121,21 +114,181 @@ document.addEventListener('alpine:init', () => {
     toast: { show: false, error: false, msg: '' },
     _toastTimer: null,
 
-    // Polling intervals
-    _pollCovers: null,
-    _pollDisc: null,
-    _pollLog: null,
-    _pollDump: null,
+    // Pending command callbacks
+    _pendingCmds: {},
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
-    async init() {
-      await this.refreshInfo()
-      await this.refreshCovers()
-      await this.loadFrequency()
-      this._pollCovers = setInterval(() => this.refreshCovers(), 3000)
-      this._pollDisc   = setInterval(() => this.refreshDiscovered(), 3000)
-      this._pollDump   = setInterval(() => this.refreshDump(), 2000)
-      this._pollLog    = setInterval(() => this.refreshLog(), 1500)
+    init() {
+      this.connect()
+    },
+
+    // ── WebSocket connection ──────────────────────────────────────────────────
+    connect() {
+      if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+        return
+      }
+
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      this.ws = new WebSocket(`${protocol}//${location.host}/elero/ws`)
+
+      this.ws.onopen = () => {
+        this.wsConnected = true
+        if (this.wsReconnectTimer) {
+          clearTimeout(this.wsReconnectTimer)
+          this.wsReconnectTimer = null
+        }
+      }
+
+      this.ws.onclose = () => {
+        this.wsConnected = false
+        this.ws = null
+        // Auto-reconnect after 2 seconds
+        this.wsReconnectTimer = setTimeout(() => this.connect(), 2000)
+      }
+
+      this.ws.onerror = () => {
+        // Will trigger onclose
+      }
+
+      this.ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+          this.handleMessage(msg)
+        } catch (e) {
+          console.error('WS message parse error:', e)
+        }
+      }
+    },
+
+    // ── Message handler ───────────────────────────────────────────────────────
+    handleMessage(msg) {
+      const { type, data, id, ok, error } = msg
+
+      // Command result
+      if (type === 'result') {
+        if (id && this._pendingCmds[id]) {
+          const { resolve, reject } = this._pendingCmds[id]
+          delete this._pendingCmds[id]
+          if (ok) {
+            resolve()
+          } else {
+            reject(new Error(error || 'Command failed'))
+          }
+        }
+        return
+      }
+
+      // YAML response
+      if (type === 'yaml') {
+        if (id && this._pendingCmds[id]) {
+          const { resolve } = this._pendingCmds[id]
+          delete this._pendingCmds[id]
+          resolve(data)
+        }
+        return
+      }
+
+      // Full state (sent on connect and as heartbeat)
+      if (type === 'state') {
+        this.deviceName = data.device_name || ''
+        this.uptimeMs = data.uptime_ms || 0
+        this.scanning = data.scanning || false
+        this.logCapture = data.log_capture || false
+        this.dumpActive = data.dump_active || false
+        if (data.freq) {
+          this.freq.freq2 = data.freq.freq2 || this.freq.freq2
+          this.freq.freq1 = data.freq.freq1 || this.freq.freq1
+          this.freq.freq0 = data.freq.freq0 || this.freq.freq0
+        }
+        if (data.covers) {
+          this.covers = data.covers.map(c => ({
+            ...c,
+            _edit: {
+              open_duration_ms:  c.open_duration_ms,
+              close_duration_ms: c.close_duration_ms,
+              poll_interval_ms:  c.poll_interval_ms,
+            }
+          }))
+        }
+        if (data.discovered) {
+          this.scanning = data.discovered.scanning
+          this.allDiscovered = data.discovered.blinds || []
+        }
+        return
+      }
+
+      // Incremental covers update
+      if (type === 'covers') {
+        this.covers = data.map(c => ({
+          ...c,
+          _edit: {
+            open_duration_ms:  c.open_duration_ms,
+            close_duration_ms: c.close_duration_ms,
+            poll_interval_ms:  c.poll_interval_ms,
+          }
+        }))
+        return
+      }
+
+      // Incremental discovered update
+      if (type === 'discovered') {
+        this.scanning = data.scanning
+        this.allDiscovered = data.blinds || []
+        return
+      }
+
+      // New log entries
+      if (type === 'log') {
+        if (Array.isArray(data) && data.length > 0) {
+          const newEntries = data.map((e, i) => ({ ...e, idx: this.logEntries.length + i }))
+          this.logEntries.push(...newEntries)
+          // Keep buffer to 500 entries
+          if (this.logEntries.length > 500) this.logEntries.splice(0, this.logEntries.length - 500)
+          if (this.logAutoScroll) {
+            this.$nextTick(() => {
+              const box = document.getElementById('log-box')
+              if (box) box.scrollTop = box.scrollHeight
+            })
+          }
+        }
+        return
+      }
+
+      // Packets update
+      if (type === 'packets') {
+        this.dumpActive = data.dump_active
+        this.dumpPackets = data.packets || []
+        return
+      }
+
+      // Scan status update
+      if (type === 'scan_status') {
+        this.scanning = data.scanning
+        return
+      }
+    },
+
+    // ── Send command helper ───────────────────────────────────────────────────
+    send(cmd, timeout = 5000) {
+      return new Promise((resolve, reject) => {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          reject(new Error('Not connected'))
+          return
+        }
+
+        const id = genId()
+        cmd.id = id
+
+        this._pendingCmds[id] = { resolve, reject }
+        setTimeout(() => {
+          if (this._pendingCmds[id]) {
+            delete this._pendingCmds[id]
+            reject(new Error('Timeout'))
+          }
+        }, timeout)
+
+        this.ws.send(JSON.stringify(cmd))
+      })
     },
 
     // ── Toast ─────────────────────────────────────────────────────────────────
@@ -145,43 +298,15 @@ document.addEventListener('alpine:init', () => {
       this._toastTimer = setTimeout(() => { this.toast.show = false }, 3500)
     },
 
-    // ── Info ──────────────────────────────────────────────────────────────────
-    async refreshInfo() {
-      try {
-        const d = await api('GET', '/elero/api/info')
-        this.deviceName = d.device_name || ''
-        this.uptimeMs = d.uptime_ms || 0
-        this.freq.freq2 = d.freq2 || this.freq.freq2
-        this.freq.freq1 = d.freq1 || this.freq.freq1
-        this.freq.freq0 = d.freq0 || this.freq.freq0
-      } catch {}
-    },
-
-    // ── Covers ────────────────────────────────────────────────────────────────
-    async refreshCovers() {
-      try {
-        const d = await api('GET', '/elero/api/configured')
-        this.covers = d.covers.map(c => ({
-          ...c,
-          _edit: {
-            open_duration_ms:  c.open_duration_ms,
-            close_duration_ms: c.close_duration_ms,
-            poll_interval_ms:  c.poll_interval_ms,
-          }
-        }))
-        // Also pull uptime from info periodically
-        this.uptimeMs += 3000  // rough increment
-      } catch {}
-    },
-
+    // ── Cover controls ────────────────────────────────────────────────────────
     toggleSettings(c) {
       this.settingsOpen = this.settingsOpen === c.blind_address ? null : c.blind_address
     },
 
-    async coverCmd(c, cmd) {
+    async coverCmd(c, action) {
       try {
-        await api('POST', `/elero/api/covers/${c.blind_address}/command`, { cmd })
-        this.showToast(`${c.name}: ${cmd} sent`)
+        await this.send({ cmd: 'cover', address: c.blind_address, action })
+        this.showToast(`${c.name}: ${action} sent`)
       } catch (e) {
         this.showToast(`Command failed: ${e.message}`, true)
       }
@@ -189,40 +314,31 @@ document.addEventListener('alpine:init', () => {
 
     async saveSettings(c) {
       try {
-        await api('POST', `/elero/api/covers/${c.blind_address}/settings`, {
+        await this.send({
+          cmd: 'settings',
+          address: c.blind_address,
           open_duration:  c._edit.open_duration_ms,
           close_duration: c._edit.close_duration_ms,
           poll_interval:  c._edit.poll_interval_ms,
         })
         this.showToast(`${c.name}: settings saved`)
         this.settingsOpen = null
-        await this.refreshCovers()
       } catch (e) {
         this.showToast(`Save failed: ${e.message}`, true)
       }
     },
 
     // ── Discovery ─────────────────────────────────────────────────────────────
-    async refreshDiscovered() {
-      try {
-        const d = await api('GET', '/elero/api/discovered')
-        this.scanning = d.scanning
-        this.allDiscovered = d.blinds || []
-      } catch {}
-    },
-
     async startScan() {
       try {
-        await api('POST', '/elero/api/scan/start')
-        this.scanning = true
+        await this.send({ cmd: 'scan_start' })
         this.showToast('Scan started')
       } catch (e) { this.showToast(`Scan start failed: ${e.message}`, true) }
     },
 
     async stopScan() {
       try {
-        await api('POST', '/elero/api/scan/stop')
-        this.scanning = false
+        await this.send({ cmd: 'scan_stop' })
         this.showToast('Scan stopped')
       } catch (e) { this.showToast(`Scan stop failed: ${e.message}`, true) }
     },
@@ -235,13 +351,14 @@ document.addEventListener('alpine:init', () => {
     async confirmAdopt() {
       if (!this.adoptTarget) return
       try {
-        await api('POST', `/elero/api/discovered/${this.adoptTarget.blind_address}/adopt`,
-                  { name: this.adoptName || this.adoptTarget.blind_address })
+        await this.send({
+          cmd: 'adopt',
+          address: this.adoptTarget.blind_address,
+          name: this.adoptName || this.adoptTarget.blind_address
+        })
         this.showToast(`Adopted as "${this.adoptName || this.adoptTarget.blind_address}"`)
         this.adoptTarget = null
         this.tab = 'devices'
-        await this.refreshCovers()
-        await this.refreshDiscovered()
       } catch (e) { this.showToast(`Adopt failed: ${e.message}`, true) }
     },
 
@@ -264,8 +381,8 @@ document.addEventListener('alpine:init', () => {
 
     async downloadYaml() {
       try {
-        const text = await api('GET', '/elero/api/yaml')
-        const blob = new Blob([text], { type: 'text/plain' })
+        const yaml = await this.send({ cmd: 'get_yaml' }, 10000)
+        const blob = new Blob([yaml], { type: 'text/plain' })
         const url  = URL.createObjectURL(blob)
         const a    = document.createElement('a')
         a.href = url; a.download = 'elero_blinds.yaml'; a.click()
@@ -282,7 +399,7 @@ document.addEventListener('alpine:init', () => {
     // ── Log ───────────────────────────────────────────────────────────────────
     async startCapture() {
       try {
-        await api('POST', '/elero/api/logs/capture/start')
+        await this.send({ cmd: 'log_start' })
         this.logCapture = true
         this.showToast('Log capture started')
       } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
@@ -290,7 +407,7 @@ document.addEventListener('alpine:init', () => {
 
     async stopCapture() {
       try {
-        await api('POST', '/elero/api/logs/capture/stop')
+        await this.send({ cmd: 'log_stop' })
         this.logCapture = false
         this.showToast('Log capture stopped')
       } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
@@ -298,31 +415,10 @@ document.addEventListener('alpine:init', () => {
 
     async clearLog() {
       try {
-        await api('POST', '/elero/api/logs/clear')
+        await this.send({ cmd: 'log_clear' })
         this.logEntries = []
-        this.logLastTs = 0
         this.showToast('Log cleared')
       } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
-    },
-
-    async refreshLog() {
-      try {
-        const d = await api('GET', '/elero/api/logs', { since: this.logLastTs })
-        this.logCapture = d.capture_active
-        if (d.entries && d.entries.length > 0) {
-          const newEntries = d.entries.map((e, i) => ({ ...e, idx: this.logEntries.length + i }))
-          this.logEntries.push(...newEntries)
-          // Keep buffer to 500 entries
-          if (this.logEntries.length > 500) this.logEntries.splice(0, this.logEntries.length - 500)
-          this.logLastTs = newEntries[newEntries.length - 1].t
-          if (this.logAutoScroll) {
-            this.$nextTick(() => {
-              const box = document.getElementById('log-box')
-              if (box) box.scrollTop = box.scrollHeight
-            })
-          }
-        }
-      } catch {}
     },
 
     // Replace 0xABCDEF hex addresses with linked name annotations
@@ -341,13 +437,6 @@ document.addEventListener('alpine:init', () => {
     },
 
     // ── Frequency ─────────────────────────────────────────────────────────────
-    async loadFrequency() {
-      try {
-        const d = await api('GET', '/elero/api/frequency')
-        this.freq = { freq2: d.freq2, freq1: d.freq1, freq0: d.freq0 }
-      } catch {}
-    },
-
     applyPreset(v) {
       if (!v) return
       const [f2, f1, f0] = v.split(',')
@@ -357,17 +446,21 @@ document.addEventListener('alpine:init', () => {
     async setFrequency() {
       this.freqStatus = 'Applying…'
       try {
-        const d = await api('POST', '/elero/api/frequency/set', this.freq)
-        this.freq = { freq2: d.freq2, freq1: d.freq1, freq0: d.freq0 }
+        await this.send({
+          cmd: 'set_frequency',
+          freq2: this.freq.freq2,
+          freq1: this.freq.freq1,
+          freq0: this.freq.freq0
+        })
         this.freqStatus = ''
-        this.showToast(`Frequency set: ${d.freq2} ${d.freq1} ${d.freq0}`)
+        this.showToast(`Frequency set: ${this.freq.freq2} ${this.freq.freq1} ${this.freq.freq0}`)
       } catch (e) { this.freqStatus = ''; this.showToast(`Failed: ${e.message}`, true) }
     },
 
     // ── Packet dump ───────────────────────────────────────────────────────────
     async startDump() {
       try {
-        await api('POST', '/elero/api/dump/start')
+        await this.send({ cmd: 'dump_start' })
         this.dumpActive = true
         this.showToast('Packet dump started')
       } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
@@ -375,7 +468,7 @@ document.addEventListener('alpine:init', () => {
 
     async stopDump() {
       try {
-        await api('POST', '/elero/api/dump/stop')
+        await this.send({ cmd: 'dump_stop' })
         this.dumpActive = false
         this.showToast('Packet dump stopped')
       } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
@@ -383,18 +476,10 @@ document.addEventListener('alpine:init', () => {
 
     async clearDump() {
       try {
-        await api('POST', '/elero/api/packets/clear')
+        await this.send({ cmd: 'dump_clear' })
         this.dumpPackets = []
         this.showToast('Dump cleared')
       } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
-    },
-
-    async refreshDump() {
-      try {
-        const d = await api('GET', '/elero/api/packets')
-        this.dumpActive  = d.dump_active
-        this.dumpPackets = d.packets || []
-      } catch {}
     },
 
     // ── Helpers exposed to template ───────────────────────────────────────────

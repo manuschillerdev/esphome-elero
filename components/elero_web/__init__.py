@@ -5,8 +5,9 @@ from esphome.components.elero import CONF_ELERO_ID, elero, elero_ns
 from esphome.components.web_server_base import CONF_WEB_SERVER_BASE_ID
 from esphome.const import CONF_ID
 
-DEPENDENCIES = ["elero"]
+DEPENDENCIES = ["elero", "web_server_base"]
 AUTO_LOAD = ["web_server_base"]
+CODEOWNERS = ["@manuschillerdev"]
 
 # Exported so the switch sub-platform can reference the web server class
 CONF_ELERO_WEB_ID = "elero_web_id"
@@ -30,3 +31,4 @@ async def to_code(config):
 
     web_server_base_var = await cg.get_variable(config[CONF_WEB_SERVER_BASE_ID])
     cg.add(var.set_web_server(web_server_base_var))
+

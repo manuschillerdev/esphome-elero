@@ -63,6 +63,24 @@ const char *elero_state_to_string(uint8_t state) {
   }
 }
 
+uint8_t elero_action_to_command(const char *action) {
+  if (action == nullptr)
+    return 0xFF;
+  if (strcmp(action, "up") == 0 || strcmp(action, "open") == 0)
+    return ELERO_COMMAND_COVER_UP;
+  if (strcmp(action, "down") == 0 || strcmp(action, "close") == 0)
+    return ELERO_COMMAND_COVER_DOWN;
+  if (strcmp(action, "stop") == 0)
+    return ELERO_COMMAND_COVER_STOP;
+  if (strcmp(action, "check") == 0)
+    return ELERO_COMMAND_COVER_CHECK;
+  if (strcmp(action, "tilt") == 0)
+    return ELERO_COMMAND_COVER_TILT;
+  if (strcmp(action, "int") == 0)
+    return ELERO_COMMAND_COVER_INT;
+  return 0xFF;
+}
+
 void Elero::loop() {
   const uint32_t now = millis();
 
@@ -186,11 +204,11 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 
 void Elero::flush_and_rx() {
   ESP_LOGVV(TAG, "flush_and_rx");
-  this->write_cmd(CC1101_SIDLE);
-  this->wait_idle();
-  this->write_cmd(CC1101_SFRX);
-  this->write_cmd(CC1101_SFTX);
-  this->write_cmd(CC1101_SRX);
+  (void) this->write_cmd(CC1101_SIDLE);
+  (void) this->wait_idle();
+  (void) this->write_cmd(CC1101_SFRX);
+  (void) this->write_cmd(CC1101_SFTX);
+  (void) this->write_cmd(CC1101_SRX);
   this->received_ = false;
 }
 
@@ -209,46 +227,48 @@ void Elero::reset() {
 void Elero::init() {
   uint8_t patable_data[] = {0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0};
 
-  this->write_reg(CC1101_FSCTRL1, 0x08);
-  this->write_reg(CC1101_FSCTRL0, 0x00);
-  this->write_reg(CC1101_FREQ2, this->freq2_);
-  this->write_reg(CC1101_FREQ1, this->freq1_);
-  this->write_reg(CC1101_FREQ0, this->freq0_);
-  this->write_reg(CC1101_MDMCFG4, 0x7B);
-  this->write_reg(CC1101_MDMCFG3, 0x83);
-  this->write_reg(CC1101_MDMCFG2, 0x13);
-  this->write_reg(CC1101_MDMCFG1, 0x52);
-  this->write_reg(CC1101_MDMCFG0, 0xF8);
-  this->write_reg(CC1101_CHANNR, 0x00);
-  this->write_reg(CC1101_DEVIATN, 0x43);
-  this->write_reg(CC1101_FREND1, 0xB6);
-  this->write_reg(CC1101_FREND0, 0x10);
-  this->write_reg(CC1101_MCSM0, 0x18);
-  this->write_reg(CC1101_MCSM1, 0x3F);
-  this->write_reg(CC1101_FOCCFG, 0x1D);
-  this->write_reg(CC1101_BSCFG, 0x1F);
-  this->write_reg(CC1101_AGCCTRL2, 0xC7);
-  this->write_reg(CC1101_AGCCTRL1, 0x00);
-  this->write_reg(CC1101_AGCCTRL0, 0xB2);
-  this->write_reg(CC1101_FSCAL3, 0xEA);
-  this->write_reg(CC1101_FSCAL2, 0x2A);
-  this->write_reg(CC1101_FSCAL1, 0x00);
-  this->write_reg(CC1101_FSCAL0, 0x1F);
-  this->write_reg(CC1101_FSTEST, 0x59);
-  this->write_reg(CC1101_TEST2, 0x81);
-  this->write_reg(CC1101_TEST1, 0x35);
-  this->write_reg(CC1101_TEST0, 0x09);
-  this->write_reg(CC1101_IOCFG0, 0x06);
-  this->write_reg(CC1101_PKTCTRL1, 0x8C);
-  this->write_reg(CC1101_PKTCTRL0, 0x45);
-  this->write_reg(CC1101_ADDR, 0x00);
-  this->write_reg(CC1101_PKTLEN, 0x3C);
-  this->write_reg(CC1101_SYNC1, 0xD3);
-  this->write_reg(CC1101_SYNC0, 0x91);
-  this->write_burst(CC1101_PATABLE, patable_data, 8);
+  // Best-effort register writes during init. SPI errors are logged by each
+  // method; no recovery path here - setup() handles marking the component failed.
+  (void) this->write_reg(CC1101_FSCTRL1, 0x08);
+  (void) this->write_reg(CC1101_FSCTRL0, 0x00);
+  (void) this->write_reg(CC1101_FREQ2, this->freq2_);
+  (void) this->write_reg(CC1101_FREQ1, this->freq1_);
+  (void) this->write_reg(CC1101_FREQ0, this->freq0_);
+  (void) this->write_reg(CC1101_MDMCFG4, 0x7B);
+  (void) this->write_reg(CC1101_MDMCFG3, 0x83);
+  (void) this->write_reg(CC1101_MDMCFG2, 0x13);
+  (void) this->write_reg(CC1101_MDMCFG1, 0x52);
+  (void) this->write_reg(CC1101_MDMCFG0, 0xF8);
+  (void) this->write_reg(CC1101_CHANNR, 0x00);
+  (void) this->write_reg(CC1101_DEVIATN, 0x43);
+  (void) this->write_reg(CC1101_FREND1, 0xB6);
+  (void) this->write_reg(CC1101_FREND0, 0x10);
+  (void) this->write_reg(CC1101_MCSM0, 0x18);
+  (void) this->write_reg(CC1101_MCSM1, 0x3F);
+  (void) this->write_reg(CC1101_FOCCFG, 0x1D);
+  (void) this->write_reg(CC1101_BSCFG, 0x1F);
+  (void) this->write_reg(CC1101_AGCCTRL2, 0xC7);
+  (void) this->write_reg(CC1101_AGCCTRL1, 0x00);
+  (void) this->write_reg(CC1101_AGCCTRL0, 0xB2);
+  (void) this->write_reg(CC1101_FSCAL3, 0xEA);
+  (void) this->write_reg(CC1101_FSCAL2, 0x2A);
+  (void) this->write_reg(CC1101_FSCAL1, 0x00);
+  (void) this->write_reg(CC1101_FSCAL0, 0x1F);
+  (void) this->write_reg(CC1101_FSTEST, 0x59);
+  (void) this->write_reg(CC1101_TEST2, 0x81);
+  (void) this->write_reg(CC1101_TEST1, 0x35);
+  (void) this->write_reg(CC1101_TEST0, 0x09);
+  (void) this->write_reg(CC1101_IOCFG0, 0x06);
+  (void) this->write_reg(CC1101_PKTCTRL1, 0x8C);
+  (void) this->write_reg(CC1101_PKTCTRL0, 0x45);
+  (void) this->write_reg(CC1101_ADDR, 0x00);
+  (void) this->write_reg(CC1101_PKTLEN, 0x3C);
+  (void) this->write_reg(CC1101_SYNC1, 0xD3);
+  (void) this->write_reg(CC1101_SYNC0, 0x91);
+  (void) this->write_burst(CC1101_PATABLE, patable_data, 8);
 
-  this->write_cmd(CC1101_SRX);
-  this->wait_rx();
+  (void) this->write_cmd(CC1101_SRX);
+  (void) this->wait_rx();
 }
 
 bool Elero::write_reg(uint8_t addr, uint8_t data) {
@@ -904,14 +924,39 @@ void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sens
 }
 #endif
 
-void Elero::start_packet_dump() {
-  packet_dump_mode_ = true;
-  ESP_LOGI(TAG, "Packet dump mode started");
+bool Elero::start_scan() {
+  if (this->scan_mode_)
+    return false;
+  this->discovered_blinds_.clear();
+  this->scan_mode_ = true;
+  ESP_LOGI(TAG, "RF scan started");
+  return true;
 }
 
-void Elero::stop_packet_dump() {
-  packet_dump_mode_ = false;
+bool Elero::stop_scan() {
+  if (!this->scan_mode_)
+    return false;
+  this->scan_mode_ = false;
+  ESP_LOGI(TAG, "RF scan stopped, discovered %d device(s)", this->discovered_blinds_.size());
+  return true;
+}
+
+bool Elero::start_packet_dump() {
+  if (this->packet_dump_mode_)
+    return false;
+  this->raw_packets_.clear();
+  this->raw_packet_write_idx_ = 0;
+  this->packet_dump_mode_ = true;
+  ESP_LOGI(TAG, "Packet dump mode started");
+  return true;
+}
+
+bool Elero::stop_packet_dump() {
+  if (!this->packet_dump_mode_)
+    return false;
+  this->packet_dump_mode_ = false;
   ESP_LOGI(TAG, "Packet dump mode stopped");
+  return true;
 }
 
 void Elero::clear_raw_packets() {
@@ -1047,27 +1092,36 @@ bool Elero::send_command(EleroCommand *cmd) {
 
 // ─── Runtime blind adoption ───────────────────────────────────────────────
 
-bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &name) {
-  if (this->is_cover_configured(discovered.blind_address))
-    return false;
-  if (this->is_blind_adopted(discovered.blind_address))
-    return false;
-  RuntimeBlind rb{};
-  rb.blind_address = discovered.blind_address;
-  rb.remote_address = discovered.remote_address;
-  rb.channel = discovered.channel;
-  rb.pck_inf[0] = discovered.pck_inf[0];
-  rb.pck_inf[1] = discovered.pck_inf[1];
-  rb.hop = discovered.hop;
-  rb.payload_1 = discovered.payload_1;
-  rb.payload_2 = discovered.payload_2;
-  rb.name = name.empty() ? "Adopted" : name;
-  rb.last_seen_ms = discovered.last_seen;
-  rb.last_rssi = discovered.rssi;
-  rb.last_state = discovered.last_state;
-  this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
-  ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"", discovered.blind_address, rb.name.c_str());
-  return true;
+bool Elero::adopt_blind_by_address(uint32_t addr, const std::string &name) {
+  // Find the discovered blind by address
+  for (const auto &discovered : this->discovered_blinds_) {
+    if (discovered.blind_address == addr) {
+      // Found it - now adopt
+      if (this->is_cover_configured(addr))
+        return false;
+      if (this->is_blind_adopted(addr))
+        return false;
+
+      RuntimeBlind rb{};
+      rb.blind_address = discovered.blind_address;
+      rb.remote_address = discovered.remote_address;
+      rb.channel = discovered.channel;
+      rb.pck_inf[0] = discovered.pck_inf[0];
+      rb.pck_inf[1] = discovered.pck_inf[1];
+      rb.hop = discovered.hop;
+      rb.payload_1 = discovered.payload_1;
+      rb.payload_2 = discovered.payload_2;
+      rb.name = name.empty() ? "Adopted" : name;
+      rb.last_seen_ms = discovered.last_seen;
+      rb.last_rssi = discovered.rssi;
+      rb.last_state = discovered.last_state;
+      this->runtime_blinds_.insert({addr, std::move(rb)});
+      ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"", addr, rb.name.c_str());
+      return true;
+    }
+  }
+  // Not found in discovered list
+  return false;
 }
 
 bool Elero::remove_runtime_blind(uint32_t addr) {
@@ -1092,13 +1146,17 @@ bool Elero::send_runtime_command(uint32_t addr, uint8_t cmd_byte) {
   return false;
 }
 
+// Apply runtime settings. Values of 0 mean "keep existing".
 bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms, uint32_t close_dur_ms,
                                           uint32_t poll_intvl_ms) {
   auto it = this->runtime_blinds_.find(addr);
   if (it != this->runtime_blinds_.end()) {
-    it->second.open_duration_ms = open_dur_ms;
-    it->second.close_duration_ms = close_dur_ms;
-    it->second.poll_intvl_ms = poll_intvl_ms;
+    if (open_dur_ms != 0)
+      it->second.open_duration_ms = open_dur_ms;
+    if (close_dur_ms != 0)
+      it->second.close_duration_ms = close_dur_ms;
+    if (poll_intvl_ms != 0)
+      it->second.poll_intvl_ms = poll_intvl_ms;
     return true;
   }
   return false;

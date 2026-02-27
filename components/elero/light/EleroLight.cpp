@@ -51,7 +51,9 @@ void EleroLight::write_state(LightState *state) {
   float new_brightness = state->current_values.get_brightness();
 
   if (!new_on) {
-    this->sender_.enqueue(this->command_off_);
+    if (!this->sender_.enqueue(this->command_off_)) {
+      ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().blind_addr);
+    }
     this->is_on_ = false;
     this->dim_direction_ = DimDirection::NONE;
     this->brightness_ = 0.0f;
@@ -63,7 +65,9 @@ void EleroLight::write_state(LightState *state) {
 
   if (this->dim_duration_ == 0) {
     // No brightness support: just toggle on
-    this->sender_.enqueue(this->command_on_);
+    if (!this->sender_.enqueue(this->command_on_)) {
+      ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().blind_addr);
+    }
     this->brightness_ = 1.0f;
     return;
   }
@@ -74,14 +78,18 @@ void EleroLight::write_state(LightState *state) {
 
   if (new_brightness >= 1.0f) {
     // Full brightness shortcut
-    this->sender_.enqueue(this->command_on_);
+    if (!this->sender_.enqueue(this->command_on_)) {
+      ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().blind_addr);
+    }
     this->brightness_ = 1.0f;
     return;
   }
 
   if (this->brightness_ < 0.01f) {
     // Currently off; turn on to full first, then dim down
-    this->sender_.enqueue(this->command_on_);
+    if (!this->sender_.enqueue(this->command_on_)) {
+      ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().blind_addr);
+    }
     this->brightness_ = 1.0f;
     // Now fall through and initiate dim-down
   }
@@ -89,14 +97,18 @@ void EleroLight::write_state(LightState *state) {
   if (new_brightness > this->brightness_ + 0.01f) {
     ESP_LOGD(TAG, "Dimming up 0x%06x from %.2f to %.2f", this->sender_.command().blind_addr, this->brightness_,
              new_brightness);
-    this->sender_.enqueue(this->command_dim_up_);
+    if (!this->sender_.enqueue(this->command_dim_up_)) {
+      ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().blind_addr);
+    }
     this->dim_direction_ = DimDirection::UP;
     this->dimming_start_ = millis();
     this->last_recompute_time_ = millis();
   } else if (new_brightness < this->brightness_ - 0.01f) {
     ESP_LOGD(TAG, "Dimming down 0x%06x from %.2f to %.2f", this->sender_.command().blind_addr, this->brightness_,
              new_brightness);
-    this->sender_.enqueue(this->command_dim_down_);
+    if (!this->sender_.enqueue(this->command_dim_down_)) {
+      ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().blind_addr);
+    }
     this->dim_direction_ = DimDirection::DOWN;
     this->dimming_start_ = millis();
     this->last_recompute_time_ = millis();
@@ -120,7 +132,9 @@ void EleroLight::loop() {
     }
 
     if (at_target) {
-      this->sender_.enqueue(this->command_stop_);
+      if (!this->sender_.enqueue(this->command_stop_)) {
+        ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().blind_addr);
+      }
       this->brightness_ = this->target_brightness_;
       this->dim_direction_ = DimDirection::NONE;
     }
@@ -135,7 +149,9 @@ void EleroLight::loop() {
 }
 
 void EleroLight::schedule_immediate_poll() {
-  this->sender_.enqueue(this->command_check_);
+  if (!this->sender_.enqueue(this->command_check_)) {
+    ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().blind_addr);
+  }
 }
 
 void EleroLight::recompute_brightness() {

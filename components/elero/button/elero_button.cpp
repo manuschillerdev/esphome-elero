@@ -27,12 +27,16 @@ void EleroScanButton::press_action() {
     return;
   }
   if (this->scan_start_) {
-    ESP_LOGI(TAG, "Starting Elero RF scan...");
-    this->parent_->clear_discovered();
-    this->parent_->start_scan();
+    if (!this->parent_->start_scan()) {
+      ESP_LOGW(TAG, "Scan already in progress");
+      return;
+    }
   } else {
-    this->parent_->stop_scan();
-    ESP_LOGI(TAG, "Stopped Elero RF scan. Discovered %d device(s).", this->parent_->get_discovered_count());
+    if (!this->parent_->stop_scan()) {
+      ESP_LOGW(TAG, "No scan running");
+      return;
+    }
+    // Log discovered blinds
     for (const auto &blind : this->parent_->get_discovered_blinds()) {
       ESP_LOGI(TAG, "  addr=0x%06x remote=0x%06x ch=%d rssi=%.1f state=%s seen=%d", blind.blind_address,
                blind.remote_address, blind.channel, blind.rssi, elero_state_to_string(blind.last_state),

@@ -2,13 +2,19 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ESPHome compile tests for each platform
   esphome-compile:
     name: ESPHome Compile (${{ matrix.test }})
     runs-on: ubuntu-latest
+    container: ghcr.io/esphome/esphome:2026.2.2
     strategy:
       fail-fast: false
       matrix:
@@ -21,14 +27,6 @@ jobs:
           - test.rp2040-ard
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install ESPHome
-        run: pip install esphome
 
       - name: Compile ${{ matrix.test }}
         run: esphome compile tests/${{ matrix.test }}.yaml
