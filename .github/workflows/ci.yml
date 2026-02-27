@@ -9,7 +9,7 @@ jobs:
   esphome-compile:
     name: ESPHome Compile (${{ matrix.test }})
     runs-on: ubuntu-latest
-    container: ghcr.io/esphome/esphome:latest
+    container: ghcr.io/esphome/esphome:2026.2.2
     strategy:
       fail-fast: false
       matrix:

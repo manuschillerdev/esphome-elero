@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.venv/
 
 # Override global .claude ignore for skills (shareable reference docs)
 !.claude/

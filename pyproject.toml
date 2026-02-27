@@ -3,11 +3,14 @@ name = "esphome-elero"
 version = "0.2.0"
 description = "ESPHome external component for Elero wireless blinds"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
+dependencies = [
+    "esphome==2026.2.2",
+]
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [
