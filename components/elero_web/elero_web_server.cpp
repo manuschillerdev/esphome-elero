@@ -56,147 +56,9 @@ static uint32_t json_find_uint(const std::string &json, const char *key) {
   return (uint32_t) strtoul(json.c_str() + pos, nullptr, 0);
 }
 
-// ─── Setup / config ───────────────────────────────────────────────────────────
-
-void EleroWebServer::setup() {
-  if (this->base_ == nullptr) {
-    ESP_LOGE(TAG, "web_server_base not set, cannot start Elero Web UI");
-    this->mark_failed();
-    return;
-  }
-  if (this->parent_ == nullptr) {
-    ESP_LOGE(TAG, "Elero parent not set, cannot start Elero Web UI");
-    this->mark_failed();
-    return;
-  }
-
-  this->base_->init();
-
-  auto server = this->base_->get_server();
-  if (!server) {
-    ESP_LOGE(TAG, "Failed to get web server instance");
-    this->mark_failed();
-    return;
-  }
-
-  // SSE endpoint: send full state on connect
-  this->events_.onConnect([this](AsyncEventSourceClient *client) {
-    if (!this->enabled_) {
-      return;
-    }
-    ESP_LOGI(TAG, "SSE client connected from %s", client->client()->remoteIP().toString().c_str());
-    std::string state = this->build_full_state_json();
-    client->send(state.c_str(), "state", millis());
-  });
-  server->addHandler(&this->events_);
-
-  // ─── GET routes ─────────────────────────────────────────────────────────────
-
-  // Serve index at /elero
-  server->on("/elero", HTTP_GET, [this](AsyncWebServerRequest *request) {
-    this->handle_index(request);
-  });
-
-  // Redirect root to /elero
-  server->on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->redirect("/elero");
-  });
-
-  // GET state (for manual refresh)
-  server->on("/elero/api/state", HTTP_GET, [this](AsyncWebServerRequest *request) {
-    this->handle_get_state(request);
-  });
-
-  // GET YAML
-  server->on("/elero/api/yaml", HTTP_GET, [this](AsyncWebServerRequest *request) {
-    this->handle_get_yaml(request);
-  });
-
-  // ─── POST routes (no body) ──────────────────────────────────────────────────
-
-  server->on("/elero/api/scan/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_post_scan_start(request);
-  });
-
-  server->on("/elero/api/scan/stop", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_post_scan_stop(request);
-  });
-
-  server->on("/elero/api/log/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_post_log_start(request);
-  });
-
-  server->on("/elero/api/log/stop", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_post_log_stop(request);
-  });
-
-  server->on("/elero/api/log/clear", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_post_log_clear(request);
-  });
-
-  server->on("/elero/api/dump/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_post_dump_start(request);
-  });
-
-  server->on("/elero/api/dump/stop", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_post_dump_stop(request);
-  });
-
-  server->on("/elero/api/dump/clear", HTTP_POST, [this](AsyncWebServerRequest *request) {
-    this->handle_post_dump_clear(request);
-  });
-
-  // ─── POST routes (with JSON body) ───────────────────────────────────────────
-
-  // Cover command: {"address":"0x...","action":"up"}
-  server->on(
-      "/elero/api/cover", HTTP_POST,
-      [](AsyncWebServerRequest *request) {
-        // Response sent in body handler
-      },
-      nullptr,
-      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-        this->handle_post_cover(request, data, len);
-      });
-
-  // Settings: {"address":"0x...","open_duration":25000,...}
-  server->on(
-      "/elero/api/settings", HTTP_POST,
-      [](AsyncWebServerRequest *request) {},
-      nullptr,
-      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-        this->handle_post_settings(request, data, len);
-      });
-
-  // Adopt: {"address":"0x...","name":"..."}
-  server->on(
-      "/elero/api/adopt", HTTP_POST,
-      [](AsyncWebServerRequest *request) {},
-      nullptr,
-      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-        this->handle_post_adopt(request, data, len);
-      });
-
-  // Runtime remove: {"address":"0x..."}
-  server->on(
-      "/elero/api/runtime/remove", HTTP_POST,
-      [](AsyncWebServerRequest *request) {},
-      nullptr,
-      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-        this->handle_post_runtime_remove(request, data, len);
-      });
-
-  // Frequency: {"freq2":"0x21","freq1":"0x71","freq0":"0x7a"}
-  server->on(
-      "/elero/api/frequency", HTTP_POST,
-      [](AsyncWebServerRequest *request) {},
-      nullptr,
-      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
-        this->handle_post_frequency(request, data, len);
-      });
-
-  ESP_LOGI(TAG, "Elero Web UI available at /elero (SSE at /elero/events)");
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+// Common Implementation (both frameworks)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 void EleroWebServer::loop() {
   uint32_t now = millis();
@@ -218,7 +80,6 @@ void EleroWebServer::loop() {
     std::string logs_json = this->build_logs_json(this->last_log_push_ts_, 20);
     if (!logs_json.empty() && logs_json != "[]") {
       this->broadcast_event("log", logs_json);
-      // Update last push timestamp
       const auto &entries = this->parent_->get_log_entries();
       if (!entries.empty()) {
         this->last_log_push_ts_ = entries.back().timestamp_ms;
@@ -260,306 +121,9 @@ void EleroWebServer::notify_scan_status_changed() { this->scan_status_changed_ =
 // ─── SSE broadcast helper ─────────────────────────────────────────────────────
 
 void EleroWebServer::broadcast_event(const char *event_type, const std::string &json) {
-  if (!this->enabled_ || this->events_.count() == 0)
+  if (!this->enabled_ || this->sse_.client_count() == 0)
     return;
-  this->events_.send(json.c_str(), event_type, millis());
-}
-
-// ─── HTTP response helpers ────────────────────────────────────────────────────
-
-void EleroWebServer::send_json_ok(AsyncWebServerRequest *request) {
-  request->send(200, "application/json", "{\"ok\":true}");
-}
-
-void EleroWebServer::send_json_error(AsyncWebServerRequest *request, int code, const char *error) {
-  char buf[128];
-  snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"%s\"}", error);
-  request->send(code, "application/json", buf);
-}
-
-// ─── HTTP GET handlers ────────────────────────────────────────────────────────
-
-void EleroWebServer::handle_index(AsyncWebServerRequest *request) {
-  if (!this->enabled_) {
-    request->send(503, "text/plain", "Web UI disabled");
-    return;
-  }
-  request->send(200, "text/html", ELERO_WEB_UI_HTML);
-}
-
-void EleroWebServer::handle_get_state(AsyncWebServerRequest *request) {
-  if (!this->enabled_) {
-    request->send(503, "application/json", "{\"ok\":false,\"error\":\"disabled\"}");
-    return;
-  }
-  std::string json = this->build_full_state_json();
-  request->send(200, "application/json", json.c_str());
-}
-
-void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
-  if (!this->enabled_) {
-    request->send(503, "text/plain", "Web UI disabled");
-    return;
-  }
-  std::string yaml = this->build_yaml();
-  request->send(200, "text/plain", yaml.c_str());
-}
-
-// ─── HTTP POST handlers (no body) ─────────────────────────────────────────────
-
-void EleroWebServer::handle_post_scan_start(AsyncWebServerRequest *request) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-  if (!this->parent_->start_scan()) {
-    this->send_json_error(request, 409, "Already scanning");
-    return;
-  }
-  this->notify_scan_status_changed();
-  this->send_json_ok(request);
-}
-
-void EleroWebServer::handle_post_scan_stop(AsyncWebServerRequest *request) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-  if (!this->parent_->stop_scan()) {
-    this->send_json_error(request, 409, "No scan running");
-    return;
-  }
-  this->notify_scan_status_changed();
-  this->send_json_ok(request);
-}
-
-void EleroWebServer::handle_post_log_start(AsyncWebServerRequest *request) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-  this->parent_->set_log_capture(true);
-  this->send_json_ok(request);
-}
-
-void EleroWebServer::handle_post_log_stop(AsyncWebServerRequest *request) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-  this->parent_->set_log_capture(false);
-  this->send_json_ok(request);
-}
-
-void EleroWebServer::handle_post_log_clear(AsyncWebServerRequest *request) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-  this->parent_->clear_log_entries();
-  this->last_log_push_ts_ = 0;
-  this->send_json_ok(request);
-}
-
-void EleroWebServer::handle_post_dump_start(AsyncWebServerRequest *request) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-  if (!this->parent_->start_packet_dump()) {
-    this->send_json_error(request, 409, "Dump already running");
-    return;
-  }
-  this->send_json_ok(request);
-}
-
-void EleroWebServer::handle_post_dump_stop(AsyncWebServerRequest *request) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-  if (!this->parent_->stop_packet_dump()) {
-    this->send_json_error(request, 409, "No dump running");
-    return;
-  }
-  this->send_json_ok(request);
-}
-
-void EleroWebServer::handle_post_dump_clear(AsyncWebServerRequest *request) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-  this->parent_->clear_raw_packets();
-  this->send_json_ok(request);
-}
-
-// ─── HTTP POST handlers (with JSON body) ──────────────────────────────────────
-
-void EleroWebServer::handle_post_cover(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-
-  std::string body((char *) data, len);
-  std::string address = json_find_str(body, "address");
-  std::string action = json_find_str(body, "action");
-
-  if (address.empty() || action.empty()) {
-    this->send_json_error(request, 400, "Missing address or action");
-    return;
-  }
-
-  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
-  uint8_t cmd_byte = elero_action_to_command(action.c_str());
-
-  if (cmd_byte == 0xFF) {
-    this->send_json_error(request, 400, "Unknown action");
-    return;
-  }
-
-  // Try configured cover first
-  const auto &covers = this->parent_->get_configured_covers();
-  auto it = covers.find(addr);
-  if (it != covers.end()) {
-    if (!it->second->perform_action(action.c_str())) {
-      this->send_json_error(request, 400, "Unknown action");
-      return;
-    }
-    this->notify_covers_changed();
-    this->send_json_ok(request);
-    return;
-  }
-
-  // Try runtime blind
-  if (this->parent_->send_runtime_command(addr, cmd_byte)) {
-    this->send_json_ok(request);
-  } else {
-    this->send_json_error(request, 404, "Cover not found");
-  }
-}
-
-void EleroWebServer::handle_post_settings(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-
-  std::string body((char *) data, len);
-  std::string address = json_find_str(body, "address");
-
-  if (address.empty()) {
-    this->send_json_error(request, 400, "Missing address");
-    return;
-  }
-
-  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
-  uint32_t open_dur = json_find_uint(body, "open_duration");
-  uint32_t close_dur = json_find_uint(body, "close_duration");
-  uint32_t poll_intvl = json_find_uint(body, "poll_interval");
-
-  // Try configured cover first
-  const auto &covers = this->parent_->get_configured_covers();
-  auto it = covers.find(addr);
-  if (it != covers.end()) {
-    it->second->apply_runtime_settings(open_dur, close_dur, poll_intvl);
-    this->notify_covers_changed();
-    this->send_json_ok(request);
-    return;
-  }
-
-  // Try runtime blind
-  if (this->parent_->update_runtime_blind_settings(addr, open_dur, close_dur, poll_intvl)) {
-    this->notify_covers_changed();
-    this->send_json_ok(request);
-  } else {
-    this->send_json_error(request, 404, "Cover not found");
-  }
-}
-
-void EleroWebServer::handle_post_adopt(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-
-  std::string body((char *) data, len);
-  std::string address = json_find_str(body, "address");
-  std::string name = json_find_str(body, "name");
-
-  if (address.empty()) {
-    this->send_json_error(request, 400, "Missing address");
-    return;
-  }
-
-  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
-  if (!this->parent_->adopt_blind_by_address(addr, name)) {
-    this->send_json_error(request, 409, "Not found or already configured");
-    return;
-  }
-
-  this->notify_covers_changed();
-  this->notify_discovered_changed();
-  this->send_json_ok(request);
-}
-
-void EleroWebServer::handle_post_runtime_remove(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-
-  std::string body((char *) data, len);
-  std::string address = json_find_str(body, "address");
-
-  if (address.empty()) {
-    this->send_json_error(request, 400, "Missing address");
-    return;
-  }
-
-  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
-  if (this->parent_->remove_runtime_blind(addr)) {
-    this->notify_covers_changed();
-    this->send_json_ok(request);
-  } else {
-    this->send_json_error(request, 404, "Runtime blind not found");
-  }
-}
-
-void EleroWebServer::handle_post_frequency(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
-  if (!this->enabled_) {
-    this->send_json_error(request, 503, "disabled");
-    return;
-  }
-
-  std::string body((char *) data, len);
-  std::string f2 = json_find_str(body, "freq2");
-  std::string f1 = json_find_str(body, "freq1");
-  std::string f0 = json_find_str(body, "freq0");
-
-  if (f2.empty() || f1.empty() || f0.empty()) {
-    this->send_json_error(request, 400, "Missing freq2, freq1 or freq0");
-    return;
-  }
-
-  auto parse_byte = [](const std::string &s, uint8_t &out) -> bool {
-    char *end;
-    unsigned long v = strtoul(s.c_str(), &end, 0);
-    if (end == s.c_str() || v > 0xFF)
-      return false;
-    out = (uint8_t) v;
-    return true;
-  };
-
-  uint8_t freq2, freq1, freq0;
-  if (!parse_byte(f2, freq2) || !parse_byte(f1, freq1) || !parse_byte(f0, freq0)) {
-    this->send_json_error(request, 400, "Invalid frequency value");
-    return;
-  }
-
-  this->parent_->reinit_frequency(freq2, freq1, freq0);
-  this->send_json_ok(request);
+  this->sse_.send(event_type, json);
 }
 
 // ─── JSON builders ────────────────────────────────────────────────────────────
@@ -812,6 +376,785 @@ std::string EleroWebServer::build_yaml() {
 
   return yaml;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Arduino Implementation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#ifdef USE_ARDUINO
+
+void EleroWebServer::setup() {
+  if (this->base_ == nullptr) {
+    ESP_LOGE(TAG, "web_server_base not set, cannot start Elero Web UI");
+    this->mark_failed();
+    return;
+  }
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(TAG, "Elero parent not set, cannot start Elero Web UI");
+    this->mark_failed();
+    return;
+  }
+
+  this->base_->init();
+
+  auto server = this->base_->get_server();
+  if (!server) {
+    ESP_LOGE(TAG, "Failed to get web server instance");
+    this->mark_failed();
+    return;
+  }
+
+  // Setup SSE with callback to send initial state
+  this->sse_.set_on_connect([this](SSEServer &sse) {
+    if (this->enabled_) {
+      std::string state = this->build_full_state_json();
+      sse.send("state", state);
+    }
+  });
+  this->sse_.setup(this->base_, "/elero/events");
+
+  // ─── GET routes ─────────────────────────────────────────────────────────────
+
+  server->on("/elero", HTTP_GET, [this](AsyncWebServerRequest *request) { this->handle_index(request); });
+
+  server->on("/", HTTP_GET, [](AsyncWebServerRequest *request) { request->redirect("/elero"); });
+
+  server->on("/elero/api/state", HTTP_GET,
+             [this](AsyncWebServerRequest *request) { this->handle_get_state(request); });
+
+  server->on("/elero/api/yaml", HTTP_GET, [this](AsyncWebServerRequest *request) { this->handle_get_yaml(request); });
+
+  // ─── POST routes (no body) ──────────────────────────────────────────────────
+
+  server->on("/elero/api/scan/start", HTTP_POST,
+             [this](AsyncWebServerRequest *request) { this->handle_post_scan_start(request); });
+
+  server->on("/elero/api/scan/stop", HTTP_POST,
+             [this](AsyncWebServerRequest *request) { this->handle_post_scan_stop(request); });
+
+  server->on("/elero/api/log/start", HTTP_POST,
+             [this](AsyncWebServerRequest *request) { this->handle_post_log_start(request); });
+
+  server->on("/elero/api/log/stop", HTTP_POST,
+             [this](AsyncWebServerRequest *request) { this->handle_post_log_stop(request); });
+
+  server->on("/elero/api/log/clear", HTTP_POST,
+             [this](AsyncWebServerRequest *request) { this->handle_post_log_clear(request); });
+
+  server->on("/elero/api/dump/start", HTTP_POST,
+             [this](AsyncWebServerRequest *request) { this->handle_post_dump_start(request); });
+
+  server->on("/elero/api/dump/stop", HTTP_POST,
+             [this](AsyncWebServerRequest *request) { this->handle_post_dump_stop(request); });
+
+  server->on("/elero/api/dump/clear", HTTP_POST,
+             [this](AsyncWebServerRequest *request) { this->handle_post_dump_clear(request); });
+
+  // ─── POST routes (with JSON body) ───────────────────────────────────────────
+
+  server->on(
+      "/elero/api/cover", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
+      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        this->handle_post_cover(request, data, len);
+      });
+
+  server->on(
+      "/elero/api/settings", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
+      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        this->handle_post_settings(request, data, len);
+      });
+
+  server->on(
+      "/elero/api/adopt", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
+      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        this->handle_post_adopt(request, data, len);
+      });
+
+  server->on(
+      "/elero/api/runtime/remove", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
+      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        this->handle_post_runtime_remove(request, data, len);
+      });
+
+  server->on(
+      "/elero/api/frequency", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
+      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        this->handle_post_frequency(request, data, len);
+      });
+
+  ESP_LOGI(TAG, "Elero Web UI available at /elero (SSE at /elero/events)");
+}
+
+// ─── HTTP response helpers ────────────────────────────────────────────────────
+
+void EleroWebServer::send_json_ok(AsyncWebServerRequest *request) {
+  request->send(200, "application/json", "{\"ok\":true}");
+}
+
+void EleroWebServer::send_json_error(AsyncWebServerRequest *request, int code, const char *error) {
+  char buf[128];
+  snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"%s\"}", error);
+  request->send(code, "application/json", buf);
+}
+
+// ─── HTTP GET handlers ────────────────────────────────────────────────────────
+
+void EleroWebServer::handle_index(AsyncWebServerRequest *request) {
+  if (!this->enabled_) {
+    request->send(503, "text/plain", "Web UI disabled");
+    return;
+  }
+  request->send(200, "text/html", ELERO_WEB_UI_HTML);
+}
+
+void EleroWebServer::handle_get_state(AsyncWebServerRequest *request) {
+  if (!this->enabled_) {
+    request->send(503, "application/json", "{\"ok\":false,\"error\":\"disabled\"}");
+    return;
+  }
+  std::string json = this->build_full_state_json();
+  request->send(200, "application/json", json.c_str());
+}
+
+void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
+  if (!this->enabled_) {
+    request->send(503, "text/plain", "Web UI disabled");
+    return;
+  }
+  std::string yaml = this->build_yaml();
+  request->send(200, "text/plain", yaml.c_str());
+}
+
+// ─── HTTP POST handlers (no body) ─────────────────────────────────────────────
+
+void EleroWebServer::handle_post_scan_start(AsyncWebServerRequest *request) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+  if (!this->parent_->start_scan()) {
+    this->send_json_error(request, 409, "Already scanning");
+    return;
+  }
+  this->notify_scan_status_changed();
+  this->send_json_ok(request);
+}
+
+void EleroWebServer::handle_post_scan_stop(AsyncWebServerRequest *request) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+  if (!this->parent_->stop_scan()) {
+    this->send_json_error(request, 409, "No scan running");
+    return;
+  }
+  this->notify_scan_status_changed();
+  this->send_json_ok(request);
+}
+
+void EleroWebServer::handle_post_log_start(AsyncWebServerRequest *request) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+  this->parent_->set_log_capture(true);
+  this->send_json_ok(request);
+}
+
+void EleroWebServer::handle_post_log_stop(AsyncWebServerRequest *request) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+  this->parent_->set_log_capture(false);
+  this->send_json_ok(request);
+}
+
+void EleroWebServer::handle_post_log_clear(AsyncWebServerRequest *request) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+  this->parent_->clear_log_entries();
+  this->last_log_push_ts_ = 0;
+  this->send_json_ok(request);
+}
+
+void EleroWebServer::handle_post_dump_start(AsyncWebServerRequest *request) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+  if (!this->parent_->start_packet_dump()) {
+    this->send_json_error(request, 409, "Dump already running");
+    return;
+  }
+  this->send_json_ok(request);
+}
+
+void EleroWebServer::handle_post_dump_stop(AsyncWebServerRequest *request) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+  if (!this->parent_->stop_packet_dump()) {
+    this->send_json_error(request, 409, "No dump running");
+    return;
+  }
+  this->send_json_ok(request);
+}
+
+void EleroWebServer::handle_post_dump_clear(AsyncWebServerRequest *request) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+  this->parent_->clear_raw_packets();
+  this->send_json_ok(request);
+}
+
+// ─── HTTP POST handlers (with JSON body) ──────────────────────────────────────
+
+void EleroWebServer::handle_post_cover(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+
+  std::string body((char *) data, len);
+  std::string address = json_find_str(body, "address");
+  std::string action = json_find_str(body, "action");
+
+  if (address.empty() || action.empty()) {
+    this->send_json_error(request, 400, "Missing address or action");
+    return;
+  }
+
+  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
+  uint8_t cmd_byte = elero_action_to_command(action.c_str());
+
+  if (cmd_byte == 0xFF) {
+    this->send_json_error(request, 400, "Unknown action");
+    return;
+  }
+
+  const auto &covers = this->parent_->get_configured_covers();
+  auto it = covers.find(addr);
+  if (it != covers.end()) {
+    if (!it->second->perform_action(action.c_str())) {
+      this->send_json_error(request, 400, "Unknown action");
+      return;
+    }
+    this->notify_covers_changed();
+    this->send_json_ok(request);
+    return;
+  }
+
+  if (this->parent_->send_runtime_command(addr, cmd_byte)) {
+    this->send_json_ok(request);
+  } else {
+    this->send_json_error(request, 404, "Cover not found");
+  }
+}
+
+void EleroWebServer::handle_post_settings(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+
+  std::string body((char *) data, len);
+  std::string address = json_find_str(body, "address");
+
+  if (address.empty()) {
+    this->send_json_error(request, 400, "Missing address");
+    return;
+  }
+
+  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
+  uint32_t open_dur = json_find_uint(body, "open_duration");
+  uint32_t close_dur = json_find_uint(body, "close_duration");
+  uint32_t poll_intvl = json_find_uint(body, "poll_interval");
+
+  const auto &covers = this->parent_->get_configured_covers();
+  auto it = covers.find(addr);
+  if (it != covers.end()) {
+    it->second->apply_runtime_settings(open_dur, close_dur, poll_intvl);
+    this->notify_covers_changed();
+    this->send_json_ok(request);
+    return;
+  }
+
+  if (this->parent_->update_runtime_blind_settings(addr, open_dur, close_dur, poll_intvl)) {
+    this->notify_covers_changed();
+    this->send_json_ok(request);
+  } else {
+    this->send_json_error(request, 404, "Cover not found");
+  }
+}
+
+void EleroWebServer::handle_post_adopt(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+
+  std::string body((char *) data, len);
+  std::string address = json_find_str(body, "address");
+  std::string name = json_find_str(body, "name");
+
+  if (address.empty()) {
+    this->send_json_error(request, 400, "Missing address");
+    return;
+  }
+
+  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
+  if (!this->parent_->adopt_blind_by_address(addr, name)) {
+    this->send_json_error(request, 409, "Not found or already configured");
+    return;
+  }
+
+  this->notify_covers_changed();
+  this->notify_discovered_changed();
+  this->send_json_ok(request);
+}
+
+void EleroWebServer::handle_post_runtime_remove(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+
+  std::string body((char *) data, len);
+  std::string address = json_find_str(body, "address");
+
+  if (address.empty()) {
+    this->send_json_error(request, 400, "Missing address");
+    return;
+  }
+
+  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
+  if (this->parent_->remove_runtime_blind(addr)) {
+    this->notify_covers_changed();
+    this->send_json_ok(request);
+  } else {
+    this->send_json_error(request, 404, "Runtime blind not found");
+  }
+}
+
+void EleroWebServer::handle_post_frequency(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
+  if (!this->enabled_) {
+    this->send_json_error(request, 503, "disabled");
+    return;
+  }
+
+  std::string body((char *) data, len);
+  std::string f2 = json_find_str(body, "freq2");
+  std::string f1 = json_find_str(body, "freq1");
+  std::string f0 = json_find_str(body, "freq0");
+
+  if (f2.empty() || f1.empty() || f0.empty()) {
+    this->send_json_error(request, 400, "Missing freq2, freq1 or freq0");
+    return;
+  }
+
+  auto parse_byte = [](const std::string &s, uint8_t &out) -> bool {
+    char *end;
+    unsigned long v = strtoul(s.c_str(), &end, 0);
+    if (end == s.c_str() || v > 0xFF)
+      return false;
+    out = (uint8_t) v;
+    return true;
+  };
+
+  uint8_t freq2, freq1, freq0;
+  if (!parse_byte(f2, freq2) || !parse_byte(f1, freq1) || !parse_byte(f0, freq0)) {
+    this->send_json_error(request, 400, "Invalid frequency value");
+    return;
+  }
+
+  this->parent_->reinit_frequency(freq2, freq1, freq0);
+  this->send_json_ok(request);
+}
+
+#endif  // USE_ARDUINO
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ESP-IDF Implementation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#ifdef USE_ESP_IDF
+
+void EleroWebServer::setup() {
+  if (this->base_ == nullptr) {
+    ESP_LOGE(TAG, "web_server_base not set, cannot start Elero Web UI");
+    this->mark_failed();
+    return;
+  }
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(TAG, "Elero parent not set, cannot start Elero Web UI");
+    this->mark_failed();
+    return;
+  }
+
+  this->base_->init();
+
+  auto server = this->base_->get_server();
+  if (!server) {
+    ESP_LOGE(TAG, "Failed to get web server instance");
+    this->mark_failed();
+    return;
+  }
+
+  // Setup SSE with callback to send initial state
+  this->sse_.set_on_connect([this](SSEServer &sse) {
+    if (this->enabled_) {
+      std::string state = this->build_full_state_json();
+      sse.send("state", state);
+    }
+  });
+  this->sse_.setup(this->base_, "/elero/events");
+
+  // Register IDF HTTP handlers
+  httpd_uri_t uri_index = {.uri = "/elero", .method = HTTP_GET, .handler = handle_index_idf_, .user_ctx = this};
+  httpd_uri_t uri_root = {
+      .uri = "/",
+      .method = HTTP_GET,
+      .handler =
+          [](httpd_req_t *req) -> esp_err_t {
+            httpd_resp_set_status(req, "302 Found");
+            httpd_resp_set_hdr(req, "Location", "/elero");
+            return httpd_resp_send(req, nullptr, 0);
+          },
+      .user_ctx = nullptr};
+  httpd_uri_t uri_state = {
+      .uri = "/elero/api/state", .method = HTTP_GET, .handler = handle_get_state_idf_, .user_ctx = this};
+  httpd_uri_t uri_yaml = {
+      .uri = "/elero/api/yaml", .method = HTTP_GET, .handler = handle_get_yaml_idf_, .user_ctx = this};
+
+  // POST routes
+  httpd_uri_t uri_scan_start = {
+      .uri = "/elero/api/scan/start", .method = HTTP_POST, .handler = handle_post_scan_start_idf_, .user_ctx = this};
+  httpd_uri_t uri_scan_stop = {
+      .uri = "/elero/api/scan/stop", .method = HTTP_POST, .handler = handle_post_scan_stop_idf_, .user_ctx = this};
+  httpd_uri_t uri_log_start = {
+      .uri = "/elero/api/log/start", .method = HTTP_POST, .handler = handle_post_log_start_idf_, .user_ctx = this};
+  httpd_uri_t uri_log_stop = {
+      .uri = "/elero/api/log/stop", .method = HTTP_POST, .handler = handle_post_log_stop_idf_, .user_ctx = this};
+  httpd_uri_t uri_log_clear = {
+      .uri = "/elero/api/log/clear", .method = HTTP_POST, .handler = handle_post_log_clear_idf_, .user_ctx = this};
+  httpd_uri_t uri_dump_start = {
+      .uri = "/elero/api/dump/start", .method = HTTP_POST, .handler = handle_post_dump_start_idf_, .user_ctx = this};
+  httpd_uri_t uri_dump_stop = {
+      .uri = "/elero/api/dump/stop", .method = HTTP_POST, .handler = handle_post_dump_stop_idf_, .user_ctx = this};
+  httpd_uri_t uri_dump_clear = {
+      .uri = "/elero/api/dump/clear", .method = HTTP_POST, .handler = handle_post_dump_clear_idf_, .user_ctx = this};
+  httpd_uri_t uri_cover = {
+      .uri = "/elero/api/cover", .method = HTTP_POST, .handler = handle_post_cover_idf_, .user_ctx = this};
+  httpd_uri_t uri_settings = {
+      .uri = "/elero/api/settings", .method = HTTP_POST, .handler = handle_post_settings_idf_, .user_ctx = this};
+  httpd_uri_t uri_adopt = {
+      .uri = "/elero/api/adopt", .method = HTTP_POST, .handler = handle_post_adopt_idf_, .user_ctx = this};
+  httpd_uri_t uri_runtime_remove = {.uri = "/elero/api/runtime/remove",
+                                    .method = HTTP_POST,
+                                    .handler = handle_post_runtime_remove_idf_,
+                                    .user_ctx = this};
+  httpd_uri_t uri_frequency = {
+      .uri = "/elero/api/frequency", .method = HTTP_POST, .handler = handle_post_frequency_idf_, .user_ctx = this};
+
+  httpd_register_uri_handler(server, &uri_index);
+  httpd_register_uri_handler(server, &uri_root);
+  httpd_register_uri_handler(server, &uri_state);
+  httpd_register_uri_handler(server, &uri_yaml);
+  httpd_register_uri_handler(server, &uri_scan_start);
+  httpd_register_uri_handler(server, &uri_scan_stop);
+  httpd_register_uri_handler(server, &uri_log_start);
+  httpd_register_uri_handler(server, &uri_log_stop);
+  httpd_register_uri_handler(server, &uri_log_clear);
+  httpd_register_uri_handler(server, &uri_dump_start);
+  httpd_register_uri_handler(server, &uri_dump_stop);
+  httpd_register_uri_handler(server, &uri_dump_clear);
+  httpd_register_uri_handler(server, &uri_cover);
+  httpd_register_uri_handler(server, &uri_settings);
+  httpd_register_uri_handler(server, &uri_adopt);
+  httpd_register_uri_handler(server, &uri_runtime_remove);
+  httpd_register_uri_handler(server, &uri_frequency);
+
+  ESP_LOGI(TAG, "Elero Web UI available at /elero (SSE at /elero/events)");
+}
+
+// ─── IDF helper functions ─────────────────────────────────────────────────────
+
+esp_err_t EleroWebServer::send_json_ok_idf_(httpd_req_t *req) {
+  httpd_resp_set_type(req, "application/json");
+  return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+esp_err_t EleroWebServer::send_json_error_idf_(httpd_req_t *req, int code, const char *error) {
+  char status[32];
+  snprintf(status, sizeof(status), "%d", code);
+  httpd_resp_set_status(req, status);
+  httpd_resp_set_type(req, "application/json");
+  char buf[128];
+  snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"%s\"}", error);
+  return httpd_resp_sendstr(req, buf);
+}
+
+// ─── IDF HTTP GET handlers ────────────────────────────────────────────────────
+
+esp_err_t EleroWebServer::handle_index_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    return httpd_resp_sendstr(req, "Web UI disabled");
+  }
+  httpd_resp_set_type(req, "text/html");
+  return httpd_resp_sendstr(req, ELERO_WEB_UI_HTML);
+}
+
+esp_err_t EleroWebServer::handle_get_state_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_) {
+    return send_json_error_idf_(req, 503, "disabled");
+  }
+  std::string json = self->build_full_state_json();
+  httpd_resp_set_type(req, "application/json");
+  return httpd_resp_sendstr(req, json.c_str());
+}
+
+esp_err_t EleroWebServer::handle_get_yaml_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    return httpd_resp_sendstr(req, "Web UI disabled");
+  }
+  std::string yaml = self->build_yaml();
+  httpd_resp_set_type(req, "text/plain");
+  return httpd_resp_sendstr(req, yaml.c_str());
+}
+
+// ─── IDF HTTP POST handlers (no body) ─────────────────────────────────────────
+
+esp_err_t EleroWebServer::handle_post_scan_start_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+  if (!self->parent_->start_scan())
+    return send_json_error_idf_(req, 409, "Already scanning");
+  self->notify_scan_status_changed();
+  return send_json_ok_idf_(req);
+}
+
+esp_err_t EleroWebServer::handle_post_scan_stop_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+  if (!self->parent_->stop_scan())
+    return send_json_error_idf_(req, 409, "No scan running");
+  self->notify_scan_status_changed();
+  return send_json_ok_idf_(req);
+}
+
+esp_err_t EleroWebServer::handle_post_log_start_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+  self->parent_->set_log_capture(true);
+  return send_json_ok_idf_(req);
+}
+
+esp_err_t EleroWebServer::handle_post_log_stop_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+  self->parent_->set_log_capture(false);
+  return send_json_ok_idf_(req);
+}
+
+esp_err_t EleroWebServer::handle_post_log_clear_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+  self->parent_->clear_log_entries();
+  self->last_log_push_ts_ = 0;
+  return send_json_ok_idf_(req);
+}
+
+esp_err_t EleroWebServer::handle_post_dump_start_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+  if (!self->parent_->start_packet_dump())
+    return send_json_error_idf_(req, 409, "Dump already running");
+  return send_json_ok_idf_(req);
+}
+
+esp_err_t EleroWebServer::handle_post_dump_stop_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+  if (!self->parent_->stop_packet_dump())
+    return send_json_error_idf_(req, 409, "No dump running");
+  return send_json_ok_idf_(req);
+}
+
+esp_err_t EleroWebServer::handle_post_dump_clear_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+  self->parent_->clear_raw_packets();
+  return send_json_ok_idf_(req);
+}
+
+// ─── IDF HTTP POST handlers (with JSON body) ──────────────────────────────────
+
+static std::string read_post_body(httpd_req_t *req) {
+  int content_len = req->content_len;
+  if (content_len <= 0 || content_len > 1024)
+    return "";
+  std::string body(content_len, '\0');
+  int received = httpd_req_recv(req, &body[0], content_len);
+  if (received != content_len)
+    return "";
+  return body;
+}
+
+esp_err_t EleroWebServer::handle_post_cover_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+
+  std::string body = read_post_body(req);
+  std::string address = json_find_str(body, "address");
+  std::string action = json_find_str(body, "action");
+
+  if (address.empty() || action.empty())
+    return send_json_error_idf_(req, 400, "Missing address or action");
+
+  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
+  uint8_t cmd_byte = elero_action_to_command(action.c_str());
+
+  if (cmd_byte == 0xFF)
+    return send_json_error_idf_(req, 400, "Unknown action");
+
+  const auto &covers = self->parent_->get_configured_covers();
+  auto it = covers.find(addr);
+  if (it != covers.end()) {
+    if (!it->second->perform_action(action.c_str()))
+      return send_json_error_idf_(req, 400, "Unknown action");
+    self->notify_covers_changed();
+    return send_json_ok_idf_(req);
+  }
+
+  if (self->parent_->send_runtime_command(addr, cmd_byte)) {
+    return send_json_ok_idf_(req);
+  }
+  return send_json_error_idf_(req, 404, "Cover not found");
+}
+
+esp_err_t EleroWebServer::handle_post_settings_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+
+  std::string body = read_post_body(req);
+  std::string address = json_find_str(body, "address");
+
+  if (address.empty())
+    return send_json_error_idf_(req, 400, "Missing address");
+
+  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
+  uint32_t open_dur = json_find_uint(body, "open_duration");
+  uint32_t close_dur = json_find_uint(body, "close_duration");
+  uint32_t poll_intvl = json_find_uint(body, "poll_interval");
+
+  const auto &covers = self->parent_->get_configured_covers();
+  auto it = covers.find(addr);
+  if (it != covers.end()) {
+    it->second->apply_runtime_settings(open_dur, close_dur, poll_intvl);
+    self->notify_covers_changed();
+    return send_json_ok_idf_(req);
+  }
+
+  if (self->parent_->update_runtime_blind_settings(addr, open_dur, close_dur, poll_intvl)) {
+    self->notify_covers_changed();
+    return send_json_ok_idf_(req);
+  }
+  return send_json_error_idf_(req, 404, "Cover not found");
+}
+
+esp_err_t EleroWebServer::handle_post_adopt_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+
+  std::string body = read_post_body(req);
+  std::string address = json_find_str(body, "address");
+  std::string name = json_find_str(body, "name");
+
+  if (address.empty())
+    return send_json_error_idf_(req, 400, "Missing address");
+
+  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
+  if (!self->parent_->adopt_blind_by_address(addr, name))
+    return send_json_error_idf_(req, 409, "Not found or already configured");
+
+  self->notify_covers_changed();
+  self->notify_discovered_changed();
+  return send_json_ok_idf_(req);
+}
+
+esp_err_t EleroWebServer::handle_post_runtime_remove_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+
+  std::string body = read_post_body(req);
+  std::string address = json_find_str(body, "address");
+
+  if (address.empty())
+    return send_json_error_idf_(req, 400, "Missing address");
+
+  uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
+  if (self->parent_->remove_runtime_blind(addr)) {
+    self->notify_covers_changed();
+    return send_json_ok_idf_(req);
+  }
+  return send_json_error_idf_(req, 404, "Runtime blind not found");
+}
+
+esp_err_t EleroWebServer::handle_post_frequency_idf_(httpd_req_t *req) {
+  auto *self = static_cast<EleroWebServer *>(req->user_ctx);
+  if (!self->enabled_)
+    return send_json_error_idf_(req, 503, "disabled");
+
+  std::string body = read_post_body(req);
+  std::string f2 = json_find_str(body, "freq2");
+  std::string f1 = json_find_str(body, "freq1");
+  std::string f0 = json_find_str(body, "freq0");
+
+  if (f2.empty() || f1.empty() || f0.empty())
+    return send_json_error_idf_(req, 400, "Missing freq2, freq1 or freq0");
+
+  auto parse_byte = [](const std::string &s, uint8_t &out) -> bool {
+    char *end;
+    unsigned long v = strtoul(s.c_str(), &end, 0);
+    if (end == s.c_str() || v > 0xFF)
+      return false;
+    out = (uint8_t) v;
+    return true;
+  };
+
+  uint8_t freq2, freq1, freq0;
+  if (!parse_byte(f2, freq2) || !parse_byte(f1, freq1) || !parse_byte(f0, freq0))
+    return send_json_error_idf_(req, 400, "Invalid frequency value");
+
+  self->parent_->reinit_frequency(freq2, freq1, freq0);
+  return send_json_ok_idf_(req);
+}
+
+#endif  // USE_ESP_IDF
 
 }  // namespace elero
 }  // namespace esphome

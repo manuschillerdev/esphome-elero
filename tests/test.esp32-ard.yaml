@@ -1,5 +1,4 @@
 # ESPHome compile test: ESP32 with Arduino framework
-# Note: elero_web excluded - ESPAsyncWebServer conflicts with ESPHome's hybrid Arduino/IDF mode
 substitutions:
   spi_clk: GPIO18
   spi_mosi: GPIO23

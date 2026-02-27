@@ -4,6 +4,7 @@ from esphome.components import web_server_base
 from esphome.components.elero import CONF_ELERO_ID, elero, elero_ns
 from esphome.components.web_server_base import CONF_WEB_SERVER_BASE_ID
 from esphome.const import CONF_ID
+from esphome.core import CORE
 
 DEPENDENCIES = ["elero", "web_server_base"]
 AUTO_LOAD = ["web_server_base"]
@@ -33,5 +34,6 @@ async def to_code(config):
     cg.add(var.set_web_server(web_server_base_var))
 
     # ESPAsyncWebServer library (Arduino framework only)
-    cg.add_library("esphome/ESPAsyncWebServer-esphome", "3.2.2")
+    if CORE.using_arduino:
+        cg.add_library("esphome/ESPAsyncWebServer-esphome", "3.2.2")
 

@@ -1,9 +1,18 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/defines.h"
 #include "esphome/components/web_server_base/web_server_base.h"
+#include "sse_server.h"
 #include "../elero/elero.h"
+
+#ifdef USE_ARDUINO
 #include <ESPAsyncWebServer.h>
+#endif
+
+#ifdef USE_ESP_IDF
+#include <esp_http_server.h>
+#endif
 
 namespace esphome {
 namespace elero {
@@ -33,34 +42,8 @@ class EleroWebServer : public Component {
   void notify_scan_status_changed();
 
  protected:
-  // SSE broadcast helper
+  // SSE broadcast helper (delegates to sse_)
   void broadcast_event(const char *event_type, const std::string &json);
-
-  // HTTP response helpers
-  void send_json_ok(AsyncWebServerRequest *request);
-  void send_json_error(AsyncWebServerRequest *request, int code, const char *error);
-
-  // HTTP GET handlers
-  void handle_index(AsyncWebServerRequest *request);
-  void handle_get_state(AsyncWebServerRequest *request);
-  void handle_get_yaml(AsyncWebServerRequest *request);
-
-  // HTTP POST handlers (no body)
-  void handle_post_scan_start(AsyncWebServerRequest *request);
-  void handle_post_scan_stop(AsyncWebServerRequest *request);
-  void handle_post_log_start(AsyncWebServerRequest *request);
-  void handle_post_log_stop(AsyncWebServerRequest *request);
-  void handle_post_log_clear(AsyncWebServerRequest *request);
-  void handle_post_dump_start(AsyncWebServerRequest *request);
-  void handle_post_dump_stop(AsyncWebServerRequest *request);
-  void handle_post_dump_clear(AsyncWebServerRequest *request);
-
-  // HTTP POST handlers (with JSON body) - parse body in callback
-  void handle_post_cover(AsyncWebServerRequest *request, uint8_t *data, size_t len);
-  void handle_post_settings(AsyncWebServerRequest *request, uint8_t *data, size_t len);
-  void handle_post_adopt(AsyncWebServerRequest *request, uint8_t *data, size_t len);
-  void handle_post_runtime_remove(AsyncWebServerRequest *request, uint8_t *data, size_t len);
-  void handle_post_frequency(AsyncWebServerRequest *request, uint8_t *data, size_t len);
 
   // JSON builders
   std::string build_full_state_json();
@@ -72,8 +55,10 @@ class EleroWebServer : public Component {
 
   Elero *parent_{nullptr};
   web_server_base::WebServerBase *base_{nullptr};
-  AsyncEventSource events_{"/elero/events"};
   bool enabled_{true};
+
+  // SSE server abstraction (handles Arduino/IDF differences internally)
+  SSEServer sse_;
 
   // Timing for heartbeat
   uint32_t last_heartbeat_ms_{0};
@@ -85,6 +70,58 @@ class EleroWebServer : public Component {
   bool packets_changed_{false};
   bool scan_status_changed_{false};
   uint32_t last_log_push_ts_{0};
+
+#ifdef USE_ARDUINO
+  // HTTP response helpers (Arduino)
+  void send_json_ok(AsyncWebServerRequest *request);
+  void send_json_error(AsyncWebServerRequest *request, int code, const char *error);
+
+  // HTTP GET handlers (Arduino)
+  void handle_index(AsyncWebServerRequest *request);
+  void handle_get_state(AsyncWebServerRequest *request);
+  void handle_get_yaml(AsyncWebServerRequest *request);
+
+  // HTTP POST handlers (no body) (Arduino)
+  void handle_post_scan_start(AsyncWebServerRequest *request);
+  void handle_post_scan_stop(AsyncWebServerRequest *request);
+  void handle_post_log_start(AsyncWebServerRequest *request);
+  void handle_post_log_stop(AsyncWebServerRequest *request);
+  void handle_post_log_clear(AsyncWebServerRequest *request);
+  void handle_post_dump_start(AsyncWebServerRequest *request);
+  void handle_post_dump_stop(AsyncWebServerRequest *request);
+  void handle_post_dump_clear(AsyncWebServerRequest *request);
+
+  // HTTP POST handlers (with JSON body) (Arduino)
+  void handle_post_cover(AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_settings(AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_adopt(AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_runtime_remove(AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_frequency(AsyncWebServerRequest *request, uint8_t *data, size_t len);
+#endif
+
+#ifdef USE_ESP_IDF
+  // IDF HTTP handlers (static for esp_http_server)
+  static esp_err_t handle_index_idf_(httpd_req_t *req);
+  static esp_err_t handle_get_state_idf_(httpd_req_t *req);
+  static esp_err_t handle_get_yaml_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_scan_start_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_scan_stop_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_log_start_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_log_stop_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_log_clear_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_dump_start_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_dump_stop_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_dump_clear_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_cover_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_settings_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_adopt_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_runtime_remove_idf_(httpd_req_t *req);
+  static esp_err_t handle_post_frequency_idf_(httpd_req_t *req);
+
+  // IDF helper to send JSON responses
+  static esp_err_t send_json_ok_idf_(httpd_req_t *req);
+  static esp_err_t send_json_error_idf_(httpd_req_t *req, int code, const char *error);
+#endif
 };
 
 }  // namespace elero
