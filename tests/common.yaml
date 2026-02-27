@@ -62,8 +62,6 @@ button:
     name: "Test Stop Scan"
     scan_start: false
 
-# Web server base (required for elero_web)
-web_server_base:
-
-# Elero web UI (SSE-based)
+# Elero web UI (Mongoose-based, no external dependencies)
 elero_web:
+  port: 80
