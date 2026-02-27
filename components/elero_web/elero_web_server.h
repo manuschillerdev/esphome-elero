@@ -1,7 +1,7 @@
 #pragma once
 
 #include "esphome/core/component.h"
-#include "mongoose/mongoose.h"
+#include "mongoose.h"
 #include "../elero/elero.h"
 #include <string>
 #include <vector>
