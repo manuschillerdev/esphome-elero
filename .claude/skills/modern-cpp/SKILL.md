@@ -417,6 +417,8 @@ std::atomic<bool> received_{false};
 volatile bool received_{false};
 ```
 
+**Note:** When migrating from `std::atomic` to `volatile`, atomic methods (`.load()`, `.store()`, `.exchange()`) must also be replaced with plain variable access.
+
 **When you actually need atomics (ESP32 only):**
 - Multi-core synchronization (ESP32 has dual cores)
 - Complex read-modify-write operations
