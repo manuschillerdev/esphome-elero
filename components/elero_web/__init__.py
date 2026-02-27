@@ -4,7 +4,6 @@ from esphome.components import web_server_base
 from esphome.components.elero import CONF_ELERO_ID, elero, elero_ns
 from esphome.components.web_server_base import CONF_WEB_SERVER_BASE_ID
 from esphome.const import CONF_ID
-from esphome.core import CORE
 
 DEPENDENCIES = ["elero", "web_server_base"]
 AUTO_LOAD = ["web_server_base"]
@@ -32,13 +31,4 @@ async def to_code(config):
 
     web_server_base_var = await cg.get_variable(config[CONF_WEB_SERVER_BASE_ID])
     cg.add(var.set_web_server(web_server_base_var))
-
-    # Ensure ESPAsyncWebServer and dependencies are available
-    if CORE.using_arduino:
-        if CORE.is_esp32:
-            cg.add_library("WiFi", None)
-            cg.add_library("FS", None)
-            cg.add_library("Update", None)
-            cg.add_library("ESP32Async/AsyncTCP", None)
-        cg.add_library("ESP32Async/ESPAsyncWebServer", None)
 
