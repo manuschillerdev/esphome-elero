@@ -1,5 +1,6 @@
 #include "elero.h"
 #include "elero_protocol.h"
+#include "../elero_web/elero_web_server.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -851,6 +852,10 @@ void Elero::interpret_msg() {
       it->second.last_rssi = rssi;
       it->second.last_state = payload[6];
     }
+
+    // Notify web server of cover state changes
+    if (this->web_server_ != nullptr)
+      this->web_server_->notify_covers_changed();
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
     auto search = this->address_to_cover_mapping_.find(src);
@@ -991,6 +996,8 @@ void Elero::mark_last_raw_packet_(bool valid, const char *reason) {
     strncpy(pkt.reject_reason, reason, sizeof(pkt.reject_reason) - 1);
     pkt.reject_reason[sizeof(pkt.reject_reason) - 1] = '\0';
   }
+  if (this->web_server_ != nullptr)
+    this->web_server_->notify_packet_received();
 }
 
 void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel, uint8_t pck_inf0, uint8_t pck_inf1,
@@ -1021,6 +1028,8 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
         ESP_LOGI(TAG, "Upgraded blind 0x%06x params from command packet: ch=%d, pck_inf=0x%02x/0x%02x, hop=0x%02x", src,
                  channel, pck_inf0, pck_inf1, hop);
       }
+      if (this->web_server_ != nullptr)
+        this->web_server_->notify_discovered_changed();
       return;
     }
   }
@@ -1043,6 +1052,8 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
     this->discovered_blinds_.push_back(blind);
     ESP_LOGI(TAG, "Discovered new device: addr=0x%06x, remote=0x%06x, ch=%d, rssi=%.1f, src=%s", src, remote, channel,
              rssi, from_command ? "cmd_pkt" : "status_pkt");
+    if (this->web_server_ != nullptr)
+      this->web_server_->notify_discovered_changed();
   }
 }
 
@@ -1185,6 +1196,8 @@ void Elero::append_log(uint8_t level, const char *tag, const char *fmt, ...) {
     this->log_entries_[this->log_write_idx_] = entry;
     this->log_write_idx_ = (this->log_write_idx_ + 1) % ELERO_LOG_BUFFER_SIZE;
   }
+  if (this->web_server_ != nullptr)
+    this->web_server_->notify_log_entry();
 }
 
 }  // namespace elero

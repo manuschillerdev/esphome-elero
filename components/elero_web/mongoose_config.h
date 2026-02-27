@@ -11,7 +11,7 @@
 #define MG_ENABLE_MQTT 0
 #define MG_ENABLE_DNS 0
 #define MG_ENABLE_IPV6 0
-#define MG_ENABLE_WEBSOCKET 0  // We use SSE, not WebSocket
+#define MG_ENABLE_WEBSOCKET 1  // WebSocket for bidirectional communication
 #define MG_ENABLE_FILE 0
 #define MG_ENABLE_DIRECTORY_LISTING 0
 #define MG_ENABLE_SSI 0

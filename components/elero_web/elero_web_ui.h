@@ -418,7 +418,7 @@ function eleroApp() {
   return {
     tab: 'devices',
     connected: false,
-    eventSource: null,
+    ws: null,
     reconnectTimer: null,
 
     deviceName: '',
@@ -455,16 +455,17 @@ function eleroApp() {
     // ── Lifecycle ──
     init() { this.connect() },
 
-    // ── SSE connection ──
+    // ── WebSocket connection ──
     connect() {
-      if (this.eventSource) {
-        this.eventSource.close()
-        this.eventSource = null
+      if (this.ws) {
+        this.ws.close()
+        this.ws = null
       }
 
-      this.eventSource = new EventSource('/elero/events')
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      this.ws = new WebSocket(`${proto}//${location.host}/elero/ws`)
 
-      this.eventSource.onopen = () => {
+      this.ws.onopen = () => {
         this.connected = true
         if (this.reconnectTimer) {
           clearTimeout(this.reconnectTimer)
@@ -472,61 +473,57 @@ function eleroApp() {
         }
       }
 
-      this.eventSource.onerror = () => {
+      this.ws.onclose = () => {
         this.connected = false
-        this.eventSource.close()
-        this.eventSource = null
+        this.ws = null
         this.reconnectTimer = setTimeout(() => this.connect(), 2000)
       }
 
-      // Full state event
-      this.eventSource.addEventListener('state', (e) => {
-        const data = JSON.parse(e.data)
-        this.applyState(data)
-      })
+      this.ws.onerror = () => {
+        this.connected = false
+      }
 
-      // Incremental covers
-      this.eventSource.addEventListener('covers', (e) => {
-        const data = JSON.parse(e.data)
-        this.covers = data.map(c => ({
-          ...c,
-          _edit: {
-            open_duration_ms: c.open_duration_ms,
-            close_duration_ms: c.close_duration_ms,
-            poll_interval_ms: c.poll_interval_ms,
+      this.ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data)
+        const event = msg.event
+        const data = msg.data
+
+        if (event === 'state') {
+          this.applyState(data)
+        } else if (event === 'covers') {
+          this.covers = data.map(c => ({
+            ...c,
+            _edit: {
+              open_duration_ms: c.open_duration_ms,
+              close_duration_ms: c.close_duration_ms,
+              poll_interval_ms: c.poll_interval_ms,
+            }
+          }))
+        } else if (event === 'discovered') {
+          this.scanning = data.scanning
+          this.allDiscovered = data.blinds || []
+        } else if (event === 'log') {
+          if (Array.isArray(data) && data.length > 0) {
+            const newEntries = data.map((entry, i) => ({ ...entry, idx: this.logEntries.length + i }))
+            this.logEntries.push(...newEntries)
+            if (this.logEntries.length > 500) this.logEntries.splice(0, this.logEntries.length - 500)
+            if (this.logAutoScroll) {
+              this.$nextTick(() => {
+                const box = document.getElementById('log-box')
+                if (box) box.scrollTop = box.scrollHeight
+              })
+            }
           }
-        }))
-      })
-
-      // Incremental discovered
-      this.eventSource.addEventListener('discovered', (e) => {
-        const data = JSON.parse(e.data)
-        this.scanning = data.scanning
-        this.allDiscovered = data.blinds || []
-      })
-
-      // Log entries
-      this.eventSource.addEventListener('log', (e) => {
-        const data = JSON.parse(e.data)
-        if (Array.isArray(data) && data.length > 0) {
-          const newEntries = data.map((entry, i) => ({ ...entry, idx: this.logEntries.length + i }))
-          this.logEntries.push(...newEntries)
-          if (this.logEntries.length > 500) this.logEntries.splice(0, this.logEntries.length - 500)
-          if (this.logAutoScroll) {
-            this.$nextTick(() => {
-              const box = document.getElementById('log-box')
-              if (box) box.scrollTop = box.scrollHeight
-            })
+        } else if (event === 'packets') {
+          this.dumpActive = data.dump_active
+          this.dumpPackets = data.packets || []
+        } else if (event === 'result') {
+          // Command result - handled by individual command callbacks
+          if (!data.ok && data.error) {
+            this.showToast(data.error, true)
           }
         }
-      })
-
-      // Packets
-      this.eventSource.addEventListener('packets', (e) => {
-        const data = JSON.parse(e.data)
-        this.dumpActive = data.dump_active
-        this.dumpPackets = data.packets || []
-      })
+      }
     },
 
     applyState(data) {
@@ -556,14 +553,13 @@ function eleroApp() {
       }
     },
 
-    // ── HTTP POST helper ──
-    async post(url, body = null) {
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: body ? { 'Content-Type': 'application/json' } : {},
-        body: body ? JSON.stringify(body) : undefined
-      })
-      return resp.json()
+    // ── WebSocket send helper ──
+    send(msg) {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify(msg))
+      } else {
+        this.showToast('Not connected', true)
+      }
     },
 
     // ── Toast ──
@@ -574,53 +570,32 @@ function eleroApp() {
     },
 
     // ── Cover controls ──
-    async coverCmd(c, action) {
-      try {
-        const res = await this.post('/elero/api/cover', { address: c.blind_address, action })
-        if (res.ok) {
-          this.showToast(`${c.name}: ${action} sent`)
-        } else {
-          this.showToast(res.error || 'Command failed', true)
-        }
-      } catch (e) {
-        this.showToast(`Command failed: ${e.message}`, true)
-      }
+    coverCmd(c, action) {
+      this.send({ type: 'cover', address: c.blind_address, action })
+      this.showToast(`${c.name}: ${action} sent`)
     },
 
-    async saveSettings(c) {
-      try {
-        const res = await this.post('/elero/api/settings', {
-          address: c.blind_address,
-          open_duration: c._edit.open_duration_ms,
-          close_duration: c._edit.close_duration_ms,
-          poll_interval: c._edit.poll_interval_ms,
-        })
-        if (res.ok) {
-          this.showToast(`${c.name}: settings saved`)
-          this.settingsOpen = null
-        } else {
-          this.showToast(res.error || 'Save failed', true)
-        }
-      } catch (e) {
-        this.showToast(`Save failed: ${e.message}`, true)
-      }
+    saveSettings(c) {
+      this.send({
+        type: 'settings',
+        address: c.blind_address,
+        open_duration: c._edit.open_duration_ms,
+        close_duration: c._edit.close_duration_ms,
+        poll_interval: c._edit.poll_interval_ms,
+      })
+      this.showToast(`${c.name}: settings saved`)
+      this.settingsOpen = null
     },
 
     // ── Discovery ──
-    async startScan() {
-      try {
-        const res = await this.post('/elero/api/scan/start')
-        if (res.ok) this.showToast('Scan started')
-        else this.showToast(res.error || 'Scan start failed', true)
-      } catch (e) { this.showToast(`Scan start failed: ${e.message}`, true) }
+    startScan() {
+      this.send({ type: 'scan_start' })
+      this.showToast('Scan started')
     },
 
-    async stopScan() {
-      try {
-        const res = await this.post('/elero/api/scan/stop')
-        if (res.ok) this.showToast('Scan stopped')
-        else this.showToast(res.error || 'Scan stop failed', true)
-      } catch (e) { this.showToast(`Scan stop failed: ${e.message}`, true) }
+    stopScan() {
+      this.send({ type: 'scan_stop' })
+      this.showToast('Scan stopped')
     },
 
     startAdopt(b) {
@@ -628,21 +603,16 @@ function eleroApp() {
       this.adoptName = ''
     },
 
-    async confirmAdopt() {
+    confirmAdopt() {
       if (!this.adoptTarget) return
-      try {
-        const res = await this.post('/elero/api/adopt', {
-          address: this.adoptTarget.blind_address,
-          name: this.adoptName || this.adoptTarget.blind_address
-        })
-        if (res.ok) {
-          this.showToast(`Adopted as "${this.adoptName || this.adoptTarget.blind_address}"`)
-          this.adoptTarget = null
-          this.tab = 'devices'
-        } else {
-          this.showToast(res.error || 'Adopt failed', true)
-        }
-      } catch (e) { this.showToast(`Adopt failed: ${e.message}`, true) }
+      this.send({
+        type: 'adopt',
+        address: this.adoptTarget.blind_address,
+        name: this.adoptName || this.adoptTarget.blind_address
+      })
+      this.showToast(`Adopted as "${this.adoptName || this.adoptTarget.blind_address}"`)
+      this.adoptTarget = null
+      this.tab = 'devices'
     },
 
     showYamlBlind(b) {
@@ -683,34 +653,22 @@ function eleroApp() {
     },
 
     // ── Log ──
-    async startCapture() {
-      try {
-        const res = await this.post('/elero/api/log/start')
-        if (res.ok) {
-          this.logCapture = true
-          this.showToast('Log capture started')
-        } else this.showToast(res.error || 'Failed', true)
-      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
+    startCapture() {
+      this.send({ type: 'log_start' })
+      this.logCapture = true
+      this.showToast('Log capture started')
     },
 
-    async stopCapture() {
-      try {
-        const res = await this.post('/elero/api/log/stop')
-        if (res.ok) {
-          this.logCapture = false
-          this.showToast('Log capture stopped')
-        } else this.showToast(res.error || 'Failed', true)
-      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
+    stopCapture() {
+      this.send({ type: 'log_stop' })
+      this.logCapture = false
+      this.showToast('Log capture stopped')
     },
 
-    async clearLog() {
-      try {
-        const res = await this.post('/elero/api/log/clear')
-        if (res.ok) {
-          this.logEntries = []
-          this.showToast('Log cleared')
-        } else this.showToast(res.error || 'Failed', true)
-      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
+    clearLog() {
+      this.send({ type: 'log_clear' })
+      this.logEntries = []
+      this.showToast('Log cleared')
     },
 
     linkAddrs(msg) {
@@ -731,52 +689,33 @@ function eleroApp() {
       this.freq = { freq2: '0x'+f2, freq1: '0x'+f1, freq0: '0x'+f0 }
     },
 
-    async setFrequency() {
-      this.freqStatus = 'Applying...'
-      try {
-        const res = await this.post('/elero/api/frequency', {
-          freq2: this.freq.freq2,
-          freq1: this.freq.freq1,
-          freq0: this.freq.freq0
-        })
-        this.freqStatus = ''
-        if (res.ok) {
-          this.showToast(`Frequency set: ${this.freq.freq2} ${this.freq.freq1} ${this.freq.freq0}`)
-        } else {
-          this.showToast(res.error || 'Failed', true)
-        }
-      } catch (e) { this.freqStatus = ''; this.showToast(`Failed: ${e.message}`, true) }
+    setFrequency() {
+      this.send({
+        type: 'frequency',
+        freq2: this.freq.freq2,
+        freq1: this.freq.freq1,
+        freq0: this.freq.freq0
+      })
+      this.showToast(`Frequency set: ${this.freq.freq2} ${this.freq.freq1} ${this.freq.freq0}`)
     },
 
     // ── Packet dump ──
-    async startDump() {
-      try {
-        const res = await this.post('/elero/api/dump/start')
-        if (res.ok) {
-          this.dumpActive = true
-          this.showToast('Packet dump started')
-        } else this.showToast(res.error || 'Failed', true)
-      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
+    startDump() {
+      this.send({ type: 'dump_start' })
+      this.dumpActive = true
+      this.showToast('Packet dump started')
     },
 
-    async stopDump() {
-      try {
-        const res = await this.post('/elero/api/dump/stop')
-        if (res.ok) {
-          this.dumpActive = false
-          this.showToast('Packet dump stopped')
-        } else this.showToast(res.error || 'Failed', true)
-      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
+    stopDump() {
+      this.send({ type: 'dump_stop' })
+      this.dumpActive = false
+      this.showToast('Packet dump stopped')
     },
 
-    async clearDump() {
-      try {
-        const res = await this.post('/elero/api/dump/clear')
-        if (res.ok) {
-          this.dumpPackets = []
-          this.showToast('Dump cleared')
-        } else this.showToast(res.error || 'Failed', true)
-      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
+    clearDump() {
+      this.send({ type: 'dump_clear' })
+      this.dumpPackets = []
+      this.showToast('Dump cleared')
     },
 
     // ── Helpers ──

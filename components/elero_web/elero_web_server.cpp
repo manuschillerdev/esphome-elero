@@ -67,6 +67,9 @@ void EleroWebServer::setup() {
     return;
   }
 
+  // Register with hub for state change notifications
+  this->parent_->set_web_server(this);
+
   g_server = this;
   mg_mgr_init(&this->mgr_);
 
@@ -80,17 +83,17 @@ void EleroWebServer::setup() {
     return;
   }
 
-  ESP_LOGI(TAG, "Web UI at http://<ip>:%d/elero (Mongoose)", this->port_);
+  ESP_LOGI(TAG, "Web UI at http://<ip>:%d/elero (Mongoose + WebSocket)", this->port_);
 }
 
 void EleroWebServer::loop() {
   // Poll mongoose (non-blocking)
   mg_mgr_poll(&this->mgr_, 0);
 
-  // Clean up disconnected SSE clients
-  this->sse_cleanup();
+  // Clean up disconnected WebSocket clients
+  this->ws_cleanup();
 
-  if (!this->enabled_ || this->sse_clients_.empty())
+  if (!this->enabled_ || this->ws_clients_.empty())
     return;
 
   uint32_t now = millis();
@@ -98,20 +101,20 @@ void EleroWebServer::loop() {
   // Push incremental updates
   if (this->covers_dirty_) {
     this->covers_dirty_ = false;
-    this->sse_broadcast("covers", this->build_covers_json());
+    this->ws_broadcast("covers", this->build_covers_json());
   }
 
   if (this->discovered_dirty_ || this->scan_dirty_) {
     this->discovered_dirty_ = false;
     this->scan_dirty_ = false;
-    this->sse_broadcast("discovered", this->build_discovered_json());
+    this->ws_broadcast("discovered", this->build_discovered_json());
   }
 
   if (this->logs_dirty_) {
     this->logs_dirty_ = false;
     std::string logs = this->build_logs_json(this->last_log_push_ts_, 20);
     if (!logs.empty() && logs != "[]") {
-      this->sse_broadcast("log", logs);
+      this->ws_broadcast("log", logs);
       const auto &entries = this->parent_->get_log_entries();
       if (!entries.empty()) {
         this->last_log_push_ts_ = entries.back().timestamp_ms;
@@ -121,21 +124,21 @@ void EleroWebServer::loop() {
 
   if (this->packets_dirty_) {
     this->packets_dirty_ = false;
-    this->sse_broadcast("packets", this->build_packets_json());
+    this->ws_broadcast("packets", this->build_packets_json());
   }
 
   // Heartbeat
-  if (now - this->last_heartbeat_ms_ >= ELERO_SSE_HEARTBEAT_INTERVAL) {
+  if (now - this->last_heartbeat_ms_ >= ELERO_WS_HEARTBEAT_INTERVAL) {
     this->last_heartbeat_ms_ = now;
-    this->sse_broadcast("state", this->build_full_state_json());
+    this->ws_broadcast("state", this->build_full_state_json());
   }
 }
 
 void EleroWebServer::dump_config() {
-  ESP_LOGCONFIG(TAG, "Elero Web Server (Mongoose):");
+  ESP_LOGCONFIG(TAG, "Elero Web Server (Mongoose + WebSocket):");
   ESP_LOGCONFIG(TAG, "  Port: %d", this->port_);
   ESP_LOGCONFIG(TAG, "  URL: /elero");
-  ESP_LOGCONFIG(TAG, "  SSE: /elero/events");
+  ESP_LOGCONFIG(TAG, "  WebSocket: /elero/ws");
   ESP_LOGCONFIG(TAG, "  Enabled: %s", this->enabled_ ? "yes" : "no");
 }
 
@@ -150,13 +153,11 @@ void EleroWebServer::event_handler(struct mg_connection *c, int ev, void *ev_dat
 
   if (ev == MG_EV_HTTP_MSG) {
     auto *hm = static_cast<struct mg_http_message *>(ev_data);
-
-    // Check if disabled (except for SSE which we just won't send data)
     bool disabled = !self->enabled_;
 
-    // ─── SSE endpoint ─────────────────────────────────────────────────────────
-    if (mg_match(hm->uri, mg_str("/elero/events"), nullptr)) {
-      self->handle_sse_connect(c);
+    // ─── WebSocket upgrade ─────────────────────────────────────────────────────
+    if (mg_match(hm->uri, mg_str("/elero/ws"), nullptr)) {
+      self->handle_ws_upgrade(c, hm);
       return;
     }
 
@@ -175,10 +176,10 @@ void EleroWebServer::event_handler(struct mg_connection *c, int ev, void *ev_dat
       return;
     }
 
-    // ─── API GET routes ───────────────────────────────────────────────────────
+    // ─── API GET routes (kept for direct access) ──────────────────────────────
     if (mg_match(hm->uri, mg_str("/elero/api/state"), nullptr)) {
       if (disabled) {
-        self->send_json_error(c, 503, "disabled");
+        mg_http_reply(c, 503, "Content-Type: application/json\r\n", "{\"error\":\"disabled\"}");
         return;
       }
       self->handle_get_state(c);
@@ -194,99 +195,25 @@ void EleroWebServer::event_handler(struct mg_connection *c, int ev, void *ev_dat
       return;
     }
 
-    // ─── API POST routes (no body) ────────────────────────────────────────────
-    if (mg_match(hm->uri, mg_str("/elero/api/scan/start"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_scan_start(c);
-      return;
-    }
-
-    if (mg_match(hm->uri, mg_str("/elero/api/scan/stop"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_scan_stop(c);
-      return;
-    }
-
-    if (mg_match(hm->uri, mg_str("/elero/api/log/start"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_log_start(c);
-      return;
-    }
-
-    if (mg_match(hm->uri, mg_str("/elero/api/log/stop"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_log_stop(c);
-      return;
-    }
-
-    if (mg_match(hm->uri, mg_str("/elero/api/log/clear"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_log_clear(c);
-      return;
-    }
-
-    if (mg_match(hm->uri, mg_str("/elero/api/dump/start"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_dump_start(c);
-      return;
-    }
-
-    if (mg_match(hm->uri, mg_str("/elero/api/dump/stop"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_dump_stop(c);
-      return;
-    }
-
-    if (mg_match(hm->uri, mg_str("/elero/api/dump/clear"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_dump_clear(c);
-      return;
-    }
-
-    // ─── API POST routes (with JSON body) ─────────────────────────────────────
-    if (mg_match(hm->uri, mg_str("/elero/api/cover"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_cover(c, hm);
-      return;
-    }
-
-    if (mg_match(hm->uri, mg_str("/elero/api/settings"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_settings(c, hm);
-      return;
-    }
-
-    if (mg_match(hm->uri, mg_str("/elero/api/adopt"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_adopt(c, hm);
-      return;
-    }
-
-    if (mg_match(hm->uri, mg_str("/elero/api/runtime/remove"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_runtime_remove(c, hm);
-      return;
-    }
-
-    if (mg_match(hm->uri, mg_str("/elero/api/frequency"), nullptr)) {
-      if (disabled) { self->send_json_error(c, 503, "disabled"); return; }
-      self->handle_post_frequency(c, hm);
-      return;
-    }
-
     // ─── 404 ──────────────────────────────────────────────────────────────────
     mg_http_reply(c, 404, "", "Not found");
   }
 
-  // Connection closed - clean up SSE client
-  if (ev == MG_EV_CLOSE && c->data[0] == 'S') {
+  // WebSocket message received
+  if (ev == MG_EV_WS_MSG) {
+    auto *wm = static_cast<struct mg_ws_message *>(ev_data);
+    self->handle_ws_message(c, wm);
+  }
+
+  // Connection closed - clean up WebSocket client
+  if (ev == MG_EV_CLOSE && c->data[0] == 'W') {
     c->data[0] = 0;  // Clear marker
-    ESP_LOGD(TAG, "SSE client disconnected");
+    ESP_LOGD(TAG, "WebSocket client disconnected");
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Route Handlers
+// HTTP Route Handlers
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void EleroWebServer::handle_index(struct mg_connection *c) {
@@ -303,87 +230,94 @@ void EleroWebServer::handle_get_yaml(struct mg_connection *c) {
   mg_http_reply(c, 200, "Content-Type: text/plain\r\n", "%s", yaml.c_str());
 }
 
-void EleroWebServer::handle_sse_connect(struct mg_connection *c) {
-  mg_printf(c,
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/event-stream\r\n"
-            "Cache-Control: no-cache\r\n"
-            "Connection: keep-alive\r\n"
-            "Access-Control-Allow-Origin: *\r\n\r\n");
+// ═══════════════════════════════════════════════════════════════════════════════
+// WebSocket Handlers
+// ═══════════════════════════════════════════════════════════════════════════════
 
-  c->data[0] = 'S';  // Mark as SSE connection
-  this->sse_clients_.push_back(c);
+void EleroWebServer::handle_ws_upgrade(struct mg_connection *c, struct mg_http_message *hm) {
+  mg_ws_upgrade(c, hm, nullptr);
+  c->data[0] = 'W';  // Mark as WebSocket connection
+  this->ws_clients_.push_back(c);
 
-  ESP_LOGI(TAG, "SSE client connected, %d total", this->sse_clients_.size());
+  ESP_LOGI(TAG, "WebSocket client connected, %d total", this->ws_clients_.size());
 
   // Send initial state
   if (this->enabled_) {
-    this->sse_send(c, "state", this->build_full_state_json());
+    this->ws_send(c, "state", this->build_full_state_json());
   }
 }
 
-void EleroWebServer::handle_post_scan_start(struct mg_connection *c) {
-  if (this->parent_->start_scan()) {
-    this->notify_scan_status_changed();
-    this->send_json_ok(c);
+void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm) {
+  if (!this->enabled_) {
+    this->ws_send_error(c, "disabled");
+    return;
+  }
+
+  std::string msg(wm->data.buf, wm->data.len);
+  std::string type = json_find_str(msg, "type");
+
+  ESP_LOGD(TAG, "WS message: type=%s", type.c_str());
+
+  if (type == "cover") {
+    this->ws_handle_cover(c, msg);
+  } else if (type == "settings") {
+    this->ws_handle_settings(c, msg);
+  } else if (type == "scan_start") {
+    if (this->parent_->start_scan()) {
+      this->notify_scan_status_changed();
+      this->ws_send_ok(c);
+    } else {
+      this->ws_send_error(c, "Already scanning");
+    }
+  } else if (type == "scan_stop") {
+    if (this->parent_->stop_scan()) {
+      this->notify_scan_status_changed();
+      this->ws_send_ok(c);
+    } else {
+      this->ws_send_error(c, "Not scanning");
+    }
+  } else if (type == "log_start") {
+    this->parent_->set_log_capture(true);
+    this->ws_send_ok(c);
+  } else if (type == "log_stop") {
+    this->parent_->set_log_capture(false);
+    this->ws_send_ok(c);
+  } else if (type == "log_clear") {
+    this->parent_->clear_log_entries();
+    this->last_log_push_ts_ = 0;
+    this->ws_send_ok(c);
+  } else if (type == "dump_start") {
+    if (this->parent_->start_packet_dump()) {
+      this->ws_send_ok(c);
+    } else {
+      this->ws_send_error(c, "Dump already running");
+    }
+  } else if (type == "dump_stop") {
+    if (this->parent_->stop_packet_dump()) {
+      this->ws_send_ok(c);
+    } else {
+      this->ws_send_error(c, "No dump running");
+    }
+  } else if (type == "dump_clear") {
+    this->parent_->clear_raw_packets();
+    this->ws_send_ok(c);
+  } else if (type == "adopt") {
+    this->ws_handle_adopt(c, msg);
+  } else if (type == "runtime_remove") {
+    this->ws_handle_runtime_remove(c, msg);
+  } else if (type == "frequency") {
+    this->ws_handle_frequency(c, msg);
   } else {
-    this->send_json_error(c, 409, "Already scanning");
+    this->ws_send_error(c, "Unknown command type");
   }
 }
 
-void EleroWebServer::handle_post_scan_stop(struct mg_connection *c) {
-  if (this->parent_->stop_scan()) {
-    this->notify_scan_status_changed();
-    this->send_json_ok(c);
-  } else {
-    this->send_json_error(c, 409, "Not scanning");
-  }
-}
-
-void EleroWebServer::handle_post_log_start(struct mg_connection *c) {
-  this->parent_->set_log_capture(true);
-  this->send_json_ok(c);
-}
-
-void EleroWebServer::handle_post_log_stop(struct mg_connection *c) {
-  this->parent_->set_log_capture(false);
-  this->send_json_ok(c);
-}
-
-void EleroWebServer::handle_post_log_clear(struct mg_connection *c) {
-  this->parent_->clear_log_entries();
-  this->last_log_push_ts_ = 0;
-  this->send_json_ok(c);
-}
-
-void EleroWebServer::handle_post_dump_start(struct mg_connection *c) {
-  if (this->parent_->start_packet_dump()) {
-    this->send_json_ok(c);
-  } else {
-    this->send_json_error(c, 409, "Dump already running");
-  }
-}
-
-void EleroWebServer::handle_post_dump_stop(struct mg_connection *c) {
-  if (this->parent_->stop_packet_dump()) {
-    this->send_json_ok(c);
-  } else {
-    this->send_json_error(c, 409, "No dump running");
-  }
-}
-
-void EleroWebServer::handle_post_dump_clear(struct mg_connection *c) {
-  this->parent_->clear_raw_packets();
-  this->send_json_ok(c);
-}
-
-void EleroWebServer::handle_post_cover(struct mg_connection *c, struct mg_http_message *hm) {
-  std::string body(hm->body.buf, hm->body.len);
-  std::string address = json_find_str(body, "address");
-  std::string action = json_find_str(body, "action");
+void EleroWebServer::ws_handle_cover(struct mg_connection *c, const std::string &json) {
+  std::string address = json_find_str(json, "address");
+  std::string action = json_find_str(json, "action");
 
   if (address.empty() || action.empty()) {
-    this->send_json_error(c, 400, "Missing address or action");
+    this->ws_send_error(c, "Missing address or action");
     return;
   }
 
@@ -391,7 +325,7 @@ void EleroWebServer::handle_post_cover(struct mg_connection *c, struct mg_http_m
   uint8_t cmd_byte = elero_action_to_command(action.c_str());
 
   if (cmd_byte == 0xFF) {
-    this->send_json_error(c, 400, "Unknown action");
+    this->ws_send_error(c, "Unknown action");
     return;
   }
 
@@ -399,99 +333,95 @@ void EleroWebServer::handle_post_cover(struct mg_connection *c, struct mg_http_m
   auto it = covers.find(addr);
   if (it != covers.end()) {
     if (!it->second->perform_action(action.c_str())) {
-      this->send_json_error(c, 400, "Unknown action");
+      this->ws_send_error(c, "Unknown action");
       return;
     }
     this->notify_covers_changed();
-    this->send_json_ok(c);
+    this->ws_send_ok(c);
     return;
   }
 
   if (this->parent_->send_runtime_command(addr, cmd_byte)) {
-    this->send_json_ok(c);
+    this->ws_send_ok(c);
   } else {
-    this->send_json_error(c, 404, "Cover not found");
+    this->ws_send_error(c, "Cover not found");
   }
 }
 
-void EleroWebServer::handle_post_settings(struct mg_connection *c, struct mg_http_message *hm) {
-  std::string body(hm->body.buf, hm->body.len);
-  std::string address = json_find_str(body, "address");
+void EleroWebServer::ws_handle_settings(struct mg_connection *c, const std::string &json) {
+  std::string address = json_find_str(json, "address");
 
   if (address.empty()) {
-    this->send_json_error(c, 400, "Missing address");
+    this->ws_send_error(c, "Missing address");
     return;
   }
 
   uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
-  uint32_t open_dur = json_find_uint(body, "open_duration");
-  uint32_t close_dur = json_find_uint(body, "close_duration");
-  uint32_t poll_intvl = json_find_uint(body, "poll_interval");
+  uint32_t open_dur = json_find_uint(json, "open_duration");
+  uint32_t close_dur = json_find_uint(json, "close_duration");
+  uint32_t poll_intvl = json_find_uint(json, "poll_interval");
 
   const auto &covers = this->parent_->get_configured_covers();
   auto it = covers.find(addr);
   if (it != covers.end()) {
     it->second->apply_runtime_settings(open_dur, close_dur, poll_intvl);
     this->notify_covers_changed();
-    this->send_json_ok(c);
+    this->ws_send_ok(c);
     return;
   }
 
   if (this->parent_->update_runtime_blind_settings(addr, open_dur, close_dur, poll_intvl)) {
     this->notify_covers_changed();
-    this->send_json_ok(c);
+    this->ws_send_ok(c);
   } else {
-    this->send_json_error(c, 404, "Cover not found");
+    this->ws_send_error(c, "Cover not found");
   }
 }
 
-void EleroWebServer::handle_post_adopt(struct mg_connection *c, struct mg_http_message *hm) {
-  std::string body(hm->body.buf, hm->body.len);
-  std::string address = json_find_str(body, "address");
-  std::string name = json_find_str(body, "name");
+void EleroWebServer::ws_handle_adopt(struct mg_connection *c, const std::string &json) {
+  std::string address = json_find_str(json, "address");
+  std::string name = json_find_str(json, "name");
 
   if (address.empty()) {
-    this->send_json_error(c, 400, "Missing address");
+    this->ws_send_error(c, "Missing address");
     return;
   }
 
   uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
   if (!this->parent_->adopt_blind_by_address(addr, name)) {
-    this->send_json_error(c, 409, "Not found or already configured");
+    this->ws_send_error(c, "Not found or already configured");
     return;
   }
 
   this->notify_covers_changed();
   this->notify_discovered_changed();
-  this->send_json_ok(c);
+  this->ws_send_ok(c);
 }
 
-void EleroWebServer::handle_post_runtime_remove(struct mg_connection *c, struct mg_http_message *hm) {
-  std::string body(hm->body.buf, hm->body.len);
-  std::string address = json_find_str(body, "address");
+void EleroWebServer::ws_handle_runtime_remove(struct mg_connection *c, const std::string &json) {
+  std::string address = json_find_str(json, "address");
 
   if (address.empty()) {
-    this->send_json_error(c, 400, "Missing address");
+    this->ws_send_error(c, "Missing address");
     return;
   }
 
   uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
   if (this->parent_->remove_runtime_blind(addr)) {
     this->notify_covers_changed();
-    this->send_json_ok(c);
+    this->ws_send_ok(c);
   } else {
-    this->send_json_error(c, 404, "Runtime blind not found");
+    this->ws_send_error(c, "Runtime blind not found");
   }
 }
 
-void EleroWebServer::handle_post_frequency(struct mg_connection *c, struct mg_http_message *hm) {
-  std::string body(hm->body.buf, hm->body.len);
-  std::string f2 = json_find_str(body, "freq2");
-  std::string f1 = json_find_str(body, "freq1");
-  std::string f0 = json_find_str(body, "freq0");
+void EleroWebServer::ws_handle_frequency(struct mg_connection *c, const std::string &json) {
+  std::string f2 = json_find_str(json, "freq2");
+  std::string f1 = json_find_str(json, "freq1");
+  std::string f0 = json_find_str(json, "freq0");
 
   if (f2.empty() || f1.empty() || f0.empty()) {
-    this->send_json_error(c, 400, "Missing freq2, freq1 or freq0");
+    this->ws_send_error(c, "Missing freq2, freq1 or freq0");
     return;
   }
 
@@ -506,48 +436,57 @@ void EleroWebServer::handle_post_frequency(struct mg_connection *c, struct mg_ht
 
   uint8_t freq2, freq1, freq0;
   if (!parse_byte(f2, freq2) || !parse_byte(f1, freq1) || !parse_byte(f0, freq0)) {
-    this->send_json_error(c, 400, "Invalid frequency value");
+    this->ws_send_error(c, "Invalid frequency value");
     return;
   }
 
   this->parent_->reinit_frequency(freq2, freq1, freq0);
-  this->send_json_ok(c);
+  this->ws_send_ok(c);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SSE Helpers
+// WebSocket Helpers
 // ═══════════════════════════════════════════════════════════════════════════════
 
-void EleroWebServer::sse_send(struct mg_connection *c, const char *event, const std::string &data) {
+void EleroWebServer::ws_send(struct mg_connection *c, const char *event, const std::string &data) {
   if (c == nullptr || c->is_closing)
     return;
-  mg_printf(c, "event: %s\ndata: %s\n\n", event, data.c_str());
+  // Format: {"event":"<event>","data":<data>}
+  std::string msg = "{\"event\":\"";
+  msg += event;
+  msg += "\",\"data\":";
+  msg += data;
+  msg += "}";
+  mg_ws_send(c, msg.c_str(), msg.size(), WEBSOCKET_OP_TEXT);
 }
 
-void EleroWebServer::sse_broadcast(const char *event, const std::string &data) {
-  for (auto *c : this->sse_clients_) {
-    this->sse_send(c, event, data);
+void EleroWebServer::ws_send_ok(struct mg_connection *c) {
+  if (c == nullptr || c->is_closing)
+    return;
+  const char *msg = "{\"event\":\"result\",\"data\":{\"ok\":true}}";
+  mg_ws_send(c, msg, strlen(msg), WEBSOCKET_OP_TEXT);
+}
+
+void EleroWebServer::ws_send_error(struct mg_connection *c, const char *error) {
+  if (c == nullptr || c->is_closing)
+    return;
+  std::string msg = "{\"event\":\"result\",\"data\":{\"ok\":false,\"error\":\"";
+  msg += error;
+  msg += "\"}}";
+  mg_ws_send(c, msg.c_str(), msg.size(), WEBSOCKET_OP_TEXT);
+}
+
+void EleroWebServer::ws_broadcast(const char *event, const std::string &data) {
+  for (auto *c : this->ws_clients_) {
+    this->ws_send(c, event, data);
   }
 }
 
-void EleroWebServer::sse_cleanup() {
-  this->sse_clients_.erase(
-      std::remove_if(this->sse_clients_.begin(), this->sse_clients_.end(),
-                     [](struct mg_connection *c) { return c->is_closing || c->data[0] != 'S'; }),
-      this->sse_clients_.end());
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Response Helpers
-// ═══════════════════════════════════════════════════════════════════════════════
-
-void EleroWebServer::send_json_ok(struct mg_connection *c) {
-  mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{\"ok\":true}");
-}
-
-void EleroWebServer::send_json_error(struct mg_connection *c, int code, const char *error) {
-  mg_http_reply(c, code, "Content-Type: application/json\r\n",
-                "{\"ok\":false,\"error\":\"%s\"}", error);
+void EleroWebServer::ws_cleanup() {
+  this->ws_clients_.erase(
+      std::remove_if(this->ws_clients_.begin(), this->ws_clients_.end(),
+                     [](struct mg_connection *c) { return c->is_closing || c->data[0] != 'W'; }),
+      this->ws_clients_.end());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -1,5 +1,10 @@
 #pragma once
 
+// Include Arduino first to avoid INADDR_NONE macro conflict with mongoose/lwip
+#ifdef USE_ARDUINO
+#include <Arduino.h>
+#endif
+
 #include "esphome/core/component.h"
 #include "mongoose.h"
 #include "../elero/elero.h"
@@ -38,7 +43,7 @@ class EleroWebServer : public Component {
   // Mongoose state
   struct mg_mgr mgr_;
   struct mg_connection *listener_{nullptr};
-  std::vector<struct mg_connection *> sse_clients_;
+  std::vector<struct mg_connection *> ws_clients_;
 
   // Dirty flags for incremental updates
   bool covers_dirty_{false};
@@ -52,29 +57,28 @@ class EleroWebServer : public Component {
   // Mongoose event handler (static for C callback)
   static void event_handler(struct mg_connection *c, int ev, void *ev_data);
 
-  // Route handlers
+  // HTTP route handlers
   void handle_index(struct mg_connection *c);
   void handle_get_state(struct mg_connection *c);
   void handle_get_yaml(struct mg_connection *c);
-  void handle_sse_connect(struct mg_connection *c);
-  void handle_post_scan_start(struct mg_connection *c);
-  void handle_post_scan_stop(struct mg_connection *c);
-  void handle_post_log_start(struct mg_connection *c);
-  void handle_post_log_stop(struct mg_connection *c);
-  void handle_post_log_clear(struct mg_connection *c);
-  void handle_post_dump_start(struct mg_connection *c);
-  void handle_post_dump_stop(struct mg_connection *c);
-  void handle_post_dump_clear(struct mg_connection *c);
-  void handle_post_cover(struct mg_connection *c, struct mg_http_message *hm);
-  void handle_post_settings(struct mg_connection *c, struct mg_http_message *hm);
-  void handle_post_adopt(struct mg_connection *c, struct mg_http_message *hm);
-  void handle_post_runtime_remove(struct mg_connection *c, struct mg_http_message *hm);
-  void handle_post_frequency(struct mg_connection *c, struct mg_http_message *hm);
 
-  // SSE helpers
-  void sse_send(struct mg_connection *c, const char *event, const std::string &data);
-  void sse_broadcast(const char *event, const std::string &data);
-  void sse_cleanup();
+  // WebSocket handlers
+  void handle_ws_upgrade(struct mg_connection *c, struct mg_http_message *hm);
+  void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm);
+
+  // WebSocket command handlers
+  void ws_handle_cover(struct mg_connection *c, const std::string &json);
+  void ws_handle_settings(struct mg_connection *c, const std::string &json);
+  void ws_handle_adopt(struct mg_connection *c, const std::string &json);
+  void ws_handle_runtime_remove(struct mg_connection *c, const std::string &json);
+  void ws_handle_frequency(struct mg_connection *c, const std::string &json);
+
+  // WebSocket helpers
+  void ws_send(struct mg_connection *c, const char *event, const std::string &data);
+  void ws_send_ok(struct mg_connection *c);
+  void ws_send_error(struct mg_connection *c, const char *error);
+  void ws_broadcast(const char *event, const std::string &data);
+  void ws_cleanup();
 
   // JSON builders
   std::string build_full_state_json();
@@ -83,14 +87,10 @@ class EleroWebServer : public Component {
   std::string build_logs_json(uint32_t since_ms = 0, size_t max_entries = 20);
   std::string build_packets_json();
   std::string build_yaml();
-
-  // Response helpers
-  void send_json_ok(struct mg_connection *c);
-  void send_json_error(struct mg_connection *c, int code, const char *error);
 };
 
-// Heartbeat interval for SSE (ms)
-constexpr uint32_t ELERO_SSE_HEARTBEAT_INTERVAL = 15000;
+// Heartbeat interval for WebSocket (ms)
+constexpr uint32_t ELERO_WS_HEARTBEAT_INTERVAL = 15000;
 
 }  // namespace elero
 }  // namespace esphome

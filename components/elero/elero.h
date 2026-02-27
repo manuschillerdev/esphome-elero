@@ -239,6 +239,9 @@ class EleroBlindBase {
 
 class Elero;  // Forward declaration for SpiTransaction
 
+// Forward declaration for web server notifications
+class EleroWebServer;
+
 /// RAII guard for SPI transactions. Calls enable() on construction and
 /// disable() on destruction, ensuring CS is always released even on early return.
 class SpiTransaction {
@@ -360,6 +363,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }
   void set_freq2(uint8_t freq) { freq2_ = freq; }
+
+  // Web server notification link
+  void set_web_server(EleroWebServer *ws) { web_server_ = ws; }
   void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   uint8_t get_freq0() const { return freq0_; }
   uint8_t get_freq1() const { return freq1_; }
@@ -405,6 +411,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool log_capture_{false};
   std::vector<LogEntry> log_entries_;
   uint8_t log_write_idx_{0};
+
+  // Web server for notifications (optional)
+  EleroWebServer *web_server_{nullptr};
 };
 
 }  // namespace elero
