@@ -27,6 +27,17 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ matrix.test }}-${{ hashFiles('tests/*.yaml', 'components/**/*.py') }}
+          restore-keys: |
+            pio-${{ matrix.test }}-
+            pio-
+
       - name: Install ESPHome
         run: pip install esphome
 
