@@ -4,6 +4,7 @@
 #include "esphome/core/preferences.h"
 #include "esphome/components/spi/spi.h"
 #include "cc1101.h"
+#include "tx_client.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -274,12 +275,25 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void flush_and_rx();
   void interpret_msg();
 
-  // Non-blocking TX state machine
+  // Non-blocking TX state machine (internal)
   [[nodiscard]] bool start_transmit();  // Begin async TX, returns true if started
-  bool is_tx_busy() const { return tx_ctx_.state != TxState::IDLE; }
+  bool is_tx_busy() const { return tx_ctx_.state != TxState::IDLE || tx_owner_ != nullptr; }
   [[nodiscard]] bool poll_tx_result();  // Check if TX completed, get result
+
+  // Non-blocking TX API for CommandSender
+  /// Request to transmit a command. Non-blocking.
+  /// @param client The sender requesting TX (receives completion callback)
+  /// @param cmd The command to transmit
+  /// @return true if TX started, false if hub is busy
+  [[nodiscard]] bool request_tx(TxClient *client, const EleroCommand &cmd);
+
+  /// Get the current TX owner (for debugging/testing).
+  TxClient *get_tx_owner() const { return tx_owner_; }
+
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
+
+  // Legacy blocking TX API (for backwards compatibility and simple use cases)
   [[nodiscard]] bool send_command(EleroCommand *cmd);
 
 #ifdef USE_SENSOR
@@ -353,10 +367,13 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void mark_last_raw_packet_(bool valid, const char *reason);
   void handle_tx_state_(uint32_t now);  // Progress TX state machine
   void abort_tx_();                     // Abort TX and return to RX
+  void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
+  void notify_tx_owner_(bool success);  // Notify owner and clear
 
   volatile bool received_{false};
   TxContext tx_ctx_;
   bool tx_pending_success_{false};
+  TxClient *tx_owner_{nullptr};  // Current TX owner (for non-blocking API)
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
   uint8_t freq0_{0x7a};
