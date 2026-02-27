@@ -39,5 +39,6 @@ async def to_code(config):
             cg.add_library("WiFi", None)
             cg.add_library("FS", None)
             cg.add_library("Update", None)
+            cg.add_library("ESP32Async/AsyncTCP", None)
         cg.add_library("ESP32Async/ESPAsyncWebServer", None)
 
