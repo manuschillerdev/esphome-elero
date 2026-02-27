@@ -80,37 +80,45 @@ esp_err_t SSEServer::handle_sse_request_(httpd_req_t *req) {
   httpd_resp_set_hdr(req, "Connection", "keep-alive");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
-  // Send initial response to establish connection
-  const char *initial = ":ok\n\n";
-  esp_err_t err = httpd_resp_send_chunk(req, initial, strlen(initial));
-  if (err != ESP_OK) {
-    return err;
-  }
-
-  // Get the socket fd for this connection
+  // Get the socket fd BEFORE sending any response
   int fd = httpd_req_to_sockfd(req);
   if (fd < 0) {
+    ESP_LOGE(TAG, "Failed to get socket fd for SSE connection");
     return ESP_FAIL;
   }
 
-  // Track this client
+  // Send initial SSE comment to establish connection
+  // Using chunked encoding - we intentionally don't finalize (no NULL chunk)
+  // so the connection stays open for subsequent httpd_socket_send() calls
+  const char *initial = ":ok\n\n";
+  esp_err_t err = httpd_resp_send_chunk(req, initial, strlen(initial));
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to send initial SSE chunk: %s", esp_err_to_name(err));
+    return err;
+  }
+
+  // Track this client - we use raw socket sends after this point
+  // NOTE: After returning, httpd_req_t is invalid, but the socket fd remains
+  // valid until the client disconnects or we encounter a send error.
   self->add_client_(req->handle, fd);
 
   ESP_LOGI(TAG, "SSE client connected (fd=%d)", fd);
 
-  // Call on_connect callback
+  // Send initial state to new client
   if (self->on_connect_) {
     self->on_connect_(*self);
   }
 
-  // Keep the connection open - we'll send data via send()
-  // Return ESP_OK but don't finalize the response
+  // Return ESP_OK without finalizing chunked response.
+  // The connection remains open; we send data via httpd_socket_send().
   return ESP_OK;
 }
 
 void SSEServer::add_client_(httpd_handle_t hd, int fd) {
-  if (xSemaphoreTake(this->lock_, pdMS_TO_TICKS(100)) != pdTRUE)
+  if (xSemaphoreTake(this->lock_, pdMS_TO_TICKS(100)) != pdTRUE) {
+    ESP_LOGW(TAG, "Failed to acquire lock for adding SSE client");
     return;
+  }
 
   // Clean up any disconnected clients first
   this->cleanup_disconnected_();
@@ -148,8 +156,10 @@ void SSEServer::cleanup_disconnected_() {
 }
 
 void SSEServer::send(const char *event, const std::string &data) {
-  if (xSemaphoreTake(this->lock_, pdMS_TO_TICKS(100)) != pdTRUE)
+  if (xSemaphoreTake(this->lock_, pdMS_TO_TICKS(100)) != pdTRUE) {
+    ESP_LOGW(TAG, "Failed to acquire lock for SSE send, dropping event: %s", event);
     return;
+  }
 
   if (this->clients_.empty()) {
     xSemaphoreGive(this->lock_);

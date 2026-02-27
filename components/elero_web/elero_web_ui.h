@@ -7,6 +7,11 @@ namespace esphome {
 namespace elero {
 
 const char ELERO_WEB_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
+<!--
+  Elero Web UI
+  Note: Uses Tailwind CSS and Alpine.js via CDN. Requires internet access.
+  For offline use, these would need to be bundled (increases firmware size significantly).
+-->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
