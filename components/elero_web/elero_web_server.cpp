@@ -228,12 +228,16 @@ void EleroWebServer::handle_ws_message(AsyncWebSocketClient *client, const std::
       return;
     }
 
-    // Try configured cover
+    // Try configured cover — use perform_action() for same code path as Home Assistant
     const auto &covers = this->parent_->get_configured_covers();
     auto it = covers.find(addr);
     if (it != covers.end()) {
-      it->second->enqueue_command(cmd_byte);
+      if (!it->second->perform_action(action.c_str())) {
+        this->send_result(client, id_cstr, false, "Unknown action");
+        return;
+      }
       this->send_result(client, id_cstr, true);
+      this->notify_covers_changed();
       return;
     }
 

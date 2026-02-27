@@ -222,6 +222,32 @@ void EleroCover::control(const cover::CoverCall &call) {
   }
 }
 
+bool EleroCover::perform_action(const char *action) {
+  // Use make_call() to go through the same code path as Home Assistant
+  if (strcmp(action, "up") == 0 || strcmp(action, "open") == 0) {
+    this->make_call().set_command_open().perform();
+    return true;
+  }
+  if (strcmp(action, "down") == 0 || strcmp(action, "close") == 0) {
+    this->make_call().set_command_close().perform();
+    return true;
+  }
+  if (strcmp(action, "stop") == 0) {
+    this->make_call().set_command_stop().perform();
+    return true;
+  }
+  if (strcmp(action, "tilt") == 0) {
+    this->make_call().set_tilt(1.0f).perform();
+    return true;
+  }
+  if (strcmp(action, "check") == 0) {
+    // Check is Elero-specific status query, use raw command
+    this->sender_.enqueue(this->command_check_);
+    return true;
+  }
+  return false;
+}
+
 void EleroCover::start_movement(CoverOperation dir) {
   switch (dir) {
     case COVER_OPERATION_OPENING:

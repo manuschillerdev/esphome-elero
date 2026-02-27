@@ -226,7 +226,9 @@ class EleroBlindBase {
   virtual uint32_t get_open_duration_ms() const = 0;
   virtual uint32_t get_close_duration_ms() const = 0;
   virtual bool get_supports_tilt() const = 0;
-  // Web API commands
+  // Web API commands — use perform_action() for standard commands (same path as HA)
+  virtual bool perform_action(const char *action) = 0;
+  // Low-level command queue (bypasses entity logic, use only for protocol-specific commands like "check")
   virtual void enqueue_command(uint8_t cmd_byte) = 0;
   /// Called by the hub when a remote command packet (0x6a/0x69) targets this
   /// blind, so it can poll the blind immediately instead of waiting for the
