@@ -6,7 +6,8 @@
 #include <string>
 
 #ifdef USE_ARDUINO
-#include <ESPAsyncWebServer.h>
+// Forward declaration - full include in .cpp to avoid header dependency issues
+class AsyncEventSource;
 #endif
 
 #ifdef USE_ESP_IDF

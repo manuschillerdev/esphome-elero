@@ -1,6 +1,10 @@
 #include "sse_server.h"
 #include "esphome/core/log.h"
 
+#ifdef USE_ARDUINO
+#include <ESPAsyncWebServer.h>
+#endif
+
 namespace esphome {
 namespace elero {
 

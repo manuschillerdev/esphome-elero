@@ -6,6 +6,10 @@
 #include <cstring>
 #include <cstdlib>
 
+#ifdef USE_ARDUINO
+#include <ESPAsyncWebServer.h>
+#endif
+
 namespace esphome {
 namespace elero {
 

@@ -7,7 +7,8 @@
 #include "../elero/elero.h"
 
 #ifdef USE_ARDUINO
-#include <ESPAsyncWebServer.h>
+// Forward declaration - full include in .cpp to avoid header dependency issues
+class AsyncWebServerRequest;
 #endif
 
 #ifdef USE_ESP_IDF
