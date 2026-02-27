@@ -6,13 +6,14 @@
 #include "sse_server.h"
 #include "../elero/elero.h"
 
-#ifdef USE_ARDUINO
-// Forward declaration - full include in .cpp to avoid header dependency issues
-class AsyncWebServerRequest;
-#endif
-
 #ifdef USE_ESP_IDF
 #include <esp_http_server.h>
+#endif
+
+// Forward declaration for Arduino - use global namespace to avoid conflict
+// with esphome::web_server_idf::AsyncWebServerRequest
+#ifdef USE_ARDUINO
+class AsyncWebServerRequest;
 #endif
 
 namespace esphome {
@@ -74,30 +75,32 @@ class EleroWebServer : public Component {
 
 #ifdef USE_ARDUINO
   // HTTP response helpers (Arduino)
-  void send_json_ok(AsyncWebServerRequest *request);
-  void send_json_error(AsyncWebServerRequest *request, int code, const char *error);
+  // Use ::AsyncWebServerRequest to explicitly reference global namespace class
+  // (avoids conflict with esphome::web_server_idf::AsyncWebServerRequest)
+  void send_json_ok(::AsyncWebServerRequest *request);
+  void send_json_error(::AsyncWebServerRequest *request, int code, const char *error);
 
   // HTTP GET handlers (Arduino)
-  void handle_index(AsyncWebServerRequest *request);
-  void handle_get_state(AsyncWebServerRequest *request);
-  void handle_get_yaml(AsyncWebServerRequest *request);
+  void handle_index(::AsyncWebServerRequest *request);
+  void handle_get_state(::AsyncWebServerRequest *request);
+  void handle_get_yaml(::AsyncWebServerRequest *request);
 
   // HTTP POST handlers (no body) (Arduino)
-  void handle_post_scan_start(AsyncWebServerRequest *request);
-  void handle_post_scan_stop(AsyncWebServerRequest *request);
-  void handle_post_log_start(AsyncWebServerRequest *request);
-  void handle_post_log_stop(AsyncWebServerRequest *request);
-  void handle_post_log_clear(AsyncWebServerRequest *request);
-  void handle_post_dump_start(AsyncWebServerRequest *request);
-  void handle_post_dump_stop(AsyncWebServerRequest *request);
-  void handle_post_dump_clear(AsyncWebServerRequest *request);
+  void handle_post_scan_start(::AsyncWebServerRequest *request);
+  void handle_post_scan_stop(::AsyncWebServerRequest *request);
+  void handle_post_log_start(::AsyncWebServerRequest *request);
+  void handle_post_log_stop(::AsyncWebServerRequest *request);
+  void handle_post_log_clear(::AsyncWebServerRequest *request);
+  void handle_post_dump_start(::AsyncWebServerRequest *request);
+  void handle_post_dump_stop(::AsyncWebServerRequest *request);
+  void handle_post_dump_clear(::AsyncWebServerRequest *request);
 
   // HTTP POST handlers (with JSON body) (Arduino)
-  void handle_post_cover(AsyncWebServerRequest *request, uint8_t *data, size_t len);
-  void handle_post_settings(AsyncWebServerRequest *request, uint8_t *data, size_t len);
-  void handle_post_adopt(AsyncWebServerRequest *request, uint8_t *data, size_t len);
-  void handle_post_runtime_remove(AsyncWebServerRequest *request, uint8_t *data, size_t len);
-  void handle_post_frequency(AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_cover(::AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_settings(::AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_adopt(::AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_runtime_remove(::AsyncWebServerRequest *request, uint8_t *data, size_t len);
+  void handle_post_frequency(::AsyncWebServerRequest *request, uint8_t *data, size_t len);
 #endif
 
 #ifdef USE_ESP_IDF

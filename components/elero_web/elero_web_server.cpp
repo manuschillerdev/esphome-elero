@@ -419,70 +419,70 @@ void EleroWebServer::setup() {
 
   // ─── GET routes ─────────────────────────────────────────────────────────────
 
-  server->on("/elero", HTTP_GET, [this](AsyncWebServerRequest *request) { this->handle_index(request); });
+  server->on("/elero", HTTP_GET, [this](::AsyncWebServerRequest *request) { this->handle_index(request); });
 
-  server->on("/", HTTP_GET, [](AsyncWebServerRequest *request) { request->redirect("/elero"); });
+  server->on("/", HTTP_GET, [](::AsyncWebServerRequest *request) { request->redirect("/elero"); });
 
   server->on("/elero/api/state", HTTP_GET,
-             [this](AsyncWebServerRequest *request) { this->handle_get_state(request); });
+             [this](::AsyncWebServerRequest *request) { this->handle_get_state(request); });
 
-  server->on("/elero/api/yaml", HTTP_GET, [this](AsyncWebServerRequest *request) { this->handle_get_yaml(request); });
+  server->on("/elero/api/yaml", HTTP_GET, [this](::AsyncWebServerRequest *request) { this->handle_get_yaml(request); });
 
   // ─── POST routes (no body) ──────────────────────────────────────────────────
 
   server->on("/elero/api/scan/start", HTTP_POST,
-             [this](AsyncWebServerRequest *request) { this->handle_post_scan_start(request); });
+             [this](::AsyncWebServerRequest *request) { this->handle_post_scan_start(request); });
 
   server->on("/elero/api/scan/stop", HTTP_POST,
-             [this](AsyncWebServerRequest *request) { this->handle_post_scan_stop(request); });
+             [this](::AsyncWebServerRequest *request) { this->handle_post_scan_stop(request); });
 
   server->on("/elero/api/log/start", HTTP_POST,
-             [this](AsyncWebServerRequest *request) { this->handle_post_log_start(request); });
+             [this](::AsyncWebServerRequest *request) { this->handle_post_log_start(request); });
 
   server->on("/elero/api/log/stop", HTTP_POST,
-             [this](AsyncWebServerRequest *request) { this->handle_post_log_stop(request); });
+             [this](::AsyncWebServerRequest *request) { this->handle_post_log_stop(request); });
 
   server->on("/elero/api/log/clear", HTTP_POST,
-             [this](AsyncWebServerRequest *request) { this->handle_post_log_clear(request); });
+             [this](::AsyncWebServerRequest *request) { this->handle_post_log_clear(request); });
 
   server->on("/elero/api/dump/start", HTTP_POST,
-             [this](AsyncWebServerRequest *request) { this->handle_post_dump_start(request); });
+             [this](::AsyncWebServerRequest *request) { this->handle_post_dump_start(request); });
 
   server->on("/elero/api/dump/stop", HTTP_POST,
-             [this](AsyncWebServerRequest *request) { this->handle_post_dump_stop(request); });
+             [this](::AsyncWebServerRequest *request) { this->handle_post_dump_stop(request); });
 
   server->on("/elero/api/dump/clear", HTTP_POST,
-             [this](AsyncWebServerRequest *request) { this->handle_post_dump_clear(request); });
+             [this](::AsyncWebServerRequest *request) { this->handle_post_dump_clear(request); });
 
   // ─── POST routes (with JSON body) ───────────────────────────────────────────
 
   server->on(
-      "/elero/api/cover", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
-      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+      "/elero/api/cover", HTTP_POST, [](::AsyncWebServerRequest *request) {}, nullptr,
+      [this](::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
         this->handle_post_cover(request, data, len);
       });
 
   server->on(
-      "/elero/api/settings", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
-      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+      "/elero/api/settings", HTTP_POST, [](::AsyncWebServerRequest *request) {}, nullptr,
+      [this](::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
         this->handle_post_settings(request, data, len);
       });
 
   server->on(
-      "/elero/api/adopt", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
-      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+      "/elero/api/adopt", HTTP_POST, [](::AsyncWebServerRequest *request) {}, nullptr,
+      [this](::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
         this->handle_post_adopt(request, data, len);
       });
 
   server->on(
-      "/elero/api/runtime/remove", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
-      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+      "/elero/api/runtime/remove", HTTP_POST, [](::AsyncWebServerRequest *request) {}, nullptr,
+      [this](::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
         this->handle_post_runtime_remove(request, data, len);
       });
 
   server->on(
-      "/elero/api/frequency", HTTP_POST, [](AsyncWebServerRequest *request) {}, nullptr,
-      [this](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+      "/elero/api/frequency", HTTP_POST, [](::AsyncWebServerRequest *request) {}, nullptr,
+      [this](::AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
         this->handle_post_frequency(request, data, len);
       });
 
@@ -491,11 +491,11 @@ void EleroWebServer::setup() {
 
 // ─── HTTP response helpers ────────────────────────────────────────────────────
 
-void EleroWebServer::send_json_ok(AsyncWebServerRequest *request) {
+void EleroWebServer::send_json_ok(::AsyncWebServerRequest *request) {
   request->send(200, "application/json", "{\"ok\":true}");
 }
 
-void EleroWebServer::send_json_error(AsyncWebServerRequest *request, int code, const char *error) {
+void EleroWebServer::send_json_error(::AsyncWebServerRequest *request, int code, const char *error) {
   char buf[128];
   snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"%s\"}", error);
   request->send(code, "application/json", buf);
@@ -503,7 +503,7 @@ void EleroWebServer::send_json_error(AsyncWebServerRequest *request, int code, c
 
 // ─── HTTP GET handlers ────────────────────────────────────────────────────────
 
-void EleroWebServer::handle_index(AsyncWebServerRequest *request) {
+void EleroWebServer::handle_index(::AsyncWebServerRequest *request) {
   if (!this->enabled_) {
     request->send(503, "text/plain", "Web UI disabled");
     return;
@@ -511,7 +511,7 @@ void EleroWebServer::handle_index(AsyncWebServerRequest *request) {
   request->send(200, "text/html", ELERO_WEB_UI_HTML);
 }
 
-void EleroWebServer::handle_get_state(AsyncWebServerRequest *request) {
+void EleroWebServer::handle_get_state(::AsyncWebServerRequest *request) {
   if (!this->enabled_) {
     request->send(503, "application/json", "{\"ok\":false,\"error\":\"disabled\"}");
     return;
@@ -520,7 +520,7 @@ void EleroWebServer::handle_get_state(AsyncWebServerRequest *request) {
   request->send(200, "application/json", json.c_str());
 }
 
-void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
+void EleroWebServer::handle_get_yaml(::AsyncWebServerRequest *request) {
   if (!this->enabled_) {
     request->send(503, "text/plain", "Web UI disabled");
     return;
@@ -531,7 +531,7 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
 
 // ─── HTTP POST handlers (no body) ─────────────────────────────────────────────
 
-void EleroWebServer::handle_post_scan_start(AsyncWebServerRequest *request) {
+void EleroWebServer::handle_post_scan_start(::AsyncWebServerRequest *request) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -544,7 +544,7 @@ void EleroWebServer::handle_post_scan_start(AsyncWebServerRequest *request) {
   this->send_json_ok(request);
 }
 
-void EleroWebServer::handle_post_scan_stop(AsyncWebServerRequest *request) {
+void EleroWebServer::handle_post_scan_stop(::AsyncWebServerRequest *request) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -557,7 +557,7 @@ void EleroWebServer::handle_post_scan_stop(AsyncWebServerRequest *request) {
   this->send_json_ok(request);
 }
 
-void EleroWebServer::handle_post_log_start(AsyncWebServerRequest *request) {
+void EleroWebServer::handle_post_log_start(::AsyncWebServerRequest *request) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -566,7 +566,7 @@ void EleroWebServer::handle_post_log_start(AsyncWebServerRequest *request) {
   this->send_json_ok(request);
 }
 
-void EleroWebServer::handle_post_log_stop(AsyncWebServerRequest *request) {
+void EleroWebServer::handle_post_log_stop(::AsyncWebServerRequest *request) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -575,7 +575,7 @@ void EleroWebServer::handle_post_log_stop(AsyncWebServerRequest *request) {
   this->send_json_ok(request);
 }
 
-void EleroWebServer::handle_post_log_clear(AsyncWebServerRequest *request) {
+void EleroWebServer::handle_post_log_clear(::AsyncWebServerRequest *request) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -585,7 +585,7 @@ void EleroWebServer::handle_post_log_clear(AsyncWebServerRequest *request) {
   this->send_json_ok(request);
 }
 
-void EleroWebServer::handle_post_dump_start(AsyncWebServerRequest *request) {
+void EleroWebServer::handle_post_dump_start(::AsyncWebServerRequest *request) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -597,7 +597,7 @@ void EleroWebServer::handle_post_dump_start(AsyncWebServerRequest *request) {
   this->send_json_ok(request);
 }
 
-void EleroWebServer::handle_post_dump_stop(AsyncWebServerRequest *request) {
+void EleroWebServer::handle_post_dump_stop(::AsyncWebServerRequest *request) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -609,7 +609,7 @@ void EleroWebServer::handle_post_dump_stop(AsyncWebServerRequest *request) {
   this->send_json_ok(request);
 }
 
-void EleroWebServer::handle_post_dump_clear(AsyncWebServerRequest *request) {
+void EleroWebServer::handle_post_dump_clear(::AsyncWebServerRequest *request) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -620,7 +620,7 @@ void EleroWebServer::handle_post_dump_clear(AsyncWebServerRequest *request) {
 
 // ─── HTTP POST handlers (with JSON body) ──────────────────────────────────────
 
-void EleroWebServer::handle_post_cover(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
+void EleroWebServer::handle_post_cover(::AsyncWebServerRequest *request, uint8_t *data, size_t len) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -662,7 +662,7 @@ void EleroWebServer::handle_post_cover(AsyncWebServerRequest *request, uint8_t *
   }
 }
 
-void EleroWebServer::handle_post_settings(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
+void EleroWebServer::handle_post_settings(::AsyncWebServerRequest *request, uint8_t *data, size_t len) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -698,7 +698,7 @@ void EleroWebServer::handle_post_settings(AsyncWebServerRequest *request, uint8_
   }
 }
 
-void EleroWebServer::handle_post_adopt(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
+void EleroWebServer::handle_post_adopt(::AsyncWebServerRequest *request, uint8_t *data, size_t len) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -724,7 +724,7 @@ void EleroWebServer::handle_post_adopt(AsyncWebServerRequest *request, uint8_t *
   this->send_json_ok(request);
 }
 
-void EleroWebServer::handle_post_runtime_remove(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
+void EleroWebServer::handle_post_runtime_remove(::AsyncWebServerRequest *request, uint8_t *data, size_t len) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
@@ -747,7 +747,7 @@ void EleroWebServer::handle_post_runtime_remove(AsyncWebServerRequest *request, 
   }
 }
 
-void EleroWebServer::handle_post_frequency(AsyncWebServerRequest *request, uint8_t *data, size_t len) {
+void EleroWebServer::handle_post_frequency(::AsyncWebServerRequest *request, uint8_t *data, size_t len) {
   if (!this->enabled_) {
     this->send_json_error(request, 503, "disabled");
     return;
