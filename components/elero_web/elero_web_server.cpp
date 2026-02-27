@@ -401,7 +401,9 @@ void EleroWebServer::setup() {
 
   this->base_->init();
 
-  auto server = this->base_->get_server();
+  // Explicitly use global namespace AsyncWebServer to avoid conflict with
+  // esphome::web_server_idf::AsyncWebServer wrapper class
+  ::AsyncWebServer *server = this->base_->get_server().get();
   if (!server) {
     ESP_LOGE(TAG, "Failed to get web server instance");
     this->mark_failed();
