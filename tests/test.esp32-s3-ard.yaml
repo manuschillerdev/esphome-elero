@@ -1,18 +1,19 @@
-# ESPHome compile test: ESP32-C3 with Arduino framework
+# ESPHome compile test: ESP32-S3 with Arduino framework
+# Target hardware: LilyGo T-Embed CC1101
 # Note: elero_web excluded - ESPAsyncWebServer conflicts with ESPHome's hybrid Arduino/IDF mode
 substitutions:
-  spi_clk: GPIO6
-  spi_mosi: GPIO7
-  spi_miso: GPIO2
-  spi_cs: GPIO10
-  gdo0_pin: GPIO3
+  spi_clk: GPIO11
+  spi_mosi: GPIO9
+  spi_miso: GPIO10
+  spi_cs: GPIO16
+  gdo0_pin: GPIO17
 
 esphome:
-  name: test-esp32-c3-ard
-  friendly_name: Test ESP32-C3 Arduino
+  name: test-esp32-s3-ard
+  friendly_name: Test ESP32-S3 Arduino
 
 esp32:
-  board: esp32-c3-devkitm-1
+  board: esp32-s3-devkitc-1
   framework:
     type: arduino
 

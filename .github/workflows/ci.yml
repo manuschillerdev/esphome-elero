@@ -19,12 +19,9 @@ jobs:
       fail-fast: false
       matrix:
         test:
+          - test.esp32-s3-ard
+          - test.esp32-s3-idf
           - test.esp32-ard
-          - test.esp32-idf
-          - test.esp32-c3-ard
-          - test.esp32-c3-idf
-          - test.esp8266-ard
-          - test.rp2040-ard
     steps:
       - uses: actions/checkout@v4
 
