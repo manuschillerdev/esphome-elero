@@ -783,6 +783,26 @@ void Elero::interpret_msg() {
            length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2,
            payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
 
+  // Notify web server of RF packet
+  if (this->web_server_ != nullptr) {
+    RfPacketInfo pkt{};
+    pkt.timestamp_ms = millis();
+    pkt.src = src;
+    pkt.dst = dst;
+    pkt.channel = chl;
+    pkt.type = typ;
+    pkt.cmd = ((typ == 0x6a) || (typ == 0x69)) ? payload[4] : 0;
+    pkt.state = ((typ == 0xca) || (typ == 0xc9)) ? payload[6] : 0;
+    pkt.rssi = rssi;
+    pkt.hop = hop;
+    pkt.pck_inf[0] = typ;
+    pkt.pck_inf[1] = typ2;
+    memcpy(pkt.payload, payload, 10);
+    pkt.raw_len = (length + 3 <= CC1101_FIFO_LENGTH) ? length + 3 : CC1101_FIFO_LENGTH;
+    memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
+    this->web_server_->on_rf_packet(pkt);
+  }
+
   // Update RSSI sensor for any message from a known blind
 #ifdef USE_SENSOR
   {
@@ -853,9 +873,6 @@ void Elero::interpret_msg() {
       it->second.last_state = payload[6];
     }
 
-    // Notify web server of cover state changes
-    if (this->web_server_ != nullptr)
-      this->web_server_->notify_covers_changed();
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
     auto search = this->address_to_cover_mapping_.find(src);
@@ -996,8 +1013,6 @@ void Elero::mark_last_raw_packet_(bool valid, const char *reason) {
     strncpy(pkt.reject_reason, reason, sizeof(pkt.reject_reason) - 1);
     pkt.reject_reason[sizeof(pkt.reject_reason) - 1] = '\0';
   }
-  if (this->web_server_ != nullptr)
-    this->web_server_->notify_packet_received();
 }
 
 void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel, uint8_t pck_inf0, uint8_t pck_inf1,
@@ -1028,8 +1043,6 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
         ESP_LOGI(TAG, "Upgraded blind 0x%06x params from command packet: ch=%d, pck_inf=0x%02x/0x%02x, hop=0x%02x", src,
                  channel, pck_inf0, pck_inf1, hop);
       }
-      if (this->web_server_ != nullptr)
-        this->web_server_->notify_discovered_changed();
       return;
     }
   }
@@ -1052,8 +1065,6 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
     this->discovered_blinds_.push_back(blind);
     ESP_LOGI(TAG, "Discovered new device: addr=0x%06x, remote=0x%06x, ch=%d, rssi=%.1f, src=%s", src, remote, channel,
              rssi, from_command ? "cmd_pkt" : "status_pkt");
-    if (this->web_server_ != nullptr)
-      this->web_server_->notify_discovered_changed();
   }
 }
 
@@ -1196,8 +1207,6 @@ void Elero::append_log(uint8_t level, const char *tag, const char *fmt, ...) {
     this->log_entries_[this->log_write_idx_] = entry;
     this->log_write_idx_ = (this->log_write_idx_ + 1) % ELERO_LOG_BUFFER_SIZE;
   }
-  if (this->web_server_ != nullptr)
-    this->web_server_->notify_log_entry();
 }
 
 }  // namespace elero

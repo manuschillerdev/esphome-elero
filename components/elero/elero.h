@@ -144,6 +144,23 @@ struct RawPacket {
   char reject_reason[32];  // empty when valid
 };
 
+/// Decoded RF packet info for WebSocket broadcast
+struct RfPacketInfo {
+  uint32_t timestamp_ms;
+  uint32_t src;           // Source address (remote for commands, blind for status)
+  uint32_t dst;           // Destination address (blind for commands, remote for status)
+  uint8_t channel;
+  uint8_t type;           // Packet type byte (0x6a=command, 0xca=status, etc.)
+  uint8_t cmd;            // Command byte (for command packets)
+  uint8_t state;          // State byte (for status packets)
+  float rssi;
+  uint8_t hop;
+  uint8_t pck_inf[2];
+  uint8_t payload[10];
+  uint8_t raw_len;
+  uint8_t raw[CC1101_FIFO_LENGTH];
+};
+
 struct DiscoveredBlind {
   uint32_t blind_address;
   uint32_t remote_address;
@@ -324,6 +341,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
     return address_to_cover_mapping_.find(address) != address_to_cover_mapping_.end();
   }
   const std::map<uint32_t, EleroBlindBase *> &get_configured_covers() const { return address_to_cover_mapping_; }
+  const std::map<uint32_t, EleroLightBase *> &get_configured_lights() const { return address_to_light_mapping_; }
 
   // Packet dump mode: capture every received FIFO read into a ring buffer
   // Returns false if already in that state
