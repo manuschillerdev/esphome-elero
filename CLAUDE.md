@@ -67,7 +67,7 @@ esphome-elero/
     └── elero_web/                     # Optional web UI component
         ├── __init__.py
         ├── elero_web_server.h
-        ├── elero_web_server.cpp       # REST API + CORS (~273 lines)
+        ├── elero_web_server.cpp       # Mongoose WebSocket server (~300 lines)
         └── elero_web_ui.h             # Inline web UI HTML/JS
 ```
 
@@ -169,65 +169,45 @@ Key behaviors:
 **Optional sub-platform:** `EleroWebSwitch : public switch::Switch, public Component`
 
 Key behaviors:
+- Uses **Mongoose** HTTP/WebSocket library for cross-framework compatibility (works with both Arduino and ESP-IDF frameworks)
 - Hosts the web UI at `http://<device-ip>/elero`
-- Exposes REST API for RF scanning, blind discovery, control, and runtime diagnostics
+- WebSocket endpoint at `/elero/ws` for real-time RF packet streaming and command dispatch
 - `EleroWebSwitch` allows runtime enable/disable of all `/elero` endpoints (returns 503 when disabled)
 
-### REST API Endpoints
+### Why Mongoose?
 
-All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 response is returned if the optional `elero_web` switch is disabled.
+ESPHome's built-in `web_server_base` uses different implementations depending on the framework:
+- **Arduino**: AsyncTCP + ESPAsyncWebServer
+- **ESP-IDF**: esp_http_server
 
-**Core endpoints:**
+These have incompatible APIs for WebSocket handling. Mongoose provides a single, unified API that works identically on both frameworks, simplifying development and testing.
+
+### WebSocket Protocol
+
+The web UI communicates exclusively via WebSocket at `/elero/ws`. See `docs/ARCHITECTURE.md` for the complete protocol specification.
+
+**Server → Client Events:**
+
+| Event | Description |
+|-------|-------------|
+| `config` | Sent on connect: device info, configured blinds/lights, frequency |
+| `rf` | Every decoded RF packet: addresses, state, RSSI, raw bytes |
+| `log` | ESPHome log entries with `elero.*` tags |
+
+**Client → Server Messages:**
+
+| Type | Description |
+|------|-------------|
+| `cmd` | Send command to blind/light: `{"type":"cmd", "address":"0xADDRESS", "action":"up"}` |
+| `raw` | Send raw RF packet for testing: `{"type":"raw", "blind_address":"0x...", "channel":5, ...}` |
+
+### HTTP Endpoints
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `/` | GET | Redirect to `/elero` |
 | `/elero` | GET | HTML web UI |
-| `/elero/api/scan/start` | POST | Start RF discovery scan |
-| `/elero/api/scan/stop` | POST | Stop RF discovery scan |
-| `/elero/api/discovered` | GET | JSON array of discovered blinds |
-| `/elero/api/configured` | GET | JSON array of configured covers with current state |
-| `/elero/api/yaml` | GET | YAML snippet ready to paste into ESPHome config |
-| `/elero/api/info` | GET | Device info (version, discovery count, etc.) |
-| `/elero/api/runtime` | GET | Runtime status (scan active, blinds count, etc.) |
-
-**Cover/Light control (requires address):**
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/elero/api/covers/0xADDRESS/command` | POST | Send command to cover/light (body: `{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
-| `/elero/api/covers/0xADDRESS/settings` | POST | Update cover settings at runtime (body: JSON with timing/poll settings) |
-| `/elero/api/discovered/0xADDRESS/adopt` | POST | Adopt a discovered blind into configured covers |
-
-**Diagnostics:**
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/elero/api/frequency` | GET | Current CC1101 frequency settings |
-| `/elero/api/frequency/set` | POST | Update CC1101 frequency (body: `{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
-| `/elero/api/logs` | GET | Recent log entries (supports `since` query parameter) |
-| `/elero/api/logs/clear` | POST | Clear captured logs |
-| `/elero/api/logs/capture/start` | POST | Start capturing logs |
-| `/elero/api/logs/capture/stop` | POST | Stop capturing logs |
-| `/elero/api/dump/start` | POST | Start RF packet dump |
-| `/elero/api/dump/stop` | POST | Stop RF packet dump |
-| `/elero/api/packets` | GET | Recent captured RF packets |
-| `/elero/api/packets/clear` | POST | Clear captured packets |
-
-**Web UI state (elero_web switch sub-platform):**
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/elero/api/ui/status` | GET | Get web UI enabled/disabled state |
-| `/elero/api/ui/enable` | POST | Enable/disable web UI (body: `{"enabled": true\|false}`) |
-
-**HTTP Error Codes:**
-
-| Code | Meaning |
-|---|---|
-| 200 | Success |
-| 409 | Conflict (e.g., trying to start scan when one is already running) |
-| 503 | Service Unavailable (returned when web UI is disabled via switch) |
+| `/elero/ws` | WS | WebSocket endpoint for real-time communication |
 
 ---
 

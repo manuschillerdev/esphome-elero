@@ -1112,6 +1112,32 @@ bool Elero::send_command(EleroCommand *cmd) {
   return transmit();
 }
 
+bool Elero::send_raw_command(uint32_t blind_addr, uint32_t remote_addr, uint8_t channel, uint8_t command,
+                              uint8_t payload_1, uint8_t payload_2, uint8_t pck_inf1, uint8_t pck_inf2, uint8_t hop) {
+  // Use a static counter for raw commands (persists across calls)
+  static uint8_t raw_msg_cnt = 1;
+
+  EleroCommand cmd{};
+  cmd.counter = raw_msg_cnt;
+  cmd.blind_addr = blind_addr;
+  cmd.remote_addr = remote_addr;
+  cmd.channel = channel;
+  cmd.pck_inf[0] = pck_inf1;
+  cmd.pck_inf[1] = pck_inf2;
+  cmd.hop = hop;
+  cmd.payload[0] = payload_1;
+  cmd.payload[1] = payload_2;
+  cmd.payload[4] = command;
+
+  bool success = this->send_command(&cmd);
+  if (success) {
+    ++raw_msg_cnt;
+    if (raw_msg_cnt > 255)
+      raw_msg_cnt = 1;
+  }
+  return success;
+}
+
 // ─── Runtime blind adoption ───────────────────────────────────────────────
 
 bool Elero::adopt_blind_by_address(uint32_t addr, const std::string &name) {

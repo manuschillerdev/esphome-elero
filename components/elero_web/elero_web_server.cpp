@@ -47,6 +47,32 @@ static std::string json_find_str(const std::string &json, const char *key) {
   return json.substr(pos, end - pos);
 }
 
+// Extract number value from JSON: "key":123
+static std::string json_find_num(const std::string &json, const char *key) {
+  std::string pattern = std::string("\"") + key + "\":";
+  size_t pos = json.find(pattern);
+  if (pos == std::string::npos)
+    return "";
+  pos += pattern.length();
+  size_t end = pos;
+  while (end < json.size() && (isdigit(json[end]) || json[end] == '-'))
+    ++end;
+  if (end == pos)
+    return "";
+  return json.substr(pos, end - pos);
+}
+
+// Parse hex string (from "key":"0xNN" or "key":NN) with default
+static uint8_t json_find_hex_or(const std::string &json, const char *key, uint8_t def) {
+  std::string val = json_find_str(json, key);
+  if (val.empty()) {
+    val = json_find_num(json, key);
+    if (val.empty())
+      return def;
+  }
+  return (uint8_t) strtoul(val.c_str(), nullptr, 0);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Component Lifecycle
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -234,6 +260,39 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 
     // Unknown address - could send raw command if we had protocol params
     ESP_LOGW(TAG, "Command for unknown address 0x%06x", addr);
+  }
+
+  // Raw TX for testing/debugging
+  if (type == "raw") {
+    std::string blind_addr_s = json_find_str(msg, "blind_address");
+    std::string remote_addr_s = json_find_str(msg, "remote_address");
+    std::string channel_s = json_find_str(msg, "channel");
+    std::string command_s = json_find_str(msg, "command");
+
+    // Also try numeric format for channel
+    if (channel_s.empty())
+      channel_s = json_find_num(msg, "channel");
+
+    if (blind_addr_s.empty() || remote_addr_s.empty() || channel_s.empty() || command_s.empty()) {
+      ESP_LOGW(TAG, "Raw TX missing required fields");
+      return;
+    }
+
+    uint32_t blind_addr = (uint32_t) strtoul(blind_addr_s.c_str(), nullptr, 0);
+    uint32_t remote_addr = (uint32_t) strtoul(remote_addr_s.c_str(), nullptr, 0);
+    uint8_t channel = (uint8_t) strtoul(channel_s.c_str(), nullptr, 0);
+    uint8_t command = (uint8_t) strtoul(command_s.c_str(), nullptr, 0);
+
+    uint8_t payload_1 = json_find_hex_or(msg, "payload_1", 0x00);
+    uint8_t payload_2 = json_find_hex_or(msg, "payload_2", 0x04);
+    uint8_t pck_inf1 = json_find_hex_or(msg, "pck_inf1", 0x6a);
+    uint8_t pck_inf2 = json_find_hex_or(msg, "pck_inf2", 0x00);
+    uint8_t hop = json_find_hex_or(msg, "hop", 0x0a);
+
+    bool success = this->parent_->send_raw_command(
+        blind_addr, remote_addr, channel, command,
+        payload_1, payload_2, pck_inf1, pck_inf2, hop);
+    ESP_LOGI(TAG, "Raw TX to 0x%06x cmd=0x%02x: %s", blind_addr, command, success ? "OK" : "FAIL");
   }
 }
 

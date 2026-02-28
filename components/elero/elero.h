@@ -322,6 +322,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   // Legacy blocking TX API (for backwards compatibility and simple use cases)
   [[nodiscard]] bool send_command(EleroCommand *cmd);
 
+  // Raw TX API (for WebSocket debugging/testing)
+  [[nodiscard]] bool send_raw_command(uint32_t blind_addr, uint32_t remote_addr, uint8_t channel,
+                                      uint8_t command, uint8_t payload_1 = 0x00, uint8_t payload_2 = 0x04,
+                                      uint8_t pck_inf1 = 0x6a, uint8_t pck_inf2 = 0x00, uint8_t hop = 0x0a);
+
 #ifdef USE_SENSOR
   void register_rssi_sensor(uint32_t address, sensor::Sensor *sensor);
 #endif
