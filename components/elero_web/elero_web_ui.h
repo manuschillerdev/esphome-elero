@@ -461,15 +461,21 @@ function eleroApp() {
     connect() {
       console.log('connect() called, current _ws:', _ws)
       if (_ws) {
+        // Remove handlers before closing to prevent race conditions
+        _ws.onopen = null
+        _ws.onclose = null
+        _ws.onerror = null
+        _ws.onmessage = null
         _ws.close()
-        _ws = null
       }
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
       _ws = new WebSocket(`${proto}//${location.host}/elero/ws`)
       console.log('WebSocket created:', _ws)
 
-      _ws.onopen = () => {
+      const ws = _ws  // Capture reference for closures
+
+      ws.onopen = () => {
         console.log('WebSocket onopen, _ws:', _ws)
         this.connected = true
         if (this.reconnectTimer) {
@@ -478,17 +484,20 @@ function eleroApp() {
         }
       }
 
-      _ws.onclose = () => {
+      ws.onclose = () => {
         this.connected = false
-        _ws = null
-        this.reconnectTimer = setTimeout(() => this.connect(), 2000)
+        // Only clear _ws if this is still the current WebSocket
+        if (_ws === ws) {
+          _ws = null
+          this.reconnectTimer = setTimeout(() => this.connect(), 2000)
+        }
       }
 
-      _ws.onerror = () => {
+      ws.onerror = () => {
         this.connected = false
       }
 
-      _ws.onmessage = (e) => {
+      ws.onmessage = (e) => {
         console.log('onmessage, _ws:', _ws)
         const msg = JSON.parse(e.data)
         const event = msg.event
