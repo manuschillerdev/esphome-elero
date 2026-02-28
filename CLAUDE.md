@@ -28,10 +28,38 @@ external_components:
 - Remote handling: [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3)
 - Based on the no-longer-maintained [andyboeh/esphome-elero](https://github.com/pfriedrich84/esphome-elero)
 
-**Available skills:**
-- `/elero-protocol` — Complete RF protocol reference (packet structure, encryption, commands, state constants)
-- `/modern-cpp` — C++17/C++20 best practices, RAII patterns, type safety guidelines
-- `/esp32-development` — ESP32 memory management, ISRs, FreeRTOS, power management
+**Available skills (USE THEM!):**
+
+| Skill | When to use |
+|-------|-------------|
+| `/elero-protocol` | **Always** when modifying CC1101 TX/RX code, packet encoding/decoding, encryption |
+| `/modern-cpp` | **Always** when writing or reviewing C++ code |
+| `/esp32-development` | **Always** when writing C++ code (ISRs, memory, FreeRTOS, SPI) |
+
+> **IMPORTANT:** Before writing C++ code, invoke `/modern-cpp` and `/esp32-development` skills.
+> Before touching RF protocol code (elero.cpp TX/RX, packet handling), invoke `/elero-protocol`.
+
+---
+
+## Compatibility Matrix
+
+**Supported targets — ESP32 only:**
+
+| Framework | Status | Notes |
+|-----------|--------|-------|
+| **ESP-IDF** | ✅ Supported | Primary target, recommended |
+| **Arduino** | ✅ Supported | Legacy support via ESPHome |
+
+**NOT supported (do not add support for):**
+
+| Target | Reason |
+|--------|--------|
+| ESP8266 | Insufficient RAM/flash, no SPI DMA |
+| RP2040 | No CC1101 driver, different SPI API |
+| LibreTiny | Out of scope |
+| Host (native) | No hardware access |
+
+The codebase uses Mongoose for HTTP/WebSocket specifically because it provides a unified API across ESP-IDF and Arduino frameworks. Do not introduce framework-specific code paths.
 
 ---
 
