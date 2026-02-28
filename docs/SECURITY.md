@@ -70,30 +70,28 @@ The web UI at `/elero` allows requests from **any origin** (`Access-Control-Allo
 
 The web interface has **no authentication** by default. Anyone on the local network can:
 - View discovered and configured blinds
-- Send commands to blinds
-- Start/stop RF scans
-- Change CC1101 frequency settings
+- Send commands to blinds via WebSocket
+- View RF packets and logs in real-time
 
 **Mitigations:**
 - Use the `elero_web` switch to disable the web UI when not needed
 - Restrict network access to trusted devices
 - Consider using Home Assistant's authentication instead of direct web UI access
 
-### API Endpoints
+### WebSocket Endpoint
 
-All endpoints under `/elero/api/` accept unauthenticated requests:
+The WebSocket at `/elero/ws` accepts unauthenticated connections:
 
-| Endpoint | Risk | Notes |
-|----------|------|-------|
-| `/elero/api/scan/start` | Low | Enables RF discovery |
-| `/elero/api/covers/*/command` | Low | Controls blinds |
-| `/elero/api/frequency/set` | Medium | Can desync RF communication |
-| `/elero/api/discovered` | Low | Reveals blind addresses |
+| Message Type | Risk | Notes |
+|--------------|------|-------|
+| `cmd` (send command) | Low | Controls blinds |
+| `raw` (raw TX) | Medium | Can send arbitrary RF packets |
+| `rf` events (receive) | Low | Reveals blind addresses |
 
 ### Rate Limiting
 
-There is **no rate limiting** on API endpoints. A malicious client could:
-- Flood the device with requests
+There is **no rate limiting** on WebSocket messages. A malicious client could:
+- Flood the device with commands
 - Cause excessive RF transmissions
 - Potentially interfere with normal operation
 

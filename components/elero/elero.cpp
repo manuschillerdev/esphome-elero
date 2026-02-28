@@ -1,5 +1,6 @@
 #include "elero.h"
 #include "elero_protocol.h"
+#include "../elero_web/elero_web_server.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -782,6 +783,26 @@ void Elero::interpret_msg() {
            length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2,
            payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
 
+  // Notify web server of RF packet
+  if (this->web_server_ != nullptr) {
+    RfPacketInfo pkt{};
+    pkt.timestamp_ms = millis();
+    pkt.src = src;
+    pkt.dst = dst;
+    pkt.channel = chl;
+    pkt.type = typ;
+    pkt.cmd = ((typ == 0x6a) || (typ == 0x69)) ? payload[4] : 0;
+    pkt.state = ((typ == 0xca) || (typ == 0xc9)) ? payload[6] : 0;
+    pkt.rssi = rssi;
+    pkt.hop = hop;
+    pkt.pck_inf[0] = typ;
+    pkt.pck_inf[1] = typ2;
+    memcpy(pkt.payload, payload, 10);
+    pkt.raw_len = (length + 3 <= CC1101_FIFO_LENGTH) ? length + 3 : CC1101_FIFO_LENGTH;
+    memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
+    this->web_server_->on_rf_packet(pkt);
+  }
+
   // Update RSSI sensor for any message from a known blind
 #ifdef USE_SENSOR
   {
@@ -851,6 +872,7 @@ void Elero::interpret_msg() {
       it->second.last_rssi = rssi;
       it->second.last_state = payload[6];
     }
+
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
     auto search = this->address_to_cover_mapping_.find(src);
@@ -1088,6 +1110,32 @@ bool Elero::send_command(EleroCommand *cmd) {
            this->msg_tx_[22], this->msg_tx_[23], this->msg_tx_[24], this->msg_tx_[25], this->msg_tx_[26],
            this->msg_tx_[27], this->msg_tx_[28], this->msg_tx_[29]);
   return transmit();
+}
+
+bool Elero::send_raw_command(uint32_t blind_addr, uint32_t remote_addr, uint8_t channel, uint8_t command,
+                              uint8_t payload_1, uint8_t payload_2, uint8_t pck_inf1, uint8_t pck_inf2, uint8_t hop) {
+  // Use a static counter for raw commands (persists across calls)
+  static uint8_t raw_msg_cnt = 1;
+
+  EleroCommand cmd{};
+  cmd.counter = raw_msg_cnt;
+  cmd.blind_addr = blind_addr;
+  cmd.remote_addr = remote_addr;
+  cmd.channel = channel;
+  cmd.pck_inf[0] = pck_inf1;
+  cmd.pck_inf[1] = pck_inf2;
+  cmd.hop = hop;
+  cmd.payload[0] = payload_1;
+  cmd.payload[1] = payload_2;
+  cmd.payload[4] = command;
+
+  bool success = this->send_command(&cmd);
+  if (success) {
+    ++raw_msg_cnt;
+    if (raw_msg_cnt > 255)
+      raw_msg_cnt = 1;
+  }
+  return success;
 }
 
 // ─── Runtime blind adoption ───────────────────────────────────────────────

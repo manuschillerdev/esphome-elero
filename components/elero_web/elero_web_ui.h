@@ -1,13 +1,7 @@
 #pragma once
 
-#ifdef __AVR__
-#include <pgmspace.h>
-#elif !defined(PROGMEM)
-#define PROGMEM
-#endif
-
-// AUTO-GENERATED FILE — do not edit by hand.
-// To rebuild: cd components/elero_web/frontend && npm run build
+// Auto-generated from frontend/index.html
+// Do not edit manually - run: python frontend/generate_header.py
 
 namespace esphome {
 namespace elero {
@@ -15,354 +9,276 @@ namespace elero {
 const char ELERO_WEB_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Elero Blind Manager</title>
-  <script type="module" crossorigin>(function(){const t=document.createElement("link").relList;if(t&&t.supports&&t.supports("modulepreload"))return;for(const i of document.querySelectorAll('link[rel="modulepreload"]'))r(i);new MutationObserver(i=>{for(const s of i)if(s.type==="childList")for(const o of s.addedNodes)o.tagName==="LINK"&&o.rel==="modulepreload"&&r(o)}).observe(document,{childList:!0,subtree:!0});function n(i){const s={};return i.integrity&&(s.integrity=i.integrity),i.referrerPolicy&&(s.referrerPolicy=i.referrerPolicy),i.crossOrigin==="use-credentials"?s.credentials="include":i.crossOrigin==="anonymous"?s.credentials="omit":s.credentials="same-origin",s}function r(i){if(i.ep)return;i.ep=!0;const s=n(i);fetch(i.href,s)}})();var Ie=!1,Re=!1,q=[],Le=-1,Je=!1;function Yn(e){Zn(e)}function Gn(){Je=!0}function Xn(){Je=!1,Pt()}function Zn(e){q.includes(e)||q.push(e),Pt()}function Qn(e){let t=q.indexOf(e);t!==-1&&t>Le&&q.splice(t,1)}function Pt(){if(!Re&&!Ie){if(Je)return;Ie=!0,queueMicrotask(er)}}function er(){Ie=!1,Re=!0;for(let e=0;e<q.length;e++)q[e](),Le=e;q.length=0,Le=-1,Re=!1}var Y,H,G,It,Ne=!0;function tr(e){Ne=!1,e(),Ne=!0}function nr(e){Y=e.reactive,G=e.release,H=t=>e.effect(t,{scheduler:n=>{Ne?Yn(n):n()}}),It=e.raw}function mt(e){H=e}function rr(e){let t=()=>{};return[r=>{let i=H(r);return e._x_effects||(e._x_effects=new Set,e._x_runEffects=()=>{e._x_effects.forEach(s=>s())}),e._x_effects.add(i),t=()=>{i!==void 0&&(e._x_effects.delete(i),G(i))},i},()=>{t()}]}function Rt(e,t){let n=!0,r,i=H(()=>{let s=e();if(JSON.stringify(s),!n&&(typeof s=="object"||s!==r)){let o=r;queueMicrotask(()=>{t(s,o)})}r=s,n=!1});return()=>G(i)}async function ir(e){Gn();try{await e(),await Promise.resolve()}finally{Xn()}}var Lt=[],Nt=[],qt=[];function sr(e){qt.push(e)}function Ve(e,t){typeof t=="function"?(e._x_cleanups||(e._x_cleanups=[]),e._x_cleanups.push(t)):(t=e,Nt.push(t))}function kt(e){Lt.push(e)}function jt(e,t,n){e._x_attributeCleanups||(e._x_attributeCleanups={}),e._x_attributeCleanups[t]||(e._x_attributeCleanups[t]=[]),e._x_attributeCleanups[t].push(n)}function Ft(e,t){e._x_attributeCleanups&&Object.entries(e._x_attributeCleanups).forEach(([n,r])=>{(t===void 0||t.includes(n))&&(r.forEach(i=>i()),delete e._x_attributeCleanups[n])})}function or(e){var t,n;for((t=e._x_effects)==null||t.forEach(Qn);(n=e._x_cleanups)!=null&&n.length;)e._x_cleanups.pop()()}var Ye=new MutationObserver(Qe),Ge=!1;function Xe(){Ye.observe(document,{subtree:!0,childList:!0,attributes:!0,attributeOldValue:!0}),Ge=!0}function Dt(){ar(),Ye.disconnect(),Ge=!1}var te=[];function ar(){let e=Ye.takeRecords();te.push(()=>e.length>0&&Qe(e));let t=te.length;queueMicrotask(()=>{if(te.length===t)for(;te.length>0;)te.shift()()})}function g(e){if(!Ge)return e();Dt();let t=e();return Xe(),t}var Ze=!1,ye=[];function cr(){Ze=!0}function lr(){Ze=!1,Qe(ye),ye=[]}function Qe(e){if(Ze){ye=ye.concat(e);return}let t=[],n=new Set,r=new Map,i=new Map;for(let s=0;s<e.length;s++)if(!e[s].target._x_ignoreMutationObserver&&(e[s].type==="childList"&&(e[s].removedNodes.forEach(o=>{o.nodeType===1&&o._x_marker&&n.add(o)}),e[s].addedNodes.forEach(o=>{if(o.nodeType===1){if(n.has(o)){n.delete(o);return}o._x_marker||t.push(o)}})),e[s].type==="attributes")){let o=e[s].target,a=e[s].attributeName,c=e[s].oldValue,l=()=>{r.has(o)||r.set(o,[]),r.get(o).push({name:a,value:o.getAttribute(a)})},u=()=>{i.has(o)||i.set(o,[]),i.get(o).push(a)};o.hasAttribute(a)&&c===null?l():o.hasAttribute(a)?(u(),l()):u()}i.forEach((s,o)=>{Ft(o,s)}),r.forEach((s,o)=>{Lt.forEach(a=>a(o,s))});for(let s of n)t.some(o=>o.contains(s))||Nt.forEach(o=>o(s));for(let s of t)s.isConnected&&qt.forEach(o=>o(s));t=null,n=null,r=null,i=null}function Bt(e){return B(D(e))}function ue(e,t,n){return e._x_dataStack=[t,...D(n||e)],()=>{e._x_dataStack=e._x_dataStack.filter(r=>r!==t)}}function D(e){return e._x_dataStack?e._x_dataStack:typeof ShadowRoot=="function"&&e instanceof ShadowRoot?D(e.host):e.parentNode?D(e.parentNode):[]}function B(e){return new Proxy({objects:e},ur)}var ur={ownKeys({objects:e}){return Array.from(new Set(e.flatMap(t=>Object.keys(t))))},has({objects:e},t){return t==Symbol.unscopables?!1:e.some(n=>Object.prototype.hasOwnProperty.call(n,t)||Reflect.has(n,t))},get({objects:e},t,n){return t=="toJSON"?fr:Reflect.get(e.find(r=>Reflect.has(r,t))||{},t,n)},set({objects:e},t,n,r){const i=e.find(o=>Object.prototype.hasOwnProperty.call(o,t))||e[e.length-1],s=Object.getOwnPropertyDescriptor(i,t);return s!=null&&s.set&&(s!=null&&s.get)?s.set.call(r,n)||!0:Reflect.set(i,t,n)}};function fr(){return Reflect.ownKeys(this).reduce((t,n)=>(t[n]=Reflect.get(this,n),t),{})}function et(e){let t=r=>typeof r=="object"&&!Array.isArray(r)&&r!==null,n=(r,i="")=>{Object.entries(Object.getOwnPropertyDescriptors(r)).forEach(([s,{value:o,enumerable:a}])=>{if(a===!1||o===void 0||typeof o=="object"&&o!==null&&o.__v_skip)return;let c=i===""?s:`${i}.${s}`;typeof o=="object"&&o!==null&&o._x_interceptor?r[s]=o.initialize(e,c,s):t(o)&&o!==r&&!(o instanceof Element)&&n(o,c)})};return n(e)}function Kt(e,t=()=>{}){let n={initialValue:void 0,_x_interceptor:!0,initialize(r,i,s){return e(this.initialValue,()=>dr(r,i),o=>qe(r,i,o),i,s)}};return t(n),r=>{if(typeof r=="object"&&r!==null&&r._x_interceptor){let i=n.initialize.bind(n);n.initialize=(s,o,a)=>{let c=r.initialize(s,o,a);return n.initialValue=c,i(s,o,a)}}else n.initialValue=r;return n}}function dr(e,t){return t.split(".").reduce((n,r)=>n[r],e)}function qe(e,t,n){if(typeof t=="string"&&(t=t.split(".")),t.length===1)e[t[0]]=n;else{if(t.length===0)throw error;return e[t[0]]||(e[t[0]]={}),qe(e[t[0]],t.slice(1),n)}}var Ut={};function C(e,t){Ut[e]=t}function ae(e,t){let n=pr(t);return Object.entries(Ut).forEach(([r,i])=>{Object.defineProperty(e,`$${r}`,{get(){return i(t,n)},enumerable:!1})}),e}function pr(e){let[t,n]=Xt(e),r={interceptor:Kt,...t};return Ve(e,n),r}function hr(e,t,n,...r){try{return n(...r)}catch(i){ce(i,e,t)}}function ce(...e){return Ht(...e)}var Ht=gr;function _r(e){Ht=e}function gr(e,t,n=void 0){e=Object.assign(e??{message:"No error message given."},{el:t,expression:n}),console.warn(`Alpine Expression Error: ${e.message}
-
-${n?'Expression: "'+n+`"
-
-`:""}`,t),setTimeout(()=>{throw e},0)}var J=!0;function zt(e){let t=J;J=!1;let n=e();return J=t,n}function k(e,t,n={}){let r;return w(e,t)(i=>r=i,n),r}function w(...e){return Wt(...e)}var Wt=Vt;function mr(e){Wt=e}var Jt;function yr(e){Jt=e}function Vt(e,t){let n={};ae(n,e);let r=[n,...D(e)],i=typeof t=="function"?vr(r,t):wr(r,t,e);return hr.bind(null,e,t,i)}function vr(e,t){return(n=()=>{},{scope:r={},params:i=[],context:s}={})=>{if(!J){le(n,t,B([r,...e]),i);return}let o=t.apply(B([r,...e]),i);le(n,o)}}var Oe={};function xr(e,t){if(Oe[e])return Oe[e];let n=Object.getPrototypeOf(async function(){}).constructor,r=/^[\n\s]*if.*\(.*\)/.test(e.trim())||/^(let|const)\s/.test(e.trim())?`(async()=>{ ${e} })()`:e,s=(()=>{try{let o=new n(["__self","scope"],`with (scope) { __self.result = ${r} }; __self.finished = true; return __self.result;`);return Object.defineProperty(o,"name",{value:`[Alpine] ${e}`}),o}catch(o){return ce(o,t,e),Promise.resolve()}})();return Oe[e]=s,s}function wr(e,t,n){let r=xr(t,n);return(i=()=>{},{scope:s={},params:o=[],context:a}={})=>{r.result=void 0,r.finished=!1;let c=B([s,...e]);if(typeof r=="function"){let l=r.call(a,r,c).catch(u=>ce(u,n,t));r.finished?(le(i,r.result,c,o,n),r.result=void 0):l.then(u=>{le(i,u,c,o,n)}).catch(u=>ce(u,n,t)).finally(()=>r.result=void 0)}}}function le(e,t,n,r,i){if(J&&typeof t=="function"){let s=t.apply(n,r);s instanceof Promise?s.then(o=>le(e,o,n,r)).catch(o=>ce(o,i,t)):e(s)}else typeof t=="object"&&t instanceof Promise?t.then(s=>e(s)):e(t)}function br(...e){return Jt(...e)}function Sr(e,t,n={}){let r={};ae(r,e);let i=[r,...D(e)],s=B([n.scope??{},...i]),o=n.params??[];if(t.includes("await")){let a=Object.getPrototypeOf(async function(){}).constructor,c=/^[\n\s]*if.*\(.*\)/.test(t.trim())||/^(let|const)\s/.test(t.trim())?`(async()=>{ ${t} })()`:t;return new a(["scope"],`with (scope) { let __result = ${c}; return __result }`).call(n.context,s)}else{let a=/^[\n\s]*if.*\(.*\)/.test(t.trim())||/^(let|const)\s/.test(t.trim())?`(()=>{ ${t} })()`:t,l=new Function(["scope"],`with (scope) { let __result = ${a}; return __result }`).call(n.context,s);return typeof l=="function"&&J?l.apply(s,o):l}}var tt="x-";function X(e=""){return tt+e}function Er(e){tt=e}var ve={};function y(e,t){return ve[e]=t,{before(n){if(!ve[n]){console.warn(String.raw`Cannot find directive \`${n}\`. \`${e}\` will use the default order of execution`);return}const r=N.indexOf(n);N.splice(r>=0?r:N.indexOf("DEFAULT"),0,e)}}}function Ar(e){return Object.keys(ve).includes(e)}function nt(e,t,n){if(t=Array.from(t),e._x_virtualDirectives){let s=Object.entries(e._x_virtualDirectives).map(([a,c])=>({name:a,value:c})),o=Yt(s);s=s.map(a=>o.find(c=>c.name===a.name)?{name:`x-bind:${a.name}`,value:`"${a.value}"`}:a),t=t.concat(s)}let r={};return t.map(en((s,o)=>r[s]=o)).filter(nn).map(Or(r,n)).sort(Mr).map(s=>Cr(e,s))}function Yt(e){return Array.from(e).map(en()).filter(t=>!nn(t))}var ke=!1,ie=new Map,Gt=Symbol();function Tr(e){ke=!0;let t=Symbol();Gt=t,ie.set(t,[]);let n=()=>{for(;ie.get(t).length;)ie.get(t).shift()();ie.delete(t)},r=()=>{ke=!1,n()};e(n),r()}function Xt(e){let t=[],n=a=>t.push(a),[r,i]=rr(e);return t.push(i),[{Alpine:Q,effect:r,cleanup:n,evaluateLater:w.bind(w,e),evaluate:k.bind(k,e)},()=>t.forEach(a=>a())]}function Cr(e,t){let n=()=>{},r=ve[t.type]||n,[i,s]=Xt(e);jt(e,t.original,s);let o=()=>{e._x_ignore||e._x_ignoreSelf||(r.inline&&r.inline(e,t,i),r=r.bind(r,e,t,i),ke?ie.get(Gt).push(r):r())};return o.runCleanups=s,o}var Zt=(e,t)=>({name:n,value:r})=>(n.startsWith(e)&&(n=n.replace(e,t)),{name:n,value:r}),Qt=e=>e;function en(e=()=>{}){return({name:t,value:n})=>{let{name:r,value:i}=tn.reduce((s,o)=>o(s),{name:t,value:n});return r!==t&&e(r,t),{name:r,value:i}}}var tn=[];function rt(e){tn.push(e)}function nn({name:e}){return rn().test(e)}var rn=()=>new RegExp(`^${tt}([^:^.]+)\\b`);function Or(e,t){return({name:n,value:r})=>{n===r&&(r="");let i=n.match(rn()),s=n.match(/:([a-zA-Z0-9\-_:]+)/),o=n.match(/\.[^.\]]+(?=[^\]]*$)/g)||[],a=t||e[n]||n;return{type:i?i[1]:null,value:s?s[1]:null,modifiers:o.map(c=>c.replace(".","")),expression:r,original:a}}}var je="DEFAULT",N=["ignore","ref","data","id","anchor","bind","init","for","model","modelable","transition","show","if",je,"teleport"];function Mr(e,t){let n=N.indexOf(e.type)===-1?je:e.type,r=N.indexOf(t.type)===-1?je:t.type;return N.indexOf(n)-N.indexOf(r)}function se(e,t,n={}){e.dispatchEvent(new CustomEvent(t,{detail:n,bubbles:!0,composed:!0,cancelable:!0}))}function K(e,t){if(typeof ShadowRoot=="function"&&e instanceof ShadowRoot){Array.from(e.children).forEach(i=>K(i,t));return}let n=!1;if(t(e,()=>n=!0),n)return;let r=e.firstElementChild;for(;r;)K(r,t),r=r.nextElementSibling}function E(e,...t){console.warn(`Alpine Warning: ${e}`,...t)}var yt=!1;function $r(){yt&&E("Alpine has already been initialized on this page. Calling Alpine.start() more than once can cause problems."),yt=!0,document.body||E("Unable to initialize. Trying to load Alpine before `<body>` is available. Did you forget to add `defer` in Alpine's `<script>` tag?"),se(document,"alpine:init"),se(document,"alpine:initializing"),Xe(),sr(t=>M(t,K)),Ve(t=>Z(t)),kt((t,n)=>{nt(t,n).forEach(r=>r())});let e=t=>!we(t.parentElement,!0);Array.from(document.querySelectorAll(an().join(","))).filter(e).forEach(t=>{M(t)}),se(document,"alpine:initialized"),setTimeout(()=>{Lr()})}var it=[],sn=[];function on(){return it.map(e=>e())}function an(){return it.concat(sn).map(e=>e())}function cn(e){it.push(e)}function ln(e){sn.push(e)}function we(e,t=!1){return U(e,n=>{if((t?an():on()).some(i=>n.matches(i)))return!0})}function U(e,t){if(e){if(t(e))return e;if(e._x_teleportBack&&(e=e._x_teleportBack),e.parentNode instanceof ShadowRoot)return U(e.parentNode.host,t);if(e.parentElement)return U(e.parentElement,t)}}function Pr(e){return on().some(t=>e.matches(t))}var un=[];function Ir(e){un.push(e)}var Rr=1;function M(e,t=K,n=()=>{}){U(e,r=>r._x_ignore)||Tr(()=>{t(e,(r,i)=>{r._x_marker||(n(r,i),un.forEach(s=>s(r,i)),nt(r,r.attributes).forEach(s=>s()),r._x_ignore||(r._x_marker=Rr++),r._x_ignore&&i())})})}function Z(e,t=K){t(e,n=>{or(n),Ft(n),delete n._x_marker})}function Lr(){[["ui","dialog",["[x-dialog], [x-popover]"]],["anchor","anchor",["[x-anchor]"]],["sort","sort",["[x-sort]"]]].forEach(([t,n,r])=>{Ar(n)||r.some(i=>{if(document.querySelector(i))return E(`found "${i}", but missing ${t} plugin`),!0})})}var Fe=[],st=!1;function ot(e=()=>{}){return queueMicrotask(()=>{st||setTimeout(()=>{De()})}),new Promise(t=>{Fe.push(()=>{e(),t()})})}function De(){for(st=!1;Fe.length;)Fe.shift()()}function Nr(){st=!0}function at(e,t){return Array.isArray(t)?vt(e,t.join(" ")):typeof t=="object"&&t!==null?qr(e,t):typeof t=="function"?at(e,t()):vt(e,t)}function vt(e,t){let n=i=>i.split(" ").filter(s=>!e.classList.contains(s)).filter(Boolean),r=i=>(e.classList.add(...i),()=>{e.classList.remove(...i)});return t=t===!0?t="":t||"",r(n(t))}function qr(e,t){let n=a=>a.split(" ").filter(Boolean),r=Object.entries(t).flatMap(([a,c])=>c?n(a):!1).filter(Boolean),i=Object.entries(t).flatMap(([a,c])=>c?!1:n(a)).filter(Boolean),s=[],o=[];return i.forEach(a=>{e.classList.contains(a)&&(e.classList.remove(a),o.push(a))}),r.forEach(a=>{e.classList.contains(a)||(e.classList.add(a),s.push(a))}),()=>{o.forEach(a=>e.classList.add(a)),s.forEach(a=>e.classList.remove(a))}}function be(e,t){return typeof t=="object"&&t!==null?kr(e,t):jr(e,t)}function kr(e,t){let n={};return Object.entries(t).forEach(([r,i])=>{n[r]=e.style[r],r.startsWith("--")||(r=Fr(r)),e.style.setProperty(r,i)}),setTimeout(()=>{e.style.length===0&&e.removeAttribute("style")}),()=>{be(e,n)}}function jr(e,t){let n=e.getAttribute("style",t);return e.setAttribute("style",t),()=>{e.setAttribute("style",n||"")}}function Fr(e){return e.replace(/([a-z])([A-Z])/g,"$1-$2").toLowerCase()}function Be(e,t=()=>{}){let n=!1;return function(){n?t.apply(this,arguments):(n=!0,e.apply(this,arguments))}}y("transition",(e,{value:t,modifiers:n,expression:r},{evaluate:i})=>{typeof r=="function"&&(r=i(r)),r!==!1&&(!r||typeof r=="boolean"?Br(e,n,t):Dr(e,r,t))});function Dr(e,t,n){fn(e,at,""),{enter:i=>{e._x_transition.enter.during=i},"enter-start":i=>{e._x_transition.enter.start=i},"enter-end":i=>{e._x_transition.enter.end=i},leave:i=>{e._x_transition.leave.during=i},"leave-start":i=>{e._x_transition.leave.start=i},"leave-end":i=>{e._x_transition.leave.end=i}}[n](t)}function Br(e,t,n){fn(e,be);let r=!t.includes("in")&&!t.includes("out")&&!n,i=r||t.includes("in")||["enter"].includes(n),s=r||t.includes("out")||["leave"].includes(n);t.includes("in")&&!r&&(t=t.filter((d,m)=>m<t.indexOf("out"))),t.includes("out")&&!r&&(t=t.filter((d,m)=>m>t.indexOf("out")));let o=!t.includes("opacity")&&!t.includes("scale"),a=o||t.includes("opacity"),c=o||t.includes("scale"),l=a?0:1,u=c?ne(t,"scale",95)/100:1,p=ne(t,"delay",0)/1e3,x=ne(t,"origin","center"),b="opacity, transform",A=ne(t,"duration",150)/1e3,h=ne(t,"duration",75)/1e3,f="cubic-bezier(0.4, 0.0, 0.2, 1)";i&&(e._x_transition.enter.during={transformOrigin:x,transitionDelay:`${p}s`,transitionProperty:b,transitionDuration:`${A}s`,transitionTimingFunction:f},e._x_transition.enter.start={opacity:l,transform:`scale(${u})`},e._x_transition.enter.end={opacity:1,transform:"scale(1)"}),s&&(e._x_transition.leave.during={transformOrigin:x,transitionDelay:`${p}s`,transitionProperty:b,transitionDuration:`${h}s`,transitionTimingFunction:f},e._x_transition.leave.start={opacity:1,transform:"scale(1)"},e._x_transition.leave.end={opacity:l,transform:`scale(${u})`})}function fn(e,t,n={}){e._x_transition||(e._x_transition={enter:{during:n,start:n,end:n},leave:{during:n,start:n,end:n},in(r=()=>{},i=()=>{}){Ke(e,t,{during:this.enter.during,start:this.enter.start,end:this.enter.end},r,i)},out(r=()=>{},i=()=>{}){Ke(e,t,{during:this.leave.during,start:this.leave.start,end:this.leave.end},r,i)}})}window.Element.prototype._x_toggleAndCascadeWithTransitions=function(e,t,n,r){const i=document.visibilityState==="visible"?requestAnimationFrame:setTimeout;let s=()=>i(n);if(t){e._x_transition&&(e._x_transition.enter||e._x_transition.leave)?e._x_transition.enter&&(Object.entries(e._x_transition.enter.during).length||Object.entries(e._x_transition.enter.start).length||Object.entries(e._x_transition.enter.end).length)?e._x_transition.in(n):s():e._x_transition?e._x_transition.in(n):s();return}e._x_hidePromise=e._x_transition?new Promise((o,a)=>{e._x_transition.out(()=>{},()=>o(r)),e._x_transitioning&&e._x_transitioning.beforeCancel(()=>a({isFromCancelledTransition:!0}))}):Promise.resolve(r),queueMicrotask(()=>{let o=dn(e);o?(o._x_hideChildren||(o._x_hideChildren=[]),o._x_hideChildren.push(e)):i(()=>{let a=c=>{let l=Promise.all([c._x_hidePromise,...(c._x_hideChildren||[]).map(a)]).then(([u])=>u==null?void 0:u());return delete c._x_hidePromise,delete c._x_hideChildren,l};a(e).catch(c=>{if(!c.isFromCancelledTransition)throw c})})})};function dn(e){let t=e.parentNode;if(t)return t._x_hidePromise?t:dn(t)}function Ke(e,t,{during:n,start:r,end:i}={},s=()=>{},o=()=>{}){if(e._x_transitioning&&e._x_transitioning.cancel(),Object.keys(n).length===0&&Object.keys(r).length===0&&Object.keys(i).length===0){s(),o();return}let a,c,l;Kr(e,{start(){a=t(e,r)},during(){c=t(e,n)},before:s,end(){a(),l=t(e,i)},after:o,cleanup(){c(),l()}})}function Kr(e,t){let n,r,i,s=Be(()=>{g(()=>{n=!0,r||t.before(),i||(t.end(),De()),t.after(),e.isConnected&&t.cleanup(),delete e._x_transitioning})});e._x_transitioning={beforeCancels:[],beforeCancel(o){this.beforeCancels.push(o)},cancel:Be(function(){for(;this.beforeCancels.length;)this.beforeCancels.shift()();s()}),finish:s},g(()=>{t.start(),t.during()}),Nr(),requestAnimationFrame(()=>{if(n)return;let o=Number(getComputedStyle(e).transitionDuration.replace(/,.*/,"").replace("s",""))*1e3,a=Number(getComputedStyle(e).transitionDelay.replace(/,.*/,"").replace("s",""))*1e3;o===0&&(o=Number(getComputedStyle(e).animationDuration.replace("s",""))*1e3),g(()=>{t.before()}),r=!0,requestAnimationFrame(()=>{n||(g(()=>{t.end()}),De(),setTimeout(e._x_transitioning.finish,o+a),i=!0)})})}function ne(e,t,n){if(e.indexOf(t)===-1)return n;const r=e[e.indexOf(t)+1];if(!r||t==="scale"&&isNaN(r))return n;if(t==="duration"||t==="delay"){let i=r.match(/([0-9]+)ms/);if(i)return i[1]}return t==="origin"&&["top","right","left","center","bottom"].includes(e[e.indexOf(t)+2])?[r,e[e.indexOf(t)+2]].join(" "):r}var P=!1;function R(e,t=()=>{}){return(...n)=>P?t(...n):e(...n)}function Ur(e){return(...t)=>P&&e(...t)}var pn=[];function Se(e){pn.push(e)}function Hr(e,t){pn.forEach(n=>n(e,t)),P=!0,hn(()=>{M(t,(n,r)=>{r(n,()=>{})})}),P=!1}var Ue=!1;function zr(e,t){t._x_dataStack||(t._x_dataStack=e._x_dataStack),P=!0,Ue=!0,hn(()=>{Wr(t)}),P=!1,Ue=!1}function Wr(e){let t=!1;M(e,(r,i)=>{K(r,(s,o)=>{if(t&&Pr(s))return o();t=!0,i(s,o)})})}function hn(e){let t=H;mt((n,r)=>{let i=t(n);return G(i),()=>{}}),e(),mt(t)}function _n(e,t,n,r=[]){switch(e._x_bindings||(e._x_bindings=Y({})),e._x_bindings[t]=n,t=r.includes("camel")?ei(t):t,t){case"value":Jr(e,n);break;case"style":Yr(e,n);break;case"class":Vr(e,n);break;case"selected":case"checked":Gr(e,t,n);break;default:gn(e,t,n);break}}function Jr(e,t){if(vn(e))e.attributes.value===void 0&&(e.value=t),window.fromModel&&(typeof t=="boolean"?e.checked=me(e.value)===t:e.checked=xt(e.value,t));else if(ct(e))Number.isInteger(t)?e.value=t:!Array.isArray(t)&&typeof t!="boolean"&&![null,void 0].includes(t)?e.value=String(t):Array.isArray(t)?e.checked=t.some(n=>xt(n,e.value)):e.checked=!!t;else if(e.tagName==="SELECT")Qr(e,t);else{if(e.value===t)return;e.value=t===void 0?"":t}}function Vr(e,t){e._x_undoAddedClasses&&e._x_undoAddedClasses(),e._x_undoAddedClasses=at(e,t)}function Yr(e,t){e._x_undoAddedStyles&&e._x_undoAddedStyles(),e._x_undoAddedStyles=be(e,t)}function Gr(e,t,n){gn(e,t,n),Zr(e,t,n)}function gn(e,t,n){[null,void 0,!1].includes(n)&&ni(t)?e.removeAttribute(t):(mn(t)&&(n=t),Xr(e,t,n))}function Xr(e,t,n){e.getAttribute(t)!=n&&e.setAttribute(t,n)}function Zr(e,t,n){e[t]!==n&&(e[t]=n)}function Qr(e,t){const n=[].concat(t).map(r=>r+"");Array.from(e.options).forEach(r=>{r.selected=n.includes(r.value)})}function ei(e){return e.toLowerCase().replace(/-(\w)/g,(t,n)=>n.toUpperCase())}function xt(e,t){return e==t}function me(e){return[1,"1","true","on","yes",!0].includes(e)?!0:[0,"0","false","off","no",!1].includes(e)?!1:e?!!e:null}var ti=new Set(["allowfullscreen","async","autofocus","autoplay","checked","controls","default","defer","disabled","formnovalidate","inert","ismap","itemscope","loop","multiple","muted","nomodule","novalidate","open","playsinline","readonly","required","reversed","selected","shadowrootclonable","shadowrootdelegatesfocus","shadowrootserializable"]);function mn(e){return ti.has(e)}function ni(e){return!["aria-pressed","aria-checked","aria-expanded","aria-selected"].includes(e)}function ri(e,t,n){return e._x_bindings&&e._x_bindings[t]!==void 0?e._x_bindings[t]:yn(e,t,n)}function ii(e,t,n,r=!0){if(e._x_bindings&&e._x_bindings[t]!==void 0)return e._x_bindings[t];if(e._x_inlineBindings&&e._x_inlineBindings[t]!==void 0){let i=e._x_inlineBindings[t];return i.extract=r,zt(()=>k(e,i.expression))}return yn(e,t,n)}function yn(e,t,n){let r=e.getAttribute(t);return r===null?typeof n=="function"?n():n:r===""?!0:mn(t)?!![t,"true"].includes(r):r}function ct(e){return e.type==="checkbox"||e.localName==="ui-checkbox"||e.localName==="ui-switch"}function vn(e){return e.type==="radio"||e.localName==="ui-radio"}function xn(e,t){let n;return function(){const r=this,i=arguments,s=function(){n=null,e.apply(r,i)};clearTimeout(n),n=setTimeout(s,t)}}function wn(e,t){let n;return function(){let r=this,i=arguments;n||(e.apply(r,i),n=!0,setTimeout(()=>n=!1,t))}}function bn({get:e,set:t},{get:n,set:r}){let i=!0,s,o=H(()=>{let a=e(),c=n();if(i)r(Me(a)),i=!1;else{let l=JSON.stringify(a),u=JSON.stringify(c);l!==s?r(Me(a)):l!==u&&t(Me(c))}s=JSON.stringify(e()),JSON.stringify(n())});return()=>{G(o)}}function Me(e){return typeof e=="object"?JSON.parse(JSON.stringify(e)):e}function si(e){(Array.isArray(e)?e:[e]).forEach(n=>n(Q))}var L={},wt=!1;function oi(e,t){if(wt||(L=Y(L),wt=!0),t===void 0)return L[e];L[e]=t,et(L[e]),typeof t=="object"&&t!==null&&t.hasOwnProperty("init")&&typeof t.init=="function"&&L[e].init()}function ai(){return L}var Sn={};function ci(e,t){let n=typeof t!="function"?()=>t:t;return e instanceof Element?En(e,n()):(Sn[e]=n,()=>{})}function li(e){return Object.entries(Sn).forEach(([t,n])=>{Object.defineProperty(e,t,{get(){return(...r)=>n(...r)}})}),e}function En(e,t,n){let r=[];for(;r.length;)r.pop()();let i=Object.entries(t).map(([o,a])=>({name:o,value:a})),s=Yt(i);return i=i.map(o=>s.find(a=>a.name===o.name)?{name:`x-bind:${o.name}`,value:`"${o.value}"`}:o),nt(e,i,n).map(o=>{r.push(o.runCleanups),o()}),()=>{for(;r.length;)r.pop()()}}var An={};function ui(e,t){An[e]=t}function fi(e,t){return Object.entries(An).forEach(([n,r])=>{Object.defineProperty(e,n,{get(){return(...i)=>r.bind(t)(...i)},enumerable:!1})}),e}var di={get reactive(){return Y},get release(){return G},get effect(){return H},get raw(){return It},get transaction(){return ir},version:"3.15.8",flushAndStopDeferringMutations:lr,dontAutoEvaluateFunctions:zt,disableEffectScheduling:tr,startObservingMutations:Xe,stopObservingMutations:Dt,setReactivityEngine:nr,onAttributeRemoved:jt,onAttributesAdded:kt,closestDataStack:D,skipDuringClone:R,onlyDuringClone:Ur,addRootSelector:cn,addInitSelector:ln,setErrorHandler:_r,interceptClone:Se,addScopeToNode:ue,deferMutations:cr,mapAttributes:rt,evaluateLater:w,interceptInit:Ir,initInterceptors:et,injectMagics:ae,setEvaluator:mr,setRawEvaluator:yr,mergeProxies:B,extractProp:ii,findClosest:U,onElRemoved:Ve,closestRoot:we,destroyTree:Z,interceptor:Kt,transition:Ke,setStyles:be,mutateDom:g,directive:y,entangle:bn,throttle:wn,debounce:xn,evaluate:k,evaluateRaw:br,initTree:M,nextTick:ot,prefixed:X,prefix:Er,plugin:si,magic:C,store:oi,start:$r,clone:zr,cloneNode:Hr,bound:ri,$data:Bt,watch:Rt,walk:K,data:ui,bind:ci},Q=di;function pi(e,t){const n=Object.create(null),r=e.split(",");for(let i=0;i<r.length;i++)n[r[i]]=!0;return i=>!!n[i]}var hi=Object.freeze({}),_i=Object.prototype.hasOwnProperty,Ee=(e,t)=>_i.call(e,t),j=Array.isArray,oe=e=>Tn(e)==="[object Map]",gi=e=>typeof e=="string",lt=e=>typeof e=="symbol",Ae=e=>e!==null&&typeof e=="object",mi=Object.prototype.toString,Tn=e=>mi.call(e),Cn=e=>Tn(e).slice(8,-1),ut=e=>gi(e)&&e!=="NaN"&&e[0]!=="-"&&""+parseInt(e,10)===e,yi=e=>{const t=Object.create(null);return n=>t[n]||(t[n]=e(n))},vi=yi(e=>e.charAt(0).toUpperCase()+e.slice(1)),On=(e,t)=>e!==t&&(e===e||t===t),He=new WeakMap,re=[],O,F=Symbol("iterate"),ze=Symbol("Map key iterate");function xi(e){return e&&e._isEffect===!0}function wi(e,t=hi){xi(e)&&(e=e.raw);const n=Ei(e,t);return t.lazy||n(),n}function bi(e){e.active&&(Mn(e),e.options.onStop&&e.options.onStop(),e.active=!1)}var Si=0;function Ei(e,t){const n=function(){if(!n.active)return e();if(!re.includes(n)){Mn(n);try{return Ti(),re.push(n),O=n,e()}finally{re.pop(),$n(),O=re[re.length-1]}}};return n.id=Si++,n.allowRecurse=!!t.allowRecurse,n._isEffect=!0,n.active=!0,n.raw=e,n.deps=[],n.options=t,n}function Mn(e){const{deps:t}=e;if(t.length){for(let n=0;n<t.length;n++)t[n].delete(e);t.length=0}}var V=!0,ft=[];function Ai(){ft.push(V),V=!1}function Ti(){ft.push(V),V=!0}function $n(){const e=ft.pop();V=e===void 0?!0:e}function T(e,t,n){if(!V||O===void 0)return;let r=He.get(e);r||He.set(e,r=new Map);let i=r.get(n);i||r.set(n,i=new Set),i.has(O)||(i.add(O),O.deps.push(i),O.options.onTrack&&O.options.onTrack({effect:O,target:e,type:t,key:n}))}function I(e,t,n,r,i,s){const o=He.get(e);if(!o)return;const a=new Set,c=u=>{u&&u.forEach(p=>{(p!==O||p.allowRecurse)&&a.add(p)})};if(t==="clear")o.forEach(c);else if(n==="length"&&j(e))o.forEach((u,p)=>{(p==="length"||p>=r)&&c(u)});else switch(n!==void 0&&c(o.get(n)),t){case"add":j(e)?ut(n)&&c(o.get("length")):(c(o.get(F)),oe(e)&&c(o.get(ze)));break;case"delete":j(e)||(c(o.get(F)),oe(e)&&c(o.get(ze)));break;case"set":oe(e)&&c(o.get(F));break}const l=u=>{u.options.onTrigger&&u.options.onTrigger({effect:u,target:e,key:n,type:t,newValue:r,oldValue:i,oldTarget:s}),u.options.scheduler?u.options.scheduler(u):u()};a.forEach(l)}var Ci=pi("__proto__,__v_isRef,__isVue"),Pn=new Set(Object.getOwnPropertyNames(Symbol).map(e=>Symbol[e]).filter(lt)),Oi=In(),Mi=In(!0),bt=$i();function $i(){const e={};return["includes","indexOf","lastIndexOf"].forEach(t=>{e[t]=function(...n){const r=_(this);for(let s=0,o=this.length;s<o;s++)T(r,"get",s+"");const i=r[t](...n);return i===-1||i===!1?r[t](...n.map(_)):i}}),["push","pop","shift","unshift","splice"].forEach(t=>{e[t]=function(...n){Ai();const r=_(this)[t].apply(this,n);return $n(),r}}),e}function In(e=!1,t=!1){return function(r,i,s){if(i==="__v_isReactive")return!e;if(i==="__v_isReadonly")return e;if(i==="__v_raw"&&s===(e?t?Hi:qn:t?Ui:Nn).get(r))return r;const o=j(r);if(!e&&o&&Ee(bt,i))return Reflect.get(bt,i,s);const a=Reflect.get(r,i,s);return(lt(i)?Pn.has(i):Ci(i))||(e||T(r,"get",i),t)?a:We(a)?!o||!ut(i)?a.value:a:Ae(a)?e?kn(a):_t(a):a}}var Pi=Ii();function Ii(e=!1){return function(n,r,i,s){let o=n[r];if(!e&&(i=_(i),o=_(o),!j(n)&&We(o)&&!We(i)))return o.value=i,!0;const a=j(n)&&ut(r)?Number(r)<n.length:Ee(n,r),c=Reflect.set(n,r,i,s);return n===_(s)&&(a?On(i,o)&&I(n,"set",r,i,o):I(n,"add",r,i)),c}}function Ri(e,t){const n=Ee(e,t),r=e[t],i=Reflect.deleteProperty(e,t);return i&&n&&I(e,"delete",t,void 0,r),i}function Li(e,t){const n=Reflect.has(e,t);return(!lt(t)||!Pn.has(t))&&T(e,"has",t),n}function Ni(e){return T(e,"iterate",j(e)?"length":F),Reflect.ownKeys(e)}var qi={get:Oi,set:Pi,deleteProperty:Ri,has:Li,ownKeys:Ni},ki={get:Mi,set(e,t){return console.warn(`Set operation on key "${String(t)}" failed: target is readonly.`,e),!0},deleteProperty(e,t){return console.warn(`Delete operation on key "${String(t)}" failed: target is readonly.`,e),!0}},dt=e=>Ae(e)?_t(e):e,pt=e=>Ae(e)?kn(e):e,ht=e=>e,Te=e=>Reflect.getPrototypeOf(e);function fe(e,t,n=!1,r=!1){e=e.__v_raw;const i=_(e),s=_(t);t!==s&&!n&&T(i,"get",t),!n&&T(i,"get",s);const{has:o}=Te(i),a=r?ht:n?pt:dt;if(o.call(i,t))return a(e.get(t));if(o.call(i,s))return a(e.get(s));e!==i&&e.get(t)}function de(e,t=!1){const n=this.__v_raw,r=_(n),i=_(e);return e!==i&&!t&&T(r,"has",e),!t&&T(r,"has",i),e===i?n.has(e):n.has(e)||n.has(i)}function pe(e,t=!1){return e=e.__v_raw,!t&&T(_(e),"iterate",F),Reflect.get(e,"size",e)}function St(e){e=_(e);const t=_(this);return Te(t).has.call(t,e)||(t.add(e),I(t,"add",e,e)),this}function Et(e,t){t=_(t);const n=_(this),{has:r,get:i}=Te(n);let s=r.call(n,e);s?Ln(n,r,e):(e=_(e),s=r.call(n,e));const o=i.call(n,e);return n.set(e,t),s?On(t,o)&&I(n,"set",e,t,o):I(n,"add",e,t),this}function At(e){const t=_(this),{has:n,get:r}=Te(t);let i=n.call(t,e);i?Ln(t,n,e):(e=_(e),i=n.call(t,e));const s=r?r.call(t,e):void 0,o=t.delete(e);return i&&I(t,"delete",e,void 0,s),o}function Tt(){const e=_(this),t=e.size!==0,n=oe(e)?new Map(e):new Set(e),r=e.clear();return t&&I(e,"clear",void 0,void 0,n),r}function he(e,t){return function(r,i){const s=this,o=s.__v_raw,a=_(o),c=t?ht:e?pt:dt;return!e&&T(a,"iterate",F),o.forEach((l,u)=>r.call(i,c(l),c(u),s))}}function _e(e,t,n){return function(...r){const i=this.__v_raw,s=_(i),o=oe(s),a=e==="entries"||e===Symbol.iterator&&o,c=e==="keys"&&o,l=i[e](...r),u=n?ht:t?pt:dt;return!t&&T(s,"iterate",c?ze:F),{next(){const{value:p,done:x}=l.next();return x?{value:p,done:x}:{value:a?[u(p[0]),u(p[1])]:u(p),done:x}},[Symbol.iterator](){return this}}}}function $(e){return function(...t){{const n=t[0]?`on key "${t[0]}" `:"";console.warn(`${vi(e)} operation ${n}failed: target is readonly.`,_(this))}return e==="delete"?!1:this}}function ji(){const e={get(s){return fe(this,s)},get size(){return pe(this)},has:de,add:St,set:Et,delete:At,clear:Tt,forEach:he(!1,!1)},t={get(s){return fe(this,s,!1,!0)},get size(){return pe(this)},has:de,add:St,set:Et,delete:At,clear:Tt,forEach:he(!1,!0)},n={get(s){return fe(this,s,!0)},get size(){return pe(this,!0)},has(s){return de.call(this,s,!0)},add:$("add"),set:$("set"),delete:$("delete"),clear:$("clear"),forEach:he(!0,!1)},r={get(s){return fe(this,s,!0,!0)},get size(){return pe(this,!0)},has(s){return de.call(this,s,!0)},add:$("add"),set:$("set"),delete:$("delete"),clear:$("clear"),forEach:he(!0,!0)};return["keys","values","entries",Symbol.iterator].forEach(s=>{e[s]=_e(s,!1,!1),n[s]=_e(s,!0,!1),t[s]=_e(s,!1,!0),r[s]=_e(s,!0,!0)}),[e,n,t,r]}var[Fi,Di]=ji();function Rn(e,t){const n=e?Di:Fi;return(r,i,s)=>i==="__v_isReactive"?!e:i==="__v_isReadonly"?e:i==="__v_raw"?r:Reflect.get(Ee(n,i)&&i in r?n:r,i,s)}var Bi={get:Rn(!1)},Ki={get:Rn(!0)};function Ln(e,t,n){const r=_(n);if(r!==n&&t.call(e,r)){const i=Cn(e);console.warn(`Reactive ${i} contains both the raw and reactive versions of the same object${i==="Map"?" as keys":""}, which can lead to inconsistencies. Avoid differentiating between the raw and reactive versions of an object and only use the reactive version if possible.`)}}var Nn=new WeakMap,Ui=new WeakMap,qn=new WeakMap,Hi=new WeakMap;function zi(e){switch(e){case"Object":case"Array":return 1;case"Map":case"Set":case"WeakMap":case"WeakSet":return 2;default:return 0}}function Wi(e){return e.__v_skip||!Object.isExtensible(e)?0:zi(Cn(e))}function _t(e){return e&&e.__v_isReadonly?e:jn(e,!1,qi,Bi,Nn)}function kn(e){return jn(e,!0,ki,Ki,qn)}function jn(e,t,n,r,i){if(!Ae(e))return console.warn(`value cannot be made reactive: ${String(e)}`),e;if(e.__v_raw&&!(t&&e.__v_isReactive))return e;const s=i.get(e);if(s)return s;const o=Wi(e);if(o===0)return e;const a=new Proxy(e,o===2?r:n);return i.set(e,a),a}function _(e){return e&&_(e.__v_raw)||e}function We(e){return!!(e&&e.__v_isRef===!0)}C("nextTick",()=>ot);C("dispatch",e=>se.bind(se,e));C("watch",(e,{evaluateLater:t,cleanup:n})=>(r,i)=>{let s=t(r),a=Rt(()=>{let c;return s(l=>c=l),c},i);n(a)});C("store",ai);C("data",e=>Bt(e));C("root",e=>we(e));C("refs",e=>(e._x_refs_proxy||(e._x_refs_proxy=B(Ji(e))),e._x_refs_proxy));function Ji(e){let t=[];return U(e,n=>{n._x_refs&&t.push(n._x_refs)}),t}var $e={};function Fn(e){return $e[e]||($e[e]=0),++$e[e]}function Vi(e,t){return U(e,n=>{if(n._x_ids&&n._x_ids[t])return!0})}function Yi(e,t){e._x_ids||(e._x_ids={}),e._x_ids[t]||(e._x_ids[t]=Fn(t))}C("id",(e,{cleanup:t})=>(n,r=null)=>{let i=`${n}${r?`-${r}`:""}`;return Gi(e,i,t,()=>{let s=Vi(e,n),o=s?s._x_ids[n]:Fn(n);return r?`${n}-${o}-${r}`:`${n}-${o}`})});Se((e,t)=>{e._x_id&&(t._x_id=e._x_id)});function Gi(e,t,n,r){if(e._x_id||(e._x_id={}),e._x_id[t])return e._x_id[t];let i=r();return e._x_id[t]=i,n(()=>{delete e._x_id[t]}),i}C("el",e=>e);Dn("Focus","focus","focus");Dn("Persist","persist","persist");function Dn(e,t,n){C(t,r=>E(`You can't use [$${t}] without first installing the "${e}" plugin here: https://alpinejs.dev/plugins/${n}`,r))}y("modelable",(e,{expression:t},{effect:n,evaluateLater:r,cleanup:i})=>{let s=r(t),o=()=>{let u;return s(p=>u=p),u},a=r(`${t} = __placeholder`),c=u=>a(()=>{},{scope:{__placeholder:u}}),l=o();c(l),queueMicrotask(()=>{if(!e._x_model)return;e._x_removeModelListeners.default();let u=e._x_model.get,p=e._x_model.set,x=bn({get(){return u()},set(b){p(b)}},{get(){return o()},set(b){c(b)}});i(x)})});y("teleport",(e,{modifiers:t,expression:n},{cleanup:r})=>{e.tagName.toLowerCase()!=="template"&&E("x-teleport can only be used on a <template> tag",e);let i=Ct(n),s=e.content.cloneNode(!0).firstElementChild;e._x_teleport=s,s._x_teleportBack=e,e.setAttribute("data-teleport-template",!0),s.setAttribute("data-teleport-target",!0),e._x_forwardEvents&&e._x_forwardEvents.forEach(a=>{s.addEventListener(a,c=>{c.stopPropagation(),e.dispatchEvent(new c.constructor(c.type,c))})}),ue(s,{},e);let o=(a,c,l)=>{l.includes("prepend")?c.parentNode.insertBefore(a,c):l.includes("append")?c.parentNode.insertBefore(a,c.nextSibling):c.appendChild(a)};g(()=>{o(s,i,t),R(()=>{M(s)})()}),e._x_teleportPutBack=()=>{let a=Ct(n);g(()=>{o(e._x_teleport,a,t)})},r(()=>g(()=>{s.remove(),Z(s)}))});var Xi=document.createElement("div");function Ct(e){let t=R(()=>document.querySelector(e),()=>Xi)();return t||E(`Cannot find x-teleport element for selector: "${e}"`),t}var Bn=()=>{};Bn.inline=(e,{modifiers:t},{cleanup:n})=>{t.includes("self")?e._x_ignoreSelf=!0:e._x_ignore=!0,n(()=>{t.includes("self")?delete e._x_ignoreSelf:delete e._x_ignore})};y("ignore",Bn);y("effect",R((e,{expression:t},{effect:n})=>{n(w(e,t))}));function W(e,t,n,r){let i=e,s=c=>r(c),o={},a=(c,l)=>u=>l(c,u);if(n.includes("dot")&&(t=Zi(t)),n.includes("camel")&&(t=Qi(t)),n.includes("passive")&&(o.passive=!0),n.includes("capture")&&(o.capture=!0),n.includes("window")&&(i=window),n.includes("document")&&(i=document),n.includes("debounce")){let c=n[n.indexOf("debounce")+1]||"invalid-wait",l=xe(c.split("ms")[0])?Number(c.split("ms")[0]):250;s=xn(s,l)}if(n.includes("throttle")){let c=n[n.indexOf("throttle")+1]||"invalid-wait",l=xe(c.split("ms")[0])?Number(c.split("ms")[0]):250;s=wn(s,l)}return n.includes("prevent")&&(s=a(s,(c,l)=>{l.preventDefault(),c(l)})),n.includes("stop")&&(s=a(s,(c,l)=>{l.stopPropagation(),c(l)})),n.includes("once")&&(s=a(s,(c,l)=>{c(l),i.removeEventListener(t,s,o)})),(n.includes("away")||n.includes("outside"))&&(i=document,s=a(s,(c,l)=>{e.contains(l.target)||l.target.isConnected!==!1&&(e.offsetWidth<1&&e.offsetHeight<1||e._x_isShown!==!1&&c(l))})),n.includes("self")&&(s=a(s,(c,l)=>{l.target===e&&c(l)})),t==="submit"&&(s=a(s,(c,l)=>{l.target._x_pendingModelUpdates&&l.target._x_pendingModelUpdates.forEach(u=>u()),c(l)})),(ts(t)||Kn(t))&&(s=a(s,(c,l)=>{ns(l,n)||c(l)})),i.addEventListener(t,s,o),()=>{i.removeEventListener(t,s,o)}}function Zi(e){return e.replace(/-/g,".")}function Qi(e){return e.toLowerCase().replace(/-(\w)/g,(t,n)=>n.toUpperCase())}function xe(e){return!Array.isArray(e)&&!isNaN(e)}function es(e){return[" ","_"].includes(e)?e:e.replace(/([a-z])([A-Z])/g,"$1-$2").replace(/[_\s]/,"-").toLowerCase()}function ts(e){return["keydown","keyup"].includes(e)}function Kn(e){return["contextmenu","click","mouse"].some(t=>e.includes(t))}function ns(e,t){let n=t.filter(s=>!["window","document","prevent","stop","once","capture","self","away","outside","passive","preserve-scroll","blur","change","lazy"].includes(s));if(n.includes("debounce")){let s=n.indexOf("debounce");n.splice(s,xe((n[s+1]||"invalid-wait").split("ms")[0])?2:1)}if(n.includes("throttle")){let s=n.indexOf("throttle");n.splice(s,xe((n[s+1]||"invalid-wait").split("ms")[0])?2:1)}if(n.length===0||n.length===1&&Ot(e.key).includes(n[0]))return!1;const i=["ctrl","shift","alt","meta","cmd","super"].filter(s=>n.includes(s));return n=n.filter(s=>!i.includes(s)),!(i.length>0&&i.filter(o=>((o==="cmd"||o==="super")&&(o="meta"),e[`${o}Key`])).length===i.length&&(Kn(e.type)||Ot(e.key).includes(n[0])))}function Ot(e){if(!e)return[];e=es(e);let t={ctrl:"control",slash:"/",space:" ",spacebar:" ",cmd:"meta",esc:"escape",up:"arrow-up",down:"arrow-down",left:"arrow-left",right:"arrow-right",period:".",comma:",",equal:"=",minus:"-",underscore:"_"};return t[e]=e,Object.keys(t).map(n=>{if(t[n]===e)return n}).filter(n=>n)}y("model",(e,{modifiers:t,expression:n},{effect:r,cleanup:i})=>{let s=e;t.includes("parent")&&(s=e.parentNode);let o=w(s,n),a;typeof n=="string"?a=w(s,`${n} = __placeholder`):typeof n=="function"&&typeof n()=="string"?a=w(s,`${n()} = __placeholder`):a=()=>{};let c=()=>{let h;return o(f=>h=f),Mt(h)?h.get():h},l=h=>{let f;o(d=>f=d),Mt(f)?f.set(h):a(()=>{},{scope:{__placeholder:h}})};typeof n=="string"&&e.type==="radio"&&g(()=>{e.hasAttribute("name")||e.setAttribute("name",n)});let u=t.includes("change")||t.includes("lazy"),p=t.includes("blur"),x=t.includes("enter"),b=u||p||x,A;if(P)A=()=>{};else if(b){let h=[],f=d=>l(ge(e,t,d,c()));if(u&&h.push(W(e,"change",t,f)),p&&(h.push(W(e,"blur",t,f)),e.form)){let d=()=>f({target:e});e.form._x_pendingModelUpdates||(e.form._x_pendingModelUpdates=[]),e.form._x_pendingModelUpdates.push(d),i(()=>e.form._x_pendingModelUpdates.splice(e.form._x_pendingModelUpdates.indexOf(d),1))}x&&h.push(W(e,"keydown",t,d=>{d.key==="Enter"&&f(d)})),A=()=>h.forEach(d=>d())}else{let h=e.tagName.toLowerCase()==="select"||["checkbox","radio"].includes(e.type)?"change":"input";A=W(e,h,t,f=>{l(ge(e,t,f,c()))})}if(t.includes("fill")&&([void 0,null,""].includes(c())||ct(e)&&Array.isArray(c())||e.tagName.toLowerCase()==="select"&&e.multiple)&&l(ge(e,t,{target:e},c())),e._x_removeModelListeners||(e._x_removeModelListeners={}),e._x_removeModelListeners.default=A,i(()=>e._x_removeModelListeners.default()),e.form){let h=W(e.form,"reset",[],f=>{ot(()=>e._x_model&&e._x_model.set(ge(e,t,{target:e},c())))});i(()=>h())}e._x_model={get(){return c()},set(h){l(h)}},e._x_forceModelUpdate=h=>{h===void 0&&typeof n=="string"&&n.match(/\./)&&(h=""),window.fromModel=!0,g(()=>_n(e,"value",h)),delete window.fromModel},r(()=>{let h=c();t.includes("unintrusive")&&document.activeElement.isSameNode(e)||e._x_forceModelUpdate(h)})});function ge(e,t,n,r){return g(()=>{if(n instanceof CustomEvent&&n.detail!==void 0)return n.detail!==null&&n.detail!==void 0?n.detail:n.target.value;if(ct(e))if(Array.isArray(r)){let i=null;return t.includes("number")?i=Pe(n.target.value):t.includes("boolean")?i=me(n.target.value):i=n.target.value,n.target.checked?r.includes(i)?r:r.concat([i]):r.filter(s=>!rs(s,i))}else return n.target.checked;else{if(e.tagName.toLowerCase()==="select"&&e.multiple)return t.includes("number")?Array.from(n.target.selectedOptions).map(i=>{let s=i.value||i.text;return Pe(s)}):t.includes("boolean")?Array.from(n.target.selectedOptions).map(i=>{let s=i.value||i.text;return me(s)}):Array.from(n.target.selectedOptions).map(i=>i.value||i.text);{let i;return vn(e)?n.target.checked?i=n.target.value:i=r:i=n.target.value,t.includes("number")?Pe(i):t.includes("boolean")?me(i):t.includes("trim")?i.trim():i}}})}function Pe(e){let t=e?parseFloat(e):null;return is(t)?t:e}function rs(e,t){return e==t}function is(e){return!Array.isArray(e)&&!isNaN(e)}function Mt(e){return e!==null&&typeof e=="object"&&typeof e.get=="function"&&typeof e.set=="function"}y("cloak",e=>queueMicrotask(()=>g(()=>e.removeAttribute(X("cloak")))));ln(()=>`[${X("init")}]`);y("init",R((e,{expression:t},{evaluate:n})=>typeof t=="string"?!!t.trim()&&n(t,{},!1):n(t,{},!1)));y("text",(e,{expression:t},{effect:n,evaluateLater:r})=>{let i=r(t);n(()=>{i(s=>{g(()=>{e.textContent=s})})})});y("html",(e,{expression:t},{effect:n,evaluateLater:r})=>{let i=r(t);n(()=>{i(s=>{g(()=>{e.innerHTML=s,e._x_ignoreSelf=!0,M(e),delete e._x_ignoreSelf})})})});rt(Zt(":",Qt(X("bind:"))));var Un=(e,{value:t,modifiers:n,expression:r,original:i},{effect:s,cleanup:o})=>{if(!t){let c={};li(c),w(e,r)(u=>{En(e,u,i)},{scope:c});return}if(t==="key")return ss(e,r);if(e._x_inlineBindings&&e._x_inlineBindings[t]&&e._x_inlineBindings[t].extract)return;let a=w(e,r);s(()=>a(c=>{c===void 0&&typeof r=="string"&&r.match(/\./)&&(c=""),g(()=>_n(e,t,c,n))})),o(()=>{e._x_undoAddedClasses&&e._x_undoAddedClasses(),e._x_undoAddedStyles&&e._x_undoAddedStyles()})};Un.inline=(e,{value:t,modifiers:n,expression:r})=>{t&&(e._x_inlineBindings||(e._x_inlineBindings={}),e._x_inlineBindings[t]={expression:r,extract:!1})};y("bind",Un);function ss(e,t){e._x_keyExpression=t}cn(()=>`[${X("data")}]`);y("data",(e,{expression:t},{cleanup:n})=>{if(os(e))return;t=t===""?"{}":t;let r={};ae(r,e);let i={};fi(i,r);let s=k(e,t,{scope:i});(s===void 0||s===!0)&&(s={}),ae(s,e);let o=Y(s);et(o);let a=ue(e,o);o.init&&k(e,o.init),n(()=>{o.destroy&&k(e,o.destroy),a()})});Se((e,t)=>{e._x_dataStack&&(t._x_dataStack=e._x_dataStack,t.setAttribute("data-has-alpine-state",!0))});function os(e){return P?Ue?!0:e.hasAttribute("data-has-alpine-state"):!1}y("show",(e,{modifiers:t,expression:n},{effect:r})=>{let i=w(e,n);e._x_doHide||(e._x_doHide=()=>{g(()=>{e.style.setProperty("display","none",t.includes("important")?"important":void 0)})}),e._x_doShow||(e._x_doShow=()=>{g(()=>{e.style.length===1&&e.style.display==="none"?e.removeAttribute("style"):e.style.removeProperty("display")})});let s=()=>{e._x_doHide(),e._x_isShown=!1},o=()=>{e._x_doShow(),e._x_isShown=!0},a=()=>setTimeout(o),c=Be(p=>p?o():s(),p=>{typeof e._x_toggleAndCascadeWithTransitions=="function"?e._x_toggleAndCascadeWithTransitions(e,p,o,s):p?a():s()}),l,u=!0;r(()=>i(p=>{!u&&p===l||(t.includes("immediate")&&(p?a():s()),c(p),l=p,u=!1)}))});y("for",(e,{expression:t},{effect:n,cleanup:r})=>{let i=cs(t),s=w(e,i.items),o=w(e,e._x_keyExpression||"index");e._x_prevKeys=[],e._x_lookup={},n(()=>as(e,i,s,o)),r(()=>{Object.values(e._x_lookup).forEach(a=>g(()=>{Z(a),a.remove()})),delete e._x_prevKeys,delete e._x_lookup})});function as(e,t,n,r){let i=o=>typeof o=="object"&&!Array.isArray(o),s=e;n(o=>{ls(o)&&o>=0&&(o=Array.from(Array(o).keys(),f=>f+1)),o===void 0&&(o=[]);let a=e._x_lookup,c=e._x_prevKeys,l=[],u=[];if(i(o))o=Object.entries(o).map(([f,d])=>{let m=$t(t,d,f,o);r(v=>{u.includes(v)&&E("Duplicate key on x-for",e),u.push(v)},{scope:{index:f,...m}}),l.push(m)});else for(let f=0;f<o.length;f++){let d=$t(t,o[f],f,o);r(m=>{u.includes(m)&&E("Duplicate key on x-for",e),u.push(m)},{scope:{index:f,...d}}),l.push(d)}let p=[],x=[],b=[],A=[];for(let f=0;f<c.length;f++){let d=c[f];u.indexOf(d)===-1&&b.push(d)}c=c.filter(f=>!b.includes(f));let h="template";for(let f=0;f<u.length;f++){let d=u[f],m=c.indexOf(d);if(m===-1)c.splice(f,0,d),p.push([h,f]);else if(m!==f){let v=c.splice(f,1)[0],S=c.splice(m-1,1)[0];c.splice(f,0,S),c.splice(m,0,v),x.push([v,S])}else A.push(d);h=d}for(let f=0;f<b.length;f++){let d=b[f];d in a&&(g(()=>{Z(a[d]),a[d].remove()}),delete a[d])}for(let f=0;f<x.length;f++){let[d,m]=x[f],v=a[d],S=a[m],z=document.createElement("div");g(()=>{S||E('x-for ":key" is undefined or invalid',s,m,a),S.after(z),v.after(S),S._x_currentIfEl&&S.after(S._x_currentIfEl),z.before(v),v._x_currentIfEl&&v.after(v._x_currentIfEl),z.remove()}),S._x_refreshXForScope(l[u.indexOf(m)])}for(let f=0;f<p.length;f++){let[d,m]=p[f],v=d==="template"?s:a[d];v._x_currentIfEl&&(v=v._x_currentIfEl);let S=l[m],z=u[m],ee=document.importNode(s.content,!0).firstElementChild,gt=Y(S);ue(ee,gt,s),ee._x_refreshXForScope=Wn=>{Object.entries(Wn).forEach(([Jn,Vn])=>{gt[Jn]=Vn})},g(()=>{v.after(ee),R(()=>M(ee))()}),typeof z=="object"&&E("x-for key cannot be an object, it must be a string or an integer",s),a[z]=ee}for(let f=0;f<A.length;f++)a[A[f]]._x_refreshXForScope(l[u.indexOf(A[f])]);s._x_prevKeys=u})}function cs(e){let t=/,([^,\}\]]*)(?:,([^,\}\]]*))?$/,n=/^\s*\(|\)\s*$/g,r=/([\s\S]*?)\s+(?:in|of)\s+([\s\S]*)/,i=e.match(r);if(!i)return;let s={};s.items=i[2].trim();let o=i[1].replace(n,"").trim(),a=o.match(t);return a?(s.item=o.replace(t,"").trim(),s.index=a[1].trim(),a[2]&&(s.collection=a[2].trim())):s.item=o,s}function $t(e,t,n,r){let i={};return/^\[.*\]$/.test(e.item)&&Array.isArray(t)?e.item.replace("[","").replace("]","").split(",").map(o=>o.trim()).forEach((o,a)=>{i[o]=t[a]}):/^\{.*\}$/.test(e.item)&&!Array.isArray(t)&&typeof t=="object"?e.item.replace("{","").replace("}","").split(",").map(o=>o.trim()).forEach(o=>{i[o]=t[o]}):i[e.item]=t,e.index&&(i[e.index]=n),e.collection&&(i[e.collection]=r),i}function ls(e){return!Array.isArray(e)&&!isNaN(e)}function Hn(){}Hn.inline=(e,{expression:t},{cleanup:n})=>{let r=we(e);r._x_refs||(r._x_refs={}),r._x_refs[t]=e,n(()=>delete r._x_refs[t])};y("ref",Hn);y("if",(e,{expression:t},{effect:n,cleanup:r})=>{e.tagName.toLowerCase()!=="template"&&E("x-if can only be used on a <template> tag",e);let i=w(e,t),s=()=>{if(e._x_currentIfEl)return e._x_currentIfEl;let a=e.content.cloneNode(!0).firstElementChild;return ue(a,{},e),g(()=>{e.after(a),R(()=>M(a))()}),e._x_currentIfEl=a,e._x_undoIf=()=>{g(()=>{Z(a),a.remove()}),delete e._x_currentIfEl},a},o=()=>{e._x_undoIf&&(e._x_undoIf(),delete e._x_undoIf)};n(()=>i(a=>{a?s():o()})),r(()=>e._x_undoIf&&e._x_undoIf())});y("id",(e,{expression:t},{evaluate:n})=>{n(t).forEach(i=>Yi(e,i))});Se((e,t)=>{e._x_ids&&(t._x_ids=e._x_ids)});rt(Zt("@",Qt(X("on:"))));y("on",R((e,{value:t,modifiers:n,expression:r},{cleanup:i})=>{let s=r?w(e,r):()=>{};e.tagName.toLowerCase()==="template"&&(e._x_forwardEvents||(e._x_forwardEvents=[]),e._x_forwardEvents.includes(t)||e._x_forwardEvents.push(t));let o=W(e,t,n,a=>{s(()=>{},{scope:{$event:a},params:[a]})});i(()=>o())}));Ce("Collapse","collapse","collapse");Ce("Intersect","intersect","intersect");Ce("Focus","trap","focus");Ce("Mask","mask","mask");function Ce(e,t,n){y(t,r=>E(`You can't use [x-${t}] without first installing the "${e}" plugin here: https://alpinejs.dev/plugins/${n}`,r))}Q.setEvaluator(Vt);Q.setRawEvaluator(Sr);Q.setReactivityEngine({reactive:_t,effect:wi,release:bi,raw:_});var us=Q,zn=us;const fs={top:"Top",bottom:"Bottom",intermediate:"Intermediate",tilt:"Tilt",blocking:"Blocking",overheated:"Overheated",timeout:"Timeout",start_moving_up:"Starting Up",start_moving_down:"Starting Down",moving_up:"Moving Up",moving_down:"Moving Down",stopped:"Stopped",top_tilt:"Top (Tilt)",bottom_tilt:"Bottom (Tilt)",unknown:"Unknown",on:"On",off:"Off"};function ds(e){if(!e)return"never";const t=Math.floor((Date.now()-e)/1e3);return t<5?"just now":t<60?`${t}s ago`:t<3600?`${Math.floor(t/60)}m ago`:`${Math.floor(t/3600)}h ago`}function ps(e){const t=Math.floor(e/1e3),n=Math.floor(t/3600)%24,r=Math.floor(t/60)%60,i=t%60;return`${String(n).padStart(2,"0")}:${String(r).padStart(2,"0")}:${String(i).padStart(2,"0")}`}function hs(e){if(!e)return"";const t=Math.floor(e/1e3),n=Math.floor(t/3600),r=Math.floor(t%3600/60),i=t%60;return n>0?`${n}h ${r}m ${i}s`:r>0?`${r}m ${i}s`:`${i}s`}function _s(e){return e>=-65?"▂▄█ "+e.toFixed(1)+" dBm":e>=-80?"▂▄░ "+e.toFixed(1)+" dBm":"▂░░ "+e.toFixed(1)+" dBm"}function gs(){return Math.random().toString(36).substring(2,10)}document.addEventListener("alpine:init",()=>{zn.data("app",()=>({tab:"devices",ws:null,wsConnected:!1,wsReconnectTimer:null,deviceName:"",uptimeMs:0,get uptimeStr(){return hs(this.uptimeMs)},covers:[],settingsOpen:null,scanning:!1,allDiscovered:[],get discoveredNew(){return this.allDiscovered.filter(e=>!e.already_configured&&!e.already_adopted)},get discoveredKnown(){return this.allDiscovered.filter(e=>e.already_configured||e.already_adopted)},adoptTarget:null,adoptName:"",yamlContent:null,logCapture:!1,logLevel:"3",logAutoScroll:!0,logEntries:[],get filteredLog(){return this.logEntries.filter(e=>e.level<=parseInt(this.logLevel))},freq:{freq2:"",freq1:"",freq0:""},freqStatus:"",dumpActive:!1,dumpPackets:[],toast:{show:!1,error:!1,msg:""},_toastTimer:null,_pendingCmds:{},init(){this.connect()},connect(){if(this.ws&&(this.ws.readyState===WebSocket.CONNECTING||this.ws.readyState===WebSocket.OPEN))return;const e=location.protocol==="https:"?"wss:":"ws:";this.ws=new WebSocket(`${e}//${location.host}/elero/ws`),this.ws.onopen=()=>{this.wsConnected=!0,this.wsReconnectTimer&&(clearTimeout(this.wsReconnectTimer),this.wsReconnectTimer=null)},this.ws.onclose=()=>{this.wsConnected=!1,this.ws=null,this.wsReconnectTimer=setTimeout(()=>this.connect(),2e3)},this.ws.onerror=()=>{},this.ws.onmessage=t=>{try{const n=JSON.parse(t.data);this.handleMessage(n)}catch(n){console.error("WS message parse error:",n)}}},handleMessage(e){const{type:t,data:n,id:r,ok:i,error:s}=e;if(t==="result"){if(r&&this._pendingCmds[r]){const{resolve:o,reject:a}=this._pendingCmds[r];delete this._pendingCmds[r],i?o():a(new Error(s||"Command failed"))}return}if(t==="yaml"){if(r&&this._pendingCmds[r]){const{resolve:o}=this._pendingCmds[r];delete this._pendingCmds[r],o(n)}return}if(t==="state"){this.deviceName=n.device_name||"",this.uptimeMs=n.uptime_ms||0,this.scanning=n.scanning||!1,this.logCapture=n.log_capture||!1,this.dumpActive=n.dump_active||!1,n.freq&&(this.freq.freq2=n.freq.freq2||this.freq.freq2,this.freq.freq1=n.freq.freq1||this.freq.freq1,this.freq.freq0=n.freq.freq0||this.freq.freq0),n.covers&&(this.covers=n.covers.map(o=>({...o,_edit:{open_duration_ms:o.open_duration_ms,close_duration_ms:o.close_duration_ms,poll_interval_ms:o.poll_interval_ms}}))),n.discovered&&(this.scanning=n.discovered.scanning,this.allDiscovered=n.discovered.blinds||[]);return}if(t==="covers"){this.covers=n.map(o=>({...o,_edit:{open_duration_ms:o.open_duration_ms,close_duration_ms:o.close_duration_ms,poll_interval_ms:o.poll_interval_ms}}));return}if(t==="discovered"){this.scanning=n.scanning,this.allDiscovered=n.blinds||[];return}if(t==="log"){if(Array.isArray(n)&&n.length>0){const o=n.map((a,c)=>({...a,idx:this.logEntries.length+c}));this.logEntries.push(...o),this.logEntries.length>500&&this.logEntries.splice(0,this.logEntries.length-500),this.logAutoScroll&&this.$nextTick(()=>{const a=document.getElementById("log-box");a&&(a.scrollTop=a.scrollHeight)})}return}if(t==="packets"){this.dumpActive=n.dump_active,this.dumpPackets=n.packets||[];return}if(t==="scan_status"){this.scanning=n.scanning;return}},send(e,t=5e3){return new Promise((n,r)=>{if(!this.ws||this.ws.readyState!==WebSocket.OPEN){r(new Error("Not connected"));return}const i=gs();e.id=i,this._pendingCmds[i]={resolve:n,reject:r},setTimeout(()=>{this._pendingCmds[i]&&(delete this._pendingCmds[i],r(new Error("Timeout")))},t),this.ws.send(JSON.stringify(e))})},showToast(e,t=!1){this._toastTimer&&clearTimeout(this._toastTimer),this.toast={show:!0,error:t,msg:e},this._toastTimer=setTimeout(()=>{this.toast.show=!1},3500)},toggleSettings(e){this.settingsOpen=this.settingsOpen===e.blind_address?null:e.blind_address},async coverCmd(e,t){try{await this.send({cmd:"cover",address:e.blind_address,action:t}),this.showToast(`${e.name}: ${t} sent`)}catch(n){this.showToast(`Command failed: ${n.message}`,!0)}},async saveSettings(e){try{await this.send({cmd:"settings",address:e.blind_address,open_duration:e._edit.open_duration_ms,close_duration:e._edit.close_duration_ms,poll_interval:e._edit.poll_interval_ms}),this.showToast(`${e.name}: settings saved`),this.settingsOpen=null}catch(t){this.showToast(`Save failed: ${t.message}`,!0)}},async startScan(){try{await this.send({cmd:"scan_start"}),this.showToast("Scan started")}catch(e){this.showToast(`Scan start failed: ${e.message}`,!0)}},async stopScan(){try{await this.send({cmd:"scan_stop"}),this.showToast("Scan stopped")}catch(e){this.showToast(`Scan stop failed: ${e.message}`,!0)}},startAdopt(e){this.adoptTarget=e,this.adoptName=""},async confirmAdopt(){if(this.adoptTarget)try{await this.send({cmd:"adopt",address:this.adoptTarget.blind_address,name:this.adoptName||this.adoptTarget.blind_address}),this.showToast(`Adopted as "${this.adoptName||this.adoptTarget.blind_address}"`),this.adoptTarget=null,this.tab="devices"}catch(e){this.showToast(`Adopt failed: ${e.message}`,!0)}},showYamlBlind(e){this.yamlContent=`cover:
-  - platform: elero
-    blind_address: ${e.blind_address}
-    channel: ${e.channel}
-    remote_address: ${e.remote_address}
-    name: "My Blind"
-    # open_duration: 25s
-    # close_duration: 22s
-    hop: ${e.hop}
-    payload_1: ${e.payload_1}
-    payload_2: ${e.payload_2}
-    pck_inf1: ${e.pck_inf1}
-    pck_inf2: ${e.pck_inf2}
-`},async downloadYaml(){try{const e=await this.send({cmd:"get_yaml"},1e4),t=new Blob([e],{type:"text/plain"}),n=URL.createObjectURL(t),r=document.createElement("a");r.href=n,r.download="elero_blinds.yaml",r.click(),URL.revokeObjectURL(n)}catch(e){this.showToast(`YAML download failed: ${e.message}`,!0)}},copyYaml(){var e;(e=navigator.clipboard)==null||e.writeText(this.yamlContent).then(()=>this.showToast("Copied!")).catch(()=>this.showToast("Copy failed",!0))},async startCapture(){try{await this.send({cmd:"log_start"}),this.logCapture=!0,this.showToast("Log capture started")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},async stopCapture(){try{await this.send({cmd:"log_stop"}),this.logCapture=!1,this.showToast("Log capture stopped")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},async clearLog(){try{await this.send({cmd:"log_clear"}),this.logEntries=[],this.showToast("Log cleared")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},linkAddrs(e){if(!e)return"";const t={};for(const r of this.covers)t[r.blind_address]=r.name;return e.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/0x[0-9a-fA-F]{6}/g,r=>{const i=t[r.toLowerCase()]||t[r];return i?`${r}<span class="blind-ref">(${i})</span>`:r})},applyPreset(e){if(!e)return;const[t,n,r]=e.split(",");this.freq={freq2:"0x"+t,freq1:"0x"+n,freq0:"0x"+r}},async setFrequency(){this.freqStatus="Applying…";try{await this.send({cmd:"set_frequency",freq2:this.freq.freq2,freq1:this.freq.freq1,freq0:this.freq.freq0}),this.freqStatus="",this.showToast(`Frequency set: ${this.freq.freq2} ${this.freq.freq1} ${this.freq.freq0}`)}catch(e){this.freqStatus="",this.showToast(`Failed: ${e.message}`,!0)}},async startDump(){try{await this.send({cmd:"dump_start"}),this.dumpActive=!0,this.showToast("Packet dump started")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},async stopDump(){try{await this.send({cmd:"dump_stop"}),this.dumpActive=!1,this.showToast("Packet dump stopped")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},async clearDump(){try{await this.send({cmd:"dump_clear"}),this.dumpPackets=[],this.showToast("Dump cleared")}catch(e){this.showToast(`Failed: ${e.message}`,!0)}},stateLabel:e=>fs[e]||e||"Unknown",relTime:ds,fmtTs:ps,rssiIcon:_s}))});zn.start();</script>
-  <style rel="stylesheet" crossorigin>*,*:before,*:after{box-sizing:border-box;margin:0;padding:0}:root{--blue: #1a73e8;--blue-dk: #1557b0;--red: #d32f2f;--red-dk: #b71c1c;--green: #2e7d32;--amber: #e65100;--bg: #f0f2f5;--surface: #ffffff;--border: #e0e0e0;--muted: #757575;--text: #212121;--radius: 8px;--shadow: 0 1px 4px rgba(0,0,0,.12)}body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;font-size:14px}[x-cloak]{display:none!important}#app{max-width:760px;margin:0 auto;padding:12px 12px 40px}.header{display:flex;align-items:center;gap:10px;background:var(--blue);color:#fff;padding:14px 16px;border-radius:var(--radius);margin-bottom:10px}.header h1{font-size:1.1em;font-weight:600;flex:1}.header-right{font-size:.8em;opacity:.8}.uptime{font-size:.78em;opacity:.75}.tabs{display:flex;background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden}.tab-btn{flex:1;padding:10px 4px;border:none;background:none;font-size:.85em;font-weight:500;color:var(--muted);cursor:pointer;transition:color .15s,border-bottom .15s;border-bottom:3px solid transparent;display:flex;align-items:center;justify-content:center;gap:4px}.tab-btn.active{color:var(--blue);border-bottom-color:var(--blue)}.tab-btn:hover:not(.active){color:var(--text);background:#f8f9fa}.tab-badge{display:inline-flex;align-items:center;justify-content:center;background:var(--blue);color:#fff;border-radius:10px;font-size:.7em;min-width:18px;height:18px;padding:0 4px;font-weight:700}.tab-badge.log-badge{background:var(--amber)}.tab-content{min-height:200px}.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden}.card-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#f8f9fa;border-bottom:1px solid var(--border);font-weight:600;font-size:.9em}.card-body{padding:14px}.btn{display:inline-flex;align-items:center;gap:4px;padding:7px 14px;border:none;border-radius:6px;font-size:.85em;font-weight:500;cursor:pointer;transition:background .15s;white-space:nowrap}.btn:disabled{opacity:.45;cursor:not-allowed}.btn-primary{background:var(--blue);color:#fff}.btn-primary:hover:not(:disabled){background:var(--blue-dk)}.btn-danger{background:var(--red);color:#fff}.btn-danger:hover:not(:disabled){background:var(--red-dk)}.btn-outline{background:#fff;color:var(--blue);border:1px solid var(--blue)}.btn-outline:hover:not(:disabled){background:#e8f0fe}.btn-open{background:#e8f5e9;color:var(--green);border:1px solid #a5d6a7}.btn-close{background:#fce4ec;color:var(--red);border:1px solid #f48fb1}.btn-stop{background:#f5f5f5;color:#424242;border:1px solid #bdbdbd}.btn-tilt{background:#e3f2fd;color:var(--blue);border:1px solid #90caf9}.btn-sm{padding:4px 10px;font-size:.8em}.btn-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.cover-card{padding:14px}.cover-header{display:flex;justify-content:space-between;align-items:flex-start}.cover-name{font-weight:600;font-size:.95em}.cover-meta{font-size:.8em;color:var(--muted);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}.cover-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}.pos-bar{height:6px;background:#e0e0e0;border-radius:3px;overflow:hidden;margin:8px 0 2px}.pos-fill{height:100%;background:var(--blue);transition:width .4s}.pos-label{font-size:.8em;color:var(--muted)}.last-seen{font-size:.78em;color:var(--muted);margin-top:4px}.settings-btn{margin-left:auto}.settings-panel{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}.settings-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:.85em}.settings-row label{min-width:140px;color:var(--muted)}.settings-row input{border:1px solid #ccc;border-radius:6px;padding:5px 8px;font-size:.9em;width:130px}.settings-row input:focus{outline:none;border-color:var(--blue)}.settings-footer{display:flex;justify-content:flex-end;margin-top:4px}.state-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.76em;font-weight:600;white-space:nowrap}.state-top{background:#e8f5e9;color:var(--green)}.state-bottom{background:#fce4ec;color:var(--red)}.state-moving_up,.state-start_moving_up,.state-opening,.state-moving_down,.state-start_moving_down,.state-closing{background:#fff3e0;color:var(--amber)}.state-intermediate,.state-stopped{background:#e3f2fd;color:#1565c0}.state-idle,.state-unknown{background:#f5f5f5;color:var(--muted)}.state-blocking,.state-overheated,.state-timeout{background:#ffebee;color:var(--red)}.state-tilt,.state-top_tilt,.state-bottom_tilt{background:#f3e5f5;color:#6a1b9a}.adopted-tag{font-size:.72em;color:var(--blue);border:1px solid var(--blue);border-radius:4px;padding:1px 5px}.configured-tag{font-size:.76em;color:var(--green);font-weight:600}.disc-card{padding:12px 14px}.disc-card.known{opacity:.7}.disc-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}.disc-meta{display:flex;flex-wrap:wrap;gap:10px;font-size:.82em;color:var(--muted)}.scan-status{display:flex;align-items:center;gap:6px;font-size:.85em}.status-dot{width:8px;height:8px;border-radius:50%;background:#9e9e9e}.status-dot.scanning{background:#4caf50;animation:pulse 1s infinite}@keyframes pulse{0%,to{opacity:1}50%{opacity:.3}}.hint{font-size:.8em;color:var(--muted);margin-top:8px}.log-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:.85em}.level-select{border:1px solid #ccc;border-radius:6px;padding:4px 6px;font-size:.85em}.check-label{display:flex;align-items:center;gap:4px;font-size:.82em}.log-box{max-height:420px;overflow-y:auto;font-family:Menlo,Consolas,monospace;font-size:.78em;line-height:1.6;padding:8px;background:#1e1e2e;border-radius:6px;margin-top:10px}.log-line{display:flex;gap:8px;padding:1px 0}.log-ts{color:#888;min-width:60px}.log-level{min-width:48px;font-weight:700}.log-tag{color:#7dcfff;min-width:96px}.log-msg{color:#cdd6f4;word-break:break-all}.blind-ref{color:#a6e3a1;font-weight:700}.log-error .log-level{color:#f38ba8}.log-warn .log-level{color:#fab387}.log-info .log-level{color:#a6e3a1}.log-debug .log-level{color:#89b4fa}.log-verbose .log-level{color:#6c7086}.freq-row{margin-bottom:10px}.freq-preset{border:1px solid #ccc;border-radius:6px;padding:6px 8px;font-size:.85em}.freq-inputs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}.freq-field{display:flex;flex-direction:column;gap:2px}.freq-field label{font-size:.78em;color:var(--muted)}.freq-input{width:90px;border:1px solid #ccc;border-radius:6px;padding:6px 8px;font-size:.9em}.freq-input:focus{outline:none;border-color:var(--blue)}.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.75em;font-weight:600}.badge-active{background:#e8f5e9;color:var(--green)}.badge-idle{background:#f5f5f5;color:var(--muted)}.badge-count{background:#e3f2fd;color:#1565c0}.dump-wrap{overflow-x:auto;max-height:360px;overflow-y:auto;margin-top:10px}.pkt-table{width:100%;border-collapse:collapse;font-size:.78em}.pkt-table th{background:#f8f9fa;padding:5px 8px;text-align:left;border-bottom:2px solid var(--border);font-weight:600;white-space:nowrap}.pkt-table td{padding:4px 8px;border-bottom:1px solid #f0f0f0;vertical-align:top}.pkt-ok{background:#f1f8f4}.pkt-err{background:#fff5f5}.pkt-hex{font-family:monospace;font-size:.85em;word-break:break-all}.pkt-ok-badge{color:var(--green);font-weight:700}.pkt-err-badge{color:var(--red);font-weight:700}.info-grid{display:grid;grid-template-columns:130px 1fr;gap:6px 10px;font-size:.87em}.info-label{color:var(--muted);font-weight:500}.modal-overlay{display:none;position:fixed;top:0;right:0;bottom:0;left:0;background:#00000080;z-index:100;align-items:center;justify-content:center}.modal-overlay.active{display:flex}.modal{background:#fff;border-radius:12px;width:90%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px #0003}.modal-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}.modal-header h3{font-size:.95em}.modal-close{background:none;border:none;font-size:1.4em;cursor:pointer;color:var(--muted)}.modal-close:hover{color:var(--text)}.modal-body{padding:14px}.modal-footer{padding:10px 14px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}.yaml-box{background:#263238;color:#e0e0e0;border-radius:6px;padding:12px;font-family:monospace;font-size:.8em;white-space:pre;overflow-x:auto;line-height:1.6;max-height:360px;overflow-y:auto}.toast{position:fixed;bottom:24px;left:50%;transform:translate(-50%);background:#333;color:#fff;padding:10px 20px;border-radius:8px;font-size:.88em;z-index:200;opacity:0;pointer-events:none;transition:opacity .25s;white-space:nowrap}.toast.show{opacity:1}.toast.error{background:var(--red)}.mono{font-family:monospace}.empty{text-align:center;padding:28px;color:var(--muted);font-size:.9em}</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elero RF Bridge</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+  </style>
 </head>
-<body>
-<div id="app" x-data="app()" x-init="init()">
+<body class="bg-gray-100 min-h-screen p-4" x-data="eleroApp()" x-init="init()">
 
-  <!-- Header -->
-  <header class="header">
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-      <rect x="3" y="3" width="18" height="18" rx="2"/>
-      <line x1="3" y1="9" x2="21" y2="9"/>
-      <line x1="3" y1="15" x2="21" y2="15"/>
-    </svg>
-    <h1 x-text="deviceName || 'Elero Blind Manager'"></h1>
-    <div class="header-right">
-      <span class="uptime" x-text="uptimeStr"></span>
+  <!-- Connection Status -->
+  <div class="max-w-4xl mx-auto mb-4">
+    <div class="flex items-center gap-2">
+      <div class="w-3 h-3 rounded-full" :class="connected ? 'bg-green-500' : 'bg-red-500'"></div>
+      <span class="text-sm text-gray-600" x-text="connected ? 'Connected' : 'Disconnected'"></span>
+      <span class="text-sm text-gray-400" x-text="config.device || ''"></span>
     </div>
-  </header>
+  </div>
 
-  <!-- Tab bar -->
-  <nav class="tabs">
-    <button class="tab-btn" :class="{active: tab==='devices'}"    @click="tab='devices'">
-      Devices <span class="tab-badge" x-text="covers.length" x-show="covers.length>0"></span>
-    </button>
-    <button class="tab-btn" :class="{active: tab==='discovery'}"  @click="tab='discovery'">
-      Discovery <span class="tab-badge" x-text="discoveredNew.length" x-show="discoveredNew.length>0"></span>
-    </button>
-    <button class="tab-btn" :class="{active: tab==='log'}"        @click="tab='log'">
-      Log <span class="tab-badge log-badge" x-text="logEntries.length" x-show="logEntries.length>0"></span>
-    </button>
-    <button class="tab-btn" :class="{active: tab==='config'}"     @click="tab='config'">Configuration</button>
-  </nav>
-
-  <div class="tab-content">
-
-    <!-- ══════════════ DEVICES TAB ══════════════ -->
-    <section x-show="tab==='devices'" x-cloak>
-      <template x-if="covers.length === 0">
-        <div class="empty">No covers configured. Add covers in your ESPHome YAML.</div>
-      </template>
-      <template x-for="c in covers" :key="c.blind_address">
-        <div class="card cover-card">
-          <div class="cover-header">
+  <!-- Configured Blinds -->
+  <div class="max-w-4xl mx-auto mb-6">
+    <h2 class="text-lg font-semibold mb-2">Configured Blinds</h2>
+    <div class="space-y-2">
+      <template x-for="blind in config.blinds" :key="blind.address">
+        <div class="bg-white rounded-lg shadow p-4">
+          <div class="flex items-center justify-between">
             <div>
-              <div class="cover-name" x-text="c.name"></div>
-              <div class="cover-meta">
-                <span class="mono" x-text="c.blind_address"></span>
-                <span x-show="c.channel" x-text="'· CH '+c.channel"></span>
-                <span x-show="c.rssi" :title="'RSSI: '+c.rssi.toFixed(1)+' dBm'" x-text="rssiIcon(c.rssi)"></span>
+              <div class="font-medium" x-text="blind.name"></div>
+              <div class="text-xs text-gray-500">
+                <span x-text="blind.address"></span> · ch <span x-text="blind.channel"></span>
+              </div>
+              <div class="text-xs text-gray-400 mt-1" x-show="blindState(blind.address)">
+                <span x-text="'State: ' + (blindState(blind.address)?.state || 'unknown')"></span>
+                <span x-text="' · RSSI: ' + (blindState(blind.address)?.rssi?.toFixed(1) || '-') + ' dBm'"></span>
               </div>
             </div>
-            <div class="cover-right">
-              <span class="state-badge" :class="'state-'+c.last_state" x-text="stateLabel(c.last_state)"></span>
-              <span class="adopted-tag" x-show="c.adopted">adopted</span>
+            <div class="flex gap-2">
+              <button @click="sendCmd(blind.address, 'up')"
+                      class="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200">Open</button>
+              <button @click="sendCmd(blind.address, 'stop')"
+                      class="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200">Stop</button>
+              <button @click="sendCmd(blind.address, 'down')"
+                      class="px-3 py-1.5 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200">Close</button>
+              <button x-show="blind.tilt" @click="sendCmd(blind.address, 'tilt')"
+                      class="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200">Tilt</button>
             </div>
           </div>
+        </div>
+      </template>
+      <div x-show="!config.blinds?.length" class="text-gray-500 text-sm">No blinds configured</div>
+    </div>
+  </div>
 
-          <!-- Position bar (only for covers with duration set) -->
-          <template x-if="c.position !== null && c.open_duration_ms > 0">
+  <!-- Discovered (addresses seen but not configured) -->
+  <div class="max-w-4xl mx-auto mb-6">
+    <h2 class="text-lg font-semibold mb-2">Discovered</h2>
+    <div class="space-y-2">
+      <template x-for="addr in discoveredAddresses" :key="addr">
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div class="flex items-center justify-between">
             <div>
-              <div class="pos-bar"><div class="pos-fill" :style="'width:'+Math.round(c.position*100)+'%'"></div></div>
-              <div class="pos-label" x-text="Math.round(c.position*100)+'%'"></div>
+              <div class="font-mono text-sm" x-text="addr"></div>
+              <div class="text-xs text-gray-500">
+                <span x-text="'Last seen: ' + formatTime(states[addr]?.t)"></span>
+                <span x-text="' · RSSI: ' + (states[addr]?.rssi?.toFixed(1) || '-') + ' dBm'"></span>
+                <span x-text="' · ch ' + (states[addr]?.ch || '?')"></span>
+              </div>
             </div>
+            <button @click="copyYaml(addr)" class="text-sm text-blue-600 hover:underline">Copy YAML</button>
+          </div>
+        </div>
+      </template>
+      <div x-show="!discoveredAddresses.length" class="text-gray-500 text-sm">No new devices discovered</div>
+    </div>
+  </div>
+
+  <!-- RF Packets -->
+  <div class="max-w-4xl mx-auto mb-6">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold">RF Packets</h2>
+      <div class="flex gap-2">
+        <input type="text" x-model="rfFilter" placeholder="Filter by address..."
+               class="px-2 py-1 text-sm border rounded w-40">
+        <button @click="rfPackets = []" class="text-sm text-gray-500 hover:text-gray-700">Clear</button>
+      </div>
+    </div>
+    <div class="bg-white rounded-lg shadow max-h-64 overflow-y-auto">
+      <table class="w-full text-xs font-mono">
+        <thead class="bg-gray-50 sticky top-0">
+          <tr>
+            <th class="px-2 py-1 text-left">Time</th>
+            <th class="px-2 py-1 text-left">Src</th>
+            <th class="px-2 py-1 text-left">Dst</th>
+            <th class="px-2 py-1 text-left">Type</th>
+            <th class="px-2 py-1 text-left">Cmd/State</th>
+            <th class="px-2 py-1 text-left">RSSI</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="pkt in filteredPackets" :key="pkt.t">
+            <tr class="border-t hover:bg-gray-50">
+              <td class="px-2 py-1" x-text="formatTime(pkt.t)"></td>
+              <td class="px-2 py-1" x-text="pkt.src"></td>
+              <td class="px-2 py-1" x-text="pkt.dst"></td>
+              <td class="px-2 py-1" x-text="pkt.type"></td>
+              <td class="px-2 py-1" x-text="pkt.type === '0x6a' ? pkt.cmd : pkt.state"></td>
+              <td class="px-2 py-1" x-text="pkt.rssi?.toFixed(1)"></td>
+            </tr>
           </template>
+        </tbody>
+      </table>
+      <div x-show="!filteredPackets.length" class="p-4 text-center text-gray-500 text-sm">No packets</div>
+    </div>
+  </div>
 
-          <!-- Last seen -->
-          <div class="last-seen" x-text="'Last seen: '+relTime(c.last_seen_ms)"></div>
-
-          <!-- Control buttons -->
-          <div class="btn-row">
-            <button class="btn btn-open"  @click="coverCmd(c, 'open')" title="Open">↑ Open</button>
-            <button class="btn btn-stop"  @click="coverCmd(c, 'stop')" title="Stop">■ Stop</button>
-            <button class="btn btn-close" @click="coverCmd(c, 'close')" title="Close">↓ Close</button>
-            <button class="btn btn-tilt"  @click="coverCmd(c, 'tilt')" title="Tilt" x-show="c.supports_tilt">↔ Tilt</button>
-            <button class="btn btn-outline settings-btn"
-                    @click="toggleSettings(c)"
-                    x-text="settingsOpen===c.blind_address ? '▲ Settings' : '▼ Settings'"></button>
+  <!-- Logs -->
+  <div class="max-w-4xl mx-auto">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold">Logs</h2>
+      <button @click="logs = []" class="text-sm text-gray-500 hover:text-gray-700">Clear</button>
+    </div>
+    <div class="bg-white rounded-lg shadow max-h-48 overflow-y-auto">
+      <div class="p-2 space-y-1 font-mono text-xs">
+        <template x-for="log in logs.slice(-50)" :key="log.t">
+          <div :class="logClass(log.level)">
+            <span class="text-gray-400" x-text="formatTime(log.t)"></span>
+            <span x-text="'[' + log.tag + ']'"></span>
+            <span x-text="log.msg"></span>
           </div>
-
-          <!-- Settings (collapsible) -->
-          <div class="settings-panel" x-show="settingsOpen===c.blind_address" x-transition>
-            <div class="settings-row">
-              <label>Open duration (ms)</label>
-              <input type="number" min="0" x-model.number="c._edit.open_duration_ms">
-            </div>
-            <div class="settings-row">
-              <label>Close duration (ms)</label>
-              <input type="number" min="0" x-model.number="c._edit.close_duration_ms">
-            </div>
-            <div class="settings-row">
-              <label>Poll interval (ms)</label>
-              <input type="number" min="0" x-model.number="c._edit.poll_interval_ms">
-            </div>
-            <div class="settings-footer">
-              <button class="btn btn-primary" @click="saveSettings(c)">Save</button>
-            </div>
-          </div>
-        </div>
-      </template>
-    </section>
-
-    <!-- ══════════════ DISCOVERY TAB ══════════════ -->
-    <section x-show="tab==='discovery'" x-cloak>
-      <div class="card">
-        <div class="card-header">
-          <span>RF Scan</span>
-          <div class="scan-status">
-            <span class="status-dot" :class="scanning ? 'scanning' : 'idle'"></span>
-            <span x-text="scanning ? 'Scanning…' : 'Idle'"></span>
-          </div>
-        </div>
-        <div class="card-body">
-          <div class="btn-row">
-            <button class="btn btn-primary" @click="startScan()" :disabled="scanning">▶ Start Scan</button>
-            <button class="btn btn-danger"  @click="stopScan()"  :disabled="!scanning">■ Stop Scan</button>
-          </div>
-          <p class="hint">Operate your Elero remote during the scan to capture blinds.</p>
-        </div>
-      </div>
-
-      <!-- New / unconfigured discovered blinds -->
-      <template x-if="discoveredNew.length === 0 && !scanning">
-        <div class="empty">No unconfigured blinds found. Start a scan and press your remote.</div>
-      </template>
-      <template x-for="b in discoveredNew" :key="b.blind_address">
-        <div class="card disc-card">
-          <div class="disc-header">
-            <span class="mono" x-text="b.blind_address"></span>
-            <span class="state-badge" :class="'state-'+b.last_state" x-text="stateLabel(b.last_state)"></span>
-          </div>
-          <div class="disc-meta">
-            <span>CH <span x-text="b.channel"></span></span>
-            <span>Remote <span class="mono" x-text="b.remote_address"></span></span>
-            <span x-text="b.rssi.toFixed(1)+' dBm'"></span>
-            <span x-text="b.times_seen+'× seen'"></span>
-          </div>
-          <div class="last-seen" x-text="'Last seen: '+relTime(b.last_seen_ms)"></div>
-          <div class="btn-row">
-            <button class="btn btn-outline" @click="showYamlBlind(b)">YAML…</button>
-            <button class="btn btn-primary" @click="startAdopt(b)">Adopt → Devices</button>
-          </div>
-        </div>
-      </template>
-
-      <!-- Already configured / adopted blinds seen during scan -->
-      <template x-for="b in discoveredKnown" :key="b.blind_address">
-        <div class="card disc-card known">
-          <div class="disc-header">
-            <span class="mono" x-text="b.blind_address"></span>
-            <span class="configured-tag" x-text="b.already_adopted ? '✓ Adopted' : '✓ Configured'"></span>
-          </div>
-          <div class="disc-meta">
-            <span>CH <span x-text="b.channel"></span></span>
-            <span x-text="b.rssi.toFixed(1)+' dBm'"></span>
-            <span x-text="b.times_seen+'× seen'"></span>
-            <span x-text="'Last seen: '+relTime(b.last_seen_ms)"></span>
-          </div>
-        </div>
-      </template>
-
-      <div style="text-align:center;margin-top:12px" x-show="allDiscovered.length>0">
-        <button class="btn btn-outline" @click="downloadYaml()">↓ Download all YAML</button>
-      </div>
-    </section>
-
-    <!-- ══════════════ LOG TAB ══════════════ -->
-    <section x-show="tab==='log'" x-cloak>
-      <div class="card">
-        <div class="card-header">
-          <div class="log-controls">
-            <span class="status-dot" :class="logCapture ? 'scanning' : 'idle'"></span>
-            <button class="btn btn-sm btn-primary" @click="startCapture()" :disabled="logCapture">Start</button>
-            <button class="btn btn-sm btn-danger"  @click="stopCapture()"  :disabled="!logCapture">Stop</button>
-            Level:
-            <select x-model="logLevel" class="level-select">
-              <option value="5">VERBOSE</option>
-              <option value="4">DEBUG</option>
-              <option value="3" selected>INFO</option>
-              <option value="2">WARN</option>
-              <option value="1">ERROR</option>
-            </select>
-          </div>
-          <div>
-            <label class="check-label">
-              <input type="checkbox" x-model="logAutoScroll"> Auto-scroll
-            </label>
-            <button class="btn btn-sm btn-outline" @click="clearLog()">Clear</button>
-          </div>
-        </div>
-        <div class="log-box" id="log-box">
-          <template x-if="filteredLog.length === 0">
-            <div class="empty">No log entries. <span x-show="!logCapture">Start capture first.</span></div>
-          </template>
-          <template x-for="e in filteredLog" :key="e.t+'_'+e.idx">
-            <div class="log-line" :class="'log-'+e.level_str">
-              <span class="log-ts" x-text="fmtTs(e.t)"></span>
-              <span class="log-level" x-text="e.level_str.toUpperCase().padEnd(5)"></span>
-              <span class="log-tag" x-text="e.tag"></span>
-              <span class="log-msg" x-html="linkAddrs(e.msg)"></span>
-            </div>
-          </template>
-        </div>
-      </div>
-    </section>
-
-    <!-- ══════════════ CONFIGURATION TAB ══════════════ -->
-    <section x-show="tab==='config'" x-cloak>
-
-      <!-- Frequency -->
-      <div class="card">
-        <div class="card-header">CC1101 Frequency</div>
-        <div class="card-body">
-          <div class="freq-row">
-            <select class="freq-preset" @change="applyPreset($event.target.value)">
-              <option value="">— Preset —</option>
-              <option value="21,71,7a">868.35 MHz (Standard Elero)</option>
-              <option value="21,65,c0">868.95 MHz (Alternative)</option>
-              <option value="10,A7,62">433.92 MHz</option>
-            </select>
-          </div>
-          <div class="freq-inputs">
-            <div class="freq-field"><label>freq2</label><input class="freq-input mono" x-model="freq.freq2" maxlength="4"></div>
-            <div class="freq-field"><label>freq1</label><input class="freq-input mono" x-model="freq.freq1" maxlength="4"></div>
-            <div class="freq-field"><label>freq0</label><input class="freq-input mono" x-model="freq.freq0" maxlength="4"></div>
-          </div>
-          <div class="btn-row">
-            <button class="btn btn-primary" @click="setFrequency()">Apply</button>
-            <span class="hint" x-text="freqStatus"></span>
-          </div>
-          <p class="hint">Hex values (e.g. 0x7a or 7a). Changes take effect immediately without reboot.</p>
-        </div>
-      </div>
-
-      <!-- Packet Dump -->
-      <div class="card">
-        <div class="card-header">
-          <span>Packet Dump</span>
-          <div>
-            <span class="badge" :class="dumpActive ? 'badge-active' : 'badge-idle'" x-text="dumpActive ? 'Active' : 'Idle'"></span>
-            <span class="badge badge-count" x-text="dumpPackets.length" x-show="dumpPackets.length>0"></span>
-          </div>
-        </div>
-        <div class="card-body">
-          <div class="btn-row">
-            <button class="btn btn-primary" @click="startDump()" :disabled="dumpActive">▶ Start Dump</button>
-            <button class="btn btn-danger"  @click="stopDump()"  :disabled="!dumpActive">■ Stop</button>
-            <button class="btn btn-outline" @click="clearDump()">Clear</button>
-          </div>
-          <p class="hint">Records all received RF packets (max 50). Green = valid, red = rejected.</p>
-          <div class="dump-wrap" x-show="dumpPackets.length>0">
-            <table class="pkt-table">
-              <thead><tr><th>Time (ms)</th><th>Len</th><th>Status</th><th>Reason</th><th>Hex</th></tr></thead>
-              <tbody>
-                <template x-for="p in [...dumpPackets].reverse()" :key="p.t">
-                  <tr :class="p.valid ? 'pkt-ok' : 'pkt-err'">
-                    <td x-text="p.t"></td>
-                    <td x-text="p.len"></td>
-                    <td><span :class="p.valid ? 'pkt-ok-badge' : 'pkt-err-badge'" x-text="p.valid ? 'OK' : 'ERR'"></span></td>
-                    <td x-text="p.reason||''"></td>
-                    <td class="pkt-hex" x-text="p.hex"></td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- Hardware info -->
-      <div class="card">
-        <div class="card-header">Device Info</div>
-        <div class="card-body info-grid">
-          <span class="info-label">Device</span><span x-text="deviceName||'—'"></span>
-          <span class="info-label">Uptime</span><span x-text="uptimeStr"></span>
-          <span class="info-label">Frequency</span><span class="mono" x-text="freq.freq2+' / '+freq.freq1+' / '+freq.freq0"></span>
-          <span class="info-label">Covers</span><span x-text="covers.filter(c=>!c.adopted).length+' configured, '+covers.filter(c=>c.adopted).length+' adopted'"></span>
-        </div>
-      </div>
-    </section>
-
-  </div><!-- /tab-content -->
-
-  <!-- Toast -->
-  <div id="toast" class="toast" :class="{show: toast.show, error: toast.error}" x-text="toast.msg"></div>
-
-  <!-- Adopt modal -->
-  <div class="modal-overlay" :class="{active: adoptTarget}" @click.self="adoptTarget=null">
-    <div class="modal" x-show="adoptTarget">
-      <div class="modal-header">
-        <h3>Adopt blind <span class="mono" x-text="adoptTarget?.blind_address"></span></h3>
-        <button class="modal-close" @click="adoptTarget=null">&times;</button>
-      </div>
-      <div class="modal-body">
-        <label class="settings-row">
-          Friendly name
-          <input type="text" x-model="adoptName" placeholder="e.g. Balcony" autofocus>
-        </label>
-        <p class="hint" style="margin-top:8px">
-          This blind will appear in the Devices tab and can be controlled from the web UI.
-          It is not a Home Assistant entity — reflash with the YAML below for permanent HA integration.
-        </p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline" @click="adoptTarget=null">Cancel</button>
-        <button class="btn btn-primary" @click="confirmAdopt()">Adopt</button>
+        </template>
+        <div x-show="!logs.length" class="text-gray-500">No logs</div>
       </div>
     </div>
   </div>
 
-  <!-- YAML modal -->
-  <div class="modal-overlay" :class="{active: yamlContent}" @click.self="yamlContent=null">
-    <div class="modal" x-show="yamlContent">
-      <div class="modal-header">
-        <h3>YAML Snippet</h3>
-        <button class="modal-close" @click="yamlContent=null">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p class="hint" style="margin-bottom:8px">Add this to your ESPHome configuration for permanent HA integration:</p>
-        <pre class="yaml-box" x-text="yamlContent"></pre>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline" @click="copyYaml()">Copy</button>
-        <button class="btn btn-primary" @click="yamlContent=null">Close</button>
-      </div>
-    </div>
-  </div>
+<script>
+let _ws = null
 
-</div><!-- /app -->
+function eleroApp() {
+  return {
+    connected: false,
+    config: { blinds: [], lights: [], device: '', freq: {} },
+    states: {},      // address -> last RF state
+    rfPackets: [],   // RF packet log
+    logs: [],        // ESPHome logs
+    rfFilter: '',
+    reconnectTimer: null,
+
+    init() {
+      this.connect()
+    },
+
+    connect() {
+      if (_ws) {
+        _ws.onopen = null
+        _ws.onclose = null
+        _ws.onerror = null
+        _ws.onmessage = null
+        _ws.close()
+      }
+
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      _ws = new WebSocket(`${proto}//${location.host}/elero/ws`)
+      const ws = _ws
+
+      ws.onopen = () => {
+        this.connected = true
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer)
+          this.reconnectTimer = null
+        }
+      }
+
+      ws.onclose = () => {
+        this.connected = false
+        if (_ws === ws) {
+          _ws = null
+          this.reconnectTimer = setTimeout(() => this.connect(), 2000)
+        }
+      }
+
+      ws.onerror = () => {
+        this.connected = false
+      }
+
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data)
+        this.handleEvent(msg.event, msg.data)
+      }
+    },
+
+    handleEvent(event, data) {
+      if (event === 'config') {
+        this.config = data
+      } else if (event === 'rf') {
+        // Update state for this address
+        const addr = data.src
+        this.states[addr] = data
+        // Add to packet log
+        this.rfPackets.push(data)
+        if (this.rfPackets.length > 200) {
+          this.rfPackets.shift()
+        }
+      } else if (event === 'log') {
+        this.logs.push(data)
+        if (this.logs.length > 100) {
+          this.logs.shift()
+        }
+      }
+    },
+
+    sendCmd(address, action) {
+      if (_ws && _ws.readyState === WebSocket.OPEN) {
+        _ws.send(JSON.stringify({ type: 'cmd', address, action }))
+      }
+    },
+
+    blindState(address) {
+      return this.states[address]
+    },
+
+    get configuredAddresses() {
+      const addrs = new Set()
+      for (const b of this.config.blinds || []) addrs.add(b.address)
+      for (const l of this.config.lights || []) addrs.add(l.address)
+      return addrs
+    },
+
+    get discoveredAddresses() {
+      const configured = this.configuredAddresses
+      return Object.keys(this.states).filter(a => !configured.has(a))
+    },
+
+    get filteredPackets() {
+      if (!this.rfFilter) return this.rfPackets.slice(-50).reverse()
+      const f = this.rfFilter.toLowerCase()
+      return this.rfPackets
+        .filter(p => p.src.toLowerCase().includes(f) || p.dst.toLowerCase().includes(f))
+        .slice(-50).reverse()
+    },
+
+    formatTime(ms) {
+      if (!ms) return ''
+      const s = Math.floor(ms / 1000)
+      const m = Math.floor(s / 60)
+      return `${m}:${String(s % 60).padStart(2, '0')}`
+    },
+
+    logClass(level) {
+      if (level === 1) return 'text-red-600'
+      if (level === 2) return 'text-yellow-600'
+      return 'text-gray-700'
+    },
+
+    copyYaml(address) {
+      const st = this.states[address]
+      const yaml = `  - platform: elero
+    blind_address: ${address}
+    channel: ${st?.ch || 0}
+    remote_address: ${st?.dst || '0x000000'}
+    name: "New Blind"
+    # open_duration: 25s
+    # close_duration: 22s`
+      navigator.clipboard.writeText(yaml)
+      alert('YAML copied to clipboard')
+    }
+  }
+}
+</script>
 </body>
 </html>
 )rawliteral";

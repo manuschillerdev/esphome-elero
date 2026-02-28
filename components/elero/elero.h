@@ -144,6 +144,23 @@ struct RawPacket {
   char reject_reason[32];  // empty when valid
 };
 
+/// Decoded RF packet info for WebSocket broadcast
+struct RfPacketInfo {
+  uint32_t timestamp_ms;
+  uint32_t src;           // Source address (remote for commands, blind for status)
+  uint32_t dst;           // Destination address (blind for commands, remote for status)
+  uint8_t channel;
+  uint8_t type;           // Packet type byte (0x6a=command, 0xca=status, etc.)
+  uint8_t cmd;            // Command byte (for command packets)
+  uint8_t state;          // State byte (for status packets)
+  float rssi;
+  uint8_t hop;
+  uint8_t pck_inf[2];
+  uint8_t payload[10];
+  uint8_t raw_len;
+  uint8_t raw[CC1101_FIFO_LENGTH];
+};
+
 struct DiscoveredBlind {
   uint32_t blind_address;
   uint32_t remote_address;
@@ -239,6 +256,9 @@ class EleroBlindBase {
 
 class Elero;  // Forward declaration for SpiTransaction
 
+// Forward declaration for web server notifications
+class EleroWebServer;
+
 /// RAII guard for SPI transactions. Calls enable() on construction and
 /// disable() on destruction, ensuring CS is always released even on early return.
 class SpiTransaction {
@@ -302,6 +322,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   // Legacy blocking TX API (for backwards compatibility and simple use cases)
   [[nodiscard]] bool send_command(EleroCommand *cmd);
 
+  // Raw TX API (for WebSocket debugging/testing)
+  [[nodiscard]] bool send_raw_command(uint32_t blind_addr, uint32_t remote_addr, uint8_t channel,
+                                      uint8_t command, uint8_t payload_1 = 0x00, uint8_t payload_2 = 0x04,
+                                      uint8_t pck_inf1 = 0x6a, uint8_t pck_inf2 = 0x00, uint8_t hop = 0x0a);
+
 #ifdef USE_SENSOR
   void register_rssi_sensor(uint32_t address, sensor::Sensor *sensor);
 #endif
@@ -321,6 +346,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
     return address_to_cover_mapping_.find(address) != address_to_cover_mapping_.end();
   }
   const std::map<uint32_t, EleroBlindBase *> &get_configured_covers() const { return address_to_cover_mapping_; }
+  const std::map<uint32_t, EleroLightBase *> &get_configured_lights() const { return address_to_light_mapping_; }
 
   // Packet dump mode: capture every received FIFO read into a ring buffer
   // Returns false if already in that state
@@ -360,6 +386,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }
   void set_freq2(uint8_t freq) { freq2_ = freq; }
+
+  // Web server notification link
+  void set_web_server(EleroWebServer *ws) { web_server_ = ws; }
   void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   uint8_t get_freq0() const { return freq0_; }
   uint8_t get_freq1() const { return freq1_; }
@@ -405,6 +434,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool log_capture_{false};
   std::vector<LogEntry> log_entries_;
   uint8_t log_write_idx_{0};
+
+  // Web server for notifications (optional)
+  EleroWebServer *web_server_{nullptr};
 };
 
 }  // namespace elero

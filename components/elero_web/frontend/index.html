@@ -1,336 +1,327 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Elero Blind Manager</title>
-<script type="module" src="/src/main.js"></script>
-<link rel="stylesheet" href="/src/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elero RF Bridge</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+import { h, render } from 'https://esm.sh/preact@10.19.3'
+import { useState, useEffect, useMemo } from 'https://esm.sh/preact@10.19.3/hooks'
+import htm from 'https://esm.sh/htm@3.1.1'
+import { create } from 'https://esm.sh/zustand@4.4.7/vanilla'
+
+const html = htm.bind(h)
+
+// ─── Store ───────────────────────────────────────────────────────────────────
+
+const store = create((set, get) => ({
+  connected: false,
+  config: { blinds: [], lights: [], device: '', freq: {} },
+  states: {},      // address -> last RF packet
+  rfPackets: [],   // RF packet history
+  logs: [],        // ESPHome logs
+  rfFilter: '',
+
+  setConnected: (connected) => set({ connected }),
+  setConfig: (config) => set({ config }),
+  setRfFilter: (rfFilter) => set({ rfFilter }),
+
+  addRfPacket: (pkt) => set(state => {
+    const states = { ...state.states, [pkt.src]: pkt }
+    const rfPackets = [...state.rfPackets, pkt].slice(-200)
+    return { states, rfPackets }
+  }),
+
+  addLog: (log) => set(state => ({
+    logs: [...state.logs, log].slice(-100)
+  })),
+
+  clearRfPackets: () => set({ rfPackets: [] }),
+  clearLogs: () => set({ logs: [] }),
+}))
+
+// ─── WebSocket ───────────────────────────────────────────────────────────────
+
+let ws = null
+let reconnectTimer = null
+
+function connect() {
+  if (ws) {
+    ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null
+    ws.close()
+  }
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  ws = new WebSocket(`${proto}//${location.host}/elero/ws`)
+  const socket = ws
+
+  socket.onopen = () => {
+    store.getState().setConnected(true)
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+  }
+
+  socket.onclose = () => {
+    store.getState().setConnected(false)
+    if (ws === socket) {
+      ws = null
+      reconnectTimer = setTimeout(connect, 2000)
+    }
+  }
+
+  socket.onerror = () => store.getState().setConnected(false)
+
+  socket.onmessage = (e) => {
+    const { event, data } = JSON.parse(e.data)
+    const state = store.getState()
+    if (event === 'config') state.setConfig(data)
+    else if (event === 'rf') state.addRfPacket(data)
+    else if (event === 'log') state.addLog(data)
+  }
+}
+
+function sendCmd(address, action) {
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'cmd', address, action }))
+  }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function formatTime(ms) {
+  if (!ms) return ''
+  const s = Math.floor(ms / 1000)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+function copyYaml(address, state) {
+  const yaml = `  - platform: elero
+    blind_address: ${address}
+    channel: ${state?.ch || 0}
+    remote_address: ${state?.dst || '0x000000'}
+    name: "New Blind"
+    # open_duration: 25s
+    # close_duration: 22s`
+  navigator.clipboard.writeText(yaml)
+  alert('YAML copied to clipboard')
+}
+
+// ─── Components ──────────────────────────────────────────────────────────────
+
+function useStore(selector) {
+  const [state, setState] = useState(() => selector(store.getState()))
+  useEffect(() => store.subscribe(s => setState(selector(s))), [])
+  return state
+}
+
+function ConnectionStatus() {
+  const connected = useStore(s => s.connected)
+  const device = useStore(s => s.config.device)
+
+  return html`
+    <div class="flex items-center gap-2">
+      <div class="w-3 h-3 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}"></div>
+      <span class="text-sm text-gray-600">${connected ? 'Connected' : 'Disconnected'}</span>
+      <span class="text-sm text-gray-400">${device}</span>
+    </div>
+  `
+}
+
+function BlindCard({ blind }) {
+  const state = useStore(s => s.states[blind.address])
+
+  return html`
+    <div class="bg-white rounded-lg shadow p-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-medium">${blind.name}</div>
+          <div class="text-xs text-gray-500">
+            ${blind.address} · ch ${blind.channel}
+          </div>
+          ${state && html`
+            <div class="text-xs text-gray-400 mt-1">
+              State: ${state.state || 'unknown'} · RSSI: ${state.rssi?.toFixed(1) || '-'} dBm
+            </div>
+          `}
+        </div>
+        <div class="flex gap-2">
+          <button onClick=${() => sendCmd(blind.address, 'up')}
+                  class="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200">Open</button>
+          <button onClick=${() => sendCmd(blind.address, 'stop')}
+                  class="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200">Stop</button>
+          <button onClick=${() => sendCmd(blind.address, 'down')}
+                  class="px-3 py-1.5 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200">Close</button>
+          ${blind.tilt && html`
+            <button onClick=${() => sendCmd(blind.address, 'tilt')}
+                    class="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200">Tilt</button>
+          `}
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function ConfiguredBlinds() {
+  const blinds = useStore(s => s.config.blinds)
+
+  return html`
+    <div class="mb-6">
+      <h2 class="text-lg font-semibold mb-2">Configured Blinds</h2>
+      <div class="space-y-2">
+        ${blinds?.map(b => html`<${BlindCard} key=${b.address} blind=${b} />`)}
+        ${!blinds?.length && html`<div class="text-gray-500 text-sm">No blinds configured</div>`}
+      </div>
+    </div>
+  `
+}
+
+function DiscoveredCard({ address }) {
+  const state = useStore(s => s.states[address])
+
+  return html`
+    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-mono text-sm">${address}</div>
+          <div class="text-xs text-gray-500">
+            Last seen: ${formatTime(state?.t)} · RSSI: ${state?.rssi?.toFixed(1) || '-'} dBm · ch ${state?.ch || '?'}
+          </div>
+        </div>
+        <button onClick=${() => copyYaml(address, state)} class="text-sm text-blue-600 hover:underline">Copy YAML</button>
+      </div>
+    </div>
+  `
+}
+
+function Discovered() {
+  const states = useStore(s => s.states)
+  const config = useStore(s => s.config)
+
+  const discovered = useMemo(() => {
+    const configured = new Set([
+      ...(config.blinds || []).map(b => b.address),
+      ...(config.lights || []).map(l => l.address)
+    ])
+    return Object.keys(states).filter(a => !configured.has(a))
+  }, [states, config])
+
+  return html`
+    <div class="mb-6">
+      <h2 class="text-lg font-semibold mb-2">Discovered</h2>
+      <div class="space-y-2">
+        ${discovered.map(addr => html`<${DiscoveredCard} key=${addr} address=${addr} />`)}
+        ${!discovered.length && html`<div class="text-gray-500 text-sm">No new devices discovered</div>`}
+      </div>
+    </div>
+  `
+}
+
+function RfPackets() {
+  const rfPackets = useStore(s => s.rfPackets)
+  const rfFilter = useStore(s => s.rfFilter)
+
+  const filtered = useMemo(() => {
+    let pkts = rfPackets
+    if (rfFilter) {
+      const f = rfFilter.toLowerCase()
+      pkts = pkts.filter(p => p.src.toLowerCase().includes(f) || p.dst.toLowerCase().includes(f))
+    }
+    return pkts.slice(-50).reverse()
+  }, [rfPackets, rfFilter])
+
+  return html`
+    <div class="mb-6">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-lg font-semibold">RF Packets</h2>
+        <div class="flex gap-2">
+          <input type="text" value=${rfFilter} onInput=${e => store.getState().setRfFilter(e.target.value)}
+                 placeholder="Filter by address..." class="px-2 py-1 text-sm border rounded w-40" />
+          <button onClick=${() => store.getState().clearRfPackets()} class="text-sm text-gray-500 hover:text-gray-700">Clear</button>
+        </div>
+      </div>
+      <div class="bg-white rounded-lg shadow max-h-64 overflow-y-auto">
+        <table class="w-full text-xs font-mono">
+          <thead class="bg-gray-50 sticky top-0">
+            <tr>
+              <th class="px-2 py-1 text-left">Time</th>
+              <th class="px-2 py-1 text-left">Src</th>
+              <th class="px-2 py-1 text-left">Dst</th>
+              <th class="px-2 py-1 text-left">Type</th>
+              <th class="px-2 py-1 text-left">Cmd/State</th>
+              <th class="px-2 py-1 text-left">RSSI</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.map(pkt => html`
+              <tr key=${pkt.t} class="border-t hover:bg-gray-50">
+                <td class="px-2 py-1">${formatTime(pkt.t)}</td>
+                <td class="px-2 py-1">${pkt.src}</td>
+                <td class="px-2 py-1">${pkt.dst}</td>
+                <td class="px-2 py-1">${pkt.type}</td>
+                <td class="px-2 py-1">${pkt.type === '0x6a' ? pkt.cmd : pkt.state}</td>
+                <td class="px-2 py-1">${pkt.rssi?.toFixed(1)}</td>
+              </tr>
+            `)}
+          </tbody>
+        </table>
+        ${!filtered.length && html`<div class="p-4 text-center text-gray-500 text-sm">No packets</div>`}
+      </div>
+    </div>
+  `
+}
+
+function Logs() {
+  const logs = useStore(s => s.logs)
+
+  const logClass = (level) => {
+    if (level === 1) return 'text-red-600'
+    if (level === 2) return 'text-yellow-600'
+    return 'text-gray-700'
+  }
+
+  return html`
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-lg font-semibold">Logs</h2>
+        <button onClick=${() => store.getState().clearLogs()} class="text-sm text-gray-500 hover:text-gray-700">Clear</button>
+      </div>
+      <div class="bg-white rounded-lg shadow max-h-48 overflow-y-auto">
+        <div class="p-2 space-y-1 font-mono text-xs">
+          ${logs.slice(-50).map(log => html`
+            <div key=${log.t} class=${logClass(log.level)}>
+              <span class="text-gray-400">${formatTime(log.t)}</span>
+              <span> [${log.tag}] </span>
+              <span>${log.msg}</span>
+            </div>
+          `)}
+          ${!logs.length && html`<div class="text-gray-500">No logs</div>`}
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function App() {
+  useEffect(() => { connect() }, [])
+
+  return html`
+    <div class="max-w-4xl mx-auto">
+      <div class="mb-4"><${ConnectionStatus} /></div>
+      <${ConfiguredBlinds} />
+      <${Discovered} />
+      <${RfPackets} />
+      <${Logs} />
+    </div>
+  `
+}
+
+render(html`<${App} />`, document.getElementById('app'))
+  </script>
 </head>
-<body>
-<div id="app" x-data="app()" x-init="init()">
-
-  <!-- Header -->
-  <header class="header">
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-      <rect x="3" y="3" width="18" height="18" rx="2"/>
-      <line x1="3" y1="9" x2="21" y2="9"/>
-      <line x1="3" y1="15" x2="21" y2="15"/>
-    </svg>
-    <h1 x-text="deviceName || 'Elero Blind Manager'"></h1>
-    <div class="header-right">
-      <span class="uptime" x-text="uptimeStr"></span>
-    </div>
-  </header>
-
-  <!-- Tab bar -->
-  <nav class="tabs">
-    <button class="tab-btn" :class="{active: tab==='devices'}"    @click="tab='devices'">
-      Devices <span class="tab-badge" x-text="covers.length" x-show="covers.length>0"></span>
-    </button>
-    <button class="tab-btn" :class="{active: tab==='discovery'}"  @click="tab='discovery'">
-      Discovery <span class="tab-badge" x-text="discoveredNew.length" x-show="discoveredNew.length>0"></span>
-    </button>
-    <button class="tab-btn" :class="{active: tab==='log'}"        @click="tab='log'">
-      Log <span class="tab-badge log-badge" x-text="logEntries.length" x-show="logEntries.length>0"></span>
-    </button>
-    <button class="tab-btn" :class="{active: tab==='config'}"     @click="tab='config'">Configuration</button>
-  </nav>
-
-  <div class="tab-content">
-
-    <!-- ══════════════ DEVICES TAB ══════════════ -->
-    <section x-show="tab==='devices'" x-cloak>
-      <template x-if="covers.length === 0">
-        <div class="empty">No covers configured. Add covers in your ESPHome YAML.</div>
-      </template>
-      <template x-for="c in covers" :key="c.blind_address">
-        <div class="card cover-card">
-          <div class="cover-header">
-            <div>
-              <div class="cover-name" x-text="c.name"></div>
-              <div class="cover-meta">
-                <span class="mono" x-text="c.blind_address"></span>
-                <span x-show="c.channel" x-text="'· CH '+c.channel"></span>
-                <span x-show="c.rssi" :title="'RSSI: '+c.rssi.toFixed(1)+' dBm'" x-text="rssiIcon(c.rssi)"></span>
-              </div>
-            </div>
-            <div class="cover-right">
-              <span class="state-badge" :class="'state-'+c.last_state" x-text="stateLabel(c.last_state)"></span>
-              <span class="adopted-tag" x-show="c.adopted">adopted</span>
-            </div>
-          </div>
-
-          <!-- Position bar (only for covers with duration set) -->
-          <template x-if="c.position !== null && c.open_duration_ms > 0">
-            <div>
-              <div class="pos-bar"><div class="pos-fill" :style="'width:'+Math.round(c.position*100)+'%'"></div></div>
-              <div class="pos-label" x-text="Math.round(c.position*100)+'%'"></div>
-            </div>
-          </template>
-
-          <!-- Last seen -->
-          <div class="last-seen" x-text="'Last seen: '+relTime(c.last_seen_ms)"></div>
-
-          <!-- Control buttons -->
-          <div class="btn-row">
-            <button class="btn btn-open"  @click="coverCmd(c, 'open')" title="Open">↑ Open</button>
-            <button class="btn btn-stop"  @click="coverCmd(c, 'stop')" title="Stop">■ Stop</button>
-            <button class="btn btn-close" @click="coverCmd(c, 'close')" title="Close">↓ Close</button>
-            <button class="btn btn-tilt"  @click="coverCmd(c, 'tilt')" title="Tilt" x-show="c.supports_tilt">↔ Tilt</button>
-            <button class="btn btn-outline settings-btn"
-                    @click="toggleSettings(c)"
-                    x-text="settingsOpen===c.blind_address ? '▲ Settings' : '▼ Settings'"></button>
-          </div>
-
-          <!-- Settings (collapsible) -->
-          <div class="settings-panel" x-show="settingsOpen===c.blind_address" x-transition>
-            <div class="settings-row">
-              <label>Open duration (ms)</label>
-              <input type="number" min="0" x-model.number="c._edit.open_duration_ms">
-            </div>
-            <div class="settings-row">
-              <label>Close duration (ms)</label>
-              <input type="number" min="0" x-model.number="c._edit.close_duration_ms">
-            </div>
-            <div class="settings-row">
-              <label>Poll interval (ms)</label>
-              <input type="number" min="0" x-model.number="c._edit.poll_interval_ms">
-            </div>
-            <div class="settings-footer">
-              <button class="btn btn-primary" @click="saveSettings(c)">Save</button>
-            </div>
-          </div>
-        </div>
-      </template>
-    </section>
-
-    <!-- ══════════════ DISCOVERY TAB ══════════════ -->
-    <section x-show="tab==='discovery'" x-cloak>
-      <div class="card">
-        <div class="card-header">
-          <span>RF Scan</span>
-          <div class="scan-status">
-            <span class="status-dot" :class="scanning ? 'scanning' : 'idle'"></span>
-            <span x-text="scanning ? 'Scanning…' : 'Idle'"></span>
-          </div>
-        </div>
-        <div class="card-body">
-          <div class="btn-row">
-            <button class="btn btn-primary" @click="startScan()" :disabled="scanning">▶ Start Scan</button>
-            <button class="btn btn-danger"  @click="stopScan()"  :disabled="!scanning">■ Stop Scan</button>
-          </div>
-          <p class="hint">Operate your Elero remote during the scan to capture blinds.</p>
-        </div>
-      </div>
-
-      <!-- New / unconfigured discovered blinds -->
-      <template x-if="discoveredNew.length === 0 && !scanning">
-        <div class="empty">No unconfigured blinds found. Start a scan and press your remote.</div>
-      </template>
-      <template x-for="b in discoveredNew" :key="b.blind_address">
-        <div class="card disc-card">
-          <div class="disc-header">
-            <span class="mono" x-text="b.blind_address"></span>
-            <span class="state-badge" :class="'state-'+b.last_state" x-text="stateLabel(b.last_state)"></span>
-          </div>
-          <div class="disc-meta">
-            <span>CH <span x-text="b.channel"></span></span>
-            <span>Remote <span class="mono" x-text="b.remote_address"></span></span>
-            <span x-text="b.rssi.toFixed(1)+' dBm'"></span>
-            <span x-text="b.times_seen+'× seen'"></span>
-          </div>
-          <div class="last-seen" x-text="'Last seen: '+relTime(b.last_seen_ms)"></div>
-          <div class="btn-row">
-            <button class="btn btn-outline" @click="showYamlBlind(b)">YAML…</button>
-            <button class="btn btn-primary" @click="startAdopt(b)">Adopt → Devices</button>
-          </div>
-        </div>
-      </template>
-
-      <!-- Already configured / adopted blinds seen during scan -->
-      <template x-for="b in discoveredKnown" :key="b.blind_address">
-        <div class="card disc-card known">
-          <div class="disc-header">
-            <span class="mono" x-text="b.blind_address"></span>
-            <span class="configured-tag" x-text="b.already_adopted ? '✓ Adopted' : '✓ Configured'"></span>
-          </div>
-          <div class="disc-meta">
-            <span>CH <span x-text="b.channel"></span></span>
-            <span x-text="b.rssi.toFixed(1)+' dBm'"></span>
-            <span x-text="b.times_seen+'× seen'"></span>
-            <span x-text="'Last seen: '+relTime(b.last_seen_ms)"></span>
-          </div>
-        </div>
-      </template>
-
-      <div style="text-align:center;margin-top:12px" x-show="allDiscovered.length>0">
-        <button class="btn btn-outline" @click="downloadYaml()">↓ Download all YAML</button>
-      </div>
-    </section>
-
-    <!-- ══════════════ LOG TAB ══════════════ -->
-    <section x-show="tab==='log'" x-cloak>
-      <div class="card">
-        <div class="card-header">
-          <div class="log-controls">
-            <span class="status-dot" :class="logCapture ? 'scanning' : 'idle'"></span>
-            <button class="btn btn-sm btn-primary" @click="startCapture()" :disabled="logCapture">Start</button>
-            <button class="btn btn-sm btn-danger"  @click="stopCapture()"  :disabled="!logCapture">Stop</button>
-            Level:
-            <select x-model="logLevel" class="level-select">
-              <option value="5">VERBOSE</option>
-              <option value="4">DEBUG</option>
-              <option value="3" selected>INFO</option>
-              <option value="2">WARN</option>
-              <option value="1">ERROR</option>
-            </select>
-          </div>
-          <div>
-            <label class="check-label">
-              <input type="checkbox" x-model="logAutoScroll"> Auto-scroll
-            </label>
-            <button class="btn btn-sm btn-outline" @click="clearLog()">Clear</button>
-          </div>
-        </div>
-        <div class="log-box" id="log-box">
-          <template x-if="filteredLog.length === 0">
-            <div class="empty">No log entries. <span x-show="!logCapture">Start capture first.</span></div>
-          </template>
-          <template x-for="e in filteredLog" :key="e.t+'_'+e.idx">
-            <div class="log-line" :class="'log-'+e.level_str">
-              <span class="log-ts" x-text="fmtTs(e.t)"></span>
-              <span class="log-level" x-text="e.level_str.toUpperCase().padEnd(5)"></span>
-              <span class="log-tag" x-text="e.tag"></span>
-              <span class="log-msg" x-html="linkAddrs(e.msg)"></span>
-            </div>
-          </template>
-        </div>
-      </div>
-    </section>
-
-    <!-- ══════════════ CONFIGURATION TAB ══════════════ -->
-    <section x-show="tab==='config'" x-cloak>
-
-      <!-- Frequency -->
-      <div class="card">
-        <div class="card-header">CC1101 Frequency</div>
-        <div class="card-body">
-          <div class="freq-row">
-            <select class="freq-preset" @change="applyPreset($event.target.value)">
-              <option value="">— Preset —</option>
-              <option value="21,71,7a">868.35 MHz (Standard Elero)</option>
-              <option value="21,65,c0">868.95 MHz (Alternative)</option>
-              <option value="10,A7,62">433.92 MHz</option>
-            </select>
-          </div>
-          <div class="freq-inputs">
-            <div class="freq-field"><label>freq2</label><input class="freq-input mono" x-model="freq.freq2" maxlength="4"></div>
-            <div class="freq-field"><label>freq1</label><input class="freq-input mono" x-model="freq.freq1" maxlength="4"></div>
-            <div class="freq-field"><label>freq0</label><input class="freq-input mono" x-model="freq.freq0" maxlength="4"></div>
-          </div>
-          <div class="btn-row">
-            <button class="btn btn-primary" @click="setFrequency()">Apply</button>
-            <span class="hint" x-text="freqStatus"></span>
-          </div>
-          <p class="hint">Hex values (e.g. 0x7a or 7a). Changes take effect immediately without reboot.</p>
-        </div>
-      </div>
-
-      <!-- Packet Dump -->
-      <div class="card">
-        <div class="card-header">
-          <span>Packet Dump</span>
-          <div>
-            <span class="badge" :class="dumpActive ? 'badge-active' : 'badge-idle'" x-text="dumpActive ? 'Active' : 'Idle'"></span>
-            <span class="badge badge-count" x-text="dumpPackets.length" x-show="dumpPackets.length>0"></span>
-          </div>
-        </div>
-        <div class="card-body">
-          <div class="btn-row">
-            <button class="btn btn-primary" @click="startDump()" :disabled="dumpActive">▶ Start Dump</button>
-            <button class="btn btn-danger"  @click="stopDump()"  :disabled="!dumpActive">■ Stop</button>
-            <button class="btn btn-outline" @click="clearDump()">Clear</button>
-          </div>
-          <p class="hint">Records all received RF packets (max 50). Green = valid, red = rejected.</p>
-          <div class="dump-wrap" x-show="dumpPackets.length>0">
-            <table class="pkt-table">
-              <thead><tr><th>Time (ms)</th><th>Len</th><th>Status</th><th>Reason</th><th>Hex</th></tr></thead>
-              <tbody>
-                <template x-for="p in [...dumpPackets].reverse()" :key="p.t">
-                  <tr :class="p.valid ? 'pkt-ok' : 'pkt-err'">
-                    <td x-text="p.t"></td>
-                    <td x-text="p.len"></td>
-                    <td><span :class="p.valid ? 'pkt-ok-badge' : 'pkt-err-badge'" x-text="p.valid ? 'OK' : 'ERR'"></span></td>
-                    <td x-text="p.reason||''"></td>
-                    <td class="pkt-hex" x-text="p.hex"></td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- Hardware info -->
-      <div class="card">
-        <div class="card-header">Device Info</div>
-        <div class="card-body info-grid">
-          <span class="info-label">Device</span><span x-text="deviceName||'—'"></span>
-          <span class="info-label">Uptime</span><span x-text="uptimeStr"></span>
-          <span class="info-label">Frequency</span><span class="mono" x-text="freq.freq2+' / '+freq.freq1+' / '+freq.freq0"></span>
-          <span class="info-label">Covers</span><span x-text="covers.filter(c=>!c.adopted).length+' configured, '+covers.filter(c=>c.adopted).length+' adopted'"></span>
-        </div>
-      </div>
-    </section>
-
-  </div><!-- /tab-content -->
-
-  <!-- Toast -->
-  <div id="toast" class="toast" :class="{show: toast.show, error: toast.error}" x-text="toast.msg"></div>
-
-  <!-- Adopt modal -->
-  <div class="modal-overlay" :class="{active: adoptTarget}" @click.self="adoptTarget=null">
-    <div class="modal" x-show="adoptTarget">
-      <div class="modal-header">
-        <h3>Adopt blind <span class="mono" x-text="adoptTarget?.blind_address"></span></h3>
-        <button class="modal-close" @click="adoptTarget=null">&times;</button>
-      </div>
-      <div class="modal-body">
-        <label class="settings-row">
-          Friendly name
-          <input type="text" x-model="adoptName" placeholder="e.g. Balcony" autofocus>
-        </label>
-        <p class="hint" style="margin-top:8px">
-          This blind will appear in the Devices tab and can be controlled from the web UI.
-          It is not a Home Assistant entity — reflash with the YAML below for permanent HA integration.
-        </p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline" @click="adoptTarget=null">Cancel</button>
-        <button class="btn btn-primary" @click="confirmAdopt()">Adopt</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- YAML modal -->
-  <div class="modal-overlay" :class="{active: yamlContent}" @click.self="yamlContent=null">
-    <div class="modal" x-show="yamlContent">
-      <div class="modal-header">
-        <h3>YAML Snippet</h3>
-        <button class="modal-close" @click="yamlContent=null">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p class="hint" style="margin-bottom:8px">Add this to your ESPHome configuration for permanent HA integration:</p>
-        <pre class="yaml-box" x-text="yamlContent"></pre>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline" @click="copyYaml()">Copy</button>
-        <button class="btn btn-primary" @click="yamlContent=null">Close</button>
-      </div>
-    </div>
-  </div>
-
-</div><!-- /app -->
+<body class="bg-gray-100 min-h-screen p-4">
+  <div id="app"></div>
 </body>
 </html>

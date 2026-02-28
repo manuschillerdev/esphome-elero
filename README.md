@@ -549,7 +549,7 @@ Danach ist die Oberflaeche unter `http://<device-ip>/elero` erreichbar. Funktion
 - **Konfigurierte Covers anzeigen** - Name, Position, Betriebszustand
 - **YAML exportieren** - Generiert Copy-Paste-fertige YAML-Konfiguration
 
-Die Web-UI bietet zudem eine REST-API unter `/elero/api/*` mit CORS-Unterstuetzung fuer Cross-Origin-Zugriff.
+Die Web-UI kommuniziert ueber WebSocket (`/elero/ws`) fuer Echtzeit-Updates von RF-Paketen und Logs.
 
 #### Web-UI zur Laufzeit deaktivieren
 

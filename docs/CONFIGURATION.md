@@ -291,71 +291,34 @@ elero_web:
 - **Konfigurierte Covers anzeigen** – Name, Position, Betriebszustand
 - **YAML exportieren** – Generiert Copy-Paste-fertige YAML-Konfiguration für entdeckte Blinds
 
-**REST-API Endpoints:**
+**WebSocket-Kommunikation:**
 
-Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
+Die Web-UI kommuniziert über WebSocket (`/elero/ws`) für Echtzeit-Updates. Siehe `docs/ARCHITECTURE.md` für das vollständige Protokoll.
 
-**Kern-Endpoints:**
+| Endpoint | Beschreibung |
+|---|---|
+| `/` | Weiterleitung zu `/elero` |
+| `/elero` | Web-UI (HTML) |
+| `/elero/ws` | WebSocket für Echtzeit-Kommunikation |
 
-| Endpoint | Methode | Beschreibung |
-|---|---|---|
-| `/` | GET | Weiterleitung zu `/elero` |
-| `/elero` | GET | Web-UI (HTML) |
-| `/elero/api/scan/start` | POST | RF-Scan starten |
-| `/elero/api/scan/stop` | POST | RF-Scan stoppen |
-| `/elero/api/discovered` | GET | Gefundene Geraete (JSON) |
-| `/elero/api/configured` | GET | Konfigurierte Covers mit aktuellem Status (JSON) |
-| `/elero/api/yaml` | GET | YAML-Export fuer entdeckte Blinds |
-| `/elero/api/info` | GET | Geraete-Informationen (Version, Entdeckungen, etc.) |
-| `/elero/api/runtime` | GET | Laufzeitstatus (Scan aktiv, Blind-Anzahl, etc.) |
+**Server → Client Events:**
 
-**Rollladen-/Licht-Steuerung (erfordert Adresse):**
+| Event | Beschreibung |
+|---|---|
+| `config` | Geräte-Konfiguration beim Verbindungsaufbau |
+| `rf` | Dekodierte RF-Pakete in Echtzeit |
+| `log` | ESPHome Log-Einträge mit `elero.*` Tags |
 
-| Endpoint | Methode | Beschreibung |
-|---|---|---|
-| `/elero/api/covers/0xADDRESS/command` | POST | Befehl an Rollladen/Licht senden (Body: `{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
-| `/elero/api/covers/0xADDRESS/settings` | POST | Einstellungen des Rollladens zur Laufzeit aendern (Body: JSON mit Timing/Poll-Einstellungen) |
-| `/elero/api/discovered/0xADDRESS/adopt` | POST | Entdeckten Rollladen in konfigurierte Covers aufnehmen |
+**Client → Server Messages:**
 
-**Diagnose-Endpoints:**
+| Typ | Beschreibung |
+|---|---|
+| `cmd` | Befehl an Rollladen/Licht: `{"type":"cmd", "address":"0xADDRESS", "action":"up"}` |
+| `raw` | Raw RF-Paket für Tests: `{"type":"raw", "blind_address":"0x...", "channel":5, ...}` |
 
-| Endpoint | Methode | Beschreibung |
-|---|---|---|
-| `/elero/api/frequency` | GET | Aktuelle CC1101-Frequenzeinstellungen |
-| `/elero/api/frequency/set` | POST | CC1101-Frequenz aendern (Body: `{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
-| `/elero/api/logs` | GET | Aktuelle Log-Eintraege (unterstützt `since`-Query-Parameter) |
-| `/elero/api/logs/clear` | POST | Erfasste Logs loeschen |
-| `/elero/api/logs/capture/start` | POST | Log-Erfassung starten |
-| `/elero/api/logs/capture/stop` | POST | Log-Erfassung beenden |
-| `/elero/api/dump/start` | POST | RF-Paket-Dump starten |
-| `/elero/api/dump/stop` | POST | RF-Paket-Dump beenden |
-| `/elero/api/packets` | GET | Erfasste RF-Pakete |
-| `/elero/api/packets/clear` | POST | Erfasste Pakete loeschen |
+**Warum Mongoose?**
 
-**Web-UI-Zustand (elero_web switch Sub-Plattform):**
-
-| Endpoint | Methode | Beschreibung |
-|---|---|---|
-| `/elero/api/ui/status` | GET | Web-UI aktiviert/deaktiviert Status abrufen |
-| `/elero/api/ui/enable` | POST | Web-UI aktivieren/deaktivieren (Body: `{"enabled": true\|false}`) |
-
-**HTTP-Fehlercodes:**
-
-| Code | Bedeutung | Wann |
-|---|---|---|
-| 200 | OK | Erfolgreiche Anfrage |
-| 409 | Conflict | Scan starten wenn bereits laeuft, oder Scan stoppen wenn keiner laeuft |
-| 503 | Service Unavailable | Wenn Web-UI via Switch deaktiviert ist |
-
-Fehlerantworten werden als JSON zurueckgegeben: `{"error": "Beschreibung"}`
-
-**CORS-Unterstuetzung:**
-
-Alle API-Endpoints unterstuetzen Cross-Origin-Zugriff (CORS):
-- `Access-Control-Allow-Origin: *`
-- `Access-Control-Allow-Methods: GET, POST, OPTIONS`
-- `Access-Control-Allow-Headers: Content-Type`
-- Preflight-Requests (OPTIONS) werden auf allen API-Endpoints unterstuetzt
+Die Web-UI verwendet die Mongoose HTTP/WebSocket-Bibliothek statt ESPHome's `web_server_base`. Grund: ESPHome nutzt verschiedene Implementierungen je nach Framework (Arduino vs. ESP-IDF). Mongoose bietet eine einheitliche API für beide Frameworks
 
 ---
 

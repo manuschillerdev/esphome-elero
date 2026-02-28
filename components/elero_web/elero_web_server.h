@@ -1,21 +1,24 @@
 #pragma once
 
+// Include Arduino first to avoid INADDR_NONE macro conflict with mongoose/lwip
+#ifdef USE_ARDUINO
+#include <Arduino.h>
+#endif
+
 #include "esphome/core/component.h"
-#include "esphome/components/web_server_base/web_server_base.h"
+#include "esphome/components/logger/logger.h"
+#include "mongoose.h"
 #include "../elero/elero.h"
-#include <ESPAsyncWebServer.h>
+#include <string>
+#include <vector>
 
 namespace esphome {
 namespace elero {
 
-// Maximum WebSocket clients (ESPAsyncWebServer default)
-constexpr uint8_t ELERO_WS_MAX_CLIENTS = 4;
-
-// Broadcast intervals (ms)
-constexpr uint32_t ELERO_WS_HEARTBEAT_INTERVAL = 5000;
-constexpr uint32_t ELERO_WS_CLEANUP_INTERVAL = 10000;
-
-class EleroWebServer : public Component {
+/// Simplified WebSocket server - acts as RF bridge
+/// Server → Client: config (on connect), rf (packets), log (ESPHome logs)
+/// Client → Server: cmd (blind commands)
+class EleroWebServer : public Component, public logger::LogListener {
  public:
   void setup() override;
   void loop() override;
@@ -23,61 +26,46 @@ class EleroWebServer : public Component {
   float get_setup_priority() const override { return setup_priority::WIFI - 1.0f; }
 
   void set_elero_parent(Elero *parent) { this->parent_ = parent; }
-  void set_web_server(web_server_base::WebServerBase *base) { this->base_ = base; }
+  void set_port(uint16_t port) { this->port_ = port; }
 
-  // Enable / disable the web UI (used by the HA switch)
+  // Enable/disable web UI (used by HA switch)
   void set_enabled(bool en) { this->enabled_ = en; }
   bool is_enabled() const { return this->enabled_; }
 
-  // State change notifications (call from hub when state changes)
-  void notify_covers_changed();
-  void notify_discovered_changed();
-  void notify_log_entry();
-  void notify_packet_received();
-  void notify_scan_status_changed();
+  // Called from hub when RF packet is received
+  void on_rf_packet(const RfPacketInfo &pkt);
+
+  // LogListener interface - forwards elero.* logs to WebSocket clients
+  void on_log(uint8_t level, const char *tag, const char *message, size_t message_len) override;
 
  protected:
-  // WebSocket event handler
-  void on_ws_event(AsyncWebSocket *server, AsyncWebSocketClient *client,
-                   AwsEventType type, void *arg, uint8_t *data, size_t len);
-
-  // Message dispatcher
-  void handle_ws_message(AsyncWebSocketClient *client, const std::string &msg);
-
-  // Broadcast helpers
-  void broadcast(const char *type, const std::string &json);
-  void broadcast_full_state();
-  void send_full_state(AsyncWebSocketClient *client);
-  void send_result(AsyncWebSocketClient *client, const char *id, bool ok, const char *error = nullptr);
-  void send_yaml(AsyncWebSocketClient *client, const char *id);
-
-  // JSON builders
-  std::string build_full_state_json();
-  std::string build_covers_json();
-  std::string build_discovered_json();
-  std::string build_logs_json(uint32_t since_ms = 0, size_t max_entries = 20);
-  std::string build_packets_json();
-  std::string build_yaml();
-
-  // HTTP handlers (minimal - just index and redirect)
-  void handle_index(AsyncWebServerRequest *request);
-
   Elero *parent_{nullptr};
-  web_server_base::WebServerBase *base_{nullptr};
-  AsyncWebSocket *ws_{nullptr};
+  uint16_t port_{80};
   bool enabled_{true};
 
-  // Timing for heartbeat and cleanup
-  uint32_t last_heartbeat_ms_{0};
-  uint32_t last_cleanup_ms_{0};
+  // Mongoose state
+  struct mg_mgr mgr_;
+  struct mg_connection *listener_{nullptr};
+  std::vector<struct mg_connection *> ws_clients_;
 
-  // Change tracking for incremental pushes
-  bool covers_changed_{false};
-  bool discovered_changed_{false};
-  bool logs_changed_{false};
-  bool packets_changed_{false};
-  bool scan_status_changed_{false};
-  uint32_t last_log_push_ts_{0};
+  // Mongoose event handler (static for C callback)
+  static void event_handler(struct mg_connection *c, int ev, void *ev_data);
+
+  // HTTP route handlers
+  void handle_index(struct mg_connection *c);
+
+  // WebSocket handlers
+  void handle_ws_upgrade(struct mg_connection *c, struct mg_http_message *hm);
+  void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm);
+
+  // WebSocket helpers
+  void ws_send(struct mg_connection *c, const char *event, const std::string &data);
+  void ws_broadcast(const char *event, const std::string &data);
+  void ws_cleanup();
+
+  // JSON builders
+  std::string build_config_json();
+  std::string build_rf_json(const RfPacketInfo &pkt);
 };
 
 }  // namespace elero

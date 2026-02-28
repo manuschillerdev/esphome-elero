@@ -61,3 +61,7 @@ button:
   - platform: elero
     name: "Test Stop Scan"
     scan_start: false
+
+# Elero web UI (Mongoose-based, no external dependencies)
+elero_web:
+  port: 80

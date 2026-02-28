@@ -28,10 +28,38 @@ external_components:
 - Remote handling: [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3)
 - Based on the no-longer-maintained [andyboeh/esphome-elero](https://github.com/pfriedrich84/esphome-elero)
 
-**Available skills:**
-- `/elero-protocol` — Complete RF protocol reference (packet structure, encryption, commands, state constants)
-- `/modern-cpp` — C++17/C++20 best practices, RAII patterns, type safety guidelines
-- `/esp32-development` — ESP32 memory management, ISRs, FreeRTOS, power management
+**Available skills (USE THEM!):**
+
+| Skill | When to use |
+|-------|-------------|
+| `/elero-protocol` | **Always** when modifying CC1101 TX/RX code, packet encoding/decoding, encryption |
+| `/modern-cpp` | **Always** when writing or reviewing C++ code |
+| `/esp32-development` | **Always** when writing C++ code (ISRs, memory, FreeRTOS, SPI) |
+
+> **IMPORTANT:** Before writing C++ code, invoke `/modern-cpp` and `/esp32-development` skills.
+> Before touching RF protocol code (elero.cpp TX/RX, packet handling), invoke `/elero-protocol`.
+
+---
+
+## Compatibility Matrix
+
+**Supported targets — ESP32 only:**
+
+| Framework | Status | Notes |
+|-----------|--------|-------|
+| **ESP-IDF** | ✅ Supported | Primary target, recommended |
+| **Arduino** | ✅ Supported | Legacy support via ESPHome |
+
+**NOT supported (do not add support for):**
+
+| Target | Reason |
+|--------|--------|
+| ESP8266 | Insufficient RAM/flash, no SPI DMA |
+| RP2040 | No CC1101 driver, different SPI API |
+| LibreTiny | Out of scope |
+| Host (native) | No hardware access |
+
+The codebase uses Mongoose for HTTP/WebSocket specifically because it provides a unified API across ESP-IDF and Arduino frameworks. Do not introduce framework-specific code paths.
 
 ---
 
@@ -67,7 +95,7 @@ esphome-elero/
     └── elero_web/                     # Optional web UI component
         ├── __init__.py
         ├── elero_web_server.h
-        ├── elero_web_server.cpp       # REST API + CORS (~273 lines)
+        ├── elero_web_server.cpp       # Mongoose WebSocket server (~300 lines)
         └── elero_web_ui.h             # Inline web UI HTML/JS
 ```
 
@@ -75,7 +103,79 @@ esphome-elero/
 
 ## Architecture
 
-### Two-layer design
+### Layered Architecture (CRITICAL)
+
+The system is split into **four distinct layers** with strict responsibilities. Code MUST live in the correct layer.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  CLIENT (Browser/Preact)                                                │
+│  ─────────────────────────────────────────────────────────────────────  │
+│  • Derives ALL state from: config + rf events + logs                    │
+│  • Discovery = RF addresses NOT in config                               │
+│  • Blind states = latest status from RF packets                         │
+│  • Position = derived from movement timing                              │
+│  • YAML generation = client-side from discovered addresses              │
+│  • NO server round-trips for state queries                              │
+└─────────────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ WebSocket (events down, commands up)
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  SERVER (EleroWebServer)                                                │
+│  ─────────────────────────────────────────────────────────────────────  │
+│  • STATELESS - no business logic, no state tracking                     │
+│  • Dumb pipe: forwards RF packets → client, commands → hub              │
+│  • On connect: sends config (blinds array from YAML)                    │
+│  • On RF packet: broadcasts to all WebSocket clients                    │
+│  • On log: forwards elero.* tagged logs to clients                      │
+│  • Logger injected via callback (DI pattern)                            │
+└─────────────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ Callbacks (on_rf_packet, logger)
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  CORE (Elero Hub)                                                       │
+│  ─────────────────────────────────────────────────────────────────────  │
+│  • CC1101 initialization and SPI communication                          │
+│  • Non-blocking RX/TX via interrupt + loop() polling                    │
+│  • Packet encoding/decoding and encryption                              │
+│  • Notifies observers via callbacks (not direct coupling)               │
+│  • ESPHome entity management (covers, lights, sensors)                  │
+└─────────────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ SPI + GPIO interrupt
+                              ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  HARDWARE (CC1101)                                                      │
+│  ─────────────────────────────────────────────────────────────────────  │
+│  • 868 MHz RF transceiver                                               │
+│  • GDO0 interrupt on packet received                                    │
+│  • 64-byte TX/RX FIFO                                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Why This Matters
+
+**Server has NO business logic.** It doesn't:
+- Track which blinds are discovered (client derives from RF packets)
+- Store blind states (client derives from RF status events)
+- Generate YAML (client does this)
+- Know anything about "discovery mode" (client filters RF packets)
+
+**Client derives EVERYTHING.** Given:
+- `config` event on connect → list of configured blinds from YAML
+- `rf` events → every RF packet with addresses, states, RSSI
+- `log` events → ESPHome logs
+
+The client can derive:
+- **Configured blinds**: directly from config
+- **Current states**: latest `rf` event per address with type=0xCA/0xC9 (status)
+- **Discovery**: addresses in `rf` events that are NOT in config
+- **RSSI**: from `rf` events
+- **Logs**: from `log` events
+
+### ESPHome Layer Design
 
 1. **Python layer** (`__init__.py` files) — ESPHome code-generation time
    - Defines and validates YAML configuration schemas using `esphome.config_validation`
@@ -86,7 +186,7 @@ esphome-elero/
    - Implements the actual RF protocol, SPI communication, and entity logic
    - Runs inside the ESPHome `Component` lifecycle (`setup()`, `loop()`)
 
-### Component hierarchy
+### Component Hierarchy
 
 ```
 Elero (hub, SPIDevice + Component)
@@ -96,19 +196,45 @@ Elero (hub, SPIDevice + Component)
 ├── EleroScanButton (button::Button + Component)
 ├── sensor::Sensor (RSSI, registered per blind address)
 ├── text_sensor::TextSensor (status, registered per blind address)
-├── EleroWebServer (Component, wraps web_server_base)
+├── EleroWebServer (Component, Mongoose HTTP/WS)
 │   └── EleroWebSwitch (switch::Switch + Component)
 └── Auto-registered sensors/text sensors per cover (optional)
 ```
 
 The `EleroBlindBase` abstract class decouples the hub (`Elero`) from the cover implementation so `elero.h` never needs to `#include` the cover header. All communication between hub and covers goes through virtual methods.
 
-### Data flow
+### Core Data Flow
 
 1. `Elero::setup()` configures CC1101 registers over SPI and attaches a GPIO interrupt on `gdo0_pin`.
 2. When the CC1101 signals a received packet (GDO0 interrupt), `Elero::interrupt()` sets `received_ = true`.
-3. `Elero::loop()` detects `received_`, reads the FIFO, decodes and decrypts the packet, then dispatches the state to the matching `EleroBlindBase` via `set_rx_state()`.
-4. `EleroCover::loop()` handles polling timers, position recomputation, and drains the command queue by calling `parent_->send_command()`.
+3. `Elero::loop()` detects `received_`, reads the FIFO, decodes and decrypts the packet, then:
+   - Dispatches state to matching `EleroBlindBase` via `set_rx_state()`
+   - Calls `on_rf_packet_` callback → server broadcasts to WebSocket clients
+4. `EleroCover::loop()` handles polling timers, position recomputation, and drains the command queue.
+
+### Dependency Injection
+
+The server receives events via callbacks, not direct coupling:
+
+```cpp
+// Hub calls this on every decoded RF packet
+void Elero::set_rf_packet_callback(std::function<void(const RfPacketInfo&)> cb) {
+  on_rf_packet_ = std::move(cb);
+}
+
+// LogListener interface for forwarding logs to WebSocket (ESPHome 2025.12.0+)
+// Component inherits from logger::LogListener and implements on_log()
+class EleroWebServer : public Component, public logger::LogListener {
+  void setup() override {
+    logger::global_logger->add_log_listener(this);
+  }
+  void on_log(uint8_t level, const char* tag, const char* msg, size_t msg_len) override {
+    // Forward to WebSocket clients if tag starts with "elero"
+  }
+};
+```
+
+This keeps the hub independent of the web server implementation.
 
 ---
 
@@ -168,66 +294,54 @@ Key behaviors:
 **Class:** `EleroWebServer : public Component`
 **Optional sub-platform:** `EleroWebSwitch : public switch::Switch, public Component`
 
+**CRITICAL: This class is a STATELESS pipe.** It does NOT:
+- Track discovered blinds (client derives from RF packets)
+- Store blind states (client derives from RF events)
+- Generate YAML (client does this)
+- Implement "scan mode" (client filters RF packets)
+
 Key behaviors:
-- Hosts the web UI at `http://<device-ip>/elero`
-- Exposes REST API for RF scanning, blind discovery, control, and runtime diagnostics
-- `EleroWebSwitch` allows runtime enable/disable of all `/elero` endpoints (returns 503 when disabled)
+- Uses **Mongoose** HTTP/WebSocket library for cross-framework compatibility (Arduino + ESP-IDF)
+- On connect: sends `config` event with blinds array from YAML
+- On RF packet (via callback from hub): broadcasts `rf` event to all clients
+- On log (via ESPHome logger callback): broadcasts `log` event to clients
+- On `cmd` message: routes command to hub's `send_command()`
+- On `raw` message: routes to hub's `send_raw_command()`
 
-### REST API Endpoints
+### Why Mongoose?
 
-All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 response is returned if the optional `elero_web` switch is disabled.
+ESPHome's built-in `web_server_base` uses different implementations depending on the framework:
+- **Arduino**: AsyncTCP + ESPAsyncWebServer
+- **ESP-IDF**: esp_http_server
 
-**Core endpoints:**
+These have incompatible APIs for WebSocket handling. Mongoose provides a single, unified API that works identically on both frameworks.
+
+### WebSocket Protocol
+
+The web UI communicates exclusively via WebSocket at `/elero/ws`. See `docs/ARCHITECTURE.md` for the complete protocol specification.
+
+**Server → Client Events:**
+
+| Event | Description |
+|-------|-------------|
+| `config` | Sent on connect: device info, configured blinds/lights, frequency |
+| `rf` | Every decoded RF packet: addresses, state, RSSI, raw bytes |
+| `log` | ESPHome log entries with `elero.*` tags |
+
+**Client → Server Messages:**
+
+| Type | Description |
+|------|-------------|
+| `cmd` | Send command to blind/light: `{"type":"cmd", "address":"0xADDRESS", "action":"up"}` |
+| `raw` | Send raw RF packet for testing: `{"type":"raw", "blind_address":"0x...", "channel":5, ...}` |
+
+### HTTP Endpoints
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `/` | GET | Redirect to `/elero` |
-| `/elero` | GET | HTML web UI |
-| `/elero/api/scan/start` | POST | Start RF discovery scan |
-| `/elero/api/scan/stop` | POST | Stop RF discovery scan |
-| `/elero/api/discovered` | GET | JSON array of discovered blinds |
-| `/elero/api/configured` | GET | JSON array of configured covers with current state |
-| `/elero/api/yaml` | GET | YAML snippet ready to paste into ESPHome config |
-| `/elero/api/info` | GET | Device info (version, discovery count, etc.) |
-| `/elero/api/runtime` | GET | Runtime status (scan active, blinds count, etc.) |
-
-**Cover/Light control (requires address):**
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/elero/api/covers/0xADDRESS/command` | POST | Send command to cover/light (body: `{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
-| `/elero/api/covers/0xADDRESS/settings` | POST | Update cover settings at runtime (body: JSON with timing/poll settings) |
-| `/elero/api/discovered/0xADDRESS/adopt` | POST | Adopt a discovered blind into configured covers |
-
-**Diagnostics:**
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/elero/api/frequency` | GET | Current CC1101 frequency settings |
-| `/elero/api/frequency/set` | POST | Update CC1101 frequency (body: `{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
-| `/elero/api/logs` | GET | Recent log entries (supports `since` query parameter) |
-| `/elero/api/logs/clear` | POST | Clear captured logs |
-| `/elero/api/logs/capture/start` | POST | Start capturing logs |
-| `/elero/api/logs/capture/stop` | POST | Stop capturing logs |
-| `/elero/api/dump/start` | POST | Start RF packet dump |
-| `/elero/api/dump/stop` | POST | Stop RF packet dump |
-| `/elero/api/packets` | GET | Recent captured RF packets |
-| `/elero/api/packets/clear` | POST | Clear captured packets |
-
-**Web UI state (elero_web switch sub-platform):**
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/elero/api/ui/status` | GET | Get web UI enabled/disabled state |
-| `/elero/api/ui/enable` | POST | Enable/disable web UI (body: `{"enabled": true\|false}`) |
-
-**HTTP Error Codes:**
-
-| Code | Meaning |
-|---|---|
-| 200 | Success |
-| 409 | Conflict (e.g., trying to start scan when one is already running) |
-| 503 | Service Unavailable (returned when web UI is disabled via switch) |
+| `/elero` | GET | HTML web UI (static, bundled) |
+| `/elero/ws` | WS | WebSocket endpoint for real-time communication |
 
 ---
 
