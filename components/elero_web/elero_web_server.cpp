@@ -87,12 +87,10 @@ void EleroWebServer::setup() {
   // Register with hub for RF packet notifications
   this->parent_->set_web_server(this);
 
-  // Register as log listener to forward logs to WebSocket clients (ESPHome 2025.12.0+)
-#ifdef USE_LOGGER
+  // Register as log listener to forward elero.* logs to WebSocket clients
   if (logger::global_logger != nullptr) {
     logger::global_logger->add_log_listener(this);
   }
-#endif
 
   g_server = this;
   mg_mgr_init(&this->mgr_);
@@ -135,9 +133,8 @@ void EleroWebServer::on_rf_packet(const RfPacketInfo &pkt) {
   this->ws_broadcast("rf", this->build_rf_json(pkt));
 }
 
-#ifdef USE_LOGGER
 void EleroWebServer::on_log(uint8_t level, const char *tag, const char *message, size_t message_len) {
-  (void) message_len;  // Unused
+  (void) message_len;
   if (this->ws_clients_.empty() || !this->enabled_)
     return;
   // Only forward elero-related logs
@@ -150,7 +147,6 @@ void EleroWebServer::on_log(uint8_t level, const char *tag, const char *message,
            (unsigned long) millis(), level, tag, json_escape(message).c_str());
   this->ws_broadcast("log", buf);
 }
-#endif
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Mongoose Event Handler

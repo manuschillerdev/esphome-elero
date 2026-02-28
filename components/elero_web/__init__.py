@@ -1,16 +1,10 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components.elero import CONF_ELERO_ID, elero, elero_ns
+from esphome.components.logger import request_log_listener
 from esphome.const import CONF_ID, CONF_PORT
 
-# Import logger to request log listener slot (ESPHome 2025.12.0+)
-try:
-    from esphome.components.logger import request_log_listener
-    HAS_LOG_LISTENER = True
-except ImportError:
-    HAS_LOG_LISTENER = False
-
-DEPENDENCIES = ["elero", "network"]
+DEPENDENCIES = ["elero", "network", "logger"]
 CODEOWNERS = ["@manuschillerdev"]
 
 # Exported so the switch sub-platform can reference the web server class
@@ -35,7 +29,4 @@ async def to_code(config):
     cg.add(var.set_port(config[CONF_PORT]))
 
     # Request log listener slot for forwarding logs to WebSocket clients
-    if HAS_LOG_LISTENER:
-        request_log_listener()
-
-    # No external libraries needed - mongoose is compiled directly from source
+    request_log_listener()
