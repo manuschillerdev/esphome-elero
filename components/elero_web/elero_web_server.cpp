@@ -87,25 +87,10 @@ void EleroWebServer::setup() {
   // Register with hub for RF packet notifications
   this->parent_->set_web_server(this);
 
-  // Register ESPHome log callback to forward logs to WebSocket clients
+  // Register as log listener to forward logs to WebSocket clients (ESPHome 2025.12.0+)
 #ifdef USE_LOGGER
   if (logger::global_logger != nullptr) {
-    // ESPHome 2025.7.0+ uses (level, tag, msg, msg_len) signature
-    logger::global_logger->add_on_log_callback(
-        [this](int level, const char *tag, const char *msg, size_t msg_len) {
-          (void) msg_len;  // Unused but required by new API
-          if (this->ws_clients_.empty() || !this->enabled_)
-            return;
-          // Only forward elero-related logs
-          if (strncmp(tag, "elero", 5) != 0)
-            return;
-
-          char buf[512];
-          snprintf(buf, sizeof(buf),
-                   "{\"t\":%lu,\"level\":%d,\"tag\":\"%s\",\"msg\":\"%s\"}",
-                   (unsigned long) millis(), level, tag, json_escape(msg).c_str());
-          this->ws_broadcast("log", buf);
-        });
+    logger::global_logger->add_log_listener(this);
   }
 #endif
 
@@ -149,6 +134,23 @@ void EleroWebServer::on_rf_packet(const RfPacketInfo &pkt) {
     return;
   this->ws_broadcast("rf", this->build_rf_json(pkt));
 }
+
+#ifdef USE_LOGGER
+void EleroWebServer::on_log(uint8_t level, const char *tag, const char *message, size_t message_len) {
+  (void) message_len;  // Unused
+  if (this->ws_clients_.empty() || !this->enabled_)
+    return;
+  // Only forward elero-related logs
+  if (strncmp(tag, "elero", 5) != 0)
+    return;
+
+  char buf[512];
+  snprintf(buf, sizeof(buf),
+           "{\"t\":%lu,\"level\":%d,\"tag\":\"%s\",\"msg\":\"%s\"}",
+           (unsigned long) millis(), level, tag, json_escape(message).c_str());
+  this->ws_broadcast("log", buf);
+}
+#endif
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Mongoose Event Handler

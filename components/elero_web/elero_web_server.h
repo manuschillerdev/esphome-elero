@@ -6,6 +6,9 @@
 #endif
 
 #include "esphome/core/component.h"
+#ifdef USE_LOGGER
+#include "esphome/components/logger/logger.h"
+#endif
 #include "mongoose.h"
 #include "../elero/elero.h"
 #include <string>
@@ -17,7 +20,11 @@ namespace elero {
 /// Simplified WebSocket server - acts as RF bridge
 /// Server → Client: config (on connect), rf (packets), log (ESPHome logs)
 /// Client → Server: cmd (blind commands)
+#ifdef USE_LOGGER
+class EleroWebServer : public Component, public logger::LogListener {
+#else
 class EleroWebServer : public Component {
+#endif
  public:
   void setup() override;
   void loop() override;
@@ -33,6 +40,11 @@ class EleroWebServer : public Component {
 
   // Called from hub when RF packet is received
   void on_rf_packet(const RfPacketInfo &pkt);
+
+#ifdef USE_LOGGER
+  // LogListener interface (ESPHome 2025.12.0+)
+  void on_log(uint8_t level, const char *tag, const char *message, size_t message_len) override;
+#endif
 
  protected:
   Elero *parent_{nullptr};
