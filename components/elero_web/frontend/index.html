@@ -451,6 +451,7 @@ function eleroApp() {
 
     // ── WebSocket connection ──
     connect() {
+      console.log('connect() called, current _ws:', _ws)
       if (_ws) {
         _ws.close()
         _ws = null
@@ -458,8 +459,10 @@ function eleroApp() {
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
       _ws = new WebSocket(`${proto}//${location.host}/elero/ws`)
+      console.log('WebSocket created:', _ws)
 
       _ws.onopen = () => {
+        console.log('WebSocket onopen, _ws:', _ws)
         this.connected = true
         if (this.reconnectTimer) {
           clearTimeout(this.reconnectTimer)
@@ -478,6 +481,7 @@ function eleroApp() {
       }
 
       _ws.onmessage = (e) => {
+        console.log('onmessage, _ws:', _ws)
         const msg = JSON.parse(e.data)
         const event = msg.event
         const data = msg.data
