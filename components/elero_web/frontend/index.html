@@ -547,9 +547,13 @@ function eleroApp() {
 
     // ── WebSocket send helper ──
     send(msg) {
+      console.log('send() called:', msg, 'ws:', this.ws, 'readyState:', this.ws?.readyState)
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify(msg))
+        const json = JSON.stringify(msg)
+        console.log('Sending:', json)
+        this.ws.send(json)
       } else {
+        console.log('Not connected - ws:', this.ws, 'readyState:', this.ws?.readyState)
         this.showToast('Not connected', true)
       }
     },
