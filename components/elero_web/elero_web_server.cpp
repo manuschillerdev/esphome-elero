@@ -90,19 +90,22 @@ void EleroWebServer::setup() {
   // Register ESPHome log callback to forward logs to WebSocket clients
 #ifdef USE_LOGGER
   if (logger::global_logger != nullptr) {
-    logger::global_logger->add_on_log_callback([this](int level, const char *tag, const char *msg) {
-      if (this->ws_clients_.empty() || !this->enabled_)
-        return;
-      // Only forward elero-related logs
-      if (strncmp(tag, "elero", 5) != 0)
-        return;
+    // ESPHome 2025.7.0+ uses (level, tag, msg, msg_len) signature
+    logger::global_logger->add_on_log_callback(
+        [this](int level, const char *tag, const char *msg, size_t msg_len) {
+          (void) msg_len;  // Unused but required by new API
+          if (this->ws_clients_.empty() || !this->enabled_)
+            return;
+          // Only forward elero-related logs
+          if (strncmp(tag, "elero", 5) != 0)
+            return;
 
-      char buf[512];
-      snprintf(buf, sizeof(buf),
-               "{\"t\":%lu,\"level\":%d,\"tag\":\"%s\",\"msg\":\"%s\"}",
-               (unsigned long) millis(), level, tag, json_escape(msg).c_str());
-      this->ws_broadcast("log", buf);
-    });
+          char buf[512];
+          snprintf(buf, sizeof(buf),
+                   "{\"t\":%lu,\"level\":%d,\"tag\":\"%s\",\"msg\":\"%s\"}",
+                   (unsigned long) millis(), level, tag, json_escape(msg).c_str());
+          this->ws_broadcast("log", buf);
+        });
   }
 #endif
 

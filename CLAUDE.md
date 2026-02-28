@@ -222,10 +222,11 @@ void Elero::set_rf_packet_callback(std::function<void(const RfPacketInfo&)> cb) 
   on_rf_packet_ = std::move(cb);
 }
 
-// Logger callback for forwarding logs to WebSocket
-esphome::logger::global_logger->add_on_log_callback([this](int level, const char* tag, const char* msg) {
-  // Forward to WebSocket clients if tag starts with "elero"
-});
+// Logger callback for forwarding logs to WebSocket (ESPHome 2025.7.0+ signature)
+esphome::logger::global_logger->add_on_log_callback(
+    [this](int level, const char* tag, const char* msg, size_t msg_len) {
+      // Forward to WebSocket clients if tag starts with "elero"
+    });
 ```
 
 This keeps the hub independent of the web server implementation.
