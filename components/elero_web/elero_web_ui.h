@@ -414,11 +414,13 @@ function uptimeFmt(ms) {
   return `${sec}s`
 }
 
+// WebSocket stored outside Alpine's reactive proxy to avoid scope issues
+let _ws = null
+
 function eleroApp() {
   return {
     tab: 'devices',
     connected: false,
-    ws: null,
     reconnectTimer: null,
 
     deviceName: '',
@@ -457,15 +459,15 @@ function eleroApp() {
 
     // ── WebSocket connection ──
     connect() {
-      if (this.ws) {
-        this.ws.close()
-        this.ws = null
+      if (_ws) {
+        _ws.close()
+        _ws = null
       }
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      this.ws = new WebSocket(`${proto}//${location.host}/elero/ws`)
+      _ws = new WebSocket(`${proto}//${location.host}/elero/ws`)
 
-      this.ws.onopen = () => {
+      _ws.onopen = () => {
         this.connected = true
         if (this.reconnectTimer) {
           clearTimeout(this.reconnectTimer)
@@ -473,17 +475,17 @@ function eleroApp() {
         }
       }
 
-      this.ws.onclose = () => {
+      _ws.onclose = () => {
         this.connected = false
-        this.ws = null
+        _ws = null
         this.reconnectTimer = setTimeout(() => this.connect(), 2000)
       }
 
-      this.ws.onerror = () => {
+      _ws.onerror = () => {
         this.connected = false
       }
 
-      this.ws.onmessage = (e) => {
+      _ws.onmessage = (e) => {
         const msg = JSON.parse(e.data)
         const event = msg.event
         const data = msg.data
@@ -555,13 +557,13 @@ function eleroApp() {
 
     // ── WebSocket send helper ──
     send(msg) {
-      console.log('send() called:', msg, 'ws:', this.ws, 'readyState:', this.ws?.readyState)
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      console.log('send() called:', msg, 'ws:', _ws, 'readyState:', _ws?.readyState)
+      if (_ws && _ws.readyState === WebSocket.OPEN) {
         const json = JSON.stringify(msg)
         console.log('Sending:', json)
-        this.ws.send(json)
+        _ws.send(json)
       } else {
-        console.log('Not connected - ws:', this.ws, 'readyState:', this.ws?.readyState)
+        console.log('Not connected - ws:', _ws, 'readyState:', _ws?.readyState)
         this.showToast('Not connected', true)
       }
     },
