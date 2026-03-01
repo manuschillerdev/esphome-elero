@@ -84,8 +84,10 @@ void EleroWebServer::setup() {
     return;
   }
 
-  // Register with hub for RF packet notifications
-  this->parent_->set_web_server(this);
+  // Register callback with hub for RF packet notifications
+  this->parent_->set_rf_packet_callback([this](const RfPacketInfo &pkt) {
+    this->on_rf_packet(pkt);
+  });
 
   g_server = this;
   mg_mgr_init(&this->mgr_);

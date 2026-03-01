@@ -1,6 +1,5 @@
 #include "elero.h"
 #include "elero_protocol.h"
-#include "../elero_web/elero_web_server.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -731,8 +730,8 @@ void Elero::interpret_msg() {
            length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2,
            payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
 
-  // Notify web server of RF packet
-  if (this->web_server_ != nullptr) {
+  // Notify RF packet callback (if registered)
+  if (this->on_rf_packet_) {
     RfPacketInfo pkt{};
     pkt.timestamp_ms = millis();
     pkt.src = src;
@@ -748,7 +747,7 @@ void Elero::interpret_msg() {
     memcpy(pkt.payload, payload, 10);
     pkt.raw_len = (length + 3 <= CC1101_FIFO_LENGTH) ? length + 3 : CC1101_FIFO_LENGTH;
     memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
-    this->web_server_->on_rf_packet(pkt);
+    this->on_rf_packet_(pkt);
   }
 
   // Update RSSI sensor for any message from a known blind

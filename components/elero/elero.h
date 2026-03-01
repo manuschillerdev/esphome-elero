@@ -10,6 +10,7 @@
 #include <map>
 #include <queue>
 #include <atomic>
+#include <functional>
 
 // Elero RF protocol implementation based on reverse-engineered specifications.
 // Protocol documentation: https://github.com/QuadCorei8085/elero_protocol
@@ -215,9 +216,6 @@ class EleroBlindBase {
 
 class Elero;  // Forward declaration for SpiTransaction
 
-// Forward declaration for web server notifications
-class EleroWebServer;
-
 /// RAII guard for SPI transactions. Calls enable() on construction and
 /// disable() on destruction, ensuring CS is always released even on early return.
 class SpiTransaction {
@@ -305,8 +303,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_freq1(uint8_t freq) { freq1_ = freq; }
   void set_freq2(uint8_t freq) { freq2_ = freq; }
 
-  // Web server notification link
-  void set_web_server(EleroWebServer *ws) { web_server_ = ws; }
+  // RF packet notification callback (used by web server)
+  using RfPacketCallback = std::function<void(const RfPacketInfo &)>;
+  void set_rf_packet_callback(RfPacketCallback cb) { on_rf_packet_ = std::move(cb); }
+
   void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   uint8_t get_freq0() const { return freq0_; }
   uint8_t get_freq1() const { return freq1_; }
@@ -337,8 +337,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::map<uint32_t, text_sensor::TextSensor *> address_to_text_sensor_;
 #endif
 
-  // Web server for notifications (optional)
-  EleroWebServer *web_server_{nullptr};
+  // RF packet notification callback (optional, set by web server)
+  RfPacketCallback on_rf_packet_{};
 };
 
 }  // namespace elero
