@@ -1,92 +1,140 @@
+import { useState } from 'preact/hooks'
 import { Card } from './ui/card'
-import { Input } from './ui/input'
-import { Label } from './ui/label'
-import { Button } from './ui/button'
 import { Badge } from './ui/badge'
-import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
-import { Radio, Send, RotateCcw, Info, CheckCircle2, AlertCircle, Loader2 } from './icons'
-import { cn } from '@/lib/utils'
-import { useStore, type CC1101Registers, type DebugPayload, type SendStatus } from '@/store'
+import { Button } from './ui/button'
+import { Radio, Send } from './icons'
+import { useStore, parseFreq } from '@/store'
+import { sendRawCommand } from '@/ws'
 
-function HexField({ id, label, value, onChange, register, tooltip, className }: {
-  id: string; label: string; value: string; onChange: (v: string) => void
-  register?: string; tooltip?: string; className?: string
-}) {
-  return (
-    <div className={cn('flex flex-col gap-1.5', className)}>
-      <div className="flex items-center gap-2">
-        <Label htmlFor={id} className="text-xs font-medium text-foreground">{label}</Label>
-        {register && <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[10px] tracking-wider text-muted-foreground">{register}</Badge>}
-        {tooltip && (
-          <Tooltip>
-            <TooltipTrigger><Info className="size-3 text-muted-foreground" /></TooltipTrigger>
-            <TooltipContent className="max-w-48 text-xs">{tooltip}</TooltipContent>
-          </Tooltip>
-        )}
-      </div>
-      <Input id={id} value={value} onInput={(e) => onChange((e.target as HTMLInputElement).value)} placeholder="0x00" className="h-8 font-mono text-sm" />
-    </div>
-  )
-}
-
-function StatusFeedback({ status, timestamp }: { status: SendStatus; timestamp: string | null }) {
-  if (status === 'idle') return null
-  return (
-    <div className={cn(
-      'flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-all',
-      status === 'sending' && 'bg-muted text-muted-foreground',
-      status === 'success' && 'bg-success/10 text-success',
-      status === 'error' && 'bg-destructive/10 text-destructive'
-    )}>
-      {status === 'sending' && <><Loader2 className="size-3.5 animate-spin" />Sending...</>}
-      {status === 'success' && <><CheckCircle2 className="size-3.5" />Sent{timestamp && <span className="ml-auto font-mono text-[11px] text-muted-foreground">{timestamp}</span>}</>}
-      {status === 'error' && <><AlertCircle className="size-3.5" />Failed</>}
-    </div>
-  )
-}
+// Command presets for quick selection
+const COMMAND_PRESETS = [
+  { label: 'CHECK', value: '0x00' },
+  { label: 'STOP', value: '0x10' },
+  { label: 'UP', value: '0x20' },
+  { label: 'TILT', value: '0x24' },
+  { label: 'DOWN', value: '0x40' },
+  { label: 'INT', value: '0x44' },
+] as const
 
 export function HubPanel() {
-  const registers = useStore((s) => s.registers)
-  const payload = useStore((s) => s.payload)
-  const sendStatus = useStore((s) => s.sendStatus)
-  const sentTimestamp = useStore((s) => s.sentTimestamp)
-  const updateRegister = useStore((s) => s.updateRegister)
-  const resetRegisters = useStore((s) => s.resetRegisters)
-  const updatePayload = useStore((s) => s.updatePayload)
-  const resetPayload = useStore((s) => s.resetPayload)
+  const freq = useStore((s) => s.config.freq)
+  const device = useStore((s) => s.config.device)
+  const blinds = useStore((s) => s.config.blinds)
+  const lights = useStore((s) => s.config.lights)
 
-  // Compute frequency inline
-  const f2 = parseInt(registers.freq2, 16) || 0
-  const f1 = parseInt(registers.freq1, 16) || 0
-  const f0 = parseInt(registers.freq0, 16) || 0
+  // Raw TX form state
+  const [blindAddr, setBlindAddr] = useState('0x')
+  const [remoteAddr, setRemoteAddr] = useState('0x')
+  const [channel, setChannel] = useState(1)
+  const [command, setCommand] = useState('0x00')
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [payload1, setPayload1] = useState('0x00')
+  const [payload2, setPayload2] = useState('0x04')
+  const [pckInf1, setPckInf1] = useState('0x6a')
+  const [pckInf2, setPckInf2] = useState('0x00')
+  const [hop, setHop] = useState('0x0a')
+
+  // Compute frequency from registers
+  const f2 = parseFreq(freq.freq2, 0x21)
+  const f1 = parseFreq(freq.freq1, 0x71)
+  const f0 = parseFreq(freq.freq0, 0x7a)
   const calculatedFreq = `${(((f2 * 256 * 256 + f1 * 256 + f0) * 26000000) / (1 << 16) / 1000000).toFixed(3)} MHz`
 
-  const handleSendPayload = () => {
-    useStore.getState().setSendStatus('sending')
-    setTimeout(() => {
-      useStore.getState().setSendStatus('success')
-      useStore.getState().setSentTimestamp(new Date().toLocaleTimeString())
-      setTimeout(() => useStore.getState().setSendStatus('idle'), 4000)
-    }, 800)
+  const handleSendRaw = () => {
+    sendRawCommand({
+      blind_address: blindAddr,
+      remote_address: remoteAddr,
+      channel,
+      command,
+      payload_1: payload1,
+      payload_2: payload2,
+      pck_inf1: pckInf1,
+      pck_inf2: pckInf2,
+      hop,
+    })
   }
+
+  // Check if form is valid
+  const isValidHex = (s: string) => /^0x[0-9a-fA-F]+$/.test(s)
+  const isFormValid = isValidHex(blindAddr) && isValidHex(remoteAddr) && isValidHex(command) && channel >= 0 && channel <= 255
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Device Info */}
+      <Card className="gap-0 overflow-hidden p-0">
+        <div className="flex items-center gap-3 border-b border-border px-5 py-4">
+          <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Radio className="size-4" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-card-foreground">Hub Information</h2>
+            <p className="text-xs text-muted-foreground">Device configuration</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Device
+            </span>
+            <span className="text-sm font-medium">{device || '-'}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Blinds
+            </span>
+            <span className="text-sm font-medium">{blinds.length}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Lights
+            </span>
+            <span className="text-sm font-medium">{lights.length}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Frequency
+            </span>
+            <span className="text-sm font-medium">{calculatedFreq}</span>
+          </div>
+        </div>
+      </Card>
+
+      {/* Frequency Registers */}
       <Card className="gap-0 overflow-hidden p-0">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><Radio className="size-4" /></div>
-            <div>
-              <h2 className="text-sm font-semibold text-card-foreground">CC1101 Frequency</h2>
-              <p className="text-xs text-muted-foreground">Set frequency registers</p>
-            </div>
+          <div>
+            <h2 className="text-sm font-semibold text-card-foreground">CC1101 Registers</h2>
+            <p className="text-xs text-muted-foreground">Frequency configuration</p>
           </div>
-          <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={resetRegisters}><RotateCcw className="size-3" />Reset</Button>
         </div>
-        <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-3">
-          <HexField id="freq2" label="FREQ2" register="0x21" value={registers.freq2} onChange={(v) => updateRegister('freq2', v)} />
-          <HexField id="freq1" label="FREQ1" register="0x7A" value={registers.freq1} onChange={(v) => updateRegister('freq1', v)} />
-          <HexField id="freq0" label="FREQ0" register="0x71" value={registers.freq0} onChange={(v) => updateRegister('freq0', v)} />
+        <div className="grid grid-cols-3 gap-4 p-5">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-foreground">FREQ2</span>
+              <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[10px]">0x0D</Badge>
+            </div>
+            <code className="rounded bg-muted px-2 py-1.5 font-mono text-sm">
+              0x{f2.toString(16).padStart(2, '0')}
+            </code>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-foreground">FREQ1</span>
+              <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[10px]">0x0E</Badge>
+            </div>
+            <code className="rounded bg-muted px-2 py-1.5 font-mono text-sm">
+              0x{f1.toString(16).padStart(2, '0')}
+            </code>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-foreground">FREQ0</span>
+              <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[10px]">0x0F</Badge>
+            </div>
+            <code className="rounded bg-muted px-2 py-1.5 font-mono text-sm">
+              0x{f0.toString(16).padStart(2, '0')}
+            </code>
+          </div>
         </div>
         <div className="flex items-center gap-3 border-t border-border bg-muted/30 px-5 py-3">
           <span className="text-xs text-muted-foreground">Calculated:</span>
@@ -94,52 +142,139 @@ export function HubPanel() {
         </div>
       </Card>
 
+      {/* Raw TX Form */}
       <Card className="gap-0 overflow-hidden p-0">
         <div className="flex items-center gap-3 border-b border-border px-5 py-4">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-warning/10 text-warning-foreground"><Send className="size-4" /></div>
+          <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Send className="size-4" />
+          </div>
           <div>
-            <h2 className="text-sm font-semibold text-card-foreground">Debug Payload</h2>
-            <p className="text-xs text-muted-foreground">Send raw command</p>
+            <h2 className="text-sm font-semibold text-card-foreground">Raw TX</h2>
+            <p className="text-xs text-muted-foreground">Send raw RF command for testing</p>
           </div>
         </div>
-        <div className="flex flex-col gap-0 divide-y divide-border">
-          <div className="flex flex-col gap-3 p-5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Addressing</span>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <HexField id="blind-address" label="blind_address" value={payload.blindAddress} onChange={(v) => updatePayload('blindAddress', v)} />
-              <HexField id="channel" label="channel" value={payload.channel} onChange={(v) => updatePayload('channel', v)} />
-              <HexField id="remote-address" label="remote_address" value={payload.remoteAddress} onChange={(v) => updatePayload('remoteAddress', v)} />
+
+        <div className="space-y-4 p-5">
+          {/* Main fields */}
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Blind Address</label>
+              <input
+                type="text"
+                value={blindAddr}
+                onChange={(e) => setBlindAddr((e.target as HTMLInputElement).value)}
+                placeholder="0x313238"
+                className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Remote Address</label>
+              <input
+                type="text"
+                value={remoteAddr}
+                onChange={(e) => setRemoteAddr((e.target as HTMLInputElement).value)}
+                placeholder="0x17a753"
+                className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Channel</label>
+              <input
+                type="number"
+                value={channel}
+                onChange={(e) => setChannel(parseInt((e.target as HTMLInputElement).value) || 0)}
+                min="0"
+                max="255"
+                className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Command</label>
+              <select
+                value={command}
+                onChange={(e) => setCommand((e.target as HTMLSelectElement).value)}
+                className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                {COMMAND_PRESETS.map((preset) => (
+                  <option key={preset.value} value={preset.value}>
+                    {preset.label} ({preset.value})
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
-          <div className="flex flex-col gap-3 p-5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Packet</span>
+
+          {/* Advanced fields toggle */}
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            {showAdvanced ? '- Hide advanced fields' : '+ Show advanced fields'}
+          </button>
+
+          {/* Advanced fields */}
+          {showAdvanced && (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
-              <HexField id="payload-1" label="payload_1" value={payload.payload1} onChange={(v) => updatePayload('payload1', v)} />
-              <HexField id="payload-2" label="payload_2" value={payload.payload2} onChange={(v) => updatePayload('payload2', v)} />
-              <HexField id="pck-inf1" label="pck_inf1" value={payload.pckInf1} onChange={(v) => updatePayload('pckInf1', v)} />
-              <HexField id="pck-inf2" label="pck_inf2" value={payload.pckInf2} onChange={(v) => updatePayload('pckInf2', v)} />
-              <HexField id="hop" label="hop" value={payload.hop} onChange={(v) => updatePayload('hop', v)} />
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-muted-foreground">payload_1</label>
+                <input
+                  type="text"
+                  value={payload1}
+                  onChange={(e) => setPayload1((e.target as HTMLInputElement).value)}
+                  className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-muted-foreground">payload_2</label>
+                <input
+                  type="text"
+                  value={payload2}
+                  onChange={(e) => setPayload2((e.target as HTMLInputElement).value)}
+                  className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-muted-foreground">pck_inf1</label>
+                <input
+                  type="text"
+                  value={pckInf1}
+                  onChange={(e) => setPckInf1((e.target as HTMLInputElement).value)}
+                  className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-muted-foreground">pck_inf2</label>
+                <input
+                  type="text"
+                  value={pckInf2}
+                  onChange={(e) => setPckInf2((e.target as HTMLInputElement).value)}
+                  className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-muted-foreground">hop</label>
+                <input
+                  type="text"
+                  value={hop}
+                  onChange={(e) => setHop((e.target as HTMLInputElement).value)}
+                  className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
             </div>
-          </div>
-          <div className="flex flex-col gap-3 p-5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Commands</span>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
-              <HexField id="command-check" label="cmd_check" value={payload.commandCheck} onChange={(v) => updatePayload('commandCheck', v)} />
-              <HexField id="command-stop" label="cmd_stop" value={payload.commandStop} onChange={(v) => updatePayload('commandStop', v)} />
-              <HexField id="command-up" label="cmd_up" value={payload.commandUp} onChange={(v) => updatePayload('commandUp', v)} />
-              <HexField id="command-down" label="cmd_down" value={payload.commandDown} onChange={(v) => updatePayload('commandDown', v)} />
-              <HexField id="command-tilt" label="cmd_tilt" value={payload.commandTilt} onChange={(v) => updatePayload('commandTilt', v)} />
-            </div>
-          </div>
+          )}
         </div>
-        <div className="flex items-center justify-between gap-3 border-t border-border bg-muted/30 px-5 py-3">
-          <StatusFeedback status={sendStatus} timestamp={sentTimestamp} />
-          <div className="ml-auto flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={resetPayload}><RotateCcw className="size-3" />Reset</Button>
-            <Button size="sm" className="gap-1.5 text-xs" onClick={handleSendPayload} disabled={sendStatus === 'sending'}>
-              {sendStatus === 'sending' ? <Loader2 className="size-3 animate-spin" /> : <Send className="size-3" />}Send
-            </Button>
-          </div>
+
+        {/* Send button */}
+        <div className="flex items-center justify-end gap-3 border-t border-border bg-muted/30 px-5 py-3">
+          <Button
+            onClick={handleSendRaw}
+            disabled={!isFormValid}
+            className="gap-2"
+          >
+            <Send className="size-4" />
+            Send Raw TX
+          </Button>
         </div>
       </Card>
     </div>
