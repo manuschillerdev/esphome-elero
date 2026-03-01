@@ -212,3 +212,81 @@ export function Loader2(props: IconProps) {
     </svg>
   )
 }
+
+export function Copy(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </svg>
+  )
+}
+
+export function Trash2(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M3 6h18" />
+      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+      <line x1="10" x2="10" y1="11" y2="17" />
+      <line x1="14" x2="14" y1="11" y2="17" />
+    </svg>
+  )
+}
+
+export function FileText(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M10 9H8" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+    </svg>
+  )
+}
+
+export function Lightbulb(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" />
+      <path d="M9 18h6" />
+      <path d="M10 22h4" />
+    </svg>
+  )
+}
+
+export function LightbulbOff(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M16.8 11.2c.8-.9 1.2-2 1.2-3.2a6 6 0 0 0-9.3-5" />
+      <path d="m2 2 20 20" />
+      <path d="M6.3 6.3a4.67 4.67 0 0 0 1.2 5.2c.7.7 1.3 1.5 1.5 2.5" />
+      <path d="M9 18h6" />
+      <path d="M10 22h4" />
+    </svg>
+  )
+}
+
+export function Blinds(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M3 3h18" />
+      <path d="M20 7H8" />
+      <path d="M20 11H8" />
+      <path d="M10 19h10" />
+      <path d="M8 15h12" />
+      <path d="M4 3v14" />
+      <circle cx="4" cy="19" r="2" />
+    </svg>
+  )
+}
+
+export function Power(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M12 2v10" />
+      <path d="M18.4 6.6a9 9 0 1 1-12.77.04" />
+    </svg>
+  )
+}

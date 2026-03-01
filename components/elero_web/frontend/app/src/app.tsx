@@ -1,12 +1,21 @@
+import { useEffect } from 'preact/hooks'
 import { useStore } from './store'
+import { connect, disconnect } from './ws'
 import { DashboardHeader } from './components/dashboard-header'
 import { DashboardNav } from './components/dashboard-nav'
 import { ControlBar } from './components/control-bar'
 import { DeviceGrid } from './components/device-grid'
+import { RfPackets } from './components/rf-packets'
+import { LogsPanel } from './components/logs-panel'
 import { HubPanel } from './components/hub-panel'
 
 export function App() {
   const activeTab = useStore((s) => s.activeTab)
+
+  useEffect(() => {
+    connect()
+    return () => disconnect()
+  }, [])
 
   return (
     <div className="min-h-screen bg-background">
@@ -25,6 +34,8 @@ export function App() {
               </div>
             )}
 
+            {activeTab === 'packets' && <RfPackets />}
+            {activeTab === 'logs' && <LogsPanel />}
             {activeTab === 'hub' && <HubPanel />}
           </div>
         </div>
