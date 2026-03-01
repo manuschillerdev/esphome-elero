@@ -1,6 +1,7 @@
 #pragma once
 
 #include "elero.h"
+#include "time_provider.h"
 #include "tx_client.h"
 #include "esphome/core/log.h"
 #include <queue>
@@ -120,7 +121,7 @@ class CommandSender : public TxClient {
   /// - Success: increment packet count, dequeue if done
   /// - Failure: retry or give up after max retries
   void on_tx_complete(bool success) override {
-    this->last_tx_time_ = millis();
+    this->last_tx_time_ = get_time_provider().millis();
 
     // Check cancellation FIRST
     if (this->cancelled_) {
