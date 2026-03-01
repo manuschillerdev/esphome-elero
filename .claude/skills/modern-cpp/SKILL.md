@@ -403,27 +403,54 @@ Run: `clang-format -i src/*.cpp include/*.h`
 
 ## ESP Platform Constraints
 
-### No std::atomic on ESP8266/RP2040
+### Atomics: Platform Support
 
-`std::atomic` causes linker errors (`undefined reference to '__atomic_exchange_1'`) on ESP8266 and RP2040. These platforms lack hardware atomic support for the operations the standard library expects.
+| Platform | `std::atomic` | Notes |
+|----------|---------------|-------|
+| **ESP32** | ✅ Supported | Lock-free for 8/16/32-bit types, use freely |
+| **ESP8266** | ❌ Linker errors | `undefined reference to '__atomic_exchange_1'` |
+| **RP2040** | ❌ Linker errors | No hardware atomic support |
 
-**For ISR flags:** Use `volatile` instead. A single bool read/write is inherently atomic on ARM and Xtensa architectures.
+**For ESP32-only projects:** Use `std::atomic` — it's the correct solution for ISR-to-loop communication and avoids race conditions in read-modify-write patterns.
 
 ```cpp
-// Bad: Fails on ESP8266/RP2040
+// ESP32-only: Preferred — no race condition
 std::atomic<bool> received_{false};
 
-// Good: Works on all platforms
-volatile bool received_{false};
+void IRAM_ATTR isr() {
+  received_.store(true, std::memory_order_release);
+}
+
+void loop() {
+  if (received_.exchange(false)) {  // Atomic read-and-clear
+    process();
+  }
+}
 ```
 
-**Note:** When migrating from `std::atomic` to `volatile`, atomic methods (`.load()`, `.store()`, `.exchange()`) must also be replaced with plain variable access.
+**For portable code (ESP8266/RP2040 support):** Use `volatile` instead. Single bool read/write is inherently atomic on ARM and Xtensa, but read-modify-write patterns have race conditions.
 
-**When you actually need atomics (ESP32 only):**
-- Multi-core synchronization (ESP32 has dual cores)
-- Complex read-modify-write operations
+```cpp
+// Portable but has race condition in read-clear pattern
+volatile bool received_{false};
 
-For simple ISR-to-loop flag communication, `volatile` is sufficient and portable.
+void IRAM_ATTR isr() {
+  received_ = true;
+}
+
+void loop() {
+  // Race: ISR can fire between read and clear
+  if (received_) {
+    received_ = false;
+    process();
+  }
+}
+```
+
+**When you need atomics (ESP32):**
+- ISR flag read-and-clear (avoids lost updates)
+- Multi-core synchronization (ESP32 is dual-core)
+- Any read-modify-write operation shared with ISR
 
 ### Memory Constraints
 
@@ -451,4 +478,4 @@ Prefer stack allocation for small objects, static allocation for fixed buffers.
 | `i++` (unused value) | `++i` |
 | `static const` in header | `inline constexpr` |
 | Implicit conversions | `explicit` constructors |
-| `std::atomic` for ISR flags | `volatile bool` (portable) |
+| `volatile` for ISR read-clear (ESP32) | `std::atomic<bool>` with `.exchange()` |

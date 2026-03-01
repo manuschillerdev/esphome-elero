@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 .venv/
 
+# ESPHome build cache
+.esphome/
+
 # Override global .claude ignore for skills (shareable reference docs)
 !.claude/
 .claude/*

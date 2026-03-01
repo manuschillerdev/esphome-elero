@@ -84,13 +84,10 @@ void EleroWebServer::setup() {
     return;
   }
 
-  // Register with hub for RF packet notifications
-  this->parent_->set_web_server(this);
-
-  // Register as log listener to forward elero.* logs to WebSocket clients
-  if (logger::global_logger != nullptr) {
-    logger::global_logger->add_log_listener(this);
-  }
+  // Register callback with hub for RF packet notifications
+  this->parent_->set_rf_packet_callback([this](const RfPacketInfo &pkt) {
+    this->on_rf_packet(pkt);
+  });
 
   g_server = this;
   mg_mgr_init(&this->mgr_);
@@ -131,21 +128,6 @@ void EleroWebServer::on_rf_packet(const RfPacketInfo &pkt) {
   if (this->ws_clients_.empty() || !this->enabled_)
     return;
   this->ws_broadcast("rf", this->build_rf_json(pkt));
-}
-
-void EleroWebServer::on_log(uint8_t level, const char *tag, const char *message, size_t message_len) {
-  (void) message_len;
-  if (this->ws_clients_.empty() || !this->enabled_)
-    return;
-  // Only forward elero-related logs
-  if (strncmp(tag, "elero", 5) != 0)
-    return;
-
-  char buf[512];
-  snprintf(buf, sizeof(buf),
-           "{\"t\":%lu,\"level\":%d,\"tag\":\"%s\",\"msg\":\"%s\"}",
-           (unsigned long) millis(), level, tag, json_escape(message).c_str());
-  this->ws_broadcast("log", buf);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -379,10 +361,19 @@ std::string EleroWebServer::build_config_json() {
   for (const auto &pair : this->parent_->get_configured_lights()) {
     if (!first) json += ",";
     first = false;
-    char buf[128];
+    auto *light = pair.second;
+    char buf[256];
     snprintf(buf, sizeof(buf),
-             "{\"address\":\"0x%06x\"}",
-             pair.first);
+             "{\"address\":\"0x%06x\","
+             "\"name\":\"%s\","
+             "\"channel\":%d,"
+             "\"remote\":\"0x%06x\","
+             "\"dim_ms\":%lu}",
+             pair.first,
+             json_escape(light->get_light_name()).c_str(),
+             (int) light->get_channel(),
+             light->get_remote_address(),
+             (unsigned long) light->get_dim_duration_ms());
     json += buf;
   }
   json += "]";

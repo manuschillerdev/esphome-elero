@@ -1,5 +1,7 @@
 # Architecture
 
+> **Golden Rule:** Radio packets + YAML config are the only sources of truth. Everything else—device states, discovery, positions—is derived. No extra state anywhere.
+
 This document describes the data flow architecture of the `elero_web` component.
 
 ## Why Mongoose?

@@ -84,10 +84,6 @@ esphome-elero/
     │   │   ├── __init__.py            # Cover schema & code-gen
     │   │   ├── EleroCover.h           # Cover class header
     │   │   └── EleroCover.cpp         # Cover logic, position tracking (~307 lines)
-    │   ├── button/                    # Scan button platform
-    │   │   ├── __init__.py
-    │   │   ├── elero_button.h
-    │   │   └── elero_button.cpp
     │   ├── sensor/                    # RSSI sensor platform
     │   │   └── __init__.py
     │   └── text_sensor/               # Blind status text sensor platform
@@ -193,7 +189,6 @@ Elero (hub, SPIDevice + Component)
 ├── EleroBlindBase (abstract interface)
 │   ├── EleroCover (cover::Cover + Component + EleroBlindBase)
 │   └── EleroLight (light::LightOutput + Component + EleroBlindBase)
-├── EleroScanButton (button::Button + Component)
 ├── sensor::Sensor (RSSI, registered per blind address)
 ├── text_sensor::TextSensor (status, registered per blind address)
 ├── EleroWebServer (Component, Mongoose HTTP/WS)
@@ -221,17 +216,6 @@ The server receives events via callbacks, not direct coupling:
 void Elero::set_rf_packet_callback(std::function<void(const RfPacketInfo&)> cb) {
   on_rf_packet_ = std::move(cb);
 }
-
-// LogListener interface for forwarding logs to WebSocket (ESPHome 2025.12.0+)
-// Component inherits from logger::LogListener and implements on_log()
-class EleroWebServer : public Component, public logger::LogListener {
-  void setup() override {
-    logger::global_logger->add_log_listener(this);
-  }
-  void on_log(uint8_t level, const char* tag, const char* msg, size_t msg_len) override {
-    // Forward to WebSocket clients if tag starts with "elero"
-  }
-};
 ```
 
 This keeps the hub independent of the web server implementation.
@@ -248,7 +232,6 @@ This keeps the hub independent of the web server implementation.
 Critical public API:
 - `register_cover(EleroBlindBase*)` — called by each `EleroCover` at setup
 - `send_command(t_elero_command*)` — encodes, encrypts, and transmits a command
-- `start_scan()` / `stop_scan()` — toggle RF discovery mode
 - `register_rssi_sensor(uint32_t addr, sensor::Sensor*)` — link RSSI sensor to a blind address
 - `register_text_sensor(uint32_t addr, text_sensor::TextSensor*)` — link text sensor to a blind address
 - `interrupt(Elero *arg)` — static ISR, sets `received_` flag
@@ -263,7 +246,7 @@ Key constants (defined in `elero.h`):
 | `ELERO_SEND_RETRIES` | 3 | Command retry count |
 | `ELERO_SEND_PACKETS` | 2 | Packets sent per command |
 | `ELERO_DELAY_SEND_PACKETS` | 50 ms | Delay between packet repeats |
-| `ELERO_MAX_DISCOVERED` | 20 | Max blinds tracked in scan mode |
+| `ELERO_MAX_COMMAND_QUEUE` | 10 | Max commands per blind to prevent OOM |
 
 State constants (`ELERO_STATE_*`): `UNKNOWN`, `TOP`, `BOTTOM`, `INTERMEDIATE`, `TILT`, `BLOCKING`, `OVERHEATED`, `TIMEOUT`, `START_MOVING_UP`, `START_MOVING_DOWN`, `MOVING_UP`, `MOVING_DOWN`, `STOPPED`, `TOP_TILT`, `BOTTOM_TILT`
 
@@ -448,18 +431,6 @@ text_sensor:
     name: "Blind Status"      # Values: see state constants above
 ```
 
-### Buttons (RF scan)
-
-```yaml
-button:
-  - platform: elero
-    name: "Start Scan"
-    scan_start: true
-  - platform: elero
-    name: "Stop Scan"
-    scan_start: false
-```
-
 ### Web UI (`elero_web`)
 
 ```yaml
@@ -532,12 +503,12 @@ esphome logs --device <ip-address> my_device.yaml
 
 The typical workflow for a new installation:
 
-1. Add scan buttons and the web UI to `example.yaml`
+1. Add `elero_web` to your configuration
 2. Flash the device
-3. Open `http://<device-ip>/elero` and press "Start Scan"
+3. Open `http://<device-ip>/elero`
 4. Operate each blind with its original remote
-5. Discovered blinds appear in the web UI with addresses pre-filled
-6. Download the generated YAML snippet and add it to your config
+5. RF packets appear in the web UI — addresses not in config are "discovered"
+6. Add the discovered addresses to your YAML config
 
 ---
 
@@ -546,7 +517,7 @@ The typical workflow for a new installation:
 There are no automated tests in this repository. Validation is done manually on real hardware:
 
 1. Flash the firmware and verify the CC1101 initialises (check `esphome logs` for `[I][elero:...]` messages)
-2. Use the RF scan to confirm blind discovery
+2. Open the web UI and verify RF packets appear when using the remote
 3. Test each cover entity (open, close, stop) from Home Assistant
 4. Verify RSSI and status text sensors update correctly
 

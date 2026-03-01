@@ -1,4 +1,4 @@
-# ESPHome compile test: ESP32 minimal (no web UI)
+# ESPHome compile test: ESP32 minimal
 # Used to verify core elero component changes
 substitutions:
   spi_clk: GPIO18
@@ -18,6 +18,13 @@ esp32:
 
 logger:
   level: DEBUG
+
+wifi:
+  ssid: "test"
+  password: "test1234"
+  ap:
+    ssid: "Fallback"
+    password: "test1234"
 
 packages:
   common: !include common.yaml
