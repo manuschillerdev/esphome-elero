@@ -72,44 +72,45 @@ void process() {
 1. **Keep ISRs short** — Set flags, defer work to tasks
 2. **Use IRAM_ATTR** — ISR code must be in IRAM
 3. **No blocking calls** — No `delay()`, mutexes, or I/O
-4. **Use volatile for shared variables**
-5. **Use atomic operations** for multi-byte values
+4. **Use `std::atomic`** for shared variables (ESP32 supports it)
 
-```cpp
-// ISR-safe flag pattern
-volatile bool data_ready = false;
+### ISR Flag Pattern (Recommended)
 
-void IRAM_ATTR gpio_isr_handler(void* arg) {
-  data_ready = true;  // Just set flag
-}
-
-void loop() {
-  if (data_ready) {
-    data_ready = false;
-    process_data();  // Do actual work in main context
-  }
-}
-```
-
-### Atomic Operations for ISR Communication
+Use `std::atomic<bool>` with `.exchange()` to avoid the read-clear race condition:
 
 ```cpp
 #include <atomic>
 
-std::atomic<bool> flag{false};
+std::atomic<bool> data_ready{false};
+
+void IRAM_ATTR gpio_isr_handler(void* arg) {
+  data_ready.store(true, std::memory_order_release);
+}
+
+void loop() {
+  // Atomic read-and-clear — no race condition
+  if (data_ready.exchange(false, std::memory_order_acquire)) {
+    process_data();
+  }
+}
+```
+
+### Multi-byte Atomics
+
+```cpp
 std::atomic<uint32_t> counter{0};
 
 void IRAM_ATTR isr() {
-  flag.store(true, std::memory_order_release);
   counter.fetch_add(1, std::memory_order_relaxed);
 }
 
 void loop() {
-  if (flag.exchange(false, std::memory_order_acquire)) {
-    // Process
-  }
+  uint32_t val = counter.load(std::memory_order_acquire);
+  // Use val...
 }
 ```
+
+**Note:** `std::atomic` is lock-free on ESP32 for 8/16/32-bit types. Avoid on ESP8266/RP2040 (linker errors).
 
 ---
 
