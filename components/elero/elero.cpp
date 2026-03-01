@@ -564,6 +564,10 @@ void Elero::handle_tx_state_(uint32_t now) {
       if (marcstate == CC1101_MARCSTATE_TX) {
         this->tx_ctx_.state = TxState::WAIT_TX_DONE;
         this->tx_ctx_.state_enter_time = now;
+      } else if (marcstate == CC1101_MARCSTATE_TXFIFO_UFLOW) {
+        // TX FIFO underflow - packet data was not loaded correctly
+        ESP_LOGE(TAG, "TX FIFO underflow detected, aborting");
+        this->abort_tx_();
       } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
         ESP_LOGE(TAG, "TX timeout in TRIGGER_TX, marcstate=0x%02x", marcstate);
         this->abort_tx_();
