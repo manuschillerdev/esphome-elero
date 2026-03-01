@@ -90,6 +90,11 @@ void EleroWebServer::setup() {
     this->on_rf_packet(pkt);
   });
 
+  // Register as log listener to forward logs to WebSocket clients
+  if (logger::global_logger != nullptr) {
+    logger::global_logger->add_log_listener(this);
+  }
+
   g_server = this;
   mg_mgr_init(&this->mgr_);
 
@@ -129,6 +134,31 @@ void EleroWebServer::on_rf_packet(const RfPacketInfo &pkt) {
   if (this->ws_clients_.empty() || !this->enabled_)
     return;
   this->ws_broadcast("rf", this->build_rf_json(pkt));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Log Listener
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void EleroWebServer::on_log(uint8_t level, const char *tag, const char *message, size_t message_len) {
+  if (this->ws_clients_.empty() || !this->enabled_)
+    return;
+
+  // Only forward elero-related logs
+  if (tag == nullptr || strncmp(tag, "elero", 5) != 0)
+    return;
+
+  // Build JSON: {"t":<ms>,"level":<n>,"tag":"...","msg":"..."}
+  std::string escaped_msg = json_escape(std::string(message, message_len));
+  char buf[512];
+  snprintf(buf, sizeof(buf),
+           "{\"t\":%lu,\"level\":%d,\"tag\":\"%s\",\"msg\":\"%s\"}",
+           (unsigned long) millis(),
+           (int) level,
+           tag,
+           escaped_msg.c_str());
+
+  this->ws_broadcast("log", std::string(buf));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

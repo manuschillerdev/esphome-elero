@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import preact from '@preact/preset-vite'
 import tailwindcss from '@tailwindcss/vite'
+import { viteSingleFile } from 'vite-plugin-singlefile'
 import { resolve } from 'path'
 
 // Use DEVICE_IP env var to connect to real device, otherwise use mock server
@@ -10,7 +11,7 @@ const deviceTarget = process.env.DEVICE_IP
   : 'ws://localhost:8080'
 
 export default defineConfig({
-  plugins: [preact(), tailwindcss()],
+  plugins: [preact(), tailwindcss(), viteSingleFile()],
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),
