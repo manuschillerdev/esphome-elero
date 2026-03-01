@@ -5,6 +5,7 @@
 /// and deterministic time control via MockTimeProvider.
 
 #include <gtest/gtest.h>
+#include <queue>
 #include <vector>
 #include <tuple>
 
