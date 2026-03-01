@@ -121,6 +121,14 @@ class CommandSender : public TxClient {
   /// - Success: increment packet count, dequeue if done
   /// - Failure: retry or give up after max retries
   void on_tx_complete(bool success) override {
+    // Guard: reject stale callbacks after timeout recovery
+    // This can happen if hub calls back after we already timed out and moved to WAIT_DELAY
+    if (this->state_ != State::TX_PENDING) {
+      ESP_LOGD(this->log_tag_, "Ignoring stale on_tx_complete for 0x%06x (state=%d, success=%d)",
+               this->command_.blind_addr, static_cast<int>(this->state_), success);
+      return;
+    }
+
     this->last_tx_time_ = get_time_provider().millis();
 
     // Check cancellation FIRST

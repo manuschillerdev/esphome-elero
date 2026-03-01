@@ -173,6 +173,11 @@ class TestableCommandSender : public TxClient {
   }
 
   void on_tx_complete(bool success) override {
+    // Guard: reject stale callbacks after timeout recovery
+    if (this->state_ != State::TX_PENDING) {
+      return;
+    }
+
     this->last_tx_time_ = get_time_provider().millis();
 
     if (this->cancelled_) {
@@ -549,6 +554,35 @@ TEST_F(CommandSenderTest, NoTimeoutIfCallbackArrives) {
   mock_hub_.complete_tx(true);
 
   // Normal transition to WAIT_DELAY for second packet
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::WAIT_DELAY);
+}
+
+TEST_F(CommandSenderTest, StaleCallbackAfterTimeoutIsIgnored) {
+  sender_.enqueue(0x20);
+  mock_time_.advance(ELERO_DELAY_SEND_PACKETS);
+
+  // Start TX
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::TX_PENDING);
+
+  // Timeout fires - transitions to WAIT_DELAY for retry
+  mock_time_.advance(TestableCommandSender::TX_PENDING_TIMEOUT_MS + 10);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::WAIT_DELAY);
+
+  // Now hub finally calls back (stale callback) - should be ignored
+  size_t queue_before = sender_.queue_size();
+  mock_hub_.complete_tx(true);
+
+  // State should remain WAIT_DELAY, queue unchanged
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::WAIT_DELAY);
+  EXPECT_EQ(sender_.queue_size(), queue_before);
+
+  // State machine should still work - complete normally
+  mock_time_.advance(ELERO_DELAY_SEND_PACKETS);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::TX_PENDING);
+  mock_hub_.complete_tx(true);
   EXPECT_EQ(sender_.state(), TestableCommandSender::State::WAIT_DELAY);
 }
 

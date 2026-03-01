@@ -532,8 +532,12 @@ void Elero::handle_tx_state_(uint32_t now) {
       break;
 
     case TxState::FLUSH_TX:
-      // Brief settling time after SFTX (millis() has 1ms resolution)
-      if (elapsed >= 1) {
+      // Check timeout FIRST (elapsed >= 1 would always trigger before timeout otherwise)
+      if (elapsed > TxContext::STATE_TIMEOUT_MS) {
+        ESP_LOGE(TAG, "TX timeout in FLUSH_TX");
+        this->abort_tx_();
+      } else if (elapsed >= 1) {
+        // Brief settling time after SFTX (millis() has 1ms resolution)
         // Load TX FIFO
         if (!this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1)) {
           this->abort_tx_();
@@ -541,9 +545,6 @@ void Elero::handle_tx_state_(uint32_t now) {
         }
         this->tx_ctx_.state = TxState::LOAD_FIFO;
         this->tx_ctx_.state_enter_time = now;
-      } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in FLUSH_TX");
-        this->abort_tx_();
       }
       break;
 
