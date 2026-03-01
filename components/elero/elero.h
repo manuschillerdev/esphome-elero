@@ -9,7 +9,7 @@
 #include <vector>
 #include <map>
 #include <queue>
-#include <cstdarg>
+#include <atomic>
 
 // Elero RF protocol implementation based on reverse-engineered specifications.
 // Protocol documentation: https://github.com/QuadCorei8085/elero_protocol
@@ -92,8 +92,6 @@ constexpr uint32_t ELERO_TIMEOUT_MOVEMENT = 120000;    // poll for up to two min
 constexpr uint8_t ELERO_SEND_RETRIES = 3;
 constexpr uint8_t ELERO_SEND_PACKETS = 2;
 constexpr uint8_t ELERO_MAX_COMMAND_QUEUE = 10;  // max commands per blind to prevent OOM
-constexpr uint8_t ELERO_MAX_DISCOVERED = 20;     // max discovered blinds to track
-constexpr uint8_t ELERO_MAX_RAW_PACKETS = 50;    // max raw packets in dump ring buffer
 
 // ─── RF Protocol Encoding/Encryption Constants ────────────────────────────
 constexpr uint8_t ELERO_MSG_LENGTH = 0x1d;      // Fixed message length for TX
@@ -136,14 +134,6 @@ struct EleroCommand {
   uint8_t payload[10];
 };
 
-struct RawPacket {
-  uint32_t timestamp_ms;  // millis() when captured
-  uint8_t fifo_len;       // bytes actually read from CC1101 FIFO
-  uint8_t data[CC1101_FIFO_LENGTH];
-  bool valid;              // true = passed all validation and decoded
-  char reject_reason[32];  // empty when valid
-};
-
 /// Decoded RF packet info for WebSocket broadcast
 struct RfPacketInfo {
   uint32_t timestamp_ms;
@@ -159,43 +149,6 @@ struct RfPacketInfo {
   uint8_t payload[10];
   uint8_t raw_len;
   uint8_t raw[CC1101_FIFO_LENGTH];
-};
-
-struct DiscoveredBlind {
-  uint32_t blind_address;
-  uint32_t remote_address;
-  uint8_t channel;
-  uint8_t pck_inf[2];
-  uint8_t hop;
-  uint8_t payload_1;
-  uint8_t payload_2;
-  float rssi;
-  uint32_t last_seen;
-  uint8_t last_state;
-  uint16_t times_seen;
-  // true when params were derived from a command packet (6a/69) — these are
-  // the correct values to use when sending commands to the blind.
-  // false when params came only from a CA/C9 status response (less reliable).
-  bool params_from_command{false};
-};
-
-struct RuntimeBlind {
-  uint32_t blind_address;
-  uint32_t remote_address;
-  uint8_t channel;
-  uint8_t pck_inf[2];
-  uint8_t hop;
-  uint8_t payload_1;
-  uint8_t payload_2;
-  std::string name;
-  uint32_t open_duration_ms{0};
-  uint32_t close_duration_ms{0};
-  uint32_t poll_intvl_ms{300000};
-  uint32_t last_seen_ms{0};
-  float last_rssi{0.0f};
-  uint8_t last_state{ELERO_STATE_UNKNOWN};
-  uint8_t cmd_counter{1};
-  std::queue<uint8_t> command_queue;
 };
 
 const char *elero_state_to_string(uint8_t state);
@@ -217,6 +170,12 @@ class EleroLightBase {
   /// device, so it can poll the blind immediately instead of waiting for the
   /// normal poll interval.  Default no-op; concrete classes override.
   virtual void schedule_immediate_poll() {}
+
+  // Web API helpers — identity & configuration
+  virtual std::string get_light_name() const = 0;
+  virtual uint8_t get_channel() const = 0;
+  virtual uint32_t get_remote_address() const = 0;
+  virtual uint32_t get_dim_duration_ms() const = 0;
 };
 
 /// Abstract base class for blinds registered with the Elero hub.
@@ -334,53 +293,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor);
 #endif
 
-  // Discovery / scan mode — returns false if already in that state
-  bool start_scan();
-  bool stop_scan();
-  bool is_scanning() const { return scan_mode_; }
-  const std::vector<DiscoveredBlind> &get_discovered_blinds() const { return discovered_blinds_; }
-  size_t get_discovered_count() const { return discovered_blinds_.size(); }
-
   // Cover access for web server
   bool is_cover_configured(uint32_t address) const {
     return address_to_cover_mapping_.find(address) != address_to_cover_mapping_.end();
   }
   const std::map<uint32_t, EleroBlindBase *> &get_configured_covers() const { return address_to_cover_mapping_; }
   const std::map<uint32_t, EleroLightBase *> &get_configured_lights() const { return address_to_light_mapping_; }
-
-  // Packet dump mode: capture every received FIFO read into a ring buffer
-  // Returns false if already in that state
-  bool start_packet_dump();   // Clears buffer + starts capture
-  bool stop_packet_dump();
-  void clear_raw_packets();   // Clear without affecting capture state
-  bool is_packet_dump_active() const { return packet_dump_mode_; }
-  const std::vector<RawPacket> &get_raw_packets() const { return raw_packets_; }
-
-  // Runtime adopted blinds (controllable from web UI without reflashing)
-  bool adopt_blind_by_address(uint32_t addr, const std::string &name);
-  bool remove_runtime_blind(uint32_t addr);
-  bool send_runtime_command(uint32_t addr, uint8_t cmd_byte);
-  bool update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms, uint32_t close_dur_ms,
-                                     uint32_t poll_intvl_ms);
-  const std::map<uint32_t, RuntimeBlind> &get_runtime_blinds() const { return runtime_blinds_; }
-  bool is_blind_adopted(uint32_t addr) const;
-
-  // Log buffer
-  static const uint8_t ELERO_LOG_BUFFER_SIZE = 200;
-  struct LogEntry {
-    uint32_t timestamp_ms;
-    uint8_t level;
-    char tag[24];
-    char message[160];
-  };
-  void append_log(uint8_t level, const char *tag, const char *fmt, ...);
-  void clear_log_entries() {
-    log_entries_.clear();
-    log_write_idx_ = 0;
-  }
-  const std::vector<LogEntry> &get_log_entries() const { return log_entries_; }
-  void set_log_capture(bool en) { log_capture_ = en; }
-  bool is_log_capture_active() const { return log_capture_; }
 
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
@@ -395,17 +313,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t get_freq2() const { return freq2_; }
 
  private:
-  void track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel, uint8_t pck_inf0, uint8_t pck_inf1,
-                              uint8_t hop, uint8_t payload_1, uint8_t payload_2, float rssi, uint8_t state,
-                              bool from_command);
-  void capture_raw_packet_(uint8_t fifo_len);
-  void mark_last_raw_packet_(bool valid, const char *reason);
   void handle_tx_state_(uint32_t now);  // Progress TX state machine
   void abort_tx_();                     // Abort TX and return to RX
   void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
   void notify_tx_owner_(bool success);  // Notify owner and clear
 
-  volatile bool received_{false};
+  std::atomic<bool> received_{false};
   TxContext tx_ctx_;
   bool tx_pending_success_{false};
   TxClient *tx_owner_{nullptr};  // Current TX owner (for non-blocking API)
@@ -423,17 +336,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #ifdef USE_TEXT_SENSOR
   std::map<uint32_t, text_sensor::TextSensor *> address_to_text_sensor_;
 #endif
-  std::vector<DiscoveredBlind> discovered_blinds_;
-  bool scan_mode_{false};
-  bool packet_dump_mode_{false};
-  bool packet_dump_pending_update_{false};
-  std::vector<RawPacket> raw_packets_;
-  uint8_t raw_packet_write_idx_{0};
-  std::map<uint32_t, RuntimeBlind> runtime_blinds_;
-  // Log buffer
-  bool log_capture_{false};
-  std::vector<LogEntry> log_entries_;
-  uint8_t log_write_idx_{0};
 
   // Web server for notifications (optional)
   EleroWebServer *web_server_{nullptr};

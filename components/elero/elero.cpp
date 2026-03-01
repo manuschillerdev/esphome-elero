@@ -98,34 +98,8 @@ void Elero::loop() {
     return;  // Don't process RX while TX is in progress
   }
 
-  // Drain command queues for runtime-adopted blinds
-  for (auto &entry : this->runtime_blinds_) {
-    auto &rb = entry.second;
-    if (!rb.command_queue.empty()) {
-      uint8_t cmd_byte = rb.command_queue.front();
-      EleroCommand cmd{};
-      cmd.counter = rb.cmd_counter;
-      cmd.blind_addr = rb.blind_address;
-      cmd.remote_addr = rb.remote_address;
-      cmd.channel = rb.channel;
-      cmd.pck_inf[0] = rb.pck_inf[0];
-      cmd.pck_inf[1] = rb.pck_inf[1];
-      cmd.hop = rb.hop;
-      cmd.payload[0] = rb.payload_1;
-      cmd.payload[1] = rb.payload_2;
-      cmd.payload[4] = cmd_byte;
-      if (this->send_command(&cmd)) {
-        rb.command_queue.pop();
-        ++rb.cmd_counter;
-        if (rb.cmd_counter > 255)
-          rb.cmd_counter = 1;
-      }
-    }
-  }
-
-  // Check if ISR set the received flag, then clear it
-  bool was_received = this->received_;
-  this->received_ = false;
+  // Atomically check and clear the received flag (ISR-safe)
+  bool was_received = this->received_.exchange(false);
   if (was_received) {
     ESP_LOGVV(TAG, "loop says \"received\"");
     uint8_t len = this->read_status(CC1101_RXBYTES);
@@ -146,18 +120,9 @@ void Elero::loop() {
       }
       // Log raw bytes at VERBOSE level for analysis
       ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count, format_hex_pretty(this->msg_rx_, fifo_count).c_str());
-      // Capture to ring buffer if dump mode is active
-      this->packet_dump_pending_update_ = false;
-      if (this->packet_dump_mode_) {
-        this->capture_raw_packet_(fifo_count);
-        this->packet_dump_pending_update_ = true;
-      }
       // Sanity check
       if (this->msg_rx_[0] + 3 <= fifo_count) {
         this->interpret_msg();
-      } else if (this->packet_dump_pending_update_) {
-        this->mark_last_raw_packet_(false, "short_read");
-        this->packet_dump_pending_update_ = false;
       }
     }
   }
@@ -168,7 +133,7 @@ void IRAM_ATTR Elero::interrupt(Elero *arg) {
 }
 
 void IRAM_ATTR Elero::set_received() {
-  this->received_ = true;
+  this->received_.store(true, std::memory_order_release);
 }
 
 void Elero::dump_config() {
@@ -194,7 +159,7 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
     this->abort_tx_();
   }
 
-  this->received_ = false;
+  this->received_.store(false);
   this->freq2_ = freq2;
   this->freq1_ = freq1;
   this->freq0_ = freq0;
@@ -210,7 +175,7 @@ void Elero::flush_and_rx() {
   (void) this->write_cmd(CC1101_SFRX);
   (void) this->write_cmd(CC1101_SFTX);
   (void) this->write_cmd(CC1101_SRX);
-  this->received_ = false;
+  this->received_.store(false);
 }
 
 void Elero::reset() {
@@ -368,7 +333,7 @@ bool Elero::wait_tx_done() {
   ESP_LOGVV(TAG, "wait_tx_done");
   uint8_t timeout = 200;
 
-  while ((!this->received_) && (--timeout != 0)) {
+  while ((!this->received_.load()) && (--timeout != 0)) {
     delay_microseconds_safe(200);
   }
 
@@ -408,7 +373,7 @@ bool Elero::transmit() {
 
   // Clear received_ so wait_tx_done() waits for the actual TX-end GDO0
   // falling edge, not a stale flag left over from a previously received packet.
-  this->received_ = false;
+  this->received_.store(false);
 
   // Trigger TX — no CCA check when issuing STX from IDLE state
   if (!this->write_cmd(CC1101_STX)) {
@@ -577,12 +542,15 @@ void Elero::handle_tx_state_(uint32_t now) {
         }
         this->tx_ctx_.state = TxState::LOAD_FIFO;
         this->tx_ctx_.state_enter_time = now;
+      } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
+        ESP_LOGE(TAG, "TX timeout in FLUSH_TX");
+        this->abort_tx_();
       }
       break;
 
     case TxState::LOAD_FIFO:
       // Clear received_ so we can detect TX-end interrupt
-      this->received_ = false;
+      this->received_.store(false);
       // Trigger TX
       if (!this->write_cmd(CC1101_STX)) {
         this->abort_tx_();
@@ -604,7 +572,7 @@ void Elero::handle_tx_state_(uint32_t now) {
       break;
 
     case TxState::WAIT_TX_DONE:
-      if (this->received_) {
+      if (this->received_.load()) {
         // GDO0 interrupt fired - TX complete
         this->tx_ctx_.state = TxState::VERIFY_DONE;
         this->tx_ctx_.state_enter_time = now;
@@ -691,10 +659,6 @@ void Elero::interpret_msg() {
     uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - 3)) ? (length + 3) : CC1101_FIFO_LENGTH;
     ESP_LOGE(TAG, "Received invalid packet: too long (%d)", length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", dump_len, format_hex_pretty(this->msg_rx_, dump_len).c_str());
-    if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "too_long");
-      this->packet_dump_pending_update_ = false;
-    }
     return;
   }
 
@@ -715,10 +679,6 @@ void Elero::interpret_msg() {
   if (num_dests > 20) {
     ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3, format_hex_pretty(this->msg_rx_, length + 3).c_str());
-    if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "too_many_dests");
-      this->packet_dump_pending_update_ = false;
-    }
     return;
   }
 
@@ -736,10 +696,6 @@ void Elero::interpret_msg() {
   if (26 + dests_len > length || 26 + dests_len >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3, format_hex_pretty(this->msg_rx_, length + 3).c_str());
-    if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "dests_len_too_long");
-      this->packet_dump_pending_update_ = false;
-    }
     return;
   }
 
@@ -748,10 +704,6 @@ void Elero::interpret_msg() {
     ESP_LOGE(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
              format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
-    if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "rssi_oob");
-      this->packet_dump_pending_update_ = false;
-    }
     return;
   }
 
@@ -772,10 +724,6 @@ void Elero::interpret_msg() {
   }
   uint8_t *payload = &this->msg_rx_[19 + dests_len];
   protocol::msg_decode(payload);
-  if (this->packet_dump_pending_update_) {
-    this->mark_last_raw_packet_(true, nullptr);
-    this->packet_dump_pending_update_ = false;
-  }
   ESP_LOGD(TAG,
            "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, "
            "bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x "
@@ -813,33 +761,6 @@ void Elero::interpret_msg() {
   }
 #endif
 
-  // Track in discovery mode
-  if (this->scan_mode_) {
-    if ((typ == 0xca) || (typ == 0xc9)) {
-      // Status response FROM the blind: src = blind addr, fwd = remote addr.
-      // The params here (pck_inf, hop, channel, payload) belong to the blind's
-      // response packet format — not to the command format we need to send.
-      // Store them as a fallback (params_from_command=false); they will be
-      // upgraded automatically once we see a matching 6a/69 command packet.
-      this->track_discovered_blind(src, fwd, chl, typ, typ2, hop, payload1, payload2, rssi, payload[6], false);
-    } else if ((typ == 0x6a) || (typ == 0x69)) {
-      // Command FROM remote TO blind(s): src = remote addr.
-      // The channel, pck_inf, hop and payload bytes here are exactly what must
-      // be replicated when we send commands — iterate every destination and
-      // register it as a discovered blind with the correct command params.
-      for (uint8_t i = 0; i < num_dests; i++) {
-        uint32_t dest_addr;
-        if (typ > 0x60) {  // 3-byte addressing
-          dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) | ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
-                      this->msg_rx_[19 + i * 3];
-        } else {  // 1-byte addressing
-          dest_addr = this->msg_rx_[17 + i];
-        }
-        this->track_discovered_blind(dest_addr, src, chl, typ, typ2, hop, payload1, payload2, rssi, 0, true);
-      }
-    }
-  }
-
   if ((typ == 0xca) || (typ == 0xc9)) {  // Status message from a blind
                                          // Update text sensor
 #ifdef USE_TEXT_SENSOR
@@ -865,14 +786,6 @@ void Elero::interpret_msg() {
       light_search->second->set_rx_state(payload[6]);
     }
 
-    // Update runtime adopted blinds
-    auto it = this->runtime_blinds_.find(src);
-    if (it != this->runtime_blinds_.end()) {
-      it->second.last_seen_ms = millis();
-      it->second.last_rssi = rssi;
-      it->second.last_state = payload[6];
-    }
-
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
     auto search = this->address_to_cover_mapping_.find(src);
@@ -882,11 +795,6 @@ void Elero::interpret_msg() {
     auto light_search = this->address_to_light_mapping_.find(src);
     if (light_search != this->address_to_light_mapping_.end()) {
       light_search->second->notify_rx_meta(millis(), rssi);
-    }
-    auto rb_it = this->runtime_blinds_.find(src);
-    if (rb_it != this->runtime_blinds_.end()) {
-      rb_it->second.last_seen_ms = millis();
-      rb_it->second.last_rssi = rssi;
     }
 
     // Remote command packets (0x6a/0x69): src = remote addr, dst = blind addr(s).
@@ -946,158 +854,9 @@ void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sens
 }
 #endif
 
-bool Elero::start_scan() {
-  if (this->scan_mode_)
-    return false;
-  this->discovered_blinds_.clear();
-  this->scan_mode_ = true;
-  ESP_LOGI(TAG, "RF scan started");
-  return true;
-}
-
-bool Elero::stop_scan() {
-  if (!this->scan_mode_)
-    return false;
-  this->scan_mode_ = false;
-  ESP_LOGI(TAG, "RF scan stopped, discovered %d device(s)", this->discovered_blinds_.size());
-  return true;
-}
-
-bool Elero::start_packet_dump() {
-  if (this->packet_dump_mode_)
-    return false;
-  this->raw_packets_.clear();
-  this->raw_packet_write_idx_ = 0;
-  this->packet_dump_mode_ = true;
-  ESP_LOGI(TAG, "Packet dump mode started");
-  return true;
-}
-
-bool Elero::stop_packet_dump() {
-  if (!this->packet_dump_mode_)
-    return false;
-  this->packet_dump_mode_ = false;
-  ESP_LOGI(TAG, "Packet dump mode stopped");
-  return true;
-}
-
-void Elero::clear_raw_packets() {
-  raw_packets_.clear();
-  raw_packet_write_idx_ = 0;
-}
-
-void Elero::capture_raw_packet_(uint8_t fifo_len) {
-  uint8_t actual_len = (fifo_len > CC1101_FIFO_LENGTH) ? CC1101_FIFO_LENGTH : fifo_len;
-  RawPacket pkt{};
-  pkt.timestamp_ms = millis();
-  pkt.fifo_len = actual_len;
-  memcpy(pkt.data, this->msg_rx_, actual_len);
-  pkt.valid = false;
-  pkt.reject_reason[0] = '\0';
-
-  if (raw_packets_.size() < ELERO_MAX_RAW_PACKETS) {
-    raw_packets_.push_back(pkt);
-    raw_packet_write_idx_ = (uint8_t)(raw_packets_.size() - 1);
-  } else {
-    raw_packet_write_idx_ = (raw_packet_write_idx_ + 1) % ELERO_MAX_RAW_PACKETS;
-    raw_packets_[raw_packet_write_idx_] = pkt;
-  }
-}
-
-void Elero::mark_last_raw_packet_(bool valid, const char *reason) {
-  if (raw_packets_.empty())
-    return;
-  auto &pkt = raw_packets_[raw_packet_write_idx_];
-  pkt.valid = valid;
-  if (!valid && reason != nullptr) {
-    strncpy(pkt.reject_reason, reason, sizeof(pkt.reject_reason) - 1);
-    pkt.reject_reason[sizeof(pkt.reject_reason) - 1] = '\0';
-  }
-}
-
-void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel, uint8_t pck_inf0, uint8_t pck_inf1,
-                                   uint8_t hop, uint8_t payload_1, uint8_t payload_2, float rssi, uint8_t state,
-                                   bool from_command) {
-  // Check if already tracked
-  for (auto &blind : this->discovered_blinds_) {
-    if (blind.blind_address == src) {
-      blind.rssi = rssi;
-      blind.last_seen = millis();
-      if (state != 0)
-        blind.last_state = state;
-      ++blind.times_seen;
-      // Upgrade CA-derived params with command-packet params (higher quality):
-      // a 6a/69 command packet tells us the exact format the remote uses, so
-      // those values must be preferred over what the blind's own CA responses
-      // carry (CA channel/hop/pck_inf describe the response format, not the
-      // command format).
-      if (from_command && !blind.params_from_command) {
-        blind.remote_address = remote;
-        blind.channel = channel;
-        blind.pck_inf[0] = pck_inf0;
-        blind.pck_inf[1] = pck_inf1;
-        blind.hop = hop;
-        blind.payload_1 = payload_1;
-        blind.payload_2 = payload_2;
-        blind.params_from_command = true;
-        ESP_LOGI(TAG, "Upgraded blind 0x%06x params from command packet: ch=%d, pck_inf=0x%02x/0x%02x, hop=0x%02x", src,
-                 channel, pck_inf0, pck_inf1, hop);
-      }
-      return;
-    }
-  }
-  // Add new entry
-  if (this->discovered_blinds_.size() < ELERO_MAX_DISCOVERED) {
-    DiscoveredBlind blind{};
-    blind.blind_address = src;
-    blind.remote_address = remote;
-    blind.channel = channel;
-    blind.pck_inf[0] = pck_inf0;
-    blind.pck_inf[1] = pck_inf1;
-    blind.hop = hop;
-    blind.payload_1 = payload_1;
-    blind.payload_2 = payload_2;
-    blind.rssi = rssi;
-    blind.last_seen = millis();
-    blind.last_state = state;
-    blind.times_seen = 1;
-    blind.params_from_command = from_command;
-    this->discovered_blinds_.push_back(blind);
-    ESP_LOGI(TAG, "Discovered new device: addr=0x%06x, remote=0x%06x, ch=%d, rssi=%.1f, src=%s", src, remote, channel,
-             rssi, from_command ? "cmd_pkt" : "status_pkt");
-  }
-}
-
 bool Elero::send_command(EleroCommand *cmd) {
   ESP_LOGVV(TAG, "send_command called");
-  uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
-  this->msg_tx_[0] = ELERO_MSG_LENGTH;
-  this->msg_tx_[1] = cmd->counter;  // message counter
-  this->msg_tx_[2] = cmd->pck_inf[0];
-  this->msg_tx_[3] = cmd->pck_inf[1];
-  this->msg_tx_[4] = cmd->hop;  // hop info
-  this->msg_tx_[5] = ELERO_SYS_ADDR;
-  this->msg_tx_[6] = cmd->channel;                       // channel
-  this->msg_tx_[7] = ((cmd->remote_addr >> 16) & 0xff);  // source address
-  this->msg_tx_[8] = ((cmd->remote_addr >> 8) & 0xff);
-  this->msg_tx_[9] = ((cmd->remote_addr) & 0xff);
-  this->msg_tx_[10] = ((cmd->remote_addr >> 16) & 0xff);  // backward address
-  this->msg_tx_[11] = ((cmd->remote_addr >> 8) & 0xff);
-  this->msg_tx_[12] = ((cmd->remote_addr) & 0xff);
-  this->msg_tx_[13] = ((cmd->remote_addr >> 16) & 0xff);  // forward address
-  this->msg_tx_[14] = ((cmd->remote_addr >> 8) & 0xff);
-  this->msg_tx_[15] = ((cmd->remote_addr) & 0xff);
-  this->msg_tx_[16] = ELERO_DEST_COUNT;
-  this->msg_tx_[17] = ((cmd->blind_addr >> 16) & 0xff);  // blind address
-  this->msg_tx_[18] = ((cmd->blind_addr >> 8) & 0xff);
-  this->msg_tx_[19] = ((cmd->blind_addr) & 0xff);
-  for (int i = 0; i < 10; ++i)
-    this->msg_tx_[20 + i] = cmd->payload[i];
-  this->msg_tx_[22] = ((code >> 8) & 0xff);
-  this->msg_tx_[23] = (code & 0xff);
-
-  uint8_t *payload = &this->msg_tx_[22];
-  protocol::msg_encode(payload);
+  this->build_tx_packet_(*cmd);
 
   ESP_LOGV(TAG,
            "send: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%02x%02x%02x, "
@@ -1136,103 +895,6 @@ bool Elero::send_raw_command(uint32_t blind_addr, uint32_t remote_addr, uint8_t 
       raw_msg_cnt = 1;
   }
   return success;
-}
-
-// ─── Runtime blind adoption ───────────────────────────────────────────────
-
-bool Elero::adopt_blind_by_address(uint32_t addr, const std::string &name) {
-  // Find the discovered blind by address
-  for (const auto &discovered : this->discovered_blinds_) {
-    if (discovered.blind_address == addr) {
-      // Found it - now adopt
-      if (this->is_cover_configured(addr))
-        return false;
-      if (this->is_blind_adopted(addr))
-        return false;
-
-      RuntimeBlind rb{};
-      rb.blind_address = discovered.blind_address;
-      rb.remote_address = discovered.remote_address;
-      rb.channel = discovered.channel;
-      rb.pck_inf[0] = discovered.pck_inf[0];
-      rb.pck_inf[1] = discovered.pck_inf[1];
-      rb.hop = discovered.hop;
-      rb.payload_1 = discovered.payload_1;
-      rb.payload_2 = discovered.payload_2;
-      rb.name = name.empty() ? "Adopted" : name;
-      rb.last_seen_ms = discovered.last_seen;
-      rb.last_rssi = discovered.rssi;
-      rb.last_state = discovered.last_state;
-      this->runtime_blinds_.insert({addr, std::move(rb)});
-      ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"", addr, rb.name.c_str());
-      return true;
-    }
-  }
-  // Not found in discovered list
-  return false;
-}
-
-bool Elero::remove_runtime_blind(uint32_t addr) {
-  auto it = this->runtime_blinds_.find(addr);
-  if (it != this->runtime_blinds_.end()) {
-    ESP_LOGI(TAG, "Removed runtime blind 0x%06x", addr);
-    this->runtime_blinds_.erase(it);
-    return true;
-  }
-  return false;
-}
-
-bool Elero::send_runtime_command(uint32_t addr, uint8_t cmd_byte) {
-  auto it = this->runtime_blinds_.find(addr);
-  if (it != this->runtime_blinds_.end()) {
-    if (it->second.command_queue.size() < ELERO_MAX_COMMAND_QUEUE) {
-      it->second.command_queue.push(cmd_byte);
-      return true;
-    }
-    return false;  // Queue full
-  }
-  return false;
-}
-
-// Apply runtime settings. Values of 0 mean "keep existing".
-bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms, uint32_t close_dur_ms,
-                                          uint32_t poll_intvl_ms) {
-  auto it = this->runtime_blinds_.find(addr);
-  if (it != this->runtime_blinds_.end()) {
-    if (open_dur_ms != 0)
-      it->second.open_duration_ms = open_dur_ms;
-    if (close_dur_ms != 0)
-      it->second.close_duration_ms = close_dur_ms;
-    if (poll_intvl_ms != 0)
-      it->second.poll_intvl_ms = poll_intvl_ms;
-    return true;
-  }
-  return false;
-}
-
-bool Elero::is_blind_adopted(uint32_t addr) const {
-  return this->runtime_blinds_.find(addr) != this->runtime_blinds_.end();
-}
-
-// ─── Log buffer ───────────────────────────────────────────────────────────
-
-void Elero::append_log(uint8_t level, const char *tag, const char *fmt, ...) {
-  if (!this->log_capture_)
-    return;
-  LogEntry entry{};
-  entry.timestamp_ms = millis();
-  entry.level = level;
-  strncpy(entry.tag, tag, sizeof(entry.tag) - 1);
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(entry.message, sizeof(entry.message), fmt, args);
-  va_end(args);
-  if (this->log_entries_.size() < ELERO_LOG_BUFFER_SIZE) {
-    this->log_entries_.push_back(entry);
-  } else {
-    this->log_entries_[this->log_write_idx_] = entry;
-    this->log_write_idx_ = (this->log_write_idx_ + 1) % ELERO_LOG_BUFFER_SIZE;
-  }
 }
 
 }  // namespace elero

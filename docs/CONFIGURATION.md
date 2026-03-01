@@ -246,29 +246,6 @@ text_sensor:
 
 ---
 
-## Plattform: `button` (RF-Scan)
-
-Stellt Buttons zum Starten und Stoppen eines RF-Discovery-Scans bereit.
-
-```yaml
-button:
-  - platform: elero
-    name: "Elero Start Scan"
-    scan_start: true
-  - platform: elero
-    name: "Elero Stop Scan"
-    scan_start: false
-```
-
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `name` | String | Ja | - | Anzeigename in Home Assistant |
-| `scan_start` | Boolean | Nein | `true` | `true` = Scan starten, `false` = Scan stoppen |
-
-**Hinweis:** Für einen vollständigen Scan-Workflow werden zwei Buttons benötigt: einer zum Starten und einer zum Stoppen. Die Scan-Ergebnisse werden im ESPHome-Log ausgegeben.
-
----
-
 ## Web-UI: `elero_web`
 
 Optionale Web-Oberfläche zur Geräteerkennung und YAML-Generierung. Erreichbar unter `http://<device-ip>/elero`.
@@ -286,10 +263,10 @@ elero_web:
 - `web_server_base` wird automatisch von `elero_web` geladen. **Nicht** `web_server:` verwenden – das aktiviert die Standard-ESPHome-UI unter `/` wieder. Zugriff auf `/` leitet automatisch zu `/elero` weiter.
 
 **Funktionen:**
-- **RF-Scan steuern** – Scan starten/stoppen direkt im Browser
-- **Gefundene Geräte anzeigen** – Adresse, Kanal, Remote, RSSI, Status, Hop
-- **Konfigurierte Covers anzeigen** – Name, Position, Betriebszustand
-- **YAML exportieren** – Generiert Copy-Paste-fertige YAML-Konfiguration für entdeckte Blinds
+- **Geräteerkennung** – RF-Pakete von Elero-Geräten in Echtzeit anzeigen
+- **Konfigurierte Geräte** – Status von Rollläden und Lichtern
+- **Raw TX** – Test-Befehle senden für Debugging
+- **Logs** – ESPHome-Logs in Echtzeit
 
 **WebSocket-Kommunikation:**
 
@@ -402,15 +379,7 @@ text_sensor:
     blind_address: 0xb912f3
     name: "Wohnzimmer Status"
 
-button:
-  - platform: elero
-    name: "Elero Start Scan"
-    scan_start: true
-  - platform: elero
-    name: "Elero Stop Scan"
-    scan_start: false
-
-# Web UI for discovery and YAML export (do NOT use web_server: — use web_server_base: instead)
+# Web UI for discovery (do NOT use web_server: — use web_server_base: instead)
 web_server_base:
   port: 80
 

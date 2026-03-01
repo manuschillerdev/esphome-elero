@@ -106,7 +106,7 @@ The component validates all inputs:
 | Input Source | Validation |
 |--------------|------------|
 | RF packet length | Checked against `ELERO_MAX_PACKET_SIZE` (57 bytes) |
-| Destination count | Limited to 20 (`ELERO_MAX_DISCOVERED`) |
+| Destination count | Limited to 20 (hardcoded check) |
 | Buffer indices | Bounds-checked before access |
 | JSON strings | Escaped to prevent injection |
 | HTTP parameters | Parsed with error checking |
@@ -114,9 +114,7 @@ The component validates all inputs:
 ### Memory Safety
 
 - All `snprintf()` calls use proper size limits
-- Ring buffers have fixed maximum sizes
 - Command queues limited to `ELERO_MAX_COMMAND_QUEUE` (10)
-- Log buffer limited to `ELERO_LOG_BUFFER_SIZE` (200 entries)
 
 ### Stack Usage
 

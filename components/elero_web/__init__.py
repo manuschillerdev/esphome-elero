@@ -1,7 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components.elero import CONF_ELERO_ID, elero, elero_ns
-from esphome.components.logger import request_log_listener
 from esphome.const import CONF_ID, CONF_PORT
 
 DEPENDENCIES = ["elero", "network", "logger"]
@@ -27,6 +26,3 @@ async def to_code(config):
     parent = await cg.get_variable(config[CONF_ELERO_ID])
     cg.add(var.set_elero_parent(parent))
     cg.add(var.set_port(config[CONF_PORT]))
-
-    # Request log listener slot for forwarding logs to WebSocket clients
-    request_log_listener()

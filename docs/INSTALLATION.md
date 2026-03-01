@@ -143,22 +143,11 @@ elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
 
-# Dummy Cover (benötigt für Kompilierung)
-cover:
-  - platform: elero
-    blind_address: 0x000001
-    channel: 1
-    remote_address: 0x000001
-    name: "Test"
+# Web UI für Geräteerkennung
+web_server_base:
+  port: 80
 
-# Scan-Buttons
-button:
-  - platform: elero
-    name: "Elero Start Scan"
-    scan_start: true
-  - platform: elero
-    name: "Elero Stop Scan"
-    scan_start: false
+elero_web:
 ```
 
 ### Schritt 4.2: Erstmalig flashen
@@ -210,96 +199,26 @@ Flashe erneut und teste. Gängige Kombinationen:
 
 ## 5. Blind-Adressen herausfinden
 
-Wenn die Kommunikation funktioniert, kannst du die Adressen deiner Rollladen ermitteln. Es gibt zwei Wege: per **Web-UI** (empfohlen) oder per **Log-Analyse**.
+Öffne die Web-UI unter `http://<device-ip>/elero`:
 
-### Option A: Web-UI (empfohlen)
+1. Betätige deine physische Elero-Fernbedienung (Hoch/Runter/Stopp)
+2. Die Web-UI zeigt alle empfangenen RF-Pakete in Echtzeit
+3. Adressen, die nicht in der Konfiguration sind, werden als "Discovered" markiert
+4. Kopiere die angezeigten Werte in deine Konfiguration
 
-Fuege folgendes zu deiner Konfiguration hinzu:
+Die wichtigsten Felder aus den RF-Paketen:
 
-```yaml
-web_server_base:
-  port: 80
-
-elero_web:
-```
-
-Flashe erneut und oeffne im Browser `http://<device-ip>/elero`. Die Web-UI ermoeglicht:
-
-1. Klicke **Scan starten**
-2. Betaetige die Fernbedienung (Hoch/Runter/Stopp fuer jeden Rollladen)
-3. Die gefundenen Geraete erscheinen live in der Liste
-4. Klicke **Scan stoppen**
-5. Klicke **YAML exportieren** - die fertige Konfiguration kann direkt kopiert werden
-
-> **Tipp:** Die Web-UI zeigt auch bereits konfigurierte Covers mit Position und Status an.
-
-### Option B: Log-Analyse
-
-### Schritt 5.1: Scan starten
-
-1. Oeffne den ESPHome-Log
-2. Druecke den "Start Scan"-Button in Home Assistant (oder per Log beobachten)
-3. Betaetige die Fernbedienung: Waehle einen Rollladen aus und druecke Hoch/Runter
-
-### Schritt 5.2: Log-Ausgabe lesen
-
-Im Log siehst du Zeilen wie:
-
-```
-[I][elero:xxx]: Discovered new device: addr=0xa831e5, remote=0xf0d008, ch=4, rssi=-52.0
-```
-
-Und die detaillierten Pakete:
-
-```
-[D][elero:xxx]: rcv'd: len=29, cnt=45, typ=0x6a, typ2=0x00, hop=0x0a, syst=0x01,
-                chl=04, src=0xf0d008, bwd=0xf0d008, fwd=0xf0d008, #dst=01,
-                dst=0xa831e5, rssi=-52.0, lqi=47, crc=1,
-                payload=[0x00 0x04 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
-```
-
-### Schritt 5.3: Werte notieren
-
-Aus der Log-Zeile oben:
-
-```
-blind_address:  0xa831e5   (= dst, die Blind-Adresse)
-remote_address: 0xf0d008   (= src/bwd/fwd, die Fernbedienungs-Adresse)
-channel:        4           (= chl)
-pck_inf1:       0x6a        (= typ)
-pck_inf2:       0x00        (= typ2)
-hop:            0x0a        (= hop)
-payload_1:      0x00        (= payload[0])
-payload_2:      0x04        (= payload[1])
-```
-
-### Schritt 5.4: Befehle identifizieren
-
-Drücke die einzelnen Tasten auf der Fernbedienung und beobachte das 5. Payload-Byte (Position [4]):
-
-```
-Taste HOCH:   payload=[0x00 0x04 0x00 0x00 0x20 ...]  → command_up:   0x20
-Taste RUNTER: payload=[0x00 0x04 0x00 0x00 0x40 ...]  → command_down: 0x40
-Taste STOPP:  payload=[0x00 0x04 0x00 0x00 0x10 ...]  → command_stop: 0x10
-```
-
-> Falls die Werte mit den Standardwerten übereinstimmen, müssen sie nicht extra konfiguriert werden.
-
-### Schritt 5.5: Scan stoppen
-
-Drücke den "Stop Scan"-Button. Im Log erscheint eine Zusammenfassung:
-
-```
-[I][elero.button:xxx]: Stopped Elero RF scan. Discovered 2 device(s).
-[I][elero.button:xxx]:   addr=0xa831e5 remote=0xf0d008 ch=4 rssi=-52.0 state=top seen=5
-[I][elero.button:xxx]:   addr=0xb912f3 remote=0xf0d008 ch=5 rssi=-61.0 state=bottom seen=3
-```
+| Feld | YAML-Parameter | Beschreibung |
+|------|----------------|--------------|
+| `src` | `remote_address` | Adresse der Fernbedienung |
+| `dst` | `blind_address` | Adresse des Rollladens |
+| `ch` | `channel` | Funkkanal |
 
 ---
 
 ## 6. Endgültige Konfiguration
 
-Ersetze den Dummy-Cover mit den ermittelten Werten:
+Füge die ermittelten Werte in die Konfiguration ein:
 
 ```yaml
 esphome:
@@ -365,14 +284,11 @@ text_sensor:
     blind_address: 0xa831e5
     name: "Schlafzimmer Status"
 
-# ── Scan-Buttons (optional, kann nach Einrichtung entfernt werden) ──
-button:
-  - platform: elero
-    name: "Elero Start Scan"
-    scan_start: true
-  - platform: elero
-    name: "Elero Stop Scan"
-    scan_start: false
+# ── Web UI ──
+web_server_base:
+  port: 80
+
+elero_web:
 ```
 
 Flashe die endgültige Konfiguration:
@@ -409,8 +325,6 @@ Nach der Einbindung stehen folgende Entities zur Verfügung:
 - `cover.schlafzimmer` - Rollladen-Steuerung
 - `sensor.schlafzimmer_rssi` - Signalstärke
 - `text_sensor.schlafzimmer_status` - Status-Text
-- `button.elero_start_scan` - Scan starten
-- `button.elero_stop_scan` - Scan stoppen
 
 ---
 

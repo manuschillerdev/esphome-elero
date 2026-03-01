@@ -101,7 +101,7 @@ stateDiagram-v2
     LOOP_START --> TX_BUSY_CHECK
 
     TX_BUSY_CHECK --> HANDLE_TX_STATE: tx_ctx_.state != IDLE
-    TX_BUSY_CHECK --> DRAIN_RUNTIME_QUEUES: tx_ctx_.state == IDLE
+    TX_BUSY_CHECK --> CHECK_ISR_FLAG: tx_ctx_.state == IDLE
 
     note right of HANDLE_TX_STATE
         TX in progress - process TX state machine
@@ -109,12 +109,6 @@ stateDiagram-v2
     end note
 
     HANDLE_TX_STATE --> LOOP_END: return
-
-    DRAIN_RUNTIME_QUEUES --> CHECK_ISR_FLAG
-    note left of DRAIN_RUNTIME_QUEUES
-        Process runtime_blinds_ command queues
-        (web UI adopted blinds)
-    end note
 
     CHECK_ISR_FLAG --> LOOP_END: received_ == false
     CHECK_ISR_FLAG --> CLEAR_FLAG: received_ == true
@@ -131,12 +125,10 @@ stateDiagram-v2
     CHECK_BYTES --> READ_FIFO: bytes > 0
 
     READ_FIFO --> LOG_RAW: read_buf(RXFIFO, msg_rx_, count)
-    LOG_RAW --> CAPTURE_DUMP: if packet_dump_mode_
-    CAPTURE_DUMP --> SANITY_CHECK
+    LOG_RAW --> SANITY_CHECK: log raw bytes at VERBOSE level
 
     SANITY_CHECK --> INTERPRET_MSG: msg_rx_[0] + 3 <= fifo_count
-    SANITY_CHECK --> MARK_INVALID: length mismatch
-    MARK_INVALID --> LOOP_END
+    SANITY_CHECK --> LOOP_END: length mismatch
 
     INTERPRET_MSG --> LOOP_END
 
@@ -146,8 +138,7 @@ stateDiagram-v2
 ### Loop Priority
 
 1. **TX state machine** — If transmitting, handle TX states and return early
-2. **Runtime blind queues** — Drain command queues for web-adopted blinds
-3. **RX processing** — Check ISR flag, read FIFO, interpret packets
+2. **RX processing** — Check ISR flag, read FIFO, interpret packets
 
 ---
 
@@ -330,12 +321,8 @@ stateDiagram-v2
 
     state "Packet Dispatch" as DISPATCH {
         LOG_PACKET --> UPDATE_RSSI_SENSOR: if sensor registered
-        UPDATE_RSSI_SENSOR --> CHECK_SCAN_MODE
-
-        CHECK_SCAN_MODE --> TRACK_DISCOVERED: scan_mode_ && (typ=0xCA/0xC9 or 0x6A/0x69)
-        CHECK_SCAN_MODE --> CHECK_STATUS: not scanning
-
-        TRACK_DISCOVERED --> CHECK_STATUS
+        UPDATE_RSSI_SENSOR --> CALL_RF_CALLBACK: on_rf_packet_(pkt)
+        CALL_RF_CALLBACK --> CHECK_STATUS
 
         CHECK_STATUS --> STATUS_PACKET: typ == 0xCA or 0xC9
         CHECK_STATUS --> COMMAND_PACKET: typ == 0x6A or 0x69
@@ -566,7 +553,6 @@ Where:
 | **Packet Repetition** | Each command sent **2×** (`ELERO_SEND_PACKETS`) |
 | **Inter-packet Delay** | 50ms between sends (`ELERO_DELAY_SEND_PACKETS`) |
 | **Counter Management** | Increments after 2 packets sent, wraps 255→1 |
-| **Runtime Blinds** | Separate queue per adopted blind in `runtime_blinds_` map |
 
 ### Error Handling
 
@@ -628,7 +614,7 @@ The implementation supports two TX modes:
 
 ### Legacy Blocking Mode (`send_command`)
 
-Used by runtime blinds and simple use cases. Blocks the ESPHome loop during transmission.
+Used for simple use cases and raw TX via web UI. Blocks the ESPHome loop during transmission.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -785,7 +771,7 @@ stateDiagram-v2
 | Use Case | Recommended Mode |
 |----------|------------------|
 | EleroCover / EleroLight | Non-blocking (`CommandSender`) |
-| Runtime adopted blinds | Blocking (`send_command`) |
+| Raw TX via web UI | Blocking (`send_command`) |
 | Simple scripts | Blocking (`send_command`) |
 | High-traffic scenarios | Non-blocking |
 
