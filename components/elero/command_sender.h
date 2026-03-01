@@ -76,6 +76,14 @@ class CommandSender : public TxClient {
           return;  // Still waiting
         }
 
+        // Guard: queue might be empty if clear_queue was called during TX
+        // and timeout moved us here before callback arrived
+        if (this->command_queue_.empty()) {
+          this->cancelled_ = false;  // Clear stale flag
+          this->state_ = State::IDLE;
+          return;
+        }
+
         // Ready to transmit - try to acquire the radio
         this->command_.payload[4] = this->command_queue_.front();
 

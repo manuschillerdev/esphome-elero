@@ -148,6 +148,14 @@ class TestableCommandSender : public TxClient {
           return;
         }
 
+        // Guard: queue might be empty if clear_queue was called during TX
+        // and timeout moved us here before callback arrived
+        if (this->command_queue_.empty()) {
+          this->cancelled_ = false;
+          this->state_ = State::IDLE;
+          return;
+        }
+
         this->command_.payload[4] = this->command_queue_.front();
 
         if (parent->request_tx(this, this->command_)) {
@@ -462,6 +470,39 @@ TEST_F(CommandSenderTest, ClearQueueDuringTx_FailureIgnored) {
 
   sender_.clear_queue();
   mock_hub_.complete_tx(false);  // Failure should also be ignored
+
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::IDLE);
+  EXPECT_FALSE(sender_.has_pending_commands());
+}
+
+TEST_F(CommandSenderTest, ClearQueueDuringTx_TimeoutRecovery) {
+  // This tests the edge case where:
+  // 1. TX starts
+  // 2. clear_queue() is called (sets cancelled_, empties queue)
+  // 3. Timeout fires before callback (moves to WAIT_DELAY)
+  // 4. process_queue called - must not crash on empty queue
+  sender_.enqueue(0x20);
+  mock_time_.advance(ELERO_DELAY_SEND_PACKETS);
+
+  // Start TX
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::TX_PENDING);
+
+  // Clear queue during TX
+  sender_.clear_queue();
+  EXPECT_FALSE(sender_.has_pending_commands());
+
+  // Timeout fires (hub never called back)
+  mock_time_.advance(TestableCommandSender::TX_PENDING_TIMEOUT_MS + 10);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+
+  // Should be in WAIT_DELAY after timeout
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::WAIT_DELAY);
+
+  // Next process_queue should NOT crash on empty queue
+  // Should detect empty queue and go to IDLE
+  mock_time_.advance(ELERO_DELAY_SEND_PACKETS);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
 
   EXPECT_EQ(sender_.state(), TestableCommandSender::State::IDLE);
   EXPECT_FALSE(sender_.has_pending_commands());
