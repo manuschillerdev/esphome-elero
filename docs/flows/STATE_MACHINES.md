@@ -561,8 +561,11 @@ Where:
 | **TX Timeout** | 50ms per state, then `abort_tx_()` → `flush_and_rx()` |
 | **TX Retry** | Up to 3 retries per command (`ELERO_SEND_RETRIES`) |
 | **FIFO Overflow** | `flush_and_rx()` clears both FIFOs, returns to RX |
+| **FIFO Underflow** | In `TRIGGER_TX`, detected via MARCSTATE and aborted immediately |
 | **Invalid Packet** | Logged, marked in dump buffer, silently dropped |
 | **SPI Error** | Checked via CC1101 status byte (bit 7 = overflow) |
+| **Unexpected MARCSTATE** | In `TRIGGER_TX`, aborts immediately if state is not TX/IDLE/FSTXON |
+| **abort_tx_() Re-entrancy** | Early return if already IDLE (prevents double-flush/double-notify) |
 
 ### TX State Machine States
 
@@ -571,6 +574,69 @@ IDLE → GOTO_IDLE → FLUSH_TX → LOAD_FIFO → TRIGGER_TX → WAIT_TX_DONE �
 ```
 
 Each state has a 50ms timeout. Any failure triggers `abort_tx_()` which flushes and returns to RX.
+
+**State-specific behavior:**
+
+| State | Success Condition | Fast Abort Condition |
+|-------|-------------------|----------------------|
+| `GOTO_IDLE` | MARCSTATE == IDLE | Timeout only |
+| `FLUSH_TX` | 1ms settling elapsed | Timeout only |
+| `LOAD_FIFO` | FIFO loaded | SPI error |
+| `TRIGGER_TX` | MARCSTATE == TX | UFLOW, OFLOW, or unexpected MARCSTATE |
+| `WAIT_TX_DONE` | GDO0 interrupt | Timeout only |
+| `VERIFY_DONE` | TXBYTES == 0 | Bytes remaining in FIFO |
+| `RETURN_RX` | Always succeeds | N/A (uses `flush_and_rx()`) |
+
+The `TRIGGER_TX` state detects TXFIFO underflow, RXFIFO overflow, and other transient CC1101 states (CALIBRATE, SETTLING) without waiting for the full 50ms timeout.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+
+    [*] --> IDLE
+
+    IDLE --> GOTO_IDLE: start_transmit()
+
+    GOTO_IDLE --> FLUSH_TX: MARCSTATE == IDLE
+    GOTO_IDLE --> ABORT: timeout
+
+    FLUSH_TX --> LOAD_FIFO: 1ms elapsed
+    FLUSH_TX --> ABORT: timeout
+
+    LOAD_FIFO --> TRIGGER_TX: FIFO loaded
+    LOAD_FIFO --> ABORT: SPI error
+
+    TRIGGER_TX --> WAIT_TX_DONE: MARCSTATE == TX
+    TRIGGER_TX --> ABORT: UFLOW/OFLOW
+    TRIGGER_TX --> ABORT: timeout
+    TRIGGER_TX --> ABORT: unexpected MARCSTATE
+
+    note right of TRIGGER_TX
+        Fast abort if MARCSTATE not in
+        {TX, IDLE, FSTXON, UFLOW, OFLOW}
+        (catches CALIBRATE, SETTLING, etc.)
+    end note
+
+    WAIT_TX_DONE --> VERIFY_DONE: GDO0 interrupt
+    WAIT_TX_DONE --> ABORT: timeout
+
+    VERIFY_DONE --> RETURN_RX: TXBYTES == 0
+    VERIFY_DONE --> ABORT: bytes remaining
+
+    RETURN_RX --> IDLE: flush_and_rx() + notify success
+
+    state ABORT {
+        direction TB
+        [*] --> CHECK_IDLE
+        CHECK_IDLE --> EARLY_RETURN: already IDLE
+        CHECK_IDLE --> DO_ABORT: not IDLE
+        DO_ABORT --> LOG: log state + MARCSTATE
+        LOG --> FLUSH: flush_and_rx()
+        FLUSH --> NOTIFY: notify_tx_owner_(false)
+    }
+
+    ABORT --> IDLE
+```
 
 ### RX Dispatch Logic
 
@@ -597,14 +663,15 @@ Each state has a 50ms timeout. Any failure triggers `abort_tx_()` which flushes 
 
 ## Code References
 
-- CC1101 initialization: `elero.cpp:155-239`
-- Main loop: `elero.cpp:66-138`
-- TX state machine (unused): `elero.cpp:406-539`
-- Blocking transmit (active): `elero.cpp:347-404`
-- Packet interpretation: `elero.cpp:585-793`
-- Command sender: `command_sender.h:21-45`
-- Cover state handling: `EleroCover.cpp:110-185`
-- Position tracking: `EleroCover.cpp:263-292`
+- CC1101 initialization: `elero.cpp:146-238`
+- Main loop: `elero.cpp:85-129`
+- Non-blocking TX state machine: `elero.cpp:513-623` (used by CommandSender)
+- abort_tx_() with re-entrancy guard: `elero.cpp:406-418`
+- Blocking transmit (legacy): `elero.cpp:346-402`
+- Packet interpretation: `elero.cpp:663-783`
+- Command sender: `command_sender.h`
+- Cover state handling: `EleroCover.cpp`
+- Position tracking: `EleroCover.cpp`
 
 ---
 
@@ -799,10 +866,29 @@ stateDiagram-v2
 | Timeouts | ✅ | 200 × 200µs = 40ms max per state |
 | Non-blocking loop | ✅ | Via `request_tx()` + callback |
 
+### Diagnostic Logging
+
+TX state machine failures include detailed context for debugging:
+
+| Log Level | Information Included |
+|-----------|---------------------|
+| `LOGW` | `abort_tx_()`: TxState enum value + MARCSTATE register |
+| `LOGE` | Timeout: State name + elapsed time (ms) + MARCSTATE (where applicable) |
+| `LOGE` | FIFO underflow/overflow: Specific error type |
+| `LOGW` | Unexpected MARCSTATE in `TRIGGER_TX`: MARCSTATE value |
+
+Example log output:
+```
+[W][elero:411]: TX aborted in state 3, marcstate=0x16
+[E][elero:533]: TX timeout in GOTO_IDLE after 51ms, marcstate=0x01
+[E][elero:574]: TX FIFO underflow detected, aborting
+[W][elero:585]: Unexpected MARCSTATE=0x04 in TRIGGER_TX, aborting
+```
+
 ### Known Limitations
 
-1. **Volatile vs Atomic:** The `received_` flag uses `volatile` which is sufficient
-   for single-reader/single-writer but `std::atomic<bool>` would be more robust.
+1. **Volatile vs Atomic:** The `received_` flag uses `std::atomic<bool>` for
+   correct memory ordering between ISR and main loop.
 
 2. **CCA Bypass:** Clear Channel Assessment is intentionally bypassed (go to IDLE
    before STX) because Elero motors transmit continuously during status updates.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "elero.h"
+#include "time_provider.h"
 #include "tx_client.h"
 #include "esphome/core/log.h"
 #include <queue>
@@ -18,6 +19,7 @@ namespace elero {
 /// - 50ms delay between packets (ELERO_DELAY_SEND_PACKETS)
 /// - Up to 3 retries on failure (ELERO_SEND_RETRIES)
 /// - Cancellation support for STOP commands
+/// - TX_PENDING timeout watchdog (500ms) to prevent stuck states
 ///
 /// State machine:
 ///   IDLE ──enqueue()──▶ WAIT_DELAY ──request_tx()──▶ TX_PENDING
@@ -36,6 +38,12 @@ class CommandSender : public TxClient {
     WAIT_DELAY,  ///< Have command, waiting for inter-packet delay (50ms)
     TX_PENDING,  ///< TX requested and accepted, waiting for hub callback
   };
+
+  /// Timeout for TX_PENDING state (ms). If the hub doesn't call on_tx_complete()
+  /// within this time, we assume TX failed and recover. This prevents the sender
+  /// from getting stuck if the hub has an SPI lockup or other hardware issue.
+  /// Value is set to cover worst-case hub TX (~400ms) with margin.
+  static constexpr uint32_t TX_PENDING_TIMEOUT_MS = 500;
 
   CommandSender() = default;
 
@@ -68,12 +76,21 @@ class CommandSender : public TxClient {
           return;  // Still waiting
         }
 
+        // Guard: queue might be empty if clear_queue was called during TX
+        // and timeout moved us here before callback arrived
+        if (this->command_queue_.empty()) {
+          this->cancelled_ = false;  // Clear stale flag
+          this->state_ = State::IDLE;
+          return;
+        }
+
         // Ready to transmit - try to acquire the radio
         this->command_.payload[4] = this->command_queue_.front();
 
         if (parent->request_tx(this, this->command_)) {
           // Successfully started TX
           this->state_ = State::TX_PENDING;
+          this->tx_start_time_ = now;
           ESP_LOGV(tag, "TX started for 0x%06x cmd=0x%02x, packet %d/%d",
                    this->command_.blind_addr, this->command_.payload[4],
                    this->send_packets_ + 1, ELERO_SEND_PACKETS);
@@ -85,7 +102,21 @@ class CommandSender : public TxClient {
 
       case State::TX_PENDING:
         // Waiting for on_tx_complete() callback from hub
-        // Nothing to do here
+        // Watchdog: if hub never calls back, recover after timeout
+        if ((now - this->tx_start_time_) > TX_PENDING_TIMEOUT_MS) {
+          ESP_LOGW(tag, "TX_PENDING timeout for 0x%06x after %ums, treating as failure",
+                   this->command_.blind_addr, TX_PENDING_TIMEOUT_MS);
+          // Treat as TX failure - use retry logic
+          ++this->send_retries_;
+          if (this->send_retries_ > ELERO_SEND_RETRIES) {
+            ESP_LOGE(tag, "Max retries for 0x%06x after timeout, dropping command 0x%02x",
+                     this->command_.blind_addr, this->command_.payload[4]);
+            this->advance_queue_();
+          } else {
+            this->state_ = State::WAIT_DELAY;
+            this->last_tx_time_ = now;  // Enforce delay before retry
+          }
+        }
         break;
     }
   }
@@ -98,7 +129,15 @@ class CommandSender : public TxClient {
   /// - Success: increment packet count, dequeue if done
   /// - Failure: retry or give up after max retries
   void on_tx_complete(bool success) override {
-    this->last_tx_time_ = millis();
+    // Guard: reject stale callbacks after timeout recovery
+    // This can happen if hub calls back after we already timed out and moved to WAIT_DELAY
+    if (this->state_ != State::TX_PENDING) {
+      ESP_LOGD(this->log_tag_, "Ignoring stale on_tx_complete for 0x%06x (state=%d, success=%d)",
+               this->command_.blind_addr, static_cast<int>(this->state_), success);
+      return;
+    }
+
+    this->last_tx_time_ = get_time_provider().millis();
 
     // Check cancellation FIRST
     if (this->cancelled_) {
@@ -231,6 +270,7 @@ class CommandSender : public TxClient {
 
   State state_{State::IDLE};
   uint32_t last_tx_time_{0};
+  uint32_t tx_start_time_{0};  ///< When TX_PENDING state was entered (for timeout)
   uint8_t send_packets_{0};
   uint8_t send_retries_{0};
   bool cancelled_{false};

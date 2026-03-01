@@ -404,7 +404,11 @@ bool Elero::transmit() {
 // ─── Non-blocking TX State Machine ─────────────────────────────────────────
 
 void Elero::abort_tx_() {
-  ESP_LOGW(TAG, "TX aborted in state %d", static_cast<int>(this->tx_ctx_.state));
+  if (this->tx_ctx_.state == TxState::IDLE) {
+    return;  // Already idle, nothing to abort
+  }
+  uint8_t marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+  ESP_LOGW(TAG, "TX aborted in state %d, marcstate=0x%02x", static_cast<int>(this->tx_ctx_.state), marcstate);
   this->tx_ctx_.state = TxState::IDLE;
   this->tx_pending_success_ = false;
   this->flush_and_rx();
@@ -526,14 +530,18 @@ void Elero::handle_tx_state_(uint32_t now) {
         this->tx_ctx_.state = TxState::FLUSH_TX;
         this->tx_ctx_.state_enter_time = now;
       } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in GOTO_IDLE, marcstate=0x%02x", marcstate);
+        ESP_LOGE(TAG, "TX timeout in GOTO_IDLE after %ums, marcstate=0x%02x", elapsed, marcstate);
         this->abort_tx_();
       }
       break;
 
     case TxState::FLUSH_TX:
-      // Brief settling time after SFTX (millis() has 1ms resolution)
-      if (elapsed >= 1) {
+      // Check timeout FIRST (elapsed >= 1 would always trigger before timeout otherwise)
+      if (elapsed > TxContext::STATE_TIMEOUT_MS) {
+        ESP_LOGE(TAG, "TX timeout in FLUSH_TX after %ums", elapsed);
+        this->abort_tx_();
+      } else if (elapsed >= 1) {
+        // Brief settling time after SFTX (millis() has 1ms resolution)
         // Load TX FIFO
         if (!this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1)) {
           this->abort_tx_();
@@ -541,9 +549,6 @@ void Elero::handle_tx_state_(uint32_t now) {
         }
         this->tx_ctx_.state = TxState::LOAD_FIFO;
         this->tx_ctx_.state_enter_time = now;
-      } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in FLUSH_TX");
-        this->abort_tx_();
       }
       break;
 
@@ -564,8 +569,20 @@ void Elero::handle_tx_state_(uint32_t now) {
       if (marcstate == CC1101_MARCSTATE_TX) {
         this->tx_ctx_.state = TxState::WAIT_TX_DONE;
         this->tx_ctx_.state_enter_time = now;
+      } else if (marcstate == CC1101_MARCSTATE_TXFIFO_UFLOW) {
+        // TX FIFO underflow - packet data was not loaded correctly
+        ESP_LOGE(TAG, "TX FIFO underflow detected, aborting");
+        this->abort_tx_();
+      } else if (marcstate == CC1101_MARCSTATE_RXFIFO_OFLOW) {
+        // RX FIFO overflow - likely received packet during TX setup
+        ESP_LOGE(TAG, "RX FIFO overflow during TX, aborting");
+        this->abort_tx_();
       } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in TRIGGER_TX, marcstate=0x%02x", marcstate);
+        ESP_LOGE(TAG, "TX timeout in TRIGGER_TX after %ums, marcstate=0x%02x", elapsed, marcstate);
+        this->abort_tx_();
+      } else if (marcstate != CC1101_MARCSTATE_IDLE && marcstate != CC1101_MARCSTATE_FSTXON) {
+        // Unexpected state (e.g., CALIBRATE, SETTLING) - abort faster than timeout
+        ESP_LOGW(TAG, "Unexpected MARCSTATE=0x%02x in TRIGGER_TX, aborting", marcstate);
         this->abort_tx_();
       }
       break;
@@ -576,7 +593,7 @@ void Elero::handle_tx_state_(uint32_t now) {
         this->tx_ctx_.state = TxState::VERIFY_DONE;
         this->tx_ctx_.state_enter_time = now;
       } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in WAIT_TX_DONE");
+        ESP_LOGE(TAG, "TX timeout in WAIT_TX_DONE after %ums", elapsed);
         this->abort_tx_();
       }
       break;

@@ -41,8 +41,24 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+      - name: Run tests with JUnit XML output
+        run: cmake --build build --target test_xml
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: build/test-results.xml
+          retention-days: 30
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Unit Test Results
+          path: build/test-results.xml
+          reporter: java-junit
 
   # Python code validation (formatting removed - not enforced)
   python-lint:
