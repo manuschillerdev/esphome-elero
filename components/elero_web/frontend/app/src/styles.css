@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -82,8 +83,8 @@
 }
 
 @theme inline {
-  --font-sans: system-ui, -apple-system, sans-serif;
-  --font-mono: ui-monospace, monospace;
+  --font-sans: 'Geist', 'Geist Fallback', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback', ui-monospace, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -134,18 +135,3 @@
     @apply bg-background text-foreground;
   }
 }
-
-/* Animation keyframes */
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-@keyframes ping {
-  75%, 100% { transform: scale(2); opacity: 0; }
-}
-@keyframes pulse {
-  50% { opacity: .5; }
-}
-
-.animate-spin { animation: spin 1s linear infinite; }
-.animate-ping { animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite; }
-.animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }

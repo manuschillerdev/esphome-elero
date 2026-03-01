@@ -1,85 +1,112 @@
-import { useEffect } from 'preact/compat'
+import { useMemo } from 'preact/hooks'
 import { Button } from './ui/button'
-import { Badge } from './ui/badge'
 import { cn } from '@/lib/utils'
-import { Radio, Clock, LayoutGrid, List } from './icons'
-import { useStore, type FilterState } from '@/store'
-
-function formatTimer(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
+import { Radio, LayoutGrid, List, Lightbulb, Blinds } from './icons'
+import { useStore, type FilterState, type DeviceTypeFilter } from '@/store'
 
 export function ControlBar() {
   const filter = useStore((s) => s.filter)
-  const setFilter = useStore((s) => s.setFilter)
   const viewMode = useStore((s) => s.viewMode)
-  const setViewMode = useStore((s) => s.setViewMode)
-  const discoveryActive = useStore((s) => s.discoveryActive)
-  const toggleDiscovery = useStore((s) => s.toggleDiscovery)
-  const discoveryElapsed = useStore((s) => s.discoveryElapsed)
-  const devices = useStore((s) => s.devices)
+  const deviceTypeFilter = useStore((s) => s.deviceTypeFilter)
+  const blinds = useStore((s) => s.config.blinds)
+  const lights = useStore((s) => s.config.lights)
+  const states = useStore((s) => s.states)
 
-  // Compute counts inline
-  const counts = {
-    all: devices.length,
-    configured: devices.filter((d) => d.status === 'configured').length,
-    disabled: devices.filter((d) => d.status === 'disabled').length,
-    discovered: devices.filter((d) => d.status === 'discovered').length,
-  }
-
-  useEffect(() => {
-    if (!discoveryActive) {
-      useStore.getState().resetDiscoveryElapsed()
-      return
+  // Compute discovered addresses (in states but not in config)
+  const counts = useMemo(() => {
+    const configuredAddrs = new Set([
+      ...blinds.map((b) => b.address),
+      ...lights.map((l) => l.address),
+    ])
+    const discoveredAddrs = Object.keys(states).filter((addr) => !configuredAddrs.has(addr))
+    return {
+      all: blinds.length + lights.length + discoveredAddrs.length,
+      configured: blinds.length + lights.length,
+      discovered: discoveredAddrs.length,
+      blinds: blinds.length,
+      lights: lights.length,
     }
-    const interval = setInterval(() => {
-      useStore.getState().incrementDiscoveryElapsed()
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [discoveryActive])
+  }, [blinds, lights, states])
 
   const filters: { value: FilterState; label: string }[] = [
     { value: 'all', label: 'All' },
-    { value: 'configured', label: 'Enabled' },
-    { value: 'disabled', label: 'Disabled' },
+    { value: 'configured', label: 'Configured' },
     { value: 'discovered', label: 'Discovered' },
+  ]
+
+  const deviceTypes: { value: DeviceTypeFilter; label: string; icon?: typeof Blinds }[] = [
+    { value: 'all', label: 'All' },
+    { value: 'blinds', label: 'Blinds', icon: Blinds },
+    { value: 'lights', label: 'Lights', icon: Lightbulb },
   ]
 
   return (
     <div className="flex items-center justify-between">
-      {/* Filter pills */}
-      <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
-        {filters.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setFilter(f.value)}
-            className={cn(
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-              filter === f.value
-                ? 'bg-card text-card-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            )}
-          >
-            {f.label}
-            <span
+      <div className="flex items-center gap-2">
+        {/* Filter pills */}
+        <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+          {filters.map((f) => (
+            <button
+              key={f.value}
+              onClick={() => useStore.getState().setFilter(f.value)}
               className={cn(
-                'tabular-nums text-[10px]',
-                filter === f.value ? 'text-muted-foreground' : 'text-muted-foreground/60'
+                'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                filter === f.value
+                  ? 'bg-card text-card-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              {counts[f.value]}
-            </span>
-          </button>
-        ))}
+              {f.label}
+              <span
+                className={cn(
+                  'tabular-nums text-[10px]',
+                  filter === f.value ? 'text-muted-foreground' : 'text-muted-foreground/60'
+                )}
+              >
+                {counts[f.value]}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Device type filter */}
+        <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+          {deviceTypes.map((dt) => {
+            const Icon = dt.icon
+            return (
+              <button
+                key={dt.value}
+                onClick={() => useStore.getState().setDeviceTypeFilter(dt.value)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                  deviceTypeFilter === dt.value
+                    ? 'bg-card text-card-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {Icon && <Icon className="size-3.5" />}
+                {!Icon && dt.label}
+                {dt.value !== 'all' && (
+                  <span
+                    className={cn(
+                      'tabular-nums text-[10px]',
+                      deviceTypeFilter === dt.value ? 'text-muted-foreground' : 'text-muted-foreground/60'
+                    )}
+                  >
+                    {counts[dt.value]}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       <div className="flex items-center gap-2">
         {/* View toggle */}
         <div className="flex items-center rounded-lg bg-muted p-1">
           <button
-            onClick={() => setViewMode('grid')}
+            onClick={() => useStore.getState().setViewMode('grid')}
             className={cn(
               'flex items-center justify-center rounded-md p-1.5 transition-colors',
               viewMode === 'grid'
@@ -91,7 +118,7 @@ export function ControlBar() {
             <LayoutGrid className="size-3.5" />
           </button>
           <button
-            onClick={() => setViewMode('list')}
+            onClick={() => useStore.getState().setViewMode('list')}
             className={cn(
               'flex items-center justify-center rounded-md p-1.5 transition-colors',
               viewMode === 'list'
@@ -104,27 +131,14 @@ export function ControlBar() {
           </button>
         </div>
 
-        {/* Discovery toggle */}
+        {/* Discovery button */}
         <Button
-          variant={discoveryActive ? 'default' : 'outline'}
+          variant="outline"
           size="sm"
-          onClick={toggleDiscovery}
-          className={cn(
-            'gap-2 text-xs font-medium',
-            discoveryActive && 'bg-primary text-primary-foreground'
-          )}
+          className="gap-2 text-xs font-medium"
         >
-          <Radio className={cn('size-3.5', discoveryActive && 'animate-pulse')} />
+          <Radio className="size-3.5" />
           Discovery
-          {discoveryActive && (
-            <Badge
-              variant="secondary"
-              className="ml-0.5 gap-1 bg-primary-foreground/15 px-1.5 py-0 font-mono text-[10px] text-primary-foreground"
-            >
-              <Clock className="size-2.5" />
-              {formatTimer(discoveryElapsed)}
-            </Badge>
-          )}
         </Button>
       </div>
     </div>
