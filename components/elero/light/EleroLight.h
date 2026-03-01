@@ -36,6 +36,10 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   }
   void enqueue_command(uint8_t cmd_byte) override { (void)this->sender_.enqueue(cmd_byte); }
   void schedule_immediate_poll() override;
+  std::string get_light_name() const override { return this->state_ ? std::string(this->state_->get_name().c_str()) : std::string(); }
+  uint8_t get_channel() const override { return this->sender_.command().channel; }
+  uint32_t get_remote_address() const override { return this->sender_.command().remote_addr; }
+  uint32_t get_dim_duration_ms() const override { return this->dim_duration_; }
 
   // RF parameter setters
   void set_elero_parent(Elero *parent) { this->parent_ = parent; }
