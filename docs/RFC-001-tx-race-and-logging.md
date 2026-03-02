@@ -1,6 +1,6 @@
 # RFC-001: TX Race Condition Fix & Unified Naming
 
-**Status:** Partially implemented
+**Status:** Complete
 **Date:** 2026-03-02
 **Authors:** Claude + User
 
@@ -8,12 +8,12 @@
 
 | Phase | Description | Status | Notes |
 |-------|-------------|--------|-------|
-| Phase 1 | TX Race Fix | ✅ Complete | Implemented in prior session |
+| Phase 1 | TX Race Fix | ✅ Complete | defer_count, backoff_until, MARCSTATE guards |
 | Phase 2 | Config Naming | ✅ Complete | blind_address→dst_address, remote_address→src_address, pck_inf1→type, pck_inf2→type2 |
 | Phase 3 | C++ Struct Naming | ✅ Complete | Struct fields renamed to match config |
-| Phase 4 | JSON Logging | ❌ Deferred | Still using human-readable logs; JSON logging is optional enhancement |
+| Phase 4 | JSON Logging | ✅ Complete | TX/RX logs now use machine-readable JSON format |
 | Phase 5 | WebSocket JSON | ✅ Complete | Field names unified |
-| Phase 6 | Skill Documentation | ❌ Deferred | Lower priority |
+| Phase 6 | Skill Documentation | ✅ Complete | Added naming table, protocol ambiguities, JSON log examples |
 | Phase 7 | Example & Docs | ✅ Complete | README, CONFIGURATION.md, example.yaml updated |
 
 ---
