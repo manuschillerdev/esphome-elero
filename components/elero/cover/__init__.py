@@ -17,12 +17,12 @@ DEPENDENCIES = ["elero"]
 CODEOWNERS = ["@andyboeh"]
 AUTO_LOAD = ["sensor", "text_sensor"]
 
-CONF_BLIND_ADDRESS = "blind_address"
-CONF_REMOTE_ADDRESS = "remote_address"
+CONF_DST_ADDRESS = "dst_address"
+CONF_SRC_ADDRESS = "src_address"
 CONF_PAYLOAD_1 = "payload_1"
 CONF_PAYLOAD_2 = "payload_2"
-CONF_PCKINF_1 = "pck_inf1"
-CONF_PCKINF_2 = "pck_inf2"
+CONF_TYPE = "type"
+CONF_TYPE2 = "type2"
 CONF_HOP = "hop"
 CONF_COMMAND_UP = "command_up"
 CONF_COMMAND_DOWN = "command_down"
@@ -103,16 +103,16 @@ CONFIG_SCHEMA = cv.All(
     .extend(
         {
             cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
-            cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
+            cv.Required(CONF_DST_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
             cv.Required(CONF_CHANNEL): cv.int_range(min=0, max=255),
-            cv.Required(CONF_REMOTE_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
+            cv.Required(CONF_SRC_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
             cv.Optional(CONF_POLL_INTERVAL, default="5min"): poll_interval,
             cv.Optional(CONF_OPEN_DURATION, default="0s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_CLOSE_DURATION, default="0s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_PAYLOAD_1, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_PAYLOAD_2, default=0x04): cv.hex_int_range(min=0x0, max=0xFF),
-            cv.Optional(CONF_PCKINF_1, default=0x6A): cv.hex_int_range(min=0x0, max=0xFF),
-            cv.Optional(CONF_PCKINF_2, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_TYPE, default=0x6A): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_TYPE2, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_HOP, default=0x0A): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_COMMAND_UP, default=0x20): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_COMMAND_DOWN, default=0x40): cv.hex_int_range(min=0x0, max=0xFF),
@@ -137,15 +137,15 @@ async def to_code(config):
 
     parent = await cg.get_variable(config[CONF_ELERO_ID])
     cg.add(var.set_elero_parent(parent))
-    cg.add(var.set_blind_address(config[CONF_BLIND_ADDRESS]))
+    cg.add(var.set_dst_address(config[CONF_DST_ADDRESS]))
     cg.add(var.set_channel(config[CONF_CHANNEL]))
-    cg.add(var.set_remote_address(config[CONF_REMOTE_ADDRESS]))
+    cg.add(var.set_src_address(config[CONF_SRC_ADDRESS]))
     cg.add(var.set_open_duration(config[CONF_OPEN_DURATION]))
     cg.add(var.set_close_duration(config[CONF_CLOSE_DURATION]))
     cg.add(var.set_payload_1(config[CONF_PAYLOAD_1]))
     cg.add(var.set_payload_2(config[CONF_PAYLOAD_2]))
-    cg.add(var.set_pckinf_1(config[CONF_PCKINF_1]))
-    cg.add(var.set_pckinf_2(config[CONF_PCKINF_2]))
+    cg.add(var.set_type(config[CONF_TYPE]))
+    cg.add(var.set_type2(config[CONF_TYPE2]))
     cg.add(var.set_hop(config[CONF_HOP]))
     cg.add(var.set_command_up(config[CONF_COMMAND_UP]))
     cg.add(var.set_command_down(config[CONF_COMMAND_DOWN]))
@@ -155,7 +155,7 @@ async def to_code(config):
     cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
     cg.add(var.set_supports_tilt(config[CONF_SUPPORTS_TILT]))
 
-    addr = config[CONF_BLIND_ADDRESS]
+    addr = config[CONF_DST_ADDRESS]
 
     # RSSI sensor — present when explicitly configured or auto_sensors=True
     if CONF_RSSI_SENSOR in config:

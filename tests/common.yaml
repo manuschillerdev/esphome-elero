@@ -23,9 +23,9 @@ elero:
 # Cover platform test
 cover:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     channel: 4
-    remote_address: 0xf0d008
+    src_address: 0xf0d008
     name: "Test Cover"
     open_duration: 25s
     close_duration: 22s
@@ -35,22 +35,22 @@ cover:
 # Light platform test
 light:
   - platform: elero
-    blind_address: 0xc41a2b
+    dst_address: 0xc41a2b
     channel: 6
-    remote_address: 0xf0d008
+    src_address: 0xf0d008
     name: "Test Light"
     dim_duration: 5s
 
 # Sensor platform test
 sensor:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     name: "Test RSSI"
 
 # Text sensor platform test
 text_sensor:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     name: "Test Status"
 
 # Elero web UI (Mongoose-based, no external dependencies)

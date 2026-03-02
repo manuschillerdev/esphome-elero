@@ -403,6 +403,27 @@ bool Elero::transmit() {
 
 // ─── Non-blocking TX State Machine ─────────────────────────────────────────
 
+void Elero::defer_tx_(uint32_t now) {
+  this->tx_ctx_.defer_count++;
+
+  // Apply backoff if deferred multiple times
+  if (this->tx_ctx_.defer_count > TxContext::DEFER_BACKOFF_THRESHOLD) {
+    // Random backoff: scale with defer count for exponential-ish backoff
+    uint32_t backoff_ms = (random_uint32() % TxContext::BACKOFF_MAX_MS) + 1;
+    backoff_ms *= (this->tx_ctx_.defer_count - TxContext::DEFER_BACKOFF_THRESHOLD);
+    if (backoff_ms > TxContext::BACKOFF_MAX_MS * 3) {
+      backoff_ms = TxContext::BACKOFF_MAX_MS * 3;  // Cap at 150ms
+    }
+    this->tx_ctx_.backoff_until = now + backoff_ms;
+    ESP_LOGD(TAG, "TX defer %d, backoff %ums", this->tx_ctx_.defer_count, backoff_ms);
+  }
+
+  // Go back to GOTO_IDLE to retry
+  this->write_cmd(CC1101_SIDLE);
+  this->tx_ctx_.state = TxState::GOTO_IDLE;
+  this->tx_ctx_.state_enter_time = now;
+}
+
 void Elero::abort_tx_() {
   if (this->tx_ctx_.state == TxState::IDLE) {
     return;  // Already idle, nothing to abort
@@ -410,6 +431,7 @@ void Elero::abort_tx_() {
   uint8_t marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
   ESP_LOGW(TAG, "TX aborted in state %d, marcstate=0x%02x", static_cast<int>(this->tx_ctx_.state), marcstate);
   this->tx_ctx_.state = TxState::IDLE;
+  this->tx_ctx_.reset();  // Reset defer count
   this->tx_pending_success_ = false;
   this->flush_and_rx();
 
@@ -429,24 +451,24 @@ void Elero::build_tx_packet_(const EleroCommand &cmd) {
   uint16_t code = (0x00 - (cmd.counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
   this->msg_tx_[0] = ELERO_MSG_LENGTH;
   this->msg_tx_[1] = cmd.counter;
-  this->msg_tx_[2] = cmd.pck_inf[0];
-  this->msg_tx_[3] = cmd.pck_inf[1];
+  this->msg_tx_[2] = cmd.type;
+  this->msg_tx_[3] = cmd.type2;
   this->msg_tx_[4] = cmd.hop;
   this->msg_tx_[5] = ELERO_SYS_ADDR;
   this->msg_tx_[6] = cmd.channel;
-  this->msg_tx_[7] = ((cmd.remote_addr >> 16) & 0xff);
-  this->msg_tx_[8] = ((cmd.remote_addr >> 8) & 0xff);
-  this->msg_tx_[9] = ((cmd.remote_addr) & 0xff);
-  this->msg_tx_[10] = ((cmd.remote_addr >> 16) & 0xff);
-  this->msg_tx_[11] = ((cmd.remote_addr >> 8) & 0xff);
-  this->msg_tx_[12] = ((cmd.remote_addr) & 0xff);
-  this->msg_tx_[13] = ((cmd.remote_addr >> 16) & 0xff);
-  this->msg_tx_[14] = ((cmd.remote_addr >> 8) & 0xff);
-  this->msg_tx_[15] = ((cmd.remote_addr) & 0xff);
+  this->msg_tx_[7] = ((cmd.src_addr >> 16) & 0xff);
+  this->msg_tx_[8] = ((cmd.src_addr >> 8) & 0xff);
+  this->msg_tx_[9] = ((cmd.src_addr) & 0xff);
+  this->msg_tx_[10] = ((cmd.src_addr >> 16) & 0xff);
+  this->msg_tx_[11] = ((cmd.src_addr >> 8) & 0xff);
+  this->msg_tx_[12] = ((cmd.src_addr) & 0xff);
+  this->msg_tx_[13] = ((cmd.src_addr >> 16) & 0xff);
+  this->msg_tx_[14] = ((cmd.src_addr >> 8) & 0xff);
+  this->msg_tx_[15] = ((cmd.src_addr) & 0xff);
   this->msg_tx_[16] = ELERO_DEST_COUNT;
-  this->msg_tx_[17] = ((cmd.blind_addr >> 16) & 0xff);
-  this->msg_tx_[18] = ((cmd.blind_addr >> 8) & 0xff);
-  this->msg_tx_[19] = ((cmd.blind_addr) & 0xff);
+  this->msg_tx_[17] = ((cmd.dst_addr >> 16) & 0xff);
+  this->msg_tx_[18] = ((cmd.dst_addr >> 8) & 0xff);
+  this->msg_tx_[19] = ((cmd.dst_addr) & 0xff);
   for (int i = 0; i < 10; ++i)
     this->msg_tx_[20 + i] = cmd.payload[i];
   this->msg_tx_[22] = ((code >> 8) & 0xff);
@@ -467,9 +489,9 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
   this->build_tx_packet_(cmd);
 
   ESP_LOGV(TAG,
-           "request_tx: len=%02d, cnt=%02d, typ=0x%02x, blind=0x%06x, remote=0x%06x, ch=%d, cmd=0x%02x",
+           "request_tx: len=%02d, cnt=%02d, type=0x%02x, dst=0x%06x, src=0x%06x, ch=%d, cmd=0x%02x",
            this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2],
-           cmd.blind_addr, cmd.remote_addr, cmd.channel, cmd.payload[4]);
+           cmd.dst_addr, cmd.src_addr, cmd.channel, cmd.payload[4]);
 
   // Start non-blocking TX
   if (!this->start_transmit()) {
@@ -520,6 +542,18 @@ void Elero::handle_tx_state_(uint32_t now) {
 
   switch (this->tx_ctx_.state) {
     case TxState::GOTO_IDLE:
+      // Check backoff timer first
+      if (now < this->tx_ctx_.backoff_until) {
+        return;  // Still in backoff, wait
+      }
+
+      // Check defer limit
+      if (this->tx_ctx_.defer_count >= TxContext::DEFER_MAX) {
+        ESP_LOGW(TAG, "TX deferred %d times, channel busy, aborting", this->tx_ctx_.defer_count);
+        this->abort_tx_();
+        return;
+      }
+
       marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
       if (marcstate == CC1101_MARCSTATE_IDLE) {
         // Transition to FLUSH_TX
@@ -553,8 +587,18 @@ void Elero::handle_tx_state_(uint32_t now) {
       break;
 
     case TxState::LOAD_FIFO:
+      // Check we're still in IDLE before sending STX (a packet might have arrived)
+      marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      if (marcstate != CC1101_MARCSTATE_IDLE) {
+        // Radio is not idle (likely receiving) - defer TX
+        ESP_LOGD(TAG, "Radio not idle before STX (0x%02x), deferring TX", marcstate);
+        this->defer_tx_(now);
+        return;
+      }
+
       // Clear received_ so we can detect TX-end interrupt
       this->received_.store(false);
+
       // Trigger TX
       if (!this->write_cmd(CC1101_STX)) {
         this->abort_tx_();
@@ -577,13 +621,17 @@ void Elero::handle_tx_state_(uint32_t now) {
         // RX FIFO overflow - likely received packet during TX setup
         ESP_LOGE(TAG, "RX FIFO overflow during TX, aborting");
         this->abort_tx_();
+      } else if (marcstate == CC1101_MARCSTATE_RX) {
+        // Radio went back to RX (CCA failed or packet arrived) - defer and retry
+        ESP_LOGD(TAG, "Radio in RX during TRIGGER_TX, deferring");
+        this->defer_tx_(now);
       } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
         ESP_LOGE(TAG, "TX timeout in TRIGGER_TX after %ums, marcstate=0x%02x", elapsed, marcstate);
         this->abort_tx_();
       } else if (marcstate != CC1101_MARCSTATE_IDLE && marcstate != CC1101_MARCSTATE_FSTXON) {
-        // Unexpected state (e.g., CALIBRATE, SETTLING) - abort faster than timeout
-        ESP_LOGW(TAG, "Unexpected MARCSTATE=0x%02x in TRIGGER_TX, aborting", marcstate);
-        this->abort_tx_();
+        // Unexpected state (e.g., CALIBRATE, SETTLING) - defer rather than abort
+        ESP_LOGD(TAG, "Unexpected MARCSTATE=0x%02x in TRIGGER_TX, deferring", marcstate);
+        this->defer_tx_(now);
       }
       break;
 
@@ -616,6 +664,7 @@ void Elero::handle_tx_state_(uint32_t now) {
       this->flush_and_rx();
       this->tx_pending_success_ = true;
       this->tx_ctx_.state = TxState::IDLE;
+      this->tx_ctx_.reset();  // Reset defer count on success
       break;
 
     default:
@@ -755,12 +804,11 @@ void Elero::interpret_msg() {
     pkt.dst = dst;
     pkt.channel = chl;
     pkt.type = typ;
-    pkt.cmd = ((typ == 0x6a) || (typ == 0x69)) ? payload[4] : 0;
+    pkt.type2 = typ2;
+    pkt.command = ((typ == 0x6a) || (typ == 0x69)) ? payload[4] : 0;
     pkt.state = ((typ == 0xca) || (typ == 0xc9)) ? payload[6] : 0;
     pkt.rssi = rssi;
     pkt.hop = hop;
-    pkt.pck_inf[0] = typ;
-    pkt.pck_inf[1] = typ2;
     memcpy(pkt.payload, payload, 10);
     pkt.raw_len = (length + 3 <= CC1101_FIFO_LENGTH) ? length + 3 : CC1101_FIFO_LENGTH;
     memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
@@ -887,18 +935,18 @@ bool Elero::send_command(EleroCommand *cmd) {
   return transmit();
 }
 
-bool Elero::send_raw_command(uint32_t blind_addr, uint32_t remote_addr, uint8_t channel, uint8_t command,
-                              uint8_t payload_1, uint8_t payload_2, uint8_t pck_inf1, uint8_t pck_inf2, uint8_t hop) {
+bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t channel, uint8_t command,
+                              uint8_t payload_1, uint8_t payload_2, uint8_t type, uint8_t type2, uint8_t hop) {
   // Use a static counter for raw commands (persists across calls)
   static uint8_t raw_msg_cnt = 1;
 
   EleroCommand cmd{};
   cmd.counter = raw_msg_cnt;
-  cmd.blind_addr = blind_addr;
-  cmd.remote_addr = remote_addr;
+  cmd.dst_addr = dst_addr;
+  cmd.src_addr = src_addr;
   cmd.channel = channel;
-  cmd.pck_inf[0] = pck_inf1;
-  cmd.pck_inf[1] = pck_inf2;
+  cmd.type = type;
+  cmd.type2 = type2;
   cmd.hop = hop;
   cmd.payload[0] = payload_1;
   cmd.payload[1] = payload_2;

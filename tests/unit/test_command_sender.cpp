@@ -66,10 +66,11 @@ class TxClient {
 
 struct EleroCommand {
   uint8_t counter{1};
-  uint32_t blind_addr{0};
-  uint32_t remote_addr{0};
+  uint32_t dst_addr{0};
+  uint32_t src_addr{0};
   uint8_t channel{0};
-  uint8_t pck_inf[2]{0, 0};
+  uint8_t type{0};
+  uint8_t type2{0};
   uint8_t hop{0};
   uint8_t payload[10]{0};
 };
@@ -81,7 +82,7 @@ class MockElero {
   /// Result to return from next request_tx call
   bool next_request_result{true};
 
-  /// Recorded request_tx calls: (client, blind_addr, command_byte)
+  /// Recorded request_tx calls: (client, dst_addr, command_byte)
   std::vector<std::tuple<TxClient*, uint32_t, uint8_t>> recorded_requests;
 
   /// Currently pending client (simulates hub ownership)
@@ -89,7 +90,7 @@ class MockElero {
 
   /// Request to transmit a command.
   bool request_tx(TxClient* client, const EleroCommand& cmd) {
-    recorded_requests.push_back({client, cmd.blind_addr, cmd.payload[4]});
+    recorded_requests.push_back({client, cmd.dst_addr, cmd.payload[4]});
 
     if (next_request_result) {
       pending_client = client;
@@ -273,7 +274,7 @@ class TestableCommandSender : public TxClient {
     }
   }
 
-  EleroCommand command_{1, 0, 0, 0, {0, 0}, 0, {0}};
+  EleroCommand command_{1, 0, 0, 0, 0, 0, 0, {0}};
   std::queue<uint8_t> command_queue_;
 
   State state_{State::IDLE};
@@ -306,8 +307,8 @@ class CommandSenderTest : public ::testing::Test {
     mock_hub_.next_request_result = true;
 
     // Configure sender with a test address
-    sender_.command().blind_addr = 0x123456;
-    sender_.command().remote_addr = 0xABCDEF;
+    sender_.command().dst_addr = 0x123456;
+    sender_.command().src_addr = 0xABCDEF;
     sender_.command().channel = 5;
   }
 

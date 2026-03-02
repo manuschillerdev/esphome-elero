@@ -44,17 +44,17 @@ Jeder Rollladen wird als eigener Cover-Eintrag konfiguriert.
 cover:
   - platform: elero
     name: "Schlafzimmer"
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     channel: 4
-    remote_address: 0xf0d008
+    src_address: 0xf0d008
     open_duration: 25s
     close_duration: 22s
     poll_interval: 5min
     supports_tilt: false
     payload_1: 0x00
     payload_2: 0x04
-    pck_inf1: 0x6a
-    pck_inf2: 0x00
+    type: 0x6a
+    type2: 0x00
     hop: 0x0a
     command_up: 0x20
     command_down: 0x40
@@ -68,9 +68,9 @@ cover:
 | Parameter | Typ | Beschreibung |
 |---|---|---|
 | `name` | String | Anzeigename in Home Assistant |
-| `blind_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF-Adresse des Rollladens (= `dst` im Log) |
-| `channel` | Integer (0-255) | Funkkanal des Rollladens (= `chl` im Log) |
-| `remote_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF-Adresse der zu simulierenden Fernbedienung (= `src`/`bwd`/`fwd` im Log) |
+| `dst_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF-Adresse des Rollladens (Zieladresse) |
+| `channel` | Integer (0-255) | Funkkanal des Rollladens |
+| `src_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF-Adresse der zu simulierenden Fernbedienung (Quelladresse) |
 
 ### Optionale Parameter
 
@@ -86,13 +86,13 @@ cover:
 
 Diese Werte werden aus dem Log der echten Fernbedienung ausgelesen. Bei Übereinstimmung mit den Standardwerten müssen sie nicht angegeben werden.
 
-| Parameter | Typ | Standard | Log-Feld | Beschreibung |
-|---|---|---|---|---|
-| `payload_1` | Hex (0x00-0xFF) | `0x00` | `payload[0]` | Erstes Payload-Byte |
-| `payload_2` | Hex (0x00-0xFF) | `0x04` | `payload[1]` | Zweites Payload-Byte |
-| `pck_inf1` | Hex (0x00-0xFF) | `0x6a` | `typ` | Erstes Paket-Info-Byte |
-| `pck_inf2` | Hex (0x00-0xFF) | `0x00` | `typ2` | Zweites Paket-Info-Byte |
-| `hop` | Hex (0x00-0xFF) | `0x0a` | `hop` | Hop-Zähler |
+| Parameter | Typ | Standard | Beschreibung |
+|---|---|---|---|
+| `payload_1` | Hex (0x00-0xFF) | `0x00` | Erstes Payload-Byte |
+| `payload_2` | Hex (0x00-0xFF) | `0x04` | Zweites Payload-Byte |
+| `type` | Hex (0x00-0xFF) | `0x6a` | Nachrichtentyp (0x6a=Befehl, 0xca=Status) |
+| `type2` | Hex (0x00-0xFF) | `0x00` | Sekundärer Typ-Byte |
+| `hop` | Hex (0x00-0xFF) | `0x0a` | Hop-Zähler |
 
 ### Befehls-Parameter
 
@@ -114,14 +114,14 @@ Jedes Elero-Licht (z.B. Hauslicht mit Elero-Empfänger) wird als eigener Light-E
 light:
   - platform: elero
     name: "Wohnzimmerlicht"
-    blind_address: 0xc41a2b
+    dst_address: 0xc41a2b
     channel: 6
-    remote_address: 0xf0d008
+    src_address: 0xf0d008
     dim_duration: 5s        # Optional: 0s = nur Ein/Aus, >0 = Helligkeit steuerbar
     payload_1: 0x00
     payload_2: 0x04
-    pck_inf1: 0x6a
-    pck_inf2: 0x00
+    type: 0x6a
+    type2: 0x00
     hop: 0x0a
     command_on: 0x20
     command_off: 0x40
@@ -136,9 +136,9 @@ light:
 | Parameter | Typ | Beschreibung |
 |---|---|---|
 | `name` | String | Anzeigename in Home Assistant |
-| `blind_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF-Adresse des Lichts (= `dst` im Log) |
-| `channel` | Integer (0-255) | Funkkanal des Lichts (= `chl` im Log) |
-| `remote_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF-Adresse der zu simulierenden Fernbedienung (= `src`/`bwd`/`fwd` im Log) |
+| `dst_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF-Adresse des Lichts (Zieladresse) |
+| `channel` | Integer (0-255) | Funkkanal des Lichts |
+| `src_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF-Adresse der zu simulierenden Fernbedienung (Quelladresse) |
 
 ### Optionale Parameter
 
@@ -150,13 +150,13 @@ light:
 
 Diese Werte werden aus dem Log der echten Fernbedienung ausgelesen (gleiche Bedeutung wie bei `cover`).
 
-| Parameter | Typ | Standard | Log-Feld | Beschreibung |
-|---|---|---|---|---|
-| `payload_1` | Hex (0x00-0xFF) | `0x00` | `payload[0]` | Erstes Payload-Byte |
-| `payload_2` | Hex (0x00-0xFF) | `0x04` | `payload[1]` | Zweites Payload-Byte |
-| `pck_inf1` | Hex (0x00-0xFF) | `0x6a` | `typ` | Erstes Paket-Info-Byte |
-| `pck_inf2` | Hex (0x00-0xFF) | `0x00` | `typ2` | Zweites Paket-Info-Byte |
-| `hop` | Hex (0x00-0xFF) | `0x0a` | `hop` | Hop-Zähler |
+| Parameter | Typ | Standard | Beschreibung |
+|---|---|---|---|
+| `payload_1` | Hex (0x00-0xFF) | `0x00` | Erstes Payload-Byte |
+| `payload_2` | Hex (0x00-0xFF) | `0x04` | Zweites Payload-Byte |
+| `type` | Hex (0x00-0xFF) | `0x6a` | Nachrichtentyp (0x6a=Befehl, 0xca=Status) |
+| `type2` | Hex (0x00-0xFF) | `0x00` | Sekundärer Typ-Byte |
+| `hop` | Hex (0x00-0xFF) | `0x0a` | Hop-Zähler |
 
 ### Befehls-Parameter
 
@@ -178,13 +178,13 @@ Zeigt die Empfangsstärke (RSSI) des letzten empfangenen Pakets eines bestimmten
 ```yaml
 sensor:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     name: "Schlafzimmer RSSI"
 ```
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
 |---|---|---|---|---|
-| `blind_address` | Hex (24-bit) | Ja | - | RF-Adresse des zu überwachenden Rollladens |
+| `dst_address` | Hex (24-bit) | Ja | - | RF-Adresse des zu überwachenden Rollladens |
 | `name` | String | Ja | - | Anzeigename in Home Assistant |
 
 **Automatisch gesetzte Werte:**
@@ -214,13 +214,13 @@ Zeigt den aktuellen Blind-Status als lesbaren Text.
 ```yaml
 text_sensor:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     name: "Schlafzimmer Status"
 ```
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
 |---|---|---|---|---|
-| `blind_address` | Hex (24-bit) | Ja | - | RF-Adresse des zu überwachenden Rollladens |
+| `dst_address` | Hex (24-bit) | Ja | - | RF-Adresse des zu überwachenden Rollladens |
 | `name` | String | Ja | - | Anzeigename in Home Assistant |
 
 ### Mögliche Status-Werte
@@ -291,7 +291,7 @@ Die Web-UI kommuniziert über WebSocket (`/elero/ws`) für Echtzeit-Updates. Sie
 | Typ | Beschreibung |
 |---|---|
 | `cmd` | Befehl an Rollladen/Licht: `{"type":"cmd", "address":"0xADDRESS", "action":"up"}` |
-| `raw` | Raw RF-Paket für Tests: `{"type":"raw", "blind_address":"0x...", "channel":5, ...}` |
+| `raw` | Raw RF-Paket für Tests: `{"type":"raw", "dst_address":"0x...", "src_address":"0x...", "channel":5, ...}` |
 
 **Warum Mongoose?**
 
@@ -343,40 +343,40 @@ elero:
 cover:
   - platform: elero
     name: "Schlafzimmer"
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     channel: 4
-    remote_address: 0xf0d008
+    src_address: 0xf0d008
     open_duration: 25s
     close_duration: 22s
 
   - platform: elero
     name: "Wohnzimmer"
-    blind_address: 0xb912f3
+    dst_address: 0xb912f3
     channel: 5
-    remote_address: 0xf0d008
+    src_address: 0xf0d008
 
 light:
   - platform: elero
     name: "Wohnzimmerlicht"
-    blind_address: 0xc41a2b
+    dst_address: 0xc41a2b
     channel: 6
-    remote_address: 0xf0d008
+    src_address: 0xf0d008
     # dim_duration: 5s  # Aktivieren für Helligkeitssteuerung
 
 sensor:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     name: "Schlafzimmer RSSI"
   - platform: elero
-    blind_address: 0xb912f3
+    dst_address: 0xb912f3
     name: "Wohnzimmer RSSI"
 
 text_sensor:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     name: "Schlafzimmer Status"
   - platform: elero
-    blind_address: 0xb912f3
+    dst_address: 0xb912f3
     name: "Wohnzimmer Status"
 
 # Web UI for discovery (do NOT use web_server: — use web_server_base: instead)

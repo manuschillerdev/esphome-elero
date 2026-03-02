@@ -247,8 +247,8 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 
   // Raw TX for testing/debugging
   if (type == "raw") {
-    std::string blind_addr_s = json_find_str(msg, "blind_address");
-    std::string remote_addr_s = json_find_str(msg, "remote_address");
+    std::string dst_addr_s = json_find_str(msg, "dst_address");
+    std::string src_addr_s = json_find_str(msg, "src_address");
     std::string channel_s = json_find_str(msg, "channel");
     std::string command_s = json_find_str(msg, "command");
 
@@ -256,26 +256,26 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
     if (channel_s.empty())
       channel_s = json_find_num(msg, "channel");
 
-    if (blind_addr_s.empty() || remote_addr_s.empty() || channel_s.empty() || command_s.empty()) {
+    if (dst_addr_s.empty() || src_addr_s.empty() || channel_s.empty() || command_s.empty()) {
       ESP_LOGW(TAG, "Raw TX missing required fields");
       return;
     }
 
-    uint32_t blind_addr = (uint32_t) strtoul(blind_addr_s.c_str(), nullptr, 0);
-    uint32_t remote_addr = (uint32_t) strtoul(remote_addr_s.c_str(), nullptr, 0);
+    uint32_t dst_addr = (uint32_t) strtoul(dst_addr_s.c_str(), nullptr, 0);
+    uint32_t src_addr = (uint32_t) strtoul(src_addr_s.c_str(), nullptr, 0);
     uint8_t channel = (uint8_t) strtoul(channel_s.c_str(), nullptr, 0);
     uint8_t command = (uint8_t) strtoul(command_s.c_str(), nullptr, 0);
 
     uint8_t payload_1 = json_find_hex_or(msg, "payload_1", 0x00);
     uint8_t payload_2 = json_find_hex_or(msg, "payload_2", 0x04);
-    uint8_t pck_inf1 = json_find_hex_or(msg, "pck_inf1", 0x6a);
-    uint8_t pck_inf2 = json_find_hex_or(msg, "pck_inf2", 0x00);
+    uint8_t msg_type = json_find_hex_or(msg, "type", 0x6a);
+    uint8_t type2 = json_find_hex_or(msg, "type2", 0x00);
     uint8_t hop = json_find_hex_or(msg, "hop", 0x0a);
 
     bool success = this->parent_->send_raw_command(
-        blind_addr, remote_addr, channel, command,
-        payload_1, payload_2, pck_inf1, pck_inf2, hop);
-    ESP_LOGI(TAG, "Raw TX to 0x%06x cmd=0x%02x: %s", blind_addr, command, success ? "OK" : "FAIL");
+        dst_addr, src_addr, channel, command,
+        payload_1, payload_2, msg_type, type2, hop);
+    ESP_LOGI(TAG, "Raw TX to 0x%06x cmd=0x%02x: %s", dst_addr, command, success ? "OK" : "FAIL");
   }
 }
 
@@ -397,9 +397,10 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
            "{\"t\":%lu,"
            "\"src\":\"0x%06x\","
            "\"dst\":\"0x%06x\","
-           "\"ch\":%d,"
+           "\"channel\":%d,"
            "\"type\":\"0x%02x\","
-           "\"cmd\":\"0x%02x\","
+           "\"type2\":\"0x%02x\","
+           "\"command\":\"0x%02x\","
            "\"state\":\"0x%02x\","
            "\"rssi\":%.1f,"
            "\"hop\":\"0x%02x\","
@@ -409,7 +410,8 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
            pkt.dst,
            pkt.channel,
            pkt.type,
-           pkt.cmd,
+           pkt.type2,
+           pkt.command,
            pkt.state,
            pkt.rssi,
            pkt.hop,

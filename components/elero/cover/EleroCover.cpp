@@ -10,12 +10,12 @@ static const char *const TAG = "elero.cover";
 
 void EleroCover::dump_config() {
   LOG_COVER("", "Elero Cover", this);
-  ESP_LOGCONFIG(TAG, "  Blind Address: 0x%06x", this->sender_.command().blind_addr);
-  ESP_LOGCONFIG(TAG, "  Remote Address: 0x%06x", this->sender_.command().remote_addr);
-  ESP_LOGCONFIG(TAG, "  Channel: %d", this->sender_.command().channel);
-  ESP_LOGCONFIG(TAG, "  Hop: 0x%02x", this->sender_.command().hop);
-  ESP_LOGCONFIG(TAG, "  pck_inf1: 0x%02x, pck_inf2: 0x%02x", this->sender_.command().pck_inf[0],
-                this->sender_.command().pck_inf[1]);
+  ESP_LOGCONFIG(TAG, "  dst_address: 0x%06x", this->sender_.command().dst_addr);
+  ESP_LOGCONFIG(TAG, "  src_address: 0x%06x", this->sender_.command().src_addr);
+  ESP_LOGCONFIG(TAG, "  channel: %d", this->sender_.command().channel);
+  ESP_LOGCONFIG(TAG, "  hop: 0x%02x", this->sender_.command().hop);
+  ESP_LOGCONFIG(TAG, "  type: 0x%02x, type2: 0x%02x", this->sender_.command().type,
+                this->sender_.command().type2);
   if (this->open_duration_ > 0)
     ESP_LOGCONFIG(TAG, "  Open Duration: %dms", this->open_duration_);
   if (this->close_duration_ > 0)
@@ -110,7 +110,7 @@ cover::CoverTraits EleroCover::get_traits() {
 void EleroCover::set_rx_state(uint8_t state) {
   this->last_state_raw_ = state;
   ESP_LOGV(TAG, "Got state: 0x%02x (%s) for blind 0x%06x", state, elero_state_to_string(state),
-           this->sender_.command().blind_addr);
+           this->sender_.command().dst_addr);
   float pos = this->position;
   float current_tilt = this->tilt;
   CoverOperation op = this->current_operation;
@@ -160,15 +160,15 @@ void EleroCover::set_rx_state(uint8_t state) {
       current_tilt = 0.0;
       break;
     case ELERO_STATE_BLOCKING:
-      ESP_LOGW(TAG, "Blind 0x%06x reports BLOCKING", this->sender_.command().blind_addr);
+      ESP_LOGW(TAG, "Blind 0x%06x reports BLOCKING", this->sender_.command().dst_addr);
       op = COVER_OPERATION_IDLE;
       break;
     case ELERO_STATE_OVERHEATED:
-      ESP_LOGW(TAG, "Blind 0x%06x reports OVERHEATED", this->sender_.command().blind_addr);
+      ESP_LOGW(TAG, "Blind 0x%06x reports OVERHEATED", this->sender_.command().dst_addr);
       op = COVER_OPERATION_IDLE;
       break;
     case ELERO_STATE_TIMEOUT:
-      ESP_LOGW(TAG, "Blind 0x%06x reports TIMEOUT", this->sender_.command().blind_addr);
+      ESP_LOGW(TAG, "Blind 0x%06x reports TIMEOUT", this->sender_.command().dst_addr);
       op = COVER_OPERATION_IDLE;
       break;
     default:
@@ -243,7 +243,7 @@ bool EleroCover::perform_action(const char *action) {
   if (strcmp(action, "check") == 0) {
     // Check is Elero-specific status query, use raw command
     if (!this->sender_.enqueue(this->command_check_)) {
-      ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().blind_addr);
+      ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().dst_addr);
     }
     return true;
   }
@@ -272,7 +272,7 @@ void EleroCover::start_movement(CoverOperation dir) {
       // Clear any pending movement commands so STOP is sent immediately
       this->sender_.clear_queue();
       if (!this->sender_.enqueue(this->command_stop_)) {
-        ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().blind_addr);
+        ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().dst_addr);
       }
       break;
   }
@@ -288,7 +288,7 @@ void EleroCover::start_movement(CoverOperation dir) {
 
 void EleroCover::schedule_immediate_poll() {
   if (!this->sender_.enqueue(this->command_check_)) {
-    ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().blind_addr);
+    ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().dst_addr);
   }
 }
 

@@ -19,14 +19,14 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   cover::CoverTraits get_traits() override;
 
   void set_elero_parent(Elero *parent) { this->parent_ = parent; }
-  void set_blind_address(uint32_t address) { this->sender_.command().blind_addr = address; }
+  void set_dst_address(uint32_t address) { this->sender_.command().dst_addr = address; }
   void set_channel(uint8_t channel) { this->sender_.command().channel = channel; }
-  void set_remote_address(uint32_t remote) { this->sender_.command().remote_addr = remote; }
+  void set_src_address(uint32_t src) { this->sender_.command().src_addr = src; }
   void set_payload_1(uint8_t payload) { this->sender_.command().payload[0] = payload; }
   void set_payload_2(uint8_t payload) { this->sender_.command().payload[1] = payload; }
   void set_hop(uint8_t hop) { this->sender_.command().hop = hop; }
-  void set_pckinf_1(uint8_t pckinf) { this->sender_.command().pck_inf[0] = pckinf; }
-  void set_pckinf_2(uint8_t pckinf) { this->sender_.command().pck_inf[1] = pckinf; }
+  void set_type(uint8_t type) { this->sender_.command().type = type; }
+  void set_type2(uint8_t type2) { this->sender_.command().type2 = type2; }
   void set_command_up(uint8_t cmd) { this->command_up_ = cmd; }
   void set_command_down(uint8_t cmd) { this->command_down_ = cmd; }
   void set_command_stop(uint8_t cmd) { this->command_stop_ = cmd; }
@@ -36,7 +36,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   void set_close_duration(uint32_t dur) { this->close_duration_ = dur; }
   void set_open_duration(uint32_t dur) { this->open_duration_ = dur; }
   void set_poll_interval(uint32_t intvl) { this->poll_intvl_ = intvl; }
-  uint32_t get_blind_address() override { return this->sender_.command().blind_addr; }
+  uint32_t get_blind_address() override { return this->sender_.command().dst_addr; }
   void set_supports_tilt(bool tilt) { this->supports_tilt_ = tilt; }
   void set_rx_state(uint8_t state) override;
   void notify_rx_meta(uint32_t ms, float rssi) override {
@@ -56,7 +56,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint8_t get_last_state_raw() const override { return this->last_state_raw_; }
   // EleroBlindBase web API helpers — configuration
   uint8_t get_channel() const override { return this->sender_.command().channel; }
-  uint32_t get_remote_address() const override { return this->sender_.command().remote_addr; }
+  uint32_t get_remote_address() const override { return this->sender_.command().src_addr; }
   uint32_t get_poll_interval_ms() const override { return this->poll_intvl_; }
   uint32_t get_open_duration_ms() const override { return this->open_duration_; }
   uint32_t get_close_duration_ms() const override { return this->close_duration_; }

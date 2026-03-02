@@ -28,7 +28,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   void write_state(light::LightState *state) override;
 
   // EleroLightBase interface
-  uint32_t get_blind_address() override { return this->sender_.command().blind_addr; }
+  uint32_t get_blind_address() override { return this->sender_.command().dst_addr; }
   void set_rx_state(uint8_t state) override;
   void notify_rx_meta(uint32_t ms, float rssi) override {
     this->last_seen_ms_ = ms;
@@ -38,19 +38,19 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   void schedule_immediate_poll() override;
   std::string get_light_name() const override { return this->state_ ? std::string(this->state_->get_name().c_str()) : std::string(); }
   uint8_t get_channel() const override { return this->sender_.command().channel; }
-  uint32_t get_remote_address() const override { return this->sender_.command().remote_addr; }
+  uint32_t get_remote_address() const override { return this->sender_.command().src_addr; }
   uint32_t get_dim_duration_ms() const override { return this->dim_duration_; }
 
   // RF parameter setters
   void set_elero_parent(Elero *parent) { this->parent_ = parent; }
-  void set_blind_address(uint32_t address) { this->sender_.command().blind_addr = address; }
+  void set_dst_address(uint32_t address) { this->sender_.command().dst_addr = address; }
   void set_channel(uint8_t channel) { this->sender_.command().channel = channel; }
-  void set_remote_address(uint32_t remote) { this->sender_.command().remote_addr = remote; }
+  void set_src_address(uint32_t src) { this->sender_.command().src_addr = src; }
   void set_payload_1(uint8_t payload) { this->sender_.command().payload[0] = payload; }
   void set_payload_2(uint8_t payload) { this->sender_.command().payload[1] = payload; }
   void set_hop(uint8_t hop) { this->sender_.command().hop = hop; }
-  void set_pckinf_1(uint8_t pckinf) { this->sender_.command().pck_inf[0] = pckinf; }
-  void set_pckinf_2(uint8_t pckinf) { this->sender_.command().pck_inf[1] = pckinf; }
+  void set_type(uint8_t type) { this->sender_.command().type = type; }
+  void set_type2(uint8_t type2) { this->sender_.command().type2 = type2; }
   void set_dim_duration(uint32_t dur) { this->dim_duration_ = dur; }
   void set_command_on(uint8_t cmd) { this->command_on_ = cmd; }
   void set_command_off(uint8_t cmd) { this->command_off_ = cmd; }

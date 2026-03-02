@@ -122,15 +122,27 @@ enum class TxState : uint8_t {
 struct TxContext {
   TxState state{TxState::IDLE};
   uint32_t state_enter_time{0};
+  uint8_t defer_count{0};        ///< Times deferred due to busy channel
+  uint32_t backoff_until{0};     ///< Don't attempt TX until this time (millis)
+
   static constexpr uint32_t STATE_TIMEOUT_MS = 50;
+  static constexpr uint8_t DEFER_BACKOFF_THRESHOLD = 3;   ///< Start backoff after N defers
+  static constexpr uint8_t DEFER_MAX = 10;                ///< Abort after N defers
+  static constexpr uint32_t BACKOFF_MAX_MS = 50;          ///< Max random backoff (ms)
+
+  void reset() {
+    defer_count = 0;
+    backoff_until = 0;
+  }
 };
 
 struct EleroCommand {
   uint8_t counter;
-  uint32_t blind_addr;
-  uint32_t remote_addr;
+  uint32_t dst_addr;   ///< Destination address (blind/light we control)
+  uint32_t src_addr;   ///< Source address (our emulated remote)
   uint8_t channel;
-  uint8_t pck_inf[2];
+  uint8_t type;        ///< Message type (0x6a=command, 0xca=status, etc.)
+  uint8_t type2;       ///< Secondary type byte
   uint8_t hop;
   uint8_t payload[10];
 };
@@ -138,15 +150,15 @@ struct EleroCommand {
 /// Decoded RF packet info for WebSocket broadcast
 struct RfPacketInfo {
   uint32_t timestamp_ms;
-  uint32_t src;           // Source address (remote for commands, blind for status)
-  uint32_t dst;           // Destination address (blind for commands, remote for status)
+  uint32_t src;           ///< Source address (remote for commands, blind for status)
+  uint32_t dst;           ///< Destination address (blind for commands, remote for status)
   uint8_t channel;
-  uint8_t type;           // Packet type byte (0x6a=command, 0xca=status, etc.)
-  uint8_t cmd;            // Command byte (for command packets)
-  uint8_t state;          // State byte (for status packets)
+  uint8_t type;           ///< Message type byte (0x6a=command, 0xca=status, etc.)
+  uint8_t type2;          ///< Secondary type byte
+  uint8_t command;        ///< Command byte (for command packets)
+  uint8_t state;          ///< State byte (for status packets)
   float rssi;
   uint8_t hop;
-  uint8_t pck_inf[2];
   uint8_t payload[10];
   uint8_t raw_len;
   uint8_t raw[CC1101_FIFO_LENGTH];
@@ -280,9 +292,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   [[nodiscard]] bool send_command(EleroCommand *cmd);
 
   // Raw TX API (for WebSocket debugging/testing)
-  [[nodiscard]] bool send_raw_command(uint32_t blind_addr, uint32_t remote_addr, uint8_t channel,
+  [[nodiscard]] bool send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t channel,
                                       uint8_t command, uint8_t payload_1 = 0x00, uint8_t payload_2 = 0x04,
-                                      uint8_t pck_inf1 = 0x6a, uint8_t pck_inf2 = 0x00, uint8_t hop = 0x0a);
+                                      uint8_t type = 0x6a, uint8_t type2 = 0x00, uint8_t hop = 0x0a);
 
 #ifdef USE_SENSOR
   void register_rssi_sensor(uint32_t address, sensor::Sensor *sensor);
@@ -314,6 +326,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
  private:
   void handle_tx_state_(uint32_t now);  // Progress TX state machine
+  void defer_tx_(uint32_t now);         // Defer TX due to busy channel
   void abort_tx_();                     // Abort TX and return to RX
   void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
   void notify_tx_owner_(bool success);  // Notify owner and clear

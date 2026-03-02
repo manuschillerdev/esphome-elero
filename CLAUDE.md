@@ -389,9 +389,9 @@ spi:
 ### Cover (`cover: platform: elero`)
 
 Required parameters:
-- `blind_address` — 3-byte hex address of the motor (e.g., `0xa831e5`)
+- `dst_address` — 3-byte hex destination address of the motor (e.g., `0xa831e5`)
 - `channel` — RF channel number of the blind
-- `remote_address` — 3-byte hex address of the remote control paired with the blind
+- `src_address` — 3-byte hex source address of the remote control paired with the blind
 
 Optional parameters (with defaults):
 - `poll_interval` (default `5min`, or `never`) — how often to query blind status
@@ -399,21 +399,21 @@ Optional parameters (with defaults):
 - `supports_tilt` (default `false`)
 - `auto_sensors` (default `true`) — auto-generate RSSI and status text sensors for this cover
 - `payload_1` (default `0x00`), `payload_2` (default `0x04`)
-- `pck_inf1` (default `0x6a`), `pck_inf2` (default `0x00`)
+- `type` (default `0x6a`), `type2` (default `0x00`)
 - `hop` (default `0x0a`)
 - `command_up/down/stop/check/tilt` — override RF command bytes if non-standard
 
 ### Light (`light: platform: elero`)
 
 Required parameters:
-- `blind_address` — 3-byte hex address of the light receiver (e.g., `0xc41a2b`)
+- `dst_address` — 3-byte hex destination address of the light receiver (e.g., `0xc41a2b`)
 - `channel` — RF channel number of the light
-- `remote_address` — 3-byte hex address of the remote control paired with the light
+- `src_address` — 3-byte hex source address of the remote control paired with the light
 
 Optional parameters (with defaults):
 - `dim_duration` (default `0s`) — time for dimming from 0% to 100%; `0s` = on/off only, `>0` = brightness control
 - `payload_1` (default `0x00`), `payload_2` (default `0x04`)
-- `pck_inf1` (default `0x6a`), `pck_inf2` (default `0x00`)
+- `type` (default `0x6a`), `type2` (default `0x00`)
 - `hop` (default `0x0a`)
 - `command_on/off/dim_up/dim_down/stop/check` — override RF command bytes if non-standard
 
@@ -422,12 +422,12 @@ Optional parameters (with defaults):
 ```yaml
 sensor:
   - platform: elero
-    blind_address: 0xa831e5   # Required: which blind
+    dst_address: 0xa831e5     # Required: which blind
     name: "Blind RSSI"        # Unit: dBm
 
 text_sensor:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     name: "Blind Status"      # Values: see state constants above
 ```
 

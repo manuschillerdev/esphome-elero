@@ -164,9 +164,9 @@ Füge zunächst eine Dummy-Konfiguration hinzu und aktiviere den RF-Scan:
 # Dummy-Cover (wird später mit echten Werten ersetzt)
 cover:
   - platform: elero
-    blind_address: 0x000001
+    dst_address: 0x000001
     channel: 1
-    remote_address: 0x000001
+    src_address: 0x000001
     name: "Dummy"
 
 # Scan-Buttons zum Entdecken
@@ -188,9 +188,9 @@ Ersetze die Dummy-Werte mit den ermittelten Adressen:
 ```yaml
 cover:
   - platform: elero
-    blind_address: 0xa831e5    # Adresse deines Rollos
+    dst_address: 0xa831e5      # Adresse deines Rollos (Zieladresse)
     channel: 4                  # Kanal
-    remote_address: 0xf0d008   # Adresse der Fernbedienung
+    src_address: 0xf0d008      # Adresse der Fernbedienung (Quelladresse)
     name: "Schlafzimmer"
 ```
 
@@ -233,17 +233,17 @@ Jeder Rollladen wird als eigener Cover-Eintrag konfiguriert.
 cover:
   - platform: elero
     name: "Schlafzimmer"          # Pflicht
-    blind_address: 0xa831e5       # Pflicht
+    dst_address: 0xa831e5         # Pflicht: Adresse des Rollladens
     channel: 4                     # Pflicht
-    remote_address: 0xf0d008      # Pflicht
+    src_address: 0xf0d008         # Pflicht: Adresse der Fernbedienung
     open_duration: 25s             # Optional: Für Positionssteuerung
     close_duration: 22s            # Optional: Für Positionssteuerung
     poll_interval: 5min            # Optional
     supports_tilt: false           # Optional
     payload_1: 0x00                # Optional
     payload_2: 0x04                # Optional
-    pck_inf1: 0x6a                 # Optional
-    pck_inf2: 0x00                 # Optional
+    type: 0x6a                     # Optional
+    type2: 0x00                    # Optional
     hop: 0x0a                      # Optional
     command_up: 0x20               # Optional
     command_down: 0x40             # Optional
@@ -255,17 +255,17 @@ cover:
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
 |---|---|---|---|---|
 | `name` | String | Ja | - | Name in Home Assistant |
-| `blind_address` | Hex (24-bit) | Ja | - | Adresse des Rollladens |
+| `dst_address` | Hex (24-bit) | Ja | - | Zieladresse des Rollladens |
 | `channel` | Int (0-255) | Ja | - | Kanal des Rollladens |
-| `remote_address` | Hex (24-bit) | Ja | - | Adresse der zu simulierenden Fernbedienung |
+| `src_address` | Hex (24-bit) | Ja | - | Quelladresse der zu simulierenden Fernbedienung |
 | `open_duration` | Zeitdauer | Nein | `0s` | Fahrzeit zum vollständigen Öffnen |
 | `close_duration` | Zeitdauer | Nein | `0s` | Fahrzeit zum vollständigen Schließen |
 | `poll_interval` | Zeitdauer / `never` | Nein | `5min` | Status-Abfrageintervall |
 | `supports_tilt` | Boolean | Nein | `false` | Tilt/Kipp-Unterstützung aktivieren |
 | `payload_1` | Hex (0x00-0xFF) | Nein | `0x00` | Erstes Payload-Byte |
 | `payload_2` | Hex (0x00-0xFF) | Nein | `0x04` | Zweites Payload-Byte |
-| `pck_inf1` | Hex (0x00-0xFF) | Nein | `0x6a` | Erstes Paket-Info-Byte |
-| `pck_inf2` | Hex (0x00-0xFF) | Nein | `0x00` | Zweites Paket-Info-Byte |
+| `type` | Hex (0x00-0xFF) | Nein | `0x6a` | Nachrichtentyp (0x6a=Befehl) |
+| `type2` | Hex (0x00-0xFF) | Nein | `0x00` | Sekundärer Typ |
 | `hop` | Hex (0x00-0xFF) | Nein | `0x0a` | Hop-Byte |
 | `command_up` | Hex (0x00-0xFF) | Nein | `0x20` | Befehlscode: Hoch |
 | `command_down` | Hex (0x00-0xFF) | Nein | `0x40` | Befehlscode: Runter |
@@ -280,13 +280,13 @@ Zeigt die Empfangsstärke (RSSI) des letzten empfangenen Pakets eines bestimmten
 ```yaml
 sensor:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     name: "Schlafzimmer RSSI"
 ```
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
 |---|---|---|---|---|
-| `blind_address` | Hex (24-bit) | Ja | - | Adresse des Rollladens |
+| `dst_address` | Hex (24-bit) | Ja | - | Zieladresse des Rollladens |
 | `name` | String | Ja | - | Name in Home Assistant |
 
 ### Plattform `text_sensor` (Status-Text)
@@ -296,7 +296,7 @@ Zeigt den aktuellen Blind-Status als lesbaren Text.
 ```yaml
 text_sensor:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     name: "Schlafzimmer Status"
 ```
 
@@ -304,7 +304,7 @@ Mögliche Werte: `top`, `bottom`, `intermediate`, `tilt`, `top_tilt`, `bottom_ti
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
 |---|---|---|---|---|
-| `blind_address` | Hex (24-bit) | Ja | - | Adresse des Rollladens |
+| `dst_address` | Hex (24-bit) | Ja | - | Zieladresse des Rollladens |
 | `name` | String | Ja | - | Name in Home Assistant |
 
 ### Plattform `button` (RF-Scan)
@@ -363,11 +363,11 @@ Es gibt zwei Methoden, um die notwendigen Protokollwerte zu ermitteln:
 
    | Log-Feld | Konfiguration | Wert im Beispiel |
    |---|---|---|
-   | `src` / `bwd` / `fwd` | `remote_address` | `0x908bef` |
-   | `dst` | `blind_address` | `0xe039c9` |
-   | `chl` | `channel` | `9` |
-   | `typ` | `pck_inf1` | `0x6a` |
-   | `typ2` | `pck_inf2` | `0x00` |
+   | `src` / `bwd` / `fwd` | `src_address` | `0x908bef` |
+   | `dst` | `dst_address` | `0xe039c9` |
+   | `channel` | `channel` | `9` |
+   | `type` | `type` | `0x6a` |
+   | `type2` | `type2` | `0x00` |
    | `hop` | `hop` | `0x0a` |
    | `payload[0]` | `payload_1` | `0x00` |
    | `payload[1]` | `payload_2` | `0x04` |
@@ -431,9 +431,9 @@ Ohne `dim_duration` (oder `dim_duration: 0s`) wird nur Ein/Aus unterstützt:
 light:
   - platform: elero
     name: "Hauslicht"
-    blind_address: 0xc41a2b
+    dst_address: 0xc41a2b
     channel: 6
-    remote_address: 0xf0d008
+    src_address: 0xf0d008
 ```
 
 ### Dimmbar (Helligkeitssteuerung)
@@ -444,14 +444,14 @@ Mit `dim_duration` wird die Zeit angegeben, die der Empfänger benötigt, um von
 light:
   - platform: elero
     name: "Wohnzimmerlicht"
-    blind_address: 0xc41a2b
+    dst_address: 0xc41a2b
     channel: 6
-    remote_address: 0xf0d008
+    src_address: 0xf0d008
     dim_duration: 5s
 ```
 
 - Der richtige Wert für `dim_duration` hängt vom jeweiligen Empfänger ab — typisch sind 3–8 Sekunden.
-- Alle Protokoll-Parameter (`blind_address`, `channel`, `remote_address`, `payload_*`, `pck_inf*`, `hop`) werden genauso ermittelt wie bei einem Rollladen (via RF-Log oder Web-UI-Discovery).
+- Alle Protokoll-Parameter (`dst_address`, `channel`, `src_address`, `payload_*`, `type`, `type2`, `hop`) werden genauso ermittelt wie bei einem Rollladen (via RF-Log oder Web-UI-Discovery).
 - Vollständige Parameterliste: [Konfigurationsreferenz](docs/CONFIGURATION.md#plattform-light)
 
 ---
@@ -465,7 +465,7 @@ light:
 ```yaml
 sensor:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     name: "Schlafzimmer RSSI"
 ```
 
@@ -484,7 +484,7 @@ Zeigt den letzten empfangenen Blind-Status als Text:
 ```yaml
 text_sensor:
   - platform: elero
-    blind_address: 0xa831e5
+    dst_address: 0xa831e5
     name: "Schlafzimmer Status"
 ```
 
@@ -618,7 +618,7 @@ entities:
 
 - Alle Werte sorgfältig mit der echten Fernbedienung vergleichen
 - Alle Werte außer `cnt` müssen exakt übereinstimmen
-- `blind_address` und `remote_address` nicht vertauscht?
+- `dst_address` und `src_address` nicht vertauscht?
 
 ### Schwaches Signal / unzuverlässige Steuerung
 
