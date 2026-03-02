@@ -16,6 +16,7 @@ namespace esphome {
 namespace elero {
 
 static const char *const TAG = "elero";
+static const char *const TAG_RF = "elero.rf";
 
 // ─── SpiTransaction RAII Implementation ───────────────────────────────────
 SpiTransaction::SpiTransaction(Elero *device) : device_(device) {
@@ -60,6 +61,25 @@ const char *elero_state_to_string(uint8_t state) {
       return "on";
     default:
       return "unknown";
+  }
+}
+
+const char *elero_command_to_string(uint8_t command) {
+  switch (command) {
+    case ELERO_COMMAND_COVER_CHECK:
+      return "CHECK";
+    case ELERO_COMMAND_COVER_STOP:
+      return "STOP";
+    case ELERO_COMMAND_COVER_UP:
+      return "UP";
+    case ELERO_COMMAND_COVER_TILT:
+      return "TILT";
+    case ELERO_COMMAND_COVER_DOWN:
+      return "DOWN";
+    case ELERO_COMMAND_COVER_INT:
+      return "INTERMEDIATE";
+    default:
+      return "UNKNOWN";
   }
 }
 
@@ -169,6 +189,22 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 
 void Elero::flush_and_rx() {
   ESP_LOGVV(TAG, "flush_and_rx");
+
+  // Check if there's RX data before flushing - don't discard valid packets!
+  uint8_t rx_bytes = this->read_status(CC1101_RXBYTES);
+  if ((rx_bytes & 0x7F) > 0 && !(rx_bytes & 0x80)) {
+    // Valid data in RX FIFO (no overflow) - process it first
+    uint8_t fifo_count = rx_bytes & 0x7F;
+    if (fifo_count > CC1101_FIFO_LENGTH) {
+      fifo_count = CC1101_FIFO_LENGTH;
+    }
+    this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
+    ESP_LOGV(TAG, "flush_and_rx: rescued %d bytes from RX FIFO", fifo_count);
+    if (this->msg_rx_[0] + 3 <= fifo_count) {
+      this->interpret_msg();
+    }
+  }
+
   (void) this->write_cmd(CC1101_SIDLE);
   (void) this->wait_idle();
   (void) this->write_cmd(CC1101_SFRX);
@@ -418,8 +454,8 @@ void Elero::defer_tx_(uint32_t now) {
     ESP_LOGD(TAG, "TX defer %d, backoff %ums", this->tx_ctx_.defer_count, backoff_ms);
   }
 
-  // Go back to GOTO_IDLE to retry
-  this->write_cmd(CC1101_SIDLE);
+  // Go back to GOTO_IDLE to retry (best-effort, ignore failure)
+  (void) this->write_cmd(CC1101_SIDLE);
   this->tx_ctx_.state = TxState::GOTO_IDLE;
   this->tx_ctx_.state_enter_time = now;
 }
@@ -488,10 +524,36 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
   // Build packet
   this->build_tx_packet_(cmd);
 
-  ESP_LOGV(TAG,
-           "request_tx: len=%02d, cnt=%02d, type=0x%02x, dst=0x%06x, src=0x%06x, ch=%d, cmd=0x%02x",
-           this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2],
-           cmd.dst_addr, cmd.src_addr, cmd.channel, cmd.payload[4]);
+  // Look up blind name by dst address (store string to avoid dangling pointer)
+  std::string blind_name;
+  auto cover_it = this->address_to_cover_mapping_.find(cmd.dst_addr);
+  if (cover_it != this->address_to_cover_mapping_.end()) {
+    blind_name = cover_it->second->get_blind_name();
+  } else {
+    auto light_it = this->address_to_light_mapping_.find(cmd.dst_addr);
+    if (light_it != this->address_to_light_mapping_.end()) {
+      blind_name = light_it->second->get_light_name();
+    }
+  }
+
+  // JSON log for TX packet (machine-readable, tagged for WS forwarding)
+  if (!blind_name.empty()) {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"tx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
+             blind_name.c_str(), elero_command_to_string(cmd.payload[4]),
+             this->msg_tx_[0], cmd.counter, cmd.type, cmd.type2, cmd.hop,
+             cmd.channel, cmd.src_addr, cmd.dst_addr, cmd.payload[4]);
+  } else {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"tx\",\"blind\":\"0x%06x\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
+             cmd.dst_addr, elero_command_to_string(cmd.payload[4]),
+             this->msg_tx_[0], cmd.counter, cmd.type, cmd.type2, cmd.hop,
+             cmd.channel, cmd.src_addr, cmd.dst_addr, cmd.payload[4]);
+  }
 
   // Start non-blocking TX
   if (!this->start_transmit()) {
@@ -587,25 +649,47 @@ void Elero::handle_tx_state_(uint32_t now) {
       break;
 
     case TxState::LOAD_FIFO:
-      // Check we're still in IDLE before sending STX (a packet might have arrived)
-      marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
-      if (marcstate != CC1101_MARCSTATE_IDLE) {
-        // Radio is not idle (likely receiving) - defer TX
-        ESP_LOGD(TAG, "Radio not idle before STX (0x%02x), deferring TX", marcstate);
-        this->defer_tx_(now);
-        return;
-      }
+      // Force IDLE to prevent starting new packet reception between our check and STX.
+      // This is aggressive but necessary when the channel is flooded with status packets.
+      (void) this->write_cmd(CC1101_SIDLE);
 
       // Clear received_ so we can detect TX-end interrupt
       this->received_.store(false);
 
-      // Trigger TX
+      // Trigger TX immediately - no CCA check from IDLE state
       if (!this->write_cmd(CC1101_STX)) {
         this->abort_tx_();
         return;
       }
-      this->tx_ctx_.state = TxState::TRIGGER_TX;
-      this->tx_ctx_.state_enter_time = now;
+
+      // Poll MARCSTATE waiting for TX (deterministic: max 20 iterations × 5μs = 100μs)
+      for (int i = 0; i < 20; i++) {
+        delay_microseconds_safe(5);
+        marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+        if (marcstate == CC1101_MARCSTATE_TX) {
+          this->tx_ctx_.state = TxState::WAIT_TX_DONE;
+          this->tx_ctx_.state_enter_time = now;
+          return;
+        }
+        // RX states mean we lost the race - stop polling
+        if (marcstate == CC1101_MARCSTATE_RX) {
+          break;
+        }
+      }
+
+      // Didn't reach TX - check final state
+      marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      if (marcstate == CC1101_MARCSTATE_TX) {
+        this->tx_ctx_.state = TxState::WAIT_TX_DONE;
+        this->tx_ctx_.state_enter_time = now;
+      } else if (marcstate == CC1101_MARCSTATE_RX) {
+        ESP_LOGD(TAG, "Radio went to RX instead of TX, deferring");
+        this->defer_tx_(now);
+      } else {
+        // Transitional state (FSTXON, CALIBRATE, etc.) - continue via state machine
+        this->tx_ctx_.state = TxState::TRIGGER_TX;
+        this->tx_ctx_.state_enter_time = now;
+      }
       break;
 
     case TxState::TRIGGER_TX:
@@ -614,25 +698,19 @@ void Elero::handle_tx_state_(uint32_t now) {
         this->tx_ctx_.state = TxState::WAIT_TX_DONE;
         this->tx_ctx_.state_enter_time = now;
       } else if (marcstate == CC1101_MARCSTATE_TXFIFO_UFLOW) {
-        // TX FIFO underflow - packet data was not loaded correctly
         ESP_LOGE(TAG, "TX FIFO underflow detected, aborting");
         this->abort_tx_();
       } else if (marcstate == CC1101_MARCSTATE_RXFIFO_OFLOW) {
-        // RX FIFO overflow - likely received packet during TX setup
         ESP_LOGE(TAG, "RX FIFO overflow during TX, aborting");
         this->abort_tx_();
       } else if (marcstate == CC1101_MARCSTATE_RX) {
-        // Radio went back to RX (CCA failed or packet arrived) - defer and retry
         ESP_LOGD(TAG, "Radio in RX during TRIGGER_TX, deferring");
         this->defer_tx_(now);
       } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
         ESP_LOGE(TAG, "TX timeout in TRIGGER_TX after %ums, marcstate=0x%02x", elapsed, marcstate);
         this->abort_tx_();
-      } else if (marcstate != CC1101_MARCSTATE_IDLE && marcstate != CC1101_MARCSTATE_FSTXON) {
-        // Unexpected state (e.g., CALIBRATE, SETTLING) - defer rather than abort
-        ESP_LOGD(TAG, "Unexpected MARCSTATE=0x%02x in TRIGGER_TX, deferring", marcstate);
-        this->defer_tx_(now);
       }
+      // else: transitional state (FSTXON, CALIBRATE, IDLE), keep polling
       break;
 
     case TxState::WAIT_TX_DONE:
@@ -790,14 +868,41 @@ void Elero::interpret_msg() {
   uint8_t *payload = &this->msg_rx_[19 + dests_len];
   protocol::msg_decode(payload);
 
-  // JSON log for RX packet (machine-readable, consistent field names)
+  // JSON log for RX packet (machine-readable, tagged for WS forwarding)
   uint8_t command = ((typ == 0x6a) || (typ == 0x69)) ? payload[4] : 0;
   uint8_t state = ((typ == 0xca) || (typ == 0xc9)) ? payload[6] : 0;
-  ESP_LOGD(TAG,
-           "{\"dir\":\"rx\",\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
-           "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\",\"state\":\"0x%02x\","
-           "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
-           length, cnt, typ, typ2, hop, chl, src, dst, command, state, rssi, lqi, crc);
+
+  // Look up blind name: for status (0xca/0xc9) src is the blind, for commands (0x6a/0x69) dst is the blind
+  // Store string to avoid dangling pointer from temporary std::string
+  std::string blind_name;
+  uint32_t blind_addr = ((typ == 0xca) || (typ == 0xc9)) ? src : dst;
+  auto cover_it = this->address_to_cover_mapping_.find(blind_addr);
+  if (cover_it != this->address_to_cover_mapping_.end()) {
+    blind_name = cover_it->second->get_blind_name();
+  } else {
+    auto light_it = this->address_to_light_mapping_.find(blind_addr);
+    if (light_it != this->address_to_light_mapping_.end()) {
+      blind_name = light_it->second->get_light_name();
+    }
+  }
+
+  if (!blind_name.empty()) {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"rx\",\"blind\":\"%s\",\"state_name\":\"%s\",\"cmd_name\":\"%s\","
+             "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\",\"state\":\"0x%02x\","
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
+             blind_name.c_str(), elero_state_to_string(state), elero_command_to_string(command),
+             length, cnt, typ, typ2, hop, chl, src, dst, command, state, rssi, lqi, crc);
+  } else {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"rx\",\"blind\":\"0x%06x\",\"state_name\":\"%s\",\"cmd_name\":\"%s\","
+             "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\",\"state\":\"0x%02x\","
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
+             blind_addr, elero_state_to_string(state), elero_command_to_string(command),
+             length, cnt, typ, typ2, hop, chl, src, dst, command, state, rssi, lqi, crc);
+  }
 
   // Notify RF packet callback (if registered)
   if (this->on_rf_packet_) {
@@ -868,22 +973,45 @@ void Elero::interpret_msg() {
     // Trigger an immediate status poll on each configured blind/light that is
     // targeted, so HA state updates within ~50 ms instead of waiting for the
     // normal poll interval.
+    // IMPORTANT: Skip if src is one of our own remote addresses (echo of our TX).
+    // Otherwise we get a feedback loop: TX -> RX echo -> poll -> TX -> ...
     if ((typ == 0x6a) || (typ == 0x69)) {
-      for (uint8_t i = 0; i < num_dests; i++) {
-        uint32_t dest_addr;
-        if (typ > 0x60) {  // 3-byte addressing
-          dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) | ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
-                      this->msg_rx_[19 + i * 3];
-        } else {  // 1-byte addressing
-          dest_addr = this->msg_rx_[17 + i];
+      // Check if this is our own command echo by matching src against our remote addresses
+      bool is_own_command = false;
+      for (const auto &kv : this->address_to_cover_mapping_) {
+        if (kv.second->get_remote_address() == src) {
+          is_own_command = true;
+          break;
         }
-        auto c_it = this->address_to_cover_mapping_.find(dest_addr);
-        if (c_it != this->address_to_cover_mapping_.end()) {
-          c_it->second->schedule_immediate_poll();
+      }
+      if (!is_own_command) {
+        for (const auto &kv : this->address_to_light_mapping_) {
+          if (kv.second->get_remote_address() == src) {
+            is_own_command = true;
+            break;
+          }
         }
-        auto l_it = this->address_to_light_mapping_.find(dest_addr);
-        if (l_it != this->address_to_light_mapping_.end()) {
-          l_it->second->schedule_immediate_poll();
+      }
+
+      if (is_own_command) {
+        ESP_LOGV(TAG, "Ignoring own command echo from 0x%06x", src);
+      } else {
+        for (uint8_t i = 0; i < num_dests; i++) {
+          uint32_t dest_addr;
+          if (typ > 0x60) {  // 3-byte addressing
+            dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) | ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
+                        this->msg_rx_[19 + i * 3];
+          } else {  // 1-byte addressing
+            dest_addr = this->msg_rx_[17 + i];
+          }
+          auto c_it = this->address_to_cover_mapping_.find(dest_addr);
+          if (c_it != this->address_to_cover_mapping_.end()) {
+            c_it->second->schedule_immediate_poll();
+          }
+          auto l_it = this->address_to_light_mapping_.find(dest_addr);
+          if (l_it != this->address_to_light_mapping_.end()) {
+            l_it->second->schedule_immediate_poll();
+          }
         }
       }
     }
@@ -925,12 +1053,36 @@ bool Elero::send_command(EleroCommand *cmd) {
   ESP_LOGVV(TAG, "send_command called");
   this->build_tx_packet_(*cmd);
 
-  // JSON log for TX packet (machine-readable, consistent field names)
-  ESP_LOGD(TAG,
-           "{\"dir\":\"tx\",\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
-           "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
-           this->msg_tx_[0], cmd->counter, cmd->type, cmd->type2, cmd->hop,
-           cmd->channel, cmd->src_addr, cmd->dst_addr, cmd->payload[4]);
+  // Look up blind name by dst address (store string to avoid dangling pointer)
+  std::string blind_name;
+  auto cover_it = this->address_to_cover_mapping_.find(cmd->dst_addr);
+  if (cover_it != this->address_to_cover_mapping_.end()) {
+    blind_name = cover_it->second->get_blind_name();
+  } else {
+    auto light_it = this->address_to_light_mapping_.find(cmd->dst_addr);
+    if (light_it != this->address_to_light_mapping_.end()) {
+      blind_name = light_it->second->get_light_name();
+    }
+  }
+
+  // JSON log for TX packet (machine-readable, tagged for WS forwarding)
+  if (!blind_name.empty()) {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"tx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
+             blind_name.c_str(), elero_command_to_string(cmd->payload[4]),
+             this->msg_tx_[0], cmd->counter, cmd->type, cmd->type2, cmd->hop,
+             cmd->channel, cmd->src_addr, cmd->dst_addr, cmd->payload[4]);
+  } else {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"tx\",\"blind\":\"0x%06x\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
+             cmd->dst_addr, elero_command_to_string(cmd->payload[4]),
+             this->msg_tx_[0], cmd->counter, cmd->type, cmd->type2, cmd->hop,
+             cmd->channel, cmd->src_addr, cmd->dst_addr, cmd->payload[4]);
+  }
   return transmit();
 }
 

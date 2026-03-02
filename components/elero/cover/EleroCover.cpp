@@ -31,6 +31,11 @@ void EleroCover::setup() {
     return;
   }
   this->parent_->register_cover(this);
+
+  // Initialize last_poll_ to trigger first poll immediately after poll_offset_
+  // Using unsigned wraparound: makes (now - poll_offset_ - last_poll_) > poll_intvl_ true
+  this->last_poll_ = 0 - this->poll_intvl_;
+
   auto restore = this->restore_state_();
   if (restore.has_value()) {
     restore->apply(this);
@@ -38,14 +43,28 @@ void EleroCover::setup() {
     if ((this->open_duration_ > 0) && (this->close_duration_ > 0))
       this->position = 0.5f;
   }
+
+  // After restore, force operation to IDLE. We can't know if the blind is
+  // actually moving after a reboot - the first poll will tell us the real state.
+  // This prevents rapid-polling (2s) if restore contained a stale movement state.
+  this->current_operation = COVER_OPERATION_IDLE;
+  this->movement_start_ = 0;
 }
 
 void EleroCover::loop() {
   uint32_t intvl = this->poll_intvl_;
   uint32_t now = millis();
   if (this->current_operation != COVER_OPERATION_IDLE) {
-    if ((now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT)  // Poll frequently while moving (up to 2 min timeout)
+    if ((now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT) {
+      // Poll frequently while moving (up to 2 min timeout)
       intvl = ELERO_POLL_INTERVAL_MOVING;
+    } else {
+      // Movement timed out without receiving endpoint status - reset to IDLE.
+      // This handles cases where we miss the blind's status response.
+      ESP_LOGW(TAG, "Movement timeout for 0x%06x, resetting to IDLE", this->sender_.command().dst_addr);
+      this->current_operation = COVER_OPERATION_IDLE;
+      this->publish_state();
+    }
   }
 
   if ((now > this->poll_offset_) && (now - this->poll_offset_ - this->last_poll_) > intvl) {
@@ -204,7 +223,10 @@ void EleroCover::control(const cover::CoverCall &call) {
         this->tilt = 1.0;
       }
     } else {
-      this->tilt = 0.0;
+      // Send DOWN to close tilt (untilt the slats)
+      if (this->sender_.enqueue(this->command_down_)) {
+        this->tilt = 0.0;
+      }
     }
   }
   if (call.get_toggle().has_value()) {

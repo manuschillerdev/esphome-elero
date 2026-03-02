@@ -85,7 +85,7 @@ constexpr uint8_t ELERO_STATE_ON = 0x10;
 constexpr uint8_t ELERO_MAX_PACKET_SIZE = 57;  // according to FCC documents
 
 // ─── Timing Constants ─────────────────────────────────────────────────────
-constexpr uint32_t ELERO_POLL_INTERVAL_MOVING = 2000;  // poll every two seconds while moving
+constexpr uint32_t ELERO_POLL_INTERVAL_MOVING = 2000;  // poll every 2 seconds while moving
 constexpr uint32_t ELERO_DELAY_SEND_PACKETS = 50;      // 50ms send delay between repeats
 constexpr uint32_t ELERO_TIMEOUT_MOVEMENT = 120000;    // poll for up to two minutes while moving
 
@@ -165,6 +165,7 @@ struct RfPacketInfo {
 };
 
 const char *elero_state_to_string(uint8_t state);
+const char *elero_command_to_string(uint8_t command);
 
 /// Convert action string ("up", "down", "stop", etc.) to command byte.
 /// Returns 0xFF if action is not recognized.

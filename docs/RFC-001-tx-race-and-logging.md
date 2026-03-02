@@ -15,16 +15,23 @@
 | Phase 5 | WebSocket JSON | ✅ Complete | Field names unified |
 | Phase 6 | Skill Documentation | ✅ Complete | Added naming table, protocol ambiguities, JSON log examples |
 | Phase 7 | Example & Docs | ✅ Complete | README, CONFIGURATION.md, example.yaml updated |
+| Phase 8 | RX Packet Rescue | ✅ Complete | Check RX FIFO before flushing in flush_and_rx() |
+| Phase 9 | Boot State Reset | ✅ Complete | Force current_operation=IDLE on boot |
+| Phase 10 | Movement Timeout | ✅ Complete | Auto-reset to IDLE after 2min movement timeout |
 
 ---
 
 ## Summary
 
-This RFC addresses two related issues:
+This RFC addresses multiple related issues:
 
 1. **TX Race Condition** - The CC1101 can return to RX mode during TX setup, causing repeated `Unexpected MARCSTATE=0x0d` errors and failed transmissions.
 
 2. **Logging & Naming Inconsistencies** - Field names differ between config, logs, and WebSocket JSON, making debugging difficult. Human-readable and machine-readable logs are redundant.
+
+3. **RX Packet Loss** - After TX completes, `flush_and_rx()` discarded any RX data that arrived during the TX→RX transition, causing missed status responses.
+
+4. **State Machine Robustness** - Covers could get stuck in "moving" state due to restored NVS state on boot or missed endpoint responses.
 
 ---
 
@@ -426,3 +433,105 @@ Update `.claude/skills/elero-protocol/skill.md`:
 | Infinite retry risk | Possible | No | Possible | No | No |
 
 **Chosen: A + E combined** - Best balance of reliability, simplicity, and no packet loss.
+
+---
+
+## Part 4: RX Packet Rescue (Phase 8)
+
+### 4.1 Problem
+
+After TX completes, the CC1101 auto-transitions to RX mode (MCSM1=0x3F, TXOFF_MODE=3). If the blind responds quickly, its packet arrives in the RX FIFO before `flush_and_rx()` is called. The original code unconditionally flushed the RX FIFO, **discarding valid responses**.
+
+**Symptom:** Blind responds to commands but we never see the response. Cover gets stuck in "moving" state because we miss the endpoint status.
+
+### 4.2 Root Cause
+
+```cpp
+void Elero::flush_and_rx() {
+  // ...
+  (void) this->write_cmd(CC1101_SFRX);  // DISCARDS ANY PENDING RX DATA!
+  // ...
+}
+```
+
+Timeline:
+1. TX completes, CC1101 auto-transitions to RX
+2. Blind responds, packet enters RX FIFO
+3. `RETURN_RX` state calls `flush_and_rx()`
+4. `SFRX` command discards the response
+5. Cover never sees endpoint status, stays in "moving" mode
+
+### 4.3 Solution
+
+Check RX FIFO before flushing. If valid data exists, process it first:
+
+```cpp
+void Elero::flush_and_rx() {
+  // Check if there's RX data before flushing - don't discard valid packets!
+  uint8_t rx_bytes = this->read_status(CC1101_RXBYTES);
+  if ((rx_bytes & 0x7F) > 0 && !(rx_bytes & 0x80)) {
+    // Valid data in RX FIFO (no overflow) - process it first
+    uint8_t fifo_count = rx_bytes & 0x7F;
+    if (fifo_count > CC1101_FIFO_LENGTH) {
+      fifo_count = CC1101_FIFO_LENGTH;
+    }
+    this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
+    ESP_LOGV(TAG, "flush_and_rx: rescued %d bytes from RX FIFO", fifo_count);
+    if (this->msg_rx_[0] + 3 <= fifo_count) {
+      this->interpret_msg();
+    }
+  }
+
+  // Now safe to flush
+  (void) this->write_cmd(CC1101_SIDLE);
+  (void) this->wait_idle();
+  (void) this->write_cmd(CC1101_SFRX);
+  (void) this->write_cmd(CC1101_SFTX);
+  (void) this->write_cmd(CC1101_SRX);
+  this->received_.store(false);
+}
+```
+
+---
+
+## Part 5: Boot & Timeout State Fixes (Phases 9-10)
+
+### 5.1 Boot State Reset (Phase 9)
+
+**Problem:** ESPHome's `restore_state_()` restores `current_operation` from NVS. If the device rebooted while a cover was moving, it restores as non-IDLE and starts rapid polling (2s intervals) forever.
+
+**Solution:** Force `current_operation = COVER_OPERATION_IDLE` after restore:
+
+```cpp
+void EleroCover::setup() {
+  // ... register and restore ...
+
+  // After restore, force operation to IDLE. We can't know if the blind is
+  // actually moving after a reboot - the first poll will tell us the real state.
+  this->current_operation = COVER_OPERATION_IDLE;
+  this->movement_start_ = 0;
+}
+```
+
+### 5.2 Movement Timeout Reset (Phase 10)
+
+**Problem:** If we miss all status responses during movement, `current_operation` stays non-IDLE forever. The 2-minute timeout only reduced poll rate but never reset the operation state.
+
+**Solution:** Auto-reset to IDLE after movement timeout:
+
+```cpp
+void EleroCover::loop() {
+  if (this->current_operation != COVER_OPERATION_IDLE) {
+    if ((now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT) {
+      intvl = ELERO_POLL_INTERVAL_MOVING;
+    } else {
+      // Movement timed out without receiving endpoint status - reset to IDLE.
+      ESP_LOGW(TAG, "Movement timeout for 0x%06x, resetting to IDLE",
+               this->sender_.command().dst_addr);
+      this->current_operation = COVER_OPERATION_IDLE;
+      this->publish_state();
+    }
+  }
+  // ...
+}
+```
