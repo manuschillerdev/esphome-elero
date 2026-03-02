@@ -11,6 +11,9 @@ __pycache__/
 !.claude/skills/
 build/
 
+# Dev config (contains credentials)
+config.dev.yaml
+
 # Logs
 *.log
 

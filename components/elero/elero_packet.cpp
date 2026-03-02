@@ -15,7 +15,7 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
     return r;
   }
 
-  r.length = raw[0];
+  r.length = raw[rx_offset::LENGTH];
 
   // Check packet length against maximum
   if (r.length > MAX_PACKET_SIZE) {
@@ -23,27 +23,27 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
     return r;
   }
 
-  // Check we have enough data for header (need at least 17 bytes for basic header)
-  if (raw_len < 17) {
+  // Check we have enough data for header (need at least FIRST_DEST bytes for basic header)
+  if (raw_len < rx_offset::FIRST_DEST) {
     r.reject_reason = "truncated_header";
     return r;
   }
 
   // Extract header fields
-  r.counter = raw[1];
-  r.type = raw[2];
-  r.type2 = raw[3];
-  r.hop = raw[4];
-  r.syst = raw[5];
-  r.channel = raw[6];
+  r.counter = raw[rx_offset::COUNTER];
+  r.type = raw[rx_offset::TYPE];
+  r.type2 = raw[rx_offset::TYPE2];
+  r.hop = raw[rx_offset::HOP];
+  r.syst = raw[rx_offset::SYS];
+  r.channel = raw[rx_offset::CHANNEL];
 
   // Extract addresses
-  r.src_addr = extract_addr(&raw[7]);
-  r.bwd_addr = extract_addr(&raw[10]);
-  r.fwd_addr = extract_addr(&raw[13]);
+  r.src_addr = extract_addr(&raw[rx_offset::SRC_ADDR]);
+  r.bwd_addr = extract_addr(&raw[rx_offset::BWD_ADDR]);
+  r.fwd_addr = extract_addr(&raw[rx_offset::FWD_ADDR]);
 
   // Destination count
-  r.num_dests = raw[16];
+  r.num_dests = raw[rx_offset::NUM_DESTS];
 
   // Validate destination count
   if (r.num_dests > MAX_DESTINATIONS) {
@@ -54,45 +54,48 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   // Calculate destination length based on message type
   if (r.type > msg_type::ADDR_3BYTE_THRESHOLD) {
     // 3-byte addresses (command/status packets)
-    r.dests_len = r.num_dests * 3;
-    if (raw_len >= 20) {
-      r.dst_addr = extract_addr(&raw[17]);
+    r.dests_len = r.num_dests * ADDR_SIZE;
+    if (raw_len >= rx_offset::FIRST_DEST + ADDR_SIZE) {
+      r.dst_addr = extract_addr(&raw[rx_offset::FIRST_DEST]);
     }
   } else {
     // 1-byte addresses (button packets)
     r.dests_len = r.num_dests;
-    if (raw_len >= 18) {
-      r.dst_addr = raw[17];
+    if (raw_len >= rx_offset::FIRST_DEST + 1) {
+      r.dst_addr = raw[rx_offset::FIRST_DEST];
     }
   }
 
   // Sanity check: payload access bounds
-  // msg_decode accesses 8 bytes at raw[19 + dests_len]
-  // Highest index is 26 + dests_len
-  if (26 + r.dests_len > r.length || 26 + r.dests_len >= FIFO_LENGTH) {
+  // msg_decode accesses 8 bytes starting at FIRST_DEST + 2 + dests_len
+  // Highest index is FIRST_DEST + 2 + dests_len + 7 = 26 + dests_len
+  constexpr size_t PAYLOAD_OFFSET_FROM_DESTS = 2;  // payload_1 and payload_2
+  constexpr size_t ENCRYPTED_SECTION_SIZE = 8;     // 8 bytes processed by msg_decode
+  size_t payload_end_idx = rx_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + r.dests_len + ENCRYPTED_SECTION_SIZE - 1;
+  if (payload_end_idx > r.length || payload_end_idx >= FIFO_LENGTH) {
     r.reject_reason = "dests_len_too_long";
     return r;
   }
 
   // Check we have enough raw data for payload
-  size_t payload_start = 19 + r.dests_len;
-  size_t payload_end = payload_start + 10;  // 10-byte payload
+  size_t payload_start = rx_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + r.dests_len;
+  size_t payload_end = payload_start + 10;  // 10-byte payload buffer
   if (payload_end > raw_len) {
     r.reject_reason = "truncated_payload";
     return r;
   }
 
   // Check RSSI/LQI bounds (at length+1 and length+2)
-  if (r.length + 2 >= raw_len) {
+  if (r.length + CC1101_APPEND_SIZE >= raw_len) {
     r.reject_reason = "rssi_oob";
     return r;
   }
 
   // Extract RSSI and LQI (appended by CC1101 after packet data)
-  r.rssi_raw = raw[r.length + 1];
+  r.rssi_raw = raw[r.length + 1];  // +1 because length byte is at [0]
   r.rssi = calc_rssi(r.rssi_raw);
-  r.lqi = raw[r.length + 2] & cc1101_status::LQI_MASK;
-  r.crc_ok = (raw[r.length + 2] & cc1101_status::CRC_OK_BIT) ? 1 : 0;
+  r.lqi = raw[r.length + CC1101_APPEND_SIZE] & cc1101_status::LQI_MASK;
+  r.crc_ok = (raw[r.length + CC1101_APPEND_SIZE] & cc1101_status::CRC_OK_BIT) ? 1 : 0;
 
   // Copy payload and decrypt
   // Note: We need a mutable copy for msg_decode

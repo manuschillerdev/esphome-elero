@@ -140,8 +140,8 @@ void Elero::loop() {
       }
       // Log raw bytes at VERBOSE level for analysis
       ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count, format_hex_pretty(this->msg_rx_, fifo_count).c_str());
-      // Sanity check
-      if (this->msg_rx_[0] + 3 <= fifo_count) {
+      // Sanity check: need length byte value + overhead (length byte + RSSI + LQI)
+      if (this->msg_rx_[packet::rx_offset::LENGTH] + packet::PACKET_TOTAL_OVERHEAD <= fifo_count) {
         this->interpret_msg();
       }
     }
@@ -204,7 +204,8 @@ void Elero::flush_and_rx() {
     ESP_LOGV(TAG, "flush_and_rx: rescued %d bytes from RX FIFO", fifo_count);
     ESP_LOGV(TAG, "RAW RX (rescued) %d bytes: %s", fifo_count,
              format_hex_pretty(this->msg_rx_, fifo_count).c_str());
-    if (this->msg_rx_[0] + 3 <= fifo_count) {
+    // Sanity check: need length byte value + overhead (length byte + RSSI + LQI)
+    if (this->msg_rx_[packet::rx_offset::LENGTH] + packet::PACKET_TOTAL_OVERHEAD <= fifo_count) {
       this->interpret_msg();
     }
   }
@@ -789,86 +790,93 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
 }
 
 void Elero::interpret_msg() {
-  uint8_t length = this->msg_rx_[0];
+  using namespace packet;
+
+  uint8_t length = this->msg_rx_[rx_offset::LENGTH];
   // Sanity check
-  if (length > packet::MAX_PACKET_SIZE) {
-    uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - 3)) ? (length + 3) : CC1101_FIFO_LENGTH;
+  if (length > MAX_PACKET_SIZE) {
+    uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - PACKET_TOTAL_OVERHEAD))
+                           ? (length + PACKET_TOTAL_OVERHEAD)
+                           : CC1101_FIFO_LENGTH;
     ESP_LOGE(TAG, "Received invalid packet: too long (%d)", length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", dump_len, format_hex_pretty(this->msg_rx_, dump_len).c_str());
     return;
   }
 
-  uint8_t cnt = this->msg_rx_[1];
-  uint8_t typ = this->msg_rx_[2];
-  uint8_t typ2 = this->msg_rx_[3];
-  uint8_t hop = this->msg_rx_[4];
-  uint8_t syst = this->msg_rx_[5];
-  uint8_t chl = this->msg_rx_[6];
-  uint32_t src = ((uint32_t)this->msg_rx_[7] << 16) | ((uint32_t)this->msg_rx_[8] << 8) | (this->msg_rx_[9]);
-  uint32_t bwd = ((uint32_t)this->msg_rx_[10] << 16) | ((uint32_t)this->msg_rx_[11] << 8) | (this->msg_rx_[12]);
-  uint32_t fwd = ((uint32_t)this->msg_rx_[13] << 16) | ((uint32_t)this->msg_rx_[14] << 8) | (this->msg_rx_[15]);
-  uint8_t num_dests = this->msg_rx_[16];
+  uint8_t cnt = this->msg_rx_[rx_offset::COUNTER];
+  uint8_t typ = this->msg_rx_[rx_offset::TYPE];
+  uint8_t typ2 = this->msg_rx_[rx_offset::TYPE2];
+  uint8_t hop = this->msg_rx_[rx_offset::HOP];
+  uint8_t syst = this->msg_rx_[rx_offset::SYS];
+  uint8_t chl = this->msg_rx_[rx_offset::CHANNEL];
+  uint32_t src = extract_addr(&this->msg_rx_[rx_offset::SRC_ADDR]);
+  uint32_t bwd = extract_addr(&this->msg_rx_[rx_offset::BWD_ADDR]);
+  uint32_t fwd = extract_addr(&this->msg_rx_[rx_offset::FWD_ADDR]);
+  uint8_t num_dests = this->msg_rx_[rx_offset::NUM_DESTS];
   uint32_t dst;
   uint8_t dests_len;
 
   // Validate destination count before multiplication to prevent overflow
-  if (num_dests > 20) {
+  if (num_dests > MAX_DESTINATIONS) {
     ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3, format_hex_pretty(this->msg_rx_, length + 3).c_str());
+    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + PACKET_TOTAL_OVERHEAD,
+             format_hex_pretty(this->msg_rx_, length + PACKET_TOTAL_OVERHEAD).c_str());
     return;
   }
 
-  if (typ > packet::msg_type::ADDR_3BYTE_THRESHOLD) {
-    dests_len = num_dests * 3;
-    dst = ((uint32_t)this->msg_rx_[17] << 16) | ((uint32_t)this->msg_rx_[18] << 8) | (this->msg_rx_[19]);
+  if (typ > msg_type::ADDR_3BYTE_THRESHOLD) {
+    dests_len = num_dests * ADDR_SIZE;
+    dst = extract_addr(&this->msg_rx_[rx_offset::FIRST_DEST]);
   } else {
     dests_len = num_dests;
-    dst = this->msg_rx_[17];
+    dst = this->msg_rx_[rx_offset::FIRST_DEST];
   }
 
-  // Sanity check: msg_decode accesses 8 bytes at msg_rx_[19 + dests_len],
-  // so the highest index touched is 26 + dests_len. This must be within both
-  // the packet (length) and the FIFO buffer.
-  if (26 + dests_len > length || 26 + dests_len >= CC1101_FIFO_LENGTH) {
+  // Sanity check: msg_decode accesses 8 bytes at msg_rx_[FIRST_DEST + 2 + dests_len],
+  // so the highest index touched is FIRST_DEST + 2 + dests_len + 7 = 26 + dests_len.
+  // This must be within both the packet (length) and the FIFO buffer.
+  constexpr size_t PAYLOAD_OFFSET_FROM_DESTS = 2;  // payload_1 and payload_2 before encrypted section
+  constexpr size_t ENCRYPTED_SECTION_SIZE = 8;     // 8 bytes processed by msg_decode
+  size_t payload_end = rx_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + dests_len + ENCRYPTED_SECTION_SIZE - 1;
+  if (payload_end > length || payload_end >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3, format_hex_pretty(this->msg_rx_, length + 3).c_str());
+    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + PACKET_TOTAL_OVERHEAD,
+             format_hex_pretty(this->msg_rx_, length + PACKET_TOTAL_OVERHEAD).c_str());
     return;
   }
 
   // RSSI and LQI are appended by CC1101 after packet data at indices length+1 and length+2
-  if (length + 2 >= CC1101_FIFO_LENGTH) {
+  if (length + CC1101_APPEND_SIZE >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
              format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
     return;
   }
 
-  uint8_t payload1 = this->msg_rx_[17 + dests_len];
-  uint8_t payload2 = this->msg_rx_[18 + dests_len];
-  uint8_t crc = (this->msg_rx_[length + 2] & packet::cc1101_status::CRC_OK_BIT) ? 1 : 0;
-  uint8_t lqi = this->msg_rx_[length + 2] & packet::cc1101_status::LQI_MASK;
+  // Payload bytes are at FIRST_DEST + dests_len (payload_1) and +1 (payload_2)
+  size_t payload_base = rx_offset::FIRST_DEST + dests_len;
+  uint8_t payload1 = this->msg_rx_[payload_base];
+  uint8_t payload2 = this->msg_rx_[payload_base + 1];
+  uint8_t crc = (this->msg_rx_[length + CC1101_APPEND_SIZE] & cc1101_status::CRC_OK_BIT) ? 1 : 0;
+  uint8_t lqi = this->msg_rx_[length + CC1101_APPEND_SIZE] & cc1101_status::LQI_MASK;
 
   // Calculate RSSI in dBm (CC1101 transmits as two's complement encoded value)
-  float rssi;
-  uint8_t rssi_raw = this->msg_rx_[length + 1];
-  if (rssi_raw > packet::RSSI_SIGN_BIT) {
-    // Negative value (two's complement): convert from two's complement
-    rssi = static_cast<float>(static_cast<int8_t>(rssi_raw)) / packet::RSSI_DIVISOR + packet::RSSI_OFFSET;
-  } else {
-    // Positive value
-    rssi = static_cast<float>(rssi_raw) / packet::RSSI_DIVISOR + packet::RSSI_OFFSET;
-  }
-  uint8_t *payload = &this->msg_rx_[19 + dests_len];
+  // RSSI is at length+1, LQI is at length+2 (both appended by CC1101)
+  uint8_t rssi_raw = this->msg_rx_[length + 1];  // +1 because length byte is at [0]
+  float rssi = calc_rssi(rssi_raw);
+
+  // Encrypted payload starts 2 bytes after destinations (payload_1, payload_2 are unencrypted)
+  uint8_t *payload = &this->msg_rx_[payload_base + PAYLOAD_OFFSET_FROM_DESTS];
   protocol::msg_decode(payload);
 
   // JSON log for RX packet (machine-readable, tagged for WS forwarding)
-  uint8_t command = packet::is_command_packet(typ) ? payload[packet::payload_offset::COMMAND] : 0;
-  uint8_t state = packet::is_status_packet(typ) ? payload[packet::payload_offset::STATE] : 0;
+  uint8_t command = is_command_packet(typ) ? payload[payload_offset::COMMAND] : 0;
+  uint8_t state = is_status_packet(typ) ? payload[payload_offset::STATE] : 0;
 
   // Look up blind name: for status packets src is the blind, for commands dst is the blind
   // Store string to avoid dangling pointer from temporary std::string
   std::string blind_name;
-  uint32_t blind_addr = packet::is_status_packet(typ) ? src : dst;
+  uint32_t blind_addr = is_status_packet(typ) ? src : dst;
   auto cover_it = this->address_to_cover_mapping_.find(blind_addr);
   if (cover_it != this->address_to_cover_mapping_.end()) {
     blind_name = cover_it->second->get_blind_name();
@@ -906,12 +914,14 @@ void Elero::interpret_msg() {
     pkt.channel = chl;
     pkt.type = typ;
     pkt.type2 = typ2;
-    pkt.command = packet::is_command_packet(typ) ? payload[packet::payload_offset::COMMAND] : 0;
-    pkt.state = packet::is_status_packet(typ) ? payload[packet::payload_offset::STATE] : 0;
+    pkt.command = is_command_packet(typ) ? payload[payload_offset::COMMAND] : 0;
+    pkt.state = is_status_packet(typ) ? payload[payload_offset::STATE] : 0;
     pkt.rssi = rssi;
     pkt.hop = hop;
     memcpy(pkt.payload, payload, 10);
-    pkt.raw_len = (length + 3 <= CC1101_FIFO_LENGTH) ? length + 3 : CC1101_FIFO_LENGTH;
+    pkt.raw_len = (length + PACKET_TOTAL_OVERHEAD <= CC1101_FIFO_LENGTH)
+                      ? length + PACKET_TOTAL_OVERHEAD
+                      : CC1101_FIFO_LENGTH;
     memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
     this->on_rf_packet_(pkt);
   }
@@ -926,13 +936,13 @@ void Elero::interpret_msg() {
   }
 #endif
 
-  if (packet::is_status_packet(typ)) {
+  if (is_status_packet(typ)) {
     // Status message from a blind - update text sensor
 #ifdef USE_TEXT_SENSOR
     {
       auto text_it = this->address_to_text_sensor_.find(src);
       if (text_it != this->address_to_text_sensor_.end()) {
-        text_it->second->publish_state(elero_state_to_string(payload[packet::payload_offset::STATE]));
+        text_it->second->publish_state(elero_state_to_string(payload[payload_offset::STATE]));
       }
     }
 #endif
@@ -941,14 +951,14 @@ void Elero::interpret_msg() {
     auto search = this->address_to_cover_mapping_.find(src);
     if (search != this->address_to_cover_mapping_.end()) {
       search->second->notify_rx_meta(millis(), rssi);
-      search->second->set_rx_state(payload[packet::payload_offset::STATE]);
+      search->second->set_rx_state(payload[payload_offset::STATE]);
     }
 
     // Check if we know the address as a configured ESPHome light
     auto light_search = this->address_to_light_mapping_.find(src);
     if (light_search != this->address_to_light_mapping_.end()) {
       light_search->second->notify_rx_meta(millis(), rssi);
-      light_search->second->set_rx_state(payload[packet::payload_offset::STATE]);
+      light_search->second->set_rx_state(payload[payload_offset::STATE]);
     }
 
   } else {
@@ -968,7 +978,7 @@ void Elero::interpret_msg() {
     // normal poll interval.
     // IMPORTANT: Skip if src is one of our own remote addresses (echo of our TX).
     // Otherwise we get a feedback loop: TX -> RX echo -> poll -> TX -> ...
-    if (packet::is_command_packet(typ)) {
+    if (is_command_packet(typ)) {
       // Check if this is our own command echo by matching src against our remote addresses
       bool is_own_command = false;
       for (const auto &kv : this->address_to_cover_mapping_) {
@@ -991,11 +1001,10 @@ void Elero::interpret_msg() {
       } else {
         for (uint8_t i = 0; i < num_dests; i++) {
           uint32_t dest_addr;
-          if (typ > packet::msg_type::ADDR_3BYTE_THRESHOLD) {  // 3-byte addressing
-            dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) | ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
-                        this->msg_rx_[19 + i * 3];
+          if (typ > msg_type::ADDR_3BYTE_THRESHOLD) {  // 3-byte addressing
+            dest_addr = extract_addr(&this->msg_rx_[rx_offset::FIRST_DEST + i * ADDR_SIZE]);
           } else {  // 1-byte addressing
-            dest_addr = this->msg_rx_[17 + i];
+            dest_addr = this->msg_rx_[rx_offset::FIRST_DEST + i];
           }
           auto c_it = this->address_to_cover_mapping_.find(dest_addr);
           if (c_it != this->address_to_cover_mapping_.end()) {

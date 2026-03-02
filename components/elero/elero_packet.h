@@ -280,6 +280,34 @@ constexpr size_t CRYPTO_CODE = 22;  // XOR code bytes (start of encrypted sectio
 constexpr size_t COMMAND = 24;      // Command byte (encrypted[2])
 }  // namespace tx_offset
 
+/// RX packet offsets (header matches TX, documents RX-specific access patterns)
+/// Note: For status packets (0xCA/0xC9), src is the blind, dst is the remote.
+///       For command packets (0x6A/0x69), src is the remote, dst is the blind.
+namespace rx_offset {
+constexpr size_t LENGTH = 0;        // Packet length byte (value excludes this byte)
+constexpr size_t COUNTER = 1;       // Rolling counter
+constexpr size_t TYPE = 2;          // Message type (0x6a=cmd, 0xca=status, etc.)
+constexpr size_t TYPE2 = 3;         // Secondary type byte
+constexpr size_t HOP = 4;           // Hop count
+constexpr size_t SYS = 5;           // System address (usually 0x01)
+constexpr size_t CHANNEL = 6;       // RF channel
+constexpr size_t SRC_ADDR = 7;      // Source address (3 bytes, big-endian)
+constexpr size_t BWD_ADDR = 10;     // Backward address (3 bytes)
+constexpr size_t FWD_ADDR = 13;     // Forward address (3 bytes)
+constexpr size_t NUM_DESTS = 16;    // Number of destinations
+constexpr size_t FIRST_DEST = 17;   // Start of destination address(es)
+}  // namespace rx_offset
+
+/// Address size in bytes (big-endian 24-bit addresses)
+constexpr size_t ADDR_SIZE = 3;
+
+/// CC1101 appends 2 bytes after packet data: RSSI (1 byte) + LQI with CRC bit (1 byte)
+constexpr uint8_t CC1101_APPEND_SIZE = 2;
+
+/// Total overhead beyond length field value for buffer validation:
+/// 1 (length byte itself) + 2 (RSSI/LQI appended by CC1101) = 3
+constexpr uint8_t PACKET_TOTAL_OVERHEAD = 3;
+
 /// Decrypted payload offsets (after msg_decode)
 /// These offsets are for RECEIVED packets from other sources (remotes, blinds).
 /// Note: TX building uses tx_offset, which has command at position 24 (index 2).
