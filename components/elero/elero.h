@@ -5,6 +5,7 @@
 #include "esphome/components/spi/spi.h"
 #include "cc1101.h"
 #include "tx_client.h"
+#include "elero_packet.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -30,82 +31,6 @@ class TextSensor;
 #endif
 
 namespace elero {
-
-// ─── RF Command Bytes ─────────────────────────────────────────────────────
-constexpr uint8_t ELERO_COMMAND_COVER_CONTROL = 0x6a;
-constexpr uint8_t ELERO_COMMAND_COVER_CHECK = 0x00;
-constexpr uint8_t ELERO_COMMAND_COVER_STOP = 0x10;
-constexpr uint8_t ELERO_COMMAND_COVER_UP = 0x20;
-constexpr uint8_t ELERO_COMMAND_COVER_TILT = 0x24;
-constexpr uint8_t ELERO_COMMAND_COVER_DOWN = 0x40;
-constexpr uint8_t ELERO_COMMAND_COVER_INT = 0x44;
-
-// ─── RF State Values ──────────────────────────────────────────────────────
-// State byte received in payload[6] of CA/C9 status response packets.
-//
-// Cover state mapping (EleroCover::set_rx_state):
-//   ELERO_STATE_TOP              → position=1.0, operation=IDLE
-//   ELERO_STATE_BOTTOM           → position=0.0, operation=IDLE
-//   ELERO_STATE_INTERMEDIATE     → position=unchanged, operation=IDLE
-//   ELERO_STATE_TILT             → tilt=1.0, operation=IDLE
-//   ELERO_STATE_TOP_TILT         → position=1.0, tilt=1.0, operation=IDLE
-//   ELERO_STATE_BOTTOM_TILT      → position=0.0, tilt=1.0, operation=IDLE
-//   ELERO_STATE_START_MOVING_UP  → operation=OPENING
-//   ELERO_STATE_MOVING_UP        → operation=OPENING
-//   ELERO_STATE_START_MOVING_DOWN→ operation=CLOSING
-//   ELERO_STATE_MOVING_DOWN      → operation=CLOSING
-//   ELERO_STATE_STOPPED          → operation=IDLE
-//   ELERO_STATE_BLOCKING         → operation=IDLE (logs warning)
-//   ELERO_STATE_OVERHEATED       → operation=IDLE (logs warning)
-//   ELERO_STATE_TIMEOUT          → operation=IDLE (logs warning)
-//
-// Light state mapping (EleroLight::set_rx_state):
-//   ELERO_STATE_ON               → is_on=true, brightness=1.0
-//   ELERO_STATE_OFF              → is_on=false, brightness=0.0
-//
-constexpr uint8_t ELERO_STATE_UNKNOWN = 0x00;
-constexpr uint8_t ELERO_STATE_TOP = 0x01;
-constexpr uint8_t ELERO_STATE_BOTTOM = 0x02;
-constexpr uint8_t ELERO_STATE_INTERMEDIATE = 0x03;
-constexpr uint8_t ELERO_STATE_TILT = 0x04;
-constexpr uint8_t ELERO_STATE_BLOCKING = 0x05;
-constexpr uint8_t ELERO_STATE_OVERHEATED = 0x06;
-constexpr uint8_t ELERO_STATE_TIMEOUT = 0x07;
-constexpr uint8_t ELERO_STATE_START_MOVING_UP = 0x08;
-constexpr uint8_t ELERO_STATE_START_MOVING_DOWN = 0x09;
-constexpr uint8_t ELERO_STATE_MOVING_UP = 0x0a;
-constexpr uint8_t ELERO_STATE_MOVING_DOWN = 0x0b;
-constexpr uint8_t ELERO_STATE_STOPPED = 0x0d;
-constexpr uint8_t ELERO_STATE_TOP_TILT = 0x0e;
-constexpr uint8_t ELERO_STATE_BOTTOM_TILT = 0x0f;
-constexpr uint8_t ELERO_STATE_OFF = 0x0f;
-constexpr uint8_t ELERO_STATE_ON = 0x10;
-
-// ─── Protocol Limits ──────────────────────────────────────────────────────
-constexpr uint8_t ELERO_MAX_PACKET_SIZE = 57;  // according to FCC documents
-
-// ─── Timing Constants ─────────────────────────────────────────────────────
-constexpr uint32_t ELERO_POLL_INTERVAL_MOVING = 2000;  // poll every 2 seconds while moving
-constexpr uint32_t ELERO_DELAY_SEND_PACKETS = 50;      // 50ms send delay between repeats
-constexpr uint32_t ELERO_TIMEOUT_MOVEMENT = 120000;    // poll for up to two minutes while moving
-
-// ─── Queue/Buffer Limits ──────────────────────────────────────────────────
-constexpr uint8_t ELERO_SEND_RETRIES = 3;
-constexpr uint8_t ELERO_SEND_PACKETS = 2;
-constexpr uint8_t ELERO_MAX_COMMAND_QUEUE = 10;  // max commands per blind to prevent OOM
-
-// ─── RF Protocol Encoding/Encryption Constants ────────────────────────────
-constexpr uint8_t ELERO_MSG_LENGTH = 0x1d;      // Fixed message length for TX
-constexpr uint16_t ELERO_CRYPTO_MULT = 0x708f;  // Encryption multiplier for counter-based code
-constexpr uint16_t ELERO_CRYPTO_MASK = 0xffff;  // Mask for 16-bit encryption code
-constexpr uint8_t ELERO_SYS_ADDR = 0x01;        // System address in protocol
-constexpr uint8_t ELERO_DEST_COUNT = 0x01;      // Destination count in command
-
-// ─── RSSI Calculation Constants ───────────────────────────────────────────
-// CC1101 RSSI is in dBm, raw value is two's complement encoded
-constexpr uint8_t ELERO_RSSI_SIGN_BIT = 127;  // Sign bit threshold (values > 127 are negative)
-constexpr int8_t ELERO_RSSI_OFFSET = -74;     // Constant offset applied in RSSI calculation
-constexpr int ELERO_RSSI_DIVISOR = 2;         // Divisor for raw RSSI value
 
 // ─── TX State Machine ────────────────────────────────────────────────────────
 enum class TxState : uint8_t {
@@ -294,8 +219,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   // Raw TX API (for WebSocket debugging/testing)
   [[nodiscard]] bool send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t channel,
-                                      uint8_t command, uint8_t payload_1 = 0x00, uint8_t payload_2 = 0x04,
-                                      uint8_t type = 0x6a, uint8_t type2 = 0x00, uint8_t hop = 0x0a);
+                                      uint8_t command,
+                                      uint8_t payload_1 = packet::defaults::PAYLOAD_1,
+                                      uint8_t payload_2 = packet::defaults::PAYLOAD_2,
+                                      uint8_t type = packet::msg_type::COMMAND,
+                                      uint8_t type2 = packet::defaults::TYPE2,
+                                      uint8_t hop = packet::defaults::HOP);
 
 #ifdef USE_SENSOR
   void register_rssi_sensor(uint32_t address, sensor::Sensor *sensor);
@@ -338,9 +267,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   TxClient *tx_owner_{nullptr};  // Current TX owner (for non-blocking API)
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
-  uint8_t freq0_{0x7a};
-  uint8_t freq1_{0x71};
-  uint8_t freq2_{0x21};
+  uint8_t freq0_{defaults::FREQ0};
+  uint8_t freq1_{defaults::FREQ1};
+  uint8_t freq2_{defaults::FREQ2};
   InternalGPIOPin *gdo0_pin_{nullptr};
   std::map<uint32_t, EleroBlindBase *> address_to_cover_mapping_;
   std::map<uint32_t, EleroLightBase *> address_to_light_mapping_;

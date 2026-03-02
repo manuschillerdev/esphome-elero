@@ -1,5 +1,6 @@
 #include "elero.h"
 #include "elero_protocol.h"
+#include "elero_packet.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -29,35 +30,35 @@ SpiTransaction::~SpiTransaction() {
 
 const char *elero_state_to_string(uint8_t state) {
   switch (state) {
-    case ELERO_STATE_TOP:
+    case packet::state::TOP:
       return "top";
-    case ELERO_STATE_BOTTOM:
+    case packet::state::BOTTOM:
       return "bottom";
-    case ELERO_STATE_INTERMEDIATE:
+    case packet::state::INTERMEDIATE:
       return "intermediate";
-    case ELERO_STATE_TILT:
+    case packet::state::TILT:
       return "tilt";
-    case ELERO_STATE_BLOCKING:
+    case packet::state::BLOCKING:
       return "blocking";
-    case ELERO_STATE_OVERHEATED:
+    case packet::state::OVERHEATED:
       return "overheated";
-    case ELERO_STATE_TIMEOUT:
+    case packet::state::TIMEOUT:
       return "timeout";
-    case ELERO_STATE_START_MOVING_UP:
+    case packet::state::START_MOVING_UP:
       return "start_moving_up";
-    case ELERO_STATE_START_MOVING_DOWN:
+    case packet::state::START_MOVING_DOWN:
       return "start_moving_down";
-    case ELERO_STATE_MOVING_UP:
+    case packet::state::MOVING_UP:
       return "moving_up";
-    case ELERO_STATE_MOVING_DOWN:
+    case packet::state::MOVING_DOWN:
       return "moving_down";
-    case ELERO_STATE_STOPPED:
+    case packet::state::STOPPED:
       return "stopped";
-    case ELERO_STATE_TOP_TILT:
+    case packet::state::TOP_TILT:
       return "top_tilt";
-    case ELERO_STATE_BOTTOM_TILT:
-      return "bottom_tilt";  // also ELERO_STATE_OFF (0x0f)
-    case ELERO_STATE_ON:
+    case packet::state::BOTTOM_TILT:
+      return "bottom_tilt";  // also packet::state::LIGHT_OFF (0x0f)
+    case packet::state::LIGHT_ON:
       return "on";
     default:
       return "unknown";
@@ -66,17 +67,17 @@ const char *elero_state_to_string(uint8_t state) {
 
 const char *elero_command_to_string(uint8_t command) {
   switch (command) {
-    case ELERO_COMMAND_COVER_CHECK:
+    case packet::command::CHECK:
       return "CHECK";
-    case ELERO_COMMAND_COVER_STOP:
+    case packet::command::STOP:
       return "STOP";
-    case ELERO_COMMAND_COVER_UP:
+    case packet::command::UP:
       return "UP";
-    case ELERO_COMMAND_COVER_TILT:
+    case packet::command::TILT:
       return "TILT";
-    case ELERO_COMMAND_COVER_DOWN:
+    case packet::command::DOWN:
       return "DOWN";
-    case ELERO_COMMAND_COVER_INT:
+    case packet::command::INTERMEDIATE:
       return "INTERMEDIATE";
     default:
       return "UNKNOWN";
@@ -85,20 +86,20 @@ const char *elero_command_to_string(uint8_t command) {
 
 uint8_t elero_action_to_command(const char *action) {
   if (action == nullptr)
-    return 0xFF;
+    return packet::command::INVALID;
   if (strcmp(action, "up") == 0 || strcmp(action, "open") == 0)
-    return ELERO_COMMAND_COVER_UP;
+    return packet::command::UP;
   if (strcmp(action, "down") == 0 || strcmp(action, "close") == 0)
-    return ELERO_COMMAND_COVER_DOWN;
+    return packet::command::DOWN;
   if (strcmp(action, "stop") == 0)
-    return ELERO_COMMAND_COVER_STOP;
+    return packet::command::STOP;
   if (strcmp(action, "check") == 0)
-    return ELERO_COMMAND_COVER_CHECK;
+    return packet::command::CHECK;
   if (strcmp(action, "tilt") == 0)
-    return ELERO_COMMAND_COVER_TILT;
+    return packet::command::TILT;
   if (strcmp(action, "int") == 0)
-    return ELERO_COMMAND_COVER_INT;
-  return 0xFF;
+    return packet::command::INTERMEDIATE;
+  return packet::command::INVALID;
 }
 
 void Elero::loop() {
@@ -122,19 +123,19 @@ void Elero::loop() {
   if (was_received) {
     ESP_LOGVV(TAG, "loop says \"received\"");
     uint8_t len = this->read_status(CC1101_RXBYTES);
-    if (len & 0x80) {  // overflow - FIFO data unreliable
+    if (len & packet::cc1101_status::OVERFLOW_BIT) {  // overflow - FIFO data unreliable
       ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
       this->flush_and_rx();
       return;
     }
-    if (len & 0x7F) {  // bytes available
+    if (len & packet::cc1101_status::BYTE_COUNT_MASK) {  // bytes available
       uint8_t fifo_count;
-      if ((len & 0x7F) > CC1101_FIFO_LENGTH) {
+      if ((len & packet::cc1101_status::BYTE_COUNT_MASK) > CC1101_FIFO_LENGTH) {
         ESP_LOGV(TAG, "Received more bytes than FIFO length - wtf?");
         this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
         fifo_count = CC1101_FIFO_LENGTH;
       } else {
-        fifo_count = (len & 0x7f);
+        fifo_count = (len & packet::cc1101_status::BYTE_COUNT_MASK);
         this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
       }
       // Log raw bytes at VERBOSE level for analysis
@@ -192,14 +193,17 @@ void Elero::flush_and_rx() {
 
   // Check if there's RX data before flushing - don't discard valid packets!
   uint8_t rx_bytes = this->read_status(CC1101_RXBYTES);
-  if ((rx_bytes & 0x7F) > 0 && !(rx_bytes & 0x80)) {
+  if ((rx_bytes & packet::cc1101_status::BYTE_COUNT_MASK) > 0 &&
+      !(rx_bytes & packet::cc1101_status::OVERFLOW_BIT)) {
     // Valid data in RX FIFO (no overflow) - process it first
-    uint8_t fifo_count = rx_bytes & 0x7F;
+    uint8_t fifo_count = rx_bytes & packet::cc1101_status::BYTE_COUNT_MASK;
     if (fifo_count > CC1101_FIFO_LENGTH) {
       fifo_count = CC1101_FIFO_LENGTH;
     }
     this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
     ESP_LOGV(TAG, "flush_and_rx: rescued %d bytes from RX FIFO", fifo_count);
+    ESP_LOGV(TAG, "RAW RX (rescued) %d bytes: %s", fifo_count,
+             format_hex_pretty(this->msg_rx_, fifo_count).c_str());
     if (this->msg_rx_[0] + 3 <= fifo_count) {
       this->interpret_msg();
     }
@@ -226,10 +230,12 @@ void Elero::reset() {
 }
 
 void Elero::init() {
+  // PA table: +10 dBm output power for all 8 power levels
   uint8_t patable_data[] = {0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0};
 
-  // Best-effort register writes during init. SPI errors are logged by each
-  // method; no recovery path here - setup() handles marking the component failed.
+  // CC1101 register configuration for Elero protocol (868 MHz, 2-FSK, 9.6 kBaud).
+  // Values derived from TI SmartRF Studio and Elero protocol reverse-engineering.
+  // Reference: https://github.com/QuadCorei8085/elero_protocol
   (void) this->write_reg(CC1101_FSCTRL1, 0x08);
   (void) this->write_reg(CC1101_FSCTRL0, 0x00);
   (void) this->write_reg(CC1101_FREQ2, this->freq2_);
@@ -282,7 +288,7 @@ bool Elero::write_reg(uint8_t addr, uint8_t data) {
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors (bits 6:4 indicate state, bit 7 is RXFIFO overflow)
-  if (status & 0x80) {
+  if (status & packet::cc1101_status::OVERFLOW_BIT) {
     ESP_LOGW(TAG, "SPI write_reg 0x%02x: CC1101 RXFIFO overflow detected", addr);
     return false;
   }
@@ -301,7 +307,7 @@ bool Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors
-  if (status & 0x80) {
+  if (status & packet::cc1101_status::OVERFLOW_BIT) {
     ESP_LOGW(TAG, "SPI write_burst 0x%02x (%d bytes): CC1101 RXFIFO overflow detected", addr, len);
     return false;
   }
@@ -317,7 +323,7 @@ bool Elero::write_cmd(uint8_t cmd) {
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors
-  if (status & 0x80) {
+  if (status & packet::cc1101_status::OVERFLOW_BIT) {
     ESP_LOGW(TAG, "SPI write_cmd 0x%02x: CC1101 RXFIFO overflow detected", cmd);
     return false;
   }
@@ -425,7 +431,7 @@ bool Elero::transmit() {
     return false;
   }
 
-  uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7f;
+  uint8_t bytes = this->read_status(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
   if (bytes != 0) {
     ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
     this->flush_and_rx();
@@ -464,7 +470,7 @@ void Elero::abort_tx_() {
   if (this->tx_ctx_.state == TxState::IDLE) {
     return;  // Already idle, nothing to abort
   }
-  uint8_t marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+  uint8_t marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
   ESP_LOGW(TAG, "TX aborted in state %d, marcstate=0x%02x", static_cast<int>(this->tx_ctx_.state), marcstate);
   this->tx_ctx_.state = TxState::IDLE;
   this->tx_ctx_.reset();  // Reset defer count
@@ -484,34 +490,21 @@ void Elero::notify_tx_owner_(bool success) {
 }
 
 void Elero::build_tx_packet_(const EleroCommand &cmd) {
-  uint16_t code = (0x00 - (cmd.counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
-  this->msg_tx_[0] = ELERO_MSG_LENGTH;
-  this->msg_tx_[1] = cmd.counter;
-  this->msg_tx_[2] = cmd.type;
-  this->msg_tx_[3] = cmd.type2;
-  this->msg_tx_[4] = cmd.hop;
-  this->msg_tx_[5] = ELERO_SYS_ADDR;
-  this->msg_tx_[6] = cmd.channel;
-  this->msg_tx_[7] = ((cmd.src_addr >> 16) & 0xff);
-  this->msg_tx_[8] = ((cmd.src_addr >> 8) & 0xff);
-  this->msg_tx_[9] = ((cmd.src_addr) & 0xff);
-  this->msg_tx_[10] = ((cmd.src_addr >> 16) & 0xff);
-  this->msg_tx_[11] = ((cmd.src_addr >> 8) & 0xff);
-  this->msg_tx_[12] = ((cmd.src_addr) & 0xff);
-  this->msg_tx_[13] = ((cmd.src_addr >> 16) & 0xff);
-  this->msg_tx_[14] = ((cmd.src_addr >> 8) & 0xff);
-  this->msg_tx_[15] = ((cmd.src_addr) & 0xff);
-  this->msg_tx_[16] = ELERO_DEST_COUNT;
-  this->msg_tx_[17] = ((cmd.dst_addr >> 16) & 0xff);
-  this->msg_tx_[18] = ((cmd.dst_addr >> 8) & 0xff);
-  this->msg_tx_[19] = ((cmd.dst_addr) & 0xff);
-  for (int i = 0; i < 10; ++i)
-    this->msg_tx_[20 + i] = cmd.payload[i];
-  this->msg_tx_[22] = ((code >> 8) & 0xff);
-  this->msg_tx_[23] = (code & 0xff);
+  // Convert EleroCommand to TxParams
+  packet::TxParams params;
+  params.counter = cmd.counter;
+  params.dst_addr = cmd.dst_addr;
+  params.src_addr = cmd.src_addr;
+  params.channel = cmd.channel;
+  params.type = cmd.type;
+  params.type2 = cmd.type2;
+  params.hop = cmd.hop;
+  params.command = cmd.payload[4];
+  params.payload_1 = cmd.payload[0];
+  params.payload_2 = cmd.payload[1];
 
-  uint8_t *payload = &this->msg_tx_[22];
-  protocol::msg_encode(payload);
+  // Use pure function to build packet
+  packet::build_tx_packet(params, this->msg_tx_);
 }
 
 bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
@@ -616,7 +609,7 @@ void Elero::handle_tx_state_(uint32_t now) {
         return;
       }
 
-      marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
       if (marcstate == CC1101_MARCSTATE_IDLE) {
         // Transition to FLUSH_TX
         if (!this->write_cmd(CC1101_SFTX)) {
@@ -665,7 +658,7 @@ void Elero::handle_tx_state_(uint32_t now) {
       // Poll MARCSTATE waiting for TX (deterministic: max 20 iterations × 5μs = 100μs)
       for (int i = 0; i < 20; i++) {
         delay_microseconds_safe(5);
-        marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+        marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
         if (marcstate == CC1101_MARCSTATE_TX) {
           this->tx_ctx_.state = TxState::WAIT_TX_DONE;
           this->tx_ctx_.state_enter_time = now;
@@ -678,7 +671,7 @@ void Elero::handle_tx_state_(uint32_t now) {
       }
 
       // Didn't reach TX - check final state
-      marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
       if (marcstate == CC1101_MARCSTATE_TX) {
         this->tx_ctx_.state = TxState::WAIT_TX_DONE;
         this->tx_ctx_.state_enter_time = now;
@@ -693,7 +686,7 @@ void Elero::handle_tx_state_(uint32_t now) {
       break;
 
     case TxState::TRIGGER_TX:
-      marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
       if (marcstate == CC1101_MARCSTATE_TX) {
         this->tx_ctx_.state = TxState::WAIT_TX_DONE;
         this->tx_ctx_.state_enter_time = now;
@@ -725,7 +718,7 @@ void Elero::handle_tx_state_(uint32_t now) {
       break;
 
     case TxState::VERIFY_DONE: {
-      uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
+      uint8_t bytes = this->read_status(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
       if (bytes != 0) {
         ESP_LOGE(TAG, "TX error: %d bytes left in FIFO", bytes);
         this->abort_tx_();
@@ -762,7 +755,7 @@ uint8_t Elero::read_reg(uint8_t addr, bool *ok) {
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors
-  if (status & 0x80) {
+  if (status & packet::cc1101_status::OVERFLOW_BIT) {
     ESP_LOGW(TAG, "SPI read_reg 0x%02x: CC1101 RXFIFO overflow detected", addr);
     if (ok != nullptr) {
       *ok = false;
@@ -798,7 +791,7 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
 void Elero::interpret_msg() {
   uint8_t length = this->msg_rx_[0];
   // Sanity check
-  if (length > ELERO_MAX_PACKET_SIZE) {
+  if (length > packet::MAX_PACKET_SIZE) {
     uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - 3)) ? (length + 3) : CC1101_FIFO_LENGTH;
     ESP_LOGE(TAG, "Received invalid packet: too long (%d)", length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", dump_len, format_hex_pretty(this->msg_rx_, dump_len).c_str());
@@ -825,7 +818,7 @@ void Elero::interpret_msg() {
     return;
   }
 
-  if (typ > 0x60) {
+  if (typ > packet::msg_type::ADDR_3BYTE_THRESHOLD) {
     dests_len = num_dests * 3;
     dst = ((uint32_t)this->msg_rx_[17] << 16) | ((uint32_t)this->msg_rx_[18] << 8) | (this->msg_rx_[19]);
   } else {
@@ -852,30 +845,30 @@ void Elero::interpret_msg() {
 
   uint8_t payload1 = this->msg_rx_[17 + dests_len];
   uint8_t payload2 = this->msg_rx_[18 + dests_len];
-  uint8_t crc = this->msg_rx_[length + 2] >> 7;
-  uint8_t lqi = this->msg_rx_[length + 2] & 0x7f;
+  uint8_t crc = (this->msg_rx_[length + 2] & packet::cc1101_status::CRC_OK_BIT) ? 1 : 0;
+  uint8_t lqi = this->msg_rx_[length + 2] & packet::cc1101_status::LQI_MASK;
 
   // Calculate RSSI in dBm (CC1101 transmits as two's complement encoded value)
   float rssi;
   uint8_t rssi_raw = this->msg_rx_[length + 1];
-  if (rssi_raw > ELERO_RSSI_SIGN_BIT) {
+  if (rssi_raw > packet::RSSI_SIGN_BIT) {
     // Negative value (two's complement): convert from two's complement
-    rssi = static_cast<float>(static_cast<int8_t>(rssi_raw)) / ELERO_RSSI_DIVISOR + ELERO_RSSI_OFFSET;
+    rssi = static_cast<float>(static_cast<int8_t>(rssi_raw)) / packet::RSSI_DIVISOR + packet::RSSI_OFFSET;
   } else {
     // Positive value
-    rssi = static_cast<float>(rssi_raw) / ELERO_RSSI_DIVISOR + ELERO_RSSI_OFFSET;
+    rssi = static_cast<float>(rssi_raw) / packet::RSSI_DIVISOR + packet::RSSI_OFFSET;
   }
   uint8_t *payload = &this->msg_rx_[19 + dests_len];
   protocol::msg_decode(payload);
 
   // JSON log for RX packet (machine-readable, tagged for WS forwarding)
-  uint8_t command = ((typ == 0x6a) || (typ == 0x69)) ? payload[4] : 0;
-  uint8_t state = ((typ == 0xca) || (typ == 0xc9)) ? payload[6] : 0;
+  uint8_t command = packet::is_command_packet(typ) ? payload[packet::payload_offset::COMMAND] : 0;
+  uint8_t state = packet::is_status_packet(typ) ? payload[packet::payload_offset::STATE] : 0;
 
-  // Look up blind name: for status (0xca/0xc9) src is the blind, for commands (0x6a/0x69) dst is the blind
+  // Look up blind name: for status packets src is the blind, for commands dst is the blind
   // Store string to avoid dangling pointer from temporary std::string
   std::string blind_name;
-  uint32_t blind_addr = ((typ == 0xca) || (typ == 0xc9)) ? src : dst;
+  uint32_t blind_addr = packet::is_status_packet(typ) ? src : dst;
   auto cover_it = this->address_to_cover_mapping_.find(blind_addr);
   if (cover_it != this->address_to_cover_mapping_.end()) {
     blind_name = cover_it->second->get_blind_name();
@@ -913,8 +906,8 @@ void Elero::interpret_msg() {
     pkt.channel = chl;
     pkt.type = typ;
     pkt.type2 = typ2;
-    pkt.command = ((typ == 0x6a) || (typ == 0x69)) ? payload[4] : 0;
-    pkt.state = ((typ == 0xca) || (typ == 0xc9)) ? payload[6] : 0;
+    pkt.command = packet::is_command_packet(typ) ? payload[packet::payload_offset::COMMAND] : 0;
+    pkt.state = packet::is_status_packet(typ) ? payload[packet::payload_offset::STATE] : 0;
     pkt.rssi = rssi;
     pkt.hop = hop;
     memcpy(pkt.payload, payload, 10);
@@ -933,13 +926,13 @@ void Elero::interpret_msg() {
   }
 #endif
 
-  if ((typ == 0xca) || (typ == 0xc9)) {  // Status message from a blind
-                                         // Update text sensor
+  if (packet::is_status_packet(typ)) {
+    // Status message from a blind - update text sensor
 #ifdef USE_TEXT_SENSOR
     {
       auto text_it = this->address_to_text_sensor_.find(src);
       if (text_it != this->address_to_text_sensor_.end()) {
-        text_it->second->publish_state(elero_state_to_string(payload[6]));
+        text_it->second->publish_state(elero_state_to_string(payload[packet::payload_offset::STATE]));
       }
     }
 #endif
@@ -948,14 +941,14 @@ void Elero::interpret_msg() {
     auto search = this->address_to_cover_mapping_.find(src);
     if (search != this->address_to_cover_mapping_.end()) {
       search->second->notify_rx_meta(millis(), rssi);
-      search->second->set_rx_state(payload[6]);
+      search->second->set_rx_state(payload[packet::payload_offset::STATE]);
     }
 
     // Check if we know the address as a configured ESPHome light
     auto light_search = this->address_to_light_mapping_.find(src);
     if (light_search != this->address_to_light_mapping_.end()) {
       light_search->second->notify_rx_meta(millis(), rssi);
-      light_search->second->set_rx_state(payload[6]);
+      light_search->second->set_rx_state(payload[packet::payload_offset::STATE]);
     }
 
   } else {
@@ -969,13 +962,13 @@ void Elero::interpret_msg() {
       light_search->second->notify_rx_meta(millis(), rssi);
     }
 
-    // Remote command packets (0x6a/0x69): src = remote addr, dst = blind addr(s).
+    // Remote command packets: src = remote addr, dst = blind addr(s).
     // Trigger an immediate status poll on each configured blind/light that is
     // targeted, so HA state updates within ~50 ms instead of waiting for the
     // normal poll interval.
     // IMPORTANT: Skip if src is one of our own remote addresses (echo of our TX).
     // Otherwise we get a feedback loop: TX -> RX echo -> poll -> TX -> ...
-    if ((typ == 0x6a) || (typ == 0x69)) {
+    if (packet::is_command_packet(typ)) {
       // Check if this is our own command echo by matching src against our remote addresses
       bool is_own_command = false;
       for (const auto &kv : this->address_to_cover_mapping_) {
@@ -998,7 +991,7 @@ void Elero::interpret_msg() {
       } else {
         for (uint8_t i = 0; i < num_dests; i++) {
           uint32_t dest_addr;
-          if (typ > 0x60) {  // 3-byte addressing
+          if (typ > packet::msg_type::ADDR_3BYTE_THRESHOLD) {  // 3-byte addressing
             dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) | ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
                         this->msg_rx_[19 + i * 3];
           } else {  // 1-byte addressing
@@ -1025,7 +1018,7 @@ void Elero::register_cover(EleroBlindBase *cover) {
     return;
   }
   this->address_to_cover_mapping_.insert({address, cover});
-  cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * 5000);
+  cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * packet::timing::POLL_OFFSET_SPACING);
 }
 
 void Elero::register_light(EleroLightBase *light) {
@@ -1106,7 +1099,7 @@ bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t chann
   bool success = this->send_command(&cmd);
   if (success) {
     ++raw_msg_cnt;
-    if (raw_msg_cnt > 255)
+    if (raw_msg_cnt > packet::limits::COUNTER_MAX)
       raw_msg_cnt = 1;
   }
   return success;

@@ -96,12 +96,12 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   bool supports_tilt_{false};
   uint32_t last_seen_ms_{0};
   float last_rssi_{0.0f};
-  uint8_t last_state_raw_{ELERO_STATE_UNKNOWN};
-  uint8_t command_up_{0x20};
-  uint8_t command_down_{0x40};
-  uint8_t command_check_{0x00};
-  uint8_t command_stop_{0x10};
-  uint8_t command_tilt_{0x24};
+  uint8_t last_state_raw_{packet::state::UNKNOWN};
+  uint8_t command_up_{packet::command::UP};
+  uint8_t command_down_{packet::command::DOWN};
+  uint8_t command_check_{packet::command::CHECK};
+  uint8_t command_stop_{packet::command::STOP};
+  uint8_t command_tilt_{packet::command::TILT};
   cover::CoverOperation last_operation_{cover::COVER_OPERATION_OPENING};
 };
 

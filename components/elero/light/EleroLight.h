@@ -84,12 +84,12 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   bool ignore_write_state_{false};
 
   // Configurable command bytes
-  uint8_t command_on_{0x20};
-  uint8_t command_off_{0x40};
-  uint8_t command_dim_up_{0x20};
-  uint8_t command_dim_down_{0x40};
-  uint8_t command_stop_{0x10};
-  uint8_t command_check_{0x00};
+  uint8_t command_on_{packet::command::UP};      // ON uses UP command
+  uint8_t command_off_{packet::command::DOWN};   // OFF uses DOWN command
+  uint8_t command_dim_up_{packet::command::UP};
+  uint8_t command_dim_down_{packet::command::DOWN};
+  uint8_t command_stop_{packet::command::STOP};
+  uint8_t command_check_{packet::command::CHECK};
 };
 
 }  // namespace elero

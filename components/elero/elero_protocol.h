@@ -18,6 +18,15 @@ namespace esphome {
 namespace elero {
 namespace protocol {
 
+// ─── Crypto Constants ────────────────────────────────────────────────────────
+// These are defined here (not imported from elero_packet.h) because
+// elero_packet.h includes elero_protocol.h - circular dependency avoidance.
+namespace crypto_local {
+constexpr uint8_t R20_INITIAL = 0xFE;       ///< Initial R20 value for encoding
+constexpr uint8_t R20_SECOND = 0xBA;        ///< Second R20 value (after first 2 bytes)
+constexpr uint8_t R20_DECREMENT = 0x22;     ///< R20 decrement per byte
+}  // namespace crypto_local
+
 /// Lookup tables for nibble encoding/decoding (Elero protocol scrambling)
 constexpr uint8_t ENCODE_TABLE[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05,
                                     0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
@@ -57,7 +66,7 @@ inline void add_r20_to_nibbles(uint8_t *msg, uint8_t r20, uint8_t start, uint8_t
     uint8_t ln = (d + r20) & 0x0F;
     uint8_t hn = ((d & 0xF0) + (r20 & 0xF0)) & 0xFF;
     msg[i] = hn | ln;
-    r20 = (r20 - 0x22) & 0xFF;
+    r20 = (r20 - crypto_local::R20_DECREMENT) & 0xFF;
   }
 }
 
@@ -68,7 +77,7 @@ inline void sub_r20_from_nibbles(uint8_t *msg, uint8_t r20, uint8_t start, uint8
     uint8_t ln = (d - r20) & 0x0F;
     uint8_t hn = ((d & 0xF0) - (r20 & 0xF0)) & 0xFF;
     msg[i] = hn | ln;
-    r20 = (r20 - 0x22) & 0xFF;
+    r20 = (r20 - crypto_local::R20_DECREMENT) & 0xFF;
   }
 }
 
@@ -114,9 +123,9 @@ inline void decode_nibbles(uint8_t *msg, uint8_t len) {
 /// @param msg Pointer to 8-byte buffer (modified in place)
 inline void msg_decode(uint8_t *msg) {
   decode_nibbles(msg, 8);
-  sub_r20_from_nibbles(msg, 0xFE, 0, 2);
+  sub_r20_from_nibbles(msg, crypto_local::R20_INITIAL, 0, 2);
   xor_2byte_in_array_decode(msg, msg[0], msg[1]);
-  sub_r20_from_nibbles(msg, 0xBA, 2, 8);
+  sub_r20_from_nibbles(msg, crypto_local::R20_SECOND, 2, 8);
 }
 
 /// Encode an 8-byte Elero payload message.
@@ -125,7 +134,7 @@ inline void msg_encode(uint8_t *msg) {
   uint8_t xor0 = msg[0];
   uint8_t xor1 = msg[1];
   calc_parity(msg);
-  add_r20_to_nibbles(msg, 0xFE, 0, 8);
+  add_r20_to_nibbles(msg, crypto_local::R20_INITIAL, 0, 8);
   xor_2byte_in_array_encode(msg, xor0, xor1);
   encode_nibbles(msg);
 }

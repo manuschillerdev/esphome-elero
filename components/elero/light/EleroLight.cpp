@@ -169,7 +169,7 @@ void EleroLight::recompute_brightness() {
 void EleroLight::set_rx_state(uint8_t state) {
   ESP_LOGV(TAG, "Got state: 0x%02x for light 0x%06x", state, this->sender_.command().dst_addr);
 
-  if (state == ELERO_STATE_ON) {
+  if (state == packet::state::LIGHT_ON) {
     if (!this->is_on_) {
       this->is_on_ = true;
       this->brightness_ = 1.0f;
@@ -183,7 +183,7 @@ void EleroLight::set_rx_state(uint8_t state) {
         this->ignore_write_state_ = false;
       }
     }
-  } else if (state == ELERO_STATE_OFF) {
+  } else if (state == packet::state::LIGHT_OFF) {
     if (this->is_on_) {
       this->is_on_ = false;
       this->brightness_ = 0.0f;

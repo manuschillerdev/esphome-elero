@@ -1,5 +1,6 @@
 #include "elero_web_server.h"
 #include "elero_web_ui.h"
+#include "../elero/elero_packet.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include "esphome/components/logger/logger.h"
@@ -235,7 +236,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
     auto lit = lights.find(addr);
     if (lit != lights.end()) {
       uint8_t cmd_byte = elero_action_to_command(action.c_str());
-      if (cmd_byte != 0xFF) {
+      if (cmd_byte != packet::command::INVALID) {
         lit->second->enqueue_command(cmd_byte);
       }
       return;
@@ -266,11 +267,11 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
     uint8_t channel = (uint8_t) strtoul(channel_s.c_str(), nullptr, 0);
     uint8_t command = (uint8_t) strtoul(command_s.c_str(), nullptr, 0);
 
-    uint8_t payload_1 = json_find_hex_or(msg, "payload_1", 0x00);
-    uint8_t payload_2 = json_find_hex_or(msg, "payload_2", 0x04);
-    uint8_t msg_type = json_find_hex_or(msg, "type", 0x6a);
-    uint8_t type2 = json_find_hex_or(msg, "type2", 0x00);
-    uint8_t hop = json_find_hex_or(msg, "hop", 0x0a);
+    uint8_t payload_1 = json_find_hex_or(msg, "payload_1", elero::packet::defaults::PAYLOAD_1);
+    uint8_t payload_2 = json_find_hex_or(msg, "payload_2", elero::packet::defaults::PAYLOAD_2);
+    uint8_t msg_type = json_find_hex_or(msg, "type", elero::packet::msg_type::COMMAND);
+    uint8_t type2 = json_find_hex_or(msg, "type2", elero::packet::defaults::TYPE2);
+    uint8_t hop = json_find_hex_or(msg, "hop", elero::packet::defaults::HOP);
 
     bool success = this->parent_->send_raw_command(
         dst_addr, src_addr, channel, command,
