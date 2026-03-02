@@ -118,6 +118,15 @@ constexpr uint8_t CC1101_RXBYTES = 0x3B;         // Overflow and Number of Bytes
 constexpr uint8_t CC1101_RCCTRL1_STATUS = 0x3C;  // Last RC Oscillator Calibration Result
 constexpr uint8_t CC1101_RCCTRL0_STATUS = 0x3D;  // Last RC Oscillator Calibration Result
 
+// ─── Default Frequency Registers ─────────────────────────────────────────────
+// Default values for CC1101 frequency registers. Overridable via YAML config.
+// Default: 868.35 MHz (primary Elero frequency). Alternative: 868.95 MHz (FREQ0=0xC0).
+namespace defaults {
+constexpr uint8_t FREQ0 = 0x7A;  // 868.35 MHz
+constexpr uint8_t FREQ1 = 0x71;
+constexpr uint8_t FREQ2 = 0x21;
+}  // namespace defaults
+
 // ─── MARCSTATE values ────────────────────────────────────────────────────────
 constexpr uint8_t CC1101_MARCSTATE_SLEEP = 0x00;
 constexpr uint8_t CC1101_MARCSTATE_IDLE = 0x01;

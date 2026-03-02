@@ -15,9 +15,9 @@ namespace elero {
 /// RF commands without blocking the ESPHome main loop. Key features:
 ///
 /// - Queues commands and processes them one at a time
-/// - Each command is sent twice (ELERO_SEND_PACKETS) for reliability
-/// - 50ms delay between packets (ELERO_DELAY_SEND_PACKETS)
-/// - Up to 3 retries on failure (ELERO_SEND_RETRIES)
+/// - Each command is sent twice (packet::limits::SEND_PACKETS) for reliability
+/// - 50ms delay between packets (packet::timing::DELAY_SEND_PACKETS)
+/// - Up to 3 retries on failure (packet::limits::SEND_RETRIES)
 /// - Cancellation support for STOP commands
 /// - TX_PENDING timeout watchdog (500ms) to prevent stuck states
 ///
@@ -43,7 +43,7 @@ class CommandSender : public TxClient {
   /// within this time, we assume TX failed and recover. This prevents the sender
   /// from getting stuck if the hub has an SPI lockup or other hardware issue.
   /// Value is set to cover worst-case hub TX (~400ms) with margin.
-  static constexpr uint32_t TX_PENDING_TIMEOUT_MS = 500;
+  static constexpr uint32_t TX_PENDING_TIMEOUT_MS = packet::timing::TX_PENDING_TIMEOUT;
 
   CommandSender() = default;
 
@@ -72,7 +72,7 @@ class CommandSender : public TxClient {
 
       case State::WAIT_DELAY:
         // Check inter-packet delay
-        if ((now - this->last_tx_time_) < ELERO_DELAY_SEND_PACKETS) {
+        if ((now - this->last_tx_time_) < packet::timing::DELAY_SEND_PACKETS) {
           return;  // Still waiting
         }
 
@@ -92,11 +92,11 @@ class CommandSender : public TxClient {
           this->state_ = State::TX_PENDING;
           this->tx_start_time_ = now;
           ESP_LOGV(tag, "TX started for 0x%06x cmd=0x%02x, packet %d/%d",
-                   this->command_.blind_addr, this->command_.payload[4],
-                   this->send_packets_ + 1, ELERO_SEND_PACKETS);
+                   this->command_.dst_addr, this->command_.payload[4],
+                   this->send_packets_ + 1, packet::limits::SEND_PACKETS);
         } else {
           // Radio busy, will retry next loop iteration
-          ESP_LOGVV(tag, "Radio busy for 0x%06x, will retry", this->command_.blind_addr);
+          ESP_LOGVV(tag, "Radio busy for 0x%06x, will retry", this->command_.dst_addr);
         }
         break;
 
@@ -105,12 +105,12 @@ class CommandSender : public TxClient {
         // Watchdog: if hub never calls back, recover after timeout
         if ((now - this->tx_start_time_) > TX_PENDING_TIMEOUT_MS) {
           ESP_LOGW(tag, "TX_PENDING timeout for 0x%06x after %ums, treating as failure",
-                   this->command_.blind_addr, TX_PENDING_TIMEOUT_MS);
+                   this->command_.dst_addr, TX_PENDING_TIMEOUT_MS);
           // Treat as TX failure - use retry logic
           ++this->send_retries_;
-          if (this->send_retries_ > ELERO_SEND_RETRIES) {
+          if (this->send_retries_ > packet::limits::SEND_RETRIES) {
             ESP_LOGE(tag, "Max retries for 0x%06x after timeout, dropping command 0x%02x",
-                     this->command_.blind_addr, this->command_.payload[4]);
+                     this->command_.dst_addr, this->command_.payload[4]);
             this->advance_queue_();
           } else {
             this->state_ = State::WAIT_DELAY;
@@ -133,7 +133,7 @@ class CommandSender : public TxClient {
     // This can happen if hub calls back after we already timed out and moved to WAIT_DELAY
     if (this->state_ != State::TX_PENDING) {
       ESP_LOGD(this->log_tag_, "Ignoring stale on_tx_complete for 0x%06x (state=%d, success=%d)",
-               this->command_.blind_addr, static_cast<int>(this->state_), success);
+               this->command_.dst_addr, static_cast<int>(this->state_), success);
       return;
     }
 
@@ -142,7 +142,7 @@ class CommandSender : public TxClient {
     // Check cancellation FIRST
     if (this->cancelled_) {
       ESP_LOGD(this->log_tag_, "TX for 0x%06x completed but was cancelled, ignoring",
-               this->command_.blind_addr);
+               this->command_.dst_addr);
       this->cancelled_ = false;
       this->send_packets_ = 0;
       this->send_retries_ = 0;
@@ -154,10 +154,10 @@ class CommandSender : public TxClient {
       this->send_retries_ = 0;
       ++this->send_packets_;
 
-      if (this->send_packets_ >= ELERO_SEND_PACKETS) {
+      if (this->send_packets_ >= packet::limits::SEND_PACKETS) {
         // Command fully sent, move to next
         ESP_LOGV(this->log_tag_, "Command 0x%02x to 0x%06x complete (%d packets)",
-                 this->command_.payload[4], this->command_.blind_addr, this->send_packets_);
+                 this->command_.payload[4], this->command_.dst_addr, this->send_packets_);
         this->advance_queue_();
       } else {
         // Need to send more packets for this command
@@ -167,12 +167,12 @@ class CommandSender : public TxClient {
       // TX failed
       ++this->send_retries_;
       ESP_LOGD(this->log_tag_, "TX retry %d/%d for 0x%06x",
-               this->send_retries_, ELERO_SEND_RETRIES, this->command_.blind_addr);
+               this->send_retries_, packet::limits::SEND_RETRIES, this->command_.dst_addr);
 
-      if (this->send_retries_ > ELERO_SEND_RETRIES) {
+      if (this->send_retries_ > packet::limits::SEND_RETRIES) {
         // Give up on this command
         ESP_LOGE(this->log_tag_, "Max retries for 0x%06x, dropping command 0x%02x",
-                 this->command_.blind_addr, this->command_.payload[4]);
+                 this->command_.dst_addr, this->command_.payload[4]);
         this->advance_queue_();
       } else {
         // Will retry after delay
@@ -185,7 +185,7 @@ class CommandSender : public TxClient {
   /// @param cmd_byte The command byte to send
   /// @return true if queued successfully, false if queue is full
   [[nodiscard]] bool enqueue(uint8_t cmd_byte) {
-    if (this->command_queue_.size() >= ELERO_MAX_COMMAND_QUEUE) {
+    if (this->command_queue_.size() >= packet::limits::MAX_COMMAND_QUEUE) {
       return false;
     }
     this->command_queue_.push(cmd_byte);
@@ -258,14 +258,14 @@ class CommandSender : public TxClient {
 
   /// Increment rolling command counter (wraps 255 → 1).
   void increase_counter_() {
-    if (this->command_.counter == 0xff) {
+    if (this->command_.counter >= packet::limits::COUNTER_MAX) {
       this->command_.counter = 1;
     } else {
       ++this->command_.counter;
     }
   }
 
-  EleroCommand command_{1, 0, 0, 0, {0, 0}, 0, {0}};
+  EleroCommand command_{1, 0, 0, 0, 0, 0, 0, {0}};
   std::queue<uint8_t> command_queue_;
 
   State state_{State::IDLE};

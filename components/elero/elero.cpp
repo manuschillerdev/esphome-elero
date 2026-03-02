@@ -1,5 +1,6 @@
 #include "elero.h"
 #include "elero_protocol.h"
+#include "elero_packet.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -16,6 +17,7 @@ namespace esphome {
 namespace elero {
 
 static const char *const TAG = "elero";
+static const char *const TAG_RF = "elero.rf";
 
 // ─── SpiTransaction RAII Implementation ───────────────────────────────────
 SpiTransaction::SpiTransaction(Elero *device) : device_(device) {
@@ -28,57 +30,76 @@ SpiTransaction::~SpiTransaction() {
 
 const char *elero_state_to_string(uint8_t state) {
   switch (state) {
-    case ELERO_STATE_TOP:
+    case packet::state::TOP:
       return "top";
-    case ELERO_STATE_BOTTOM:
+    case packet::state::BOTTOM:
       return "bottom";
-    case ELERO_STATE_INTERMEDIATE:
+    case packet::state::INTERMEDIATE:
       return "intermediate";
-    case ELERO_STATE_TILT:
+    case packet::state::TILT:
       return "tilt";
-    case ELERO_STATE_BLOCKING:
+    case packet::state::BLOCKING:
       return "blocking";
-    case ELERO_STATE_OVERHEATED:
+    case packet::state::OVERHEATED:
       return "overheated";
-    case ELERO_STATE_TIMEOUT:
+    case packet::state::TIMEOUT:
       return "timeout";
-    case ELERO_STATE_START_MOVING_UP:
+    case packet::state::START_MOVING_UP:
       return "start_moving_up";
-    case ELERO_STATE_START_MOVING_DOWN:
+    case packet::state::START_MOVING_DOWN:
       return "start_moving_down";
-    case ELERO_STATE_MOVING_UP:
+    case packet::state::MOVING_UP:
       return "moving_up";
-    case ELERO_STATE_MOVING_DOWN:
+    case packet::state::MOVING_DOWN:
       return "moving_down";
-    case ELERO_STATE_STOPPED:
+    case packet::state::STOPPED:
       return "stopped";
-    case ELERO_STATE_TOP_TILT:
+    case packet::state::TOP_TILT:
       return "top_tilt";
-    case ELERO_STATE_BOTTOM_TILT:
-      return "bottom_tilt";  // also ELERO_STATE_OFF (0x0f)
-    case ELERO_STATE_ON:
+    case packet::state::BOTTOM_TILT:
+      return "bottom_tilt";  // also packet::state::LIGHT_OFF (0x0f)
+    case packet::state::LIGHT_ON:
       return "on";
     default:
       return "unknown";
   }
 }
 
+const char *elero_command_to_string(uint8_t command) {
+  switch (command) {
+    case packet::command::CHECK:
+      return "CHECK";
+    case packet::command::STOP:
+      return "STOP";
+    case packet::command::UP:
+      return "UP";
+    case packet::command::TILT:
+      return "TILT";
+    case packet::command::DOWN:
+      return "DOWN";
+    case packet::command::INTERMEDIATE:
+      return "INTERMEDIATE";
+    default:
+      return "UNKNOWN";
+  }
+}
+
 uint8_t elero_action_to_command(const char *action) {
   if (action == nullptr)
-    return 0xFF;
+    return packet::command::INVALID;
   if (strcmp(action, "up") == 0 || strcmp(action, "open") == 0)
-    return ELERO_COMMAND_COVER_UP;
+    return packet::command::UP;
   if (strcmp(action, "down") == 0 || strcmp(action, "close") == 0)
-    return ELERO_COMMAND_COVER_DOWN;
+    return packet::command::DOWN;
   if (strcmp(action, "stop") == 0)
-    return ELERO_COMMAND_COVER_STOP;
+    return packet::command::STOP;
   if (strcmp(action, "check") == 0)
-    return ELERO_COMMAND_COVER_CHECK;
+    return packet::command::CHECK;
   if (strcmp(action, "tilt") == 0)
-    return ELERO_COMMAND_COVER_TILT;
+    return packet::command::TILT;
   if (strcmp(action, "int") == 0)
-    return ELERO_COMMAND_COVER_INT;
-  return 0xFF;
+    return packet::command::INTERMEDIATE;
+  return packet::command::INVALID;
 }
 
 void Elero::loop() {
@@ -102,25 +123,25 @@ void Elero::loop() {
   if (was_received) {
     ESP_LOGVV(TAG, "loop says \"received\"");
     uint8_t len = this->read_status(CC1101_RXBYTES);
-    if (len & 0x80) {  // overflow - FIFO data unreliable
+    if (len & packet::cc1101_status::OVERFLOW_BIT) {  // overflow - FIFO data unreliable
       ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
       this->flush_and_rx();
       return;
     }
-    if (len & 0x7F) {  // bytes available
+    if (len & packet::cc1101_status::BYTE_COUNT_MASK) {  // bytes available
       uint8_t fifo_count;
-      if ((len & 0x7F) > CC1101_FIFO_LENGTH) {
+      if ((len & packet::cc1101_status::BYTE_COUNT_MASK) > CC1101_FIFO_LENGTH) {
         ESP_LOGV(TAG, "Received more bytes than FIFO length - wtf?");
         this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
         fifo_count = CC1101_FIFO_LENGTH;
       } else {
-        fifo_count = (len & 0x7f);
+        fifo_count = (len & packet::cc1101_status::BYTE_COUNT_MASK);
         this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
       }
       // Log raw bytes at VERBOSE level for analysis
       ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count, format_hex_pretty(this->msg_rx_, fifo_count).c_str());
-      // Sanity check
-      if (this->msg_rx_[0] + 3 <= fifo_count) {
+      // Sanity check: need length byte value + overhead (length byte + RSSI + LQI)
+      if (this->msg_rx_[packet::rx_offset::LENGTH] + packet::PACKET_TOTAL_OVERHEAD <= fifo_count) {
         this->interpret_msg();
       }
     }
@@ -169,6 +190,26 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 
 void Elero::flush_and_rx() {
   ESP_LOGVV(TAG, "flush_and_rx");
+
+  // Check if there's RX data before flushing - don't discard valid packets!
+  uint8_t rx_bytes = this->read_status(CC1101_RXBYTES);
+  if ((rx_bytes & packet::cc1101_status::BYTE_COUNT_MASK) > 0 &&
+      !(rx_bytes & packet::cc1101_status::OVERFLOW_BIT)) {
+    // Valid data in RX FIFO (no overflow) - process it first
+    uint8_t fifo_count = rx_bytes & packet::cc1101_status::BYTE_COUNT_MASK;
+    if (fifo_count > CC1101_FIFO_LENGTH) {
+      fifo_count = CC1101_FIFO_LENGTH;
+    }
+    this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
+    ESP_LOGV(TAG, "flush_and_rx: rescued %d bytes from RX FIFO", fifo_count);
+    ESP_LOGV(TAG, "RAW RX (rescued) %d bytes: %s", fifo_count,
+             format_hex_pretty(this->msg_rx_, fifo_count).c_str());
+    // Sanity check: need length byte value + overhead (length byte + RSSI + LQI)
+    if (this->msg_rx_[packet::rx_offset::LENGTH] + packet::PACKET_TOTAL_OVERHEAD <= fifo_count) {
+      this->interpret_msg();
+    }
+  }
+
   (void) this->write_cmd(CC1101_SIDLE);
   (void) this->wait_idle();
   (void) this->write_cmd(CC1101_SFRX);
@@ -190,10 +231,12 @@ void Elero::reset() {
 }
 
 void Elero::init() {
+  // PA table: +10 dBm output power for all 8 power levels
   uint8_t patable_data[] = {0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0};
 
-  // Best-effort register writes during init. SPI errors are logged by each
-  // method; no recovery path here - setup() handles marking the component failed.
+  // CC1101 register configuration for Elero protocol (868 MHz, 2-FSK, 9.6 kBaud).
+  // Values derived from TI SmartRF Studio and Elero protocol reverse-engineering.
+  // Reference: https://github.com/QuadCorei8085/elero_protocol
   (void) this->write_reg(CC1101_FSCTRL1, 0x08);
   (void) this->write_reg(CC1101_FSCTRL0, 0x00);
   (void) this->write_reg(CC1101_FREQ2, this->freq2_);
@@ -246,7 +289,7 @@ bool Elero::write_reg(uint8_t addr, uint8_t data) {
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors (bits 6:4 indicate state, bit 7 is RXFIFO overflow)
-  if (status & 0x80) {
+  if (status & packet::cc1101_status::OVERFLOW_BIT) {
     ESP_LOGW(TAG, "SPI write_reg 0x%02x: CC1101 RXFIFO overflow detected", addr);
     return false;
   }
@@ -265,7 +308,7 @@ bool Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors
-  if (status & 0x80) {
+  if (status & packet::cc1101_status::OVERFLOW_BIT) {
     ESP_LOGW(TAG, "SPI write_burst 0x%02x (%d bytes): CC1101 RXFIFO overflow detected", addr, len);
     return false;
   }
@@ -281,7 +324,7 @@ bool Elero::write_cmd(uint8_t cmd) {
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors
-  if (status & 0x80) {
+  if (status & packet::cc1101_status::OVERFLOW_BIT) {
     ESP_LOGW(TAG, "SPI write_cmd 0x%02x: CC1101 RXFIFO overflow detected", cmd);
     return false;
   }
@@ -389,7 +432,7 @@ bool Elero::transmit() {
     return false;
   }
 
-  uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7f;
+  uint8_t bytes = this->read_status(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
   if (bytes != 0) {
     ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
     this->flush_and_rx();
@@ -403,13 +446,35 @@ bool Elero::transmit() {
 
 // ─── Non-blocking TX State Machine ─────────────────────────────────────────
 
+void Elero::defer_tx_(uint32_t now) {
+  this->tx_ctx_.defer_count++;
+
+  // Apply backoff if deferred multiple times
+  if (this->tx_ctx_.defer_count > TxContext::DEFER_BACKOFF_THRESHOLD) {
+    // Random backoff: scale with defer count for exponential-ish backoff
+    uint32_t backoff_ms = (random_uint32() % TxContext::BACKOFF_MAX_MS) + 1;
+    backoff_ms *= (this->tx_ctx_.defer_count - TxContext::DEFER_BACKOFF_THRESHOLD);
+    if (backoff_ms > TxContext::BACKOFF_MAX_MS * 3) {
+      backoff_ms = TxContext::BACKOFF_MAX_MS * 3;  // Cap at 150ms
+    }
+    this->tx_ctx_.backoff_until = now + backoff_ms;
+    ESP_LOGD(TAG, "TX defer %d, backoff %ums", this->tx_ctx_.defer_count, backoff_ms);
+  }
+
+  // Go back to GOTO_IDLE to retry (best-effort, ignore failure)
+  (void) this->write_cmd(CC1101_SIDLE);
+  this->tx_ctx_.state = TxState::GOTO_IDLE;
+  this->tx_ctx_.state_enter_time = now;
+}
+
 void Elero::abort_tx_() {
   if (this->tx_ctx_.state == TxState::IDLE) {
     return;  // Already idle, nothing to abort
   }
-  uint8_t marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+  uint8_t marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
   ESP_LOGW(TAG, "TX aborted in state %d, marcstate=0x%02x", static_cast<int>(this->tx_ctx_.state), marcstate);
   this->tx_ctx_.state = TxState::IDLE;
+  this->tx_ctx_.reset();  // Reset defer count
   this->tx_pending_success_ = false;
   this->flush_and_rx();
 
@@ -426,34 +491,21 @@ void Elero::notify_tx_owner_(bool success) {
 }
 
 void Elero::build_tx_packet_(const EleroCommand &cmd) {
-  uint16_t code = (0x00 - (cmd.counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
-  this->msg_tx_[0] = ELERO_MSG_LENGTH;
-  this->msg_tx_[1] = cmd.counter;
-  this->msg_tx_[2] = cmd.pck_inf[0];
-  this->msg_tx_[3] = cmd.pck_inf[1];
-  this->msg_tx_[4] = cmd.hop;
-  this->msg_tx_[5] = ELERO_SYS_ADDR;
-  this->msg_tx_[6] = cmd.channel;
-  this->msg_tx_[7] = ((cmd.remote_addr >> 16) & 0xff);
-  this->msg_tx_[8] = ((cmd.remote_addr >> 8) & 0xff);
-  this->msg_tx_[9] = ((cmd.remote_addr) & 0xff);
-  this->msg_tx_[10] = ((cmd.remote_addr >> 16) & 0xff);
-  this->msg_tx_[11] = ((cmd.remote_addr >> 8) & 0xff);
-  this->msg_tx_[12] = ((cmd.remote_addr) & 0xff);
-  this->msg_tx_[13] = ((cmd.remote_addr >> 16) & 0xff);
-  this->msg_tx_[14] = ((cmd.remote_addr >> 8) & 0xff);
-  this->msg_tx_[15] = ((cmd.remote_addr) & 0xff);
-  this->msg_tx_[16] = ELERO_DEST_COUNT;
-  this->msg_tx_[17] = ((cmd.blind_addr >> 16) & 0xff);
-  this->msg_tx_[18] = ((cmd.blind_addr >> 8) & 0xff);
-  this->msg_tx_[19] = ((cmd.blind_addr) & 0xff);
-  for (int i = 0; i < 10; ++i)
-    this->msg_tx_[20 + i] = cmd.payload[i];
-  this->msg_tx_[22] = ((code >> 8) & 0xff);
-  this->msg_tx_[23] = (code & 0xff);
+  // Convert EleroCommand to TxParams
+  packet::TxParams params;
+  params.counter = cmd.counter;
+  params.dst_addr = cmd.dst_addr;
+  params.src_addr = cmd.src_addr;
+  params.channel = cmd.channel;
+  params.type = cmd.type;
+  params.type2 = cmd.type2;
+  params.hop = cmd.hop;
+  params.command = cmd.payload[4];
+  params.payload_1 = cmd.payload[0];
+  params.payload_2 = cmd.payload[1];
 
-  uint8_t *payload = &this->msg_tx_[22];
-  protocol::msg_encode(payload);
+  // Use pure function to build packet
+  packet::build_tx_packet(params, this->msg_tx_);
 }
 
 bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
@@ -466,10 +518,36 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
   // Build packet
   this->build_tx_packet_(cmd);
 
-  ESP_LOGV(TAG,
-           "request_tx: len=%02d, cnt=%02d, typ=0x%02x, blind=0x%06x, remote=0x%06x, ch=%d, cmd=0x%02x",
-           this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2],
-           cmd.blind_addr, cmd.remote_addr, cmd.channel, cmd.payload[4]);
+  // Look up blind name by dst address (store string to avoid dangling pointer)
+  std::string blind_name;
+  auto cover_it = this->address_to_cover_mapping_.find(cmd.dst_addr);
+  if (cover_it != this->address_to_cover_mapping_.end()) {
+    blind_name = cover_it->second->get_blind_name();
+  } else {
+    auto light_it = this->address_to_light_mapping_.find(cmd.dst_addr);
+    if (light_it != this->address_to_light_mapping_.end()) {
+      blind_name = light_it->second->get_light_name();
+    }
+  }
+
+  // JSON log for TX packet (machine-readable, tagged for WS forwarding)
+  if (!blind_name.empty()) {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"tx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
+             blind_name.c_str(), elero_command_to_string(cmd.payload[4]),
+             this->msg_tx_[0], cmd.counter, cmd.type, cmd.type2, cmd.hop,
+             cmd.channel, cmd.src_addr, cmd.dst_addr, cmd.payload[4]);
+  } else {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"tx\",\"blind\":\"0x%06x\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
+             cmd.dst_addr, elero_command_to_string(cmd.payload[4]),
+             this->msg_tx_[0], cmd.counter, cmd.type, cmd.type2, cmd.hop,
+             cmd.channel, cmd.src_addr, cmd.dst_addr, cmd.payload[4]);
+  }
 
   // Start non-blocking TX
   if (!this->start_transmit()) {
@@ -520,7 +598,19 @@ void Elero::handle_tx_state_(uint32_t now) {
 
   switch (this->tx_ctx_.state) {
     case TxState::GOTO_IDLE:
-      marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      // Check backoff timer first
+      if (now < this->tx_ctx_.backoff_until) {
+        return;  // Still in backoff, wait
+      }
+
+      // Check defer limit
+      if (this->tx_ctx_.defer_count >= TxContext::DEFER_MAX) {
+        ESP_LOGW(TAG, "TX deferred %d times, channel busy, aborting", this->tx_ctx_.defer_count);
+        this->abort_tx_();
+        return;
+      }
+
+      marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
       if (marcstate == CC1101_MARCSTATE_IDLE) {
         // Transition to FLUSH_TX
         if (!this->write_cmd(CC1101_SFTX)) {
@@ -553,38 +643,68 @@ void Elero::handle_tx_state_(uint32_t now) {
       break;
 
     case TxState::LOAD_FIFO:
+      // Force IDLE to prevent starting new packet reception between our check and STX.
+      // This is aggressive but necessary when the channel is flooded with status packets.
+      (void) this->write_cmd(CC1101_SIDLE);
+
       // Clear received_ so we can detect TX-end interrupt
       this->received_.store(false);
-      // Trigger TX
+
+      // Trigger TX immediately - no CCA check from IDLE state
       if (!this->write_cmd(CC1101_STX)) {
         this->abort_tx_();
         return;
       }
-      this->tx_ctx_.state = TxState::TRIGGER_TX;
-      this->tx_ctx_.state_enter_time = now;
+
+      // Poll MARCSTATE waiting for TX (deterministic: max 20 iterations × 5μs = 100μs)
+      for (int i = 0; i < 20; i++) {
+        delay_microseconds_safe(5);
+        marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+        if (marcstate == CC1101_MARCSTATE_TX) {
+          this->tx_ctx_.state = TxState::WAIT_TX_DONE;
+          this->tx_ctx_.state_enter_time = now;
+          return;
+        }
+        // RX states mean we lost the race - stop polling
+        if (marcstate == CC1101_MARCSTATE_RX) {
+          break;
+        }
+      }
+
+      // Didn't reach TX - check final state
+      marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+      if (marcstate == CC1101_MARCSTATE_TX) {
+        this->tx_ctx_.state = TxState::WAIT_TX_DONE;
+        this->tx_ctx_.state_enter_time = now;
+      } else if (marcstate == CC1101_MARCSTATE_RX) {
+        ESP_LOGD(TAG, "Radio went to RX instead of TX, deferring");
+        this->defer_tx_(now);
+      } else {
+        // Transitional state (FSTXON, CALIBRATE, etc.) - continue via state machine
+        this->tx_ctx_.state = TxState::TRIGGER_TX;
+        this->tx_ctx_.state_enter_time = now;
+      }
       break;
 
     case TxState::TRIGGER_TX:
-      marcstate = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
       if (marcstate == CC1101_MARCSTATE_TX) {
         this->tx_ctx_.state = TxState::WAIT_TX_DONE;
         this->tx_ctx_.state_enter_time = now;
       } else if (marcstate == CC1101_MARCSTATE_TXFIFO_UFLOW) {
-        // TX FIFO underflow - packet data was not loaded correctly
         ESP_LOGE(TAG, "TX FIFO underflow detected, aborting");
         this->abort_tx_();
       } else if (marcstate == CC1101_MARCSTATE_RXFIFO_OFLOW) {
-        // RX FIFO overflow - likely received packet during TX setup
         ESP_LOGE(TAG, "RX FIFO overflow during TX, aborting");
         this->abort_tx_();
+      } else if (marcstate == CC1101_MARCSTATE_RX) {
+        ESP_LOGD(TAG, "Radio in RX during TRIGGER_TX, deferring");
+        this->defer_tx_(now);
       } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
         ESP_LOGE(TAG, "TX timeout in TRIGGER_TX after %ums, marcstate=0x%02x", elapsed, marcstate);
         this->abort_tx_();
-      } else if (marcstate != CC1101_MARCSTATE_IDLE && marcstate != CC1101_MARCSTATE_FSTXON) {
-        // Unexpected state (e.g., CALIBRATE, SETTLING) - abort faster than timeout
-        ESP_LOGW(TAG, "Unexpected MARCSTATE=0x%02x in TRIGGER_TX, aborting", marcstate);
-        this->abort_tx_();
       }
+      // else: transitional state (FSTXON, CALIBRATE, IDLE), keep polling
       break;
 
     case TxState::WAIT_TX_DONE:
@@ -599,7 +719,7 @@ void Elero::handle_tx_state_(uint32_t now) {
       break;
 
     case TxState::VERIFY_DONE: {
-      uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
+      uint8_t bytes = this->read_status(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
       if (bytes != 0) {
         ESP_LOGE(TAG, "TX error: %d bytes left in FIFO", bytes);
         this->abort_tx_();
@@ -616,6 +736,7 @@ void Elero::handle_tx_state_(uint32_t now) {
       this->flush_and_rx();
       this->tx_pending_success_ = true;
       this->tx_ctx_.state = TxState::IDLE;
+      this->tx_ctx_.reset();  // Reset defer count on success
       break;
 
     default:
@@ -635,7 +756,7 @@ uint8_t Elero::read_reg(uint8_t addr, bool *ok) {
   delay_microseconds_safe(15);
 
   // Check CC1101 status byte for FIFO errors
-  if (status & 0x80) {
+  if (status & packet::cc1101_status::OVERFLOW_BIT) {
     ESP_LOGW(TAG, "SPI read_reg 0x%02x: CC1101 RXFIFO overflow detected", addr);
     if (ok != nullptr) {
       *ok = false;
@@ -669,83 +790,120 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
 }
 
 void Elero::interpret_msg() {
-  uint8_t length = this->msg_rx_[0];
+  using namespace packet;
+
+  uint8_t length = this->msg_rx_[rx_offset::LENGTH];
   // Sanity check
-  if (length > ELERO_MAX_PACKET_SIZE) {
-    uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - 3)) ? (length + 3) : CC1101_FIFO_LENGTH;
+  if (length > MAX_PACKET_SIZE) {
+    uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - PACKET_TOTAL_OVERHEAD))
+                           ? (length + PACKET_TOTAL_OVERHEAD)
+                           : CC1101_FIFO_LENGTH;
     ESP_LOGE(TAG, "Received invalid packet: too long (%d)", length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", dump_len, format_hex_pretty(this->msg_rx_, dump_len).c_str());
     return;
   }
 
-  uint8_t cnt = this->msg_rx_[1];
-  uint8_t typ = this->msg_rx_[2];
-  uint8_t typ2 = this->msg_rx_[3];
-  uint8_t hop = this->msg_rx_[4];
-  uint8_t syst = this->msg_rx_[5];
-  uint8_t chl = this->msg_rx_[6];
-  uint32_t src = ((uint32_t)this->msg_rx_[7] << 16) | ((uint32_t)this->msg_rx_[8] << 8) | (this->msg_rx_[9]);
-  uint32_t bwd = ((uint32_t)this->msg_rx_[10] << 16) | ((uint32_t)this->msg_rx_[11] << 8) | (this->msg_rx_[12]);
-  uint32_t fwd = ((uint32_t)this->msg_rx_[13] << 16) | ((uint32_t)this->msg_rx_[14] << 8) | (this->msg_rx_[15]);
-  uint8_t num_dests = this->msg_rx_[16];
+  uint8_t cnt = this->msg_rx_[rx_offset::COUNTER];
+  uint8_t typ = this->msg_rx_[rx_offset::TYPE];
+  uint8_t typ2 = this->msg_rx_[rx_offset::TYPE2];
+  uint8_t hop = this->msg_rx_[rx_offset::HOP];
+  uint8_t syst = this->msg_rx_[rx_offset::SYS];
+  uint8_t chl = this->msg_rx_[rx_offset::CHANNEL];
+  uint32_t src = extract_addr(&this->msg_rx_[rx_offset::SRC_ADDR]);
+  uint32_t bwd = extract_addr(&this->msg_rx_[rx_offset::BWD_ADDR]);
+  uint32_t fwd = extract_addr(&this->msg_rx_[rx_offset::FWD_ADDR]);
+  uint8_t num_dests = this->msg_rx_[rx_offset::NUM_DESTS];
   uint32_t dst;
   uint8_t dests_len;
 
   // Validate destination count before multiplication to prevent overflow
-  if (num_dests > 20) {
+  if (num_dests > MAX_DESTINATIONS) {
     ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3, format_hex_pretty(this->msg_rx_, length + 3).c_str());
+    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + PACKET_TOTAL_OVERHEAD,
+             format_hex_pretty(this->msg_rx_, length + PACKET_TOTAL_OVERHEAD).c_str());
     return;
   }
 
-  if (typ > 0x60) {
-    dests_len = num_dests * 3;
-    dst = ((uint32_t)this->msg_rx_[17] << 16) | ((uint32_t)this->msg_rx_[18] << 8) | (this->msg_rx_[19]);
+  if (typ > msg_type::ADDR_3BYTE_THRESHOLD) {
+    dests_len = num_dests * ADDR_SIZE;
+    dst = extract_addr(&this->msg_rx_[rx_offset::FIRST_DEST]);
   } else {
     dests_len = num_dests;
-    dst = this->msg_rx_[17];
+    dst = this->msg_rx_[rx_offset::FIRST_DEST];
   }
 
-  // Sanity check: msg_decode accesses 8 bytes at msg_rx_[19 + dests_len],
-  // so the highest index touched is 26 + dests_len. This must be within both
-  // the packet (length) and the FIFO buffer.
-  if (26 + dests_len > length || 26 + dests_len >= CC1101_FIFO_LENGTH) {
+  // Sanity check: msg_decode accesses 8 bytes at msg_rx_[FIRST_DEST + 2 + dests_len],
+  // so the highest index touched is FIRST_DEST + 2 + dests_len + 7 = 26 + dests_len.
+  // This must be within both the packet (length) and the FIFO buffer.
+  constexpr size_t PAYLOAD_OFFSET_FROM_DESTS = 2;  // payload_1 and payload_2 before encrypted section
+  constexpr size_t ENCRYPTED_SECTION_SIZE = 8;     // 8 bytes processed by msg_decode
+  size_t payload_end = rx_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + dests_len + ENCRYPTED_SECTION_SIZE - 1;
+  if (payload_end > length || payload_end >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3, format_hex_pretty(this->msg_rx_, length + 3).c_str());
+    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + PACKET_TOTAL_OVERHEAD,
+             format_hex_pretty(this->msg_rx_, length + PACKET_TOTAL_OVERHEAD).c_str());
     return;
   }
 
   // RSSI and LQI are appended by CC1101 after packet data at indices length+1 and length+2
-  if (length + 2 >= CC1101_FIFO_LENGTH) {
+  if (length + CC1101_APPEND_SIZE >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
              format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
     return;
   }
 
-  uint8_t payload1 = this->msg_rx_[17 + dests_len];
-  uint8_t payload2 = this->msg_rx_[18 + dests_len];
-  uint8_t crc = this->msg_rx_[length + 2] >> 7;
-  uint8_t lqi = this->msg_rx_[length + 2] & 0x7f;
+  // Payload bytes are at FIRST_DEST + dests_len (payload_1) and +1 (payload_2)
+  size_t payload_base = rx_offset::FIRST_DEST + dests_len;
+  uint8_t payload1 = this->msg_rx_[payload_base];
+  uint8_t payload2 = this->msg_rx_[payload_base + 1];
+  uint8_t crc = (this->msg_rx_[length + CC1101_APPEND_SIZE] & cc1101_status::CRC_OK_BIT) ? 1 : 0;
+  uint8_t lqi = this->msg_rx_[length + CC1101_APPEND_SIZE] & cc1101_status::LQI_MASK;
 
   // Calculate RSSI in dBm (CC1101 transmits as two's complement encoded value)
-  float rssi;
-  uint8_t rssi_raw = this->msg_rx_[length + 1];
-  if (rssi_raw > ELERO_RSSI_SIGN_BIT) {
-    // Negative value (two's complement): convert from two's complement
-    rssi = static_cast<float>(static_cast<int8_t>(rssi_raw)) / ELERO_RSSI_DIVISOR + ELERO_RSSI_OFFSET;
-  } else {
-    // Positive value
-    rssi = static_cast<float>(rssi_raw) / ELERO_RSSI_DIVISOR + ELERO_RSSI_OFFSET;
-  }
-  uint8_t *payload = &this->msg_rx_[19 + dests_len];
+  // RSSI is at length+1, LQI is at length+2 (both appended by CC1101)
+  uint8_t rssi_raw = this->msg_rx_[length + 1];  // +1 because length byte is at [0]
+  float rssi = calc_rssi(rssi_raw);
+
+  // Encrypted payload starts 2 bytes after destinations (payload_1, payload_2 are unencrypted)
+  uint8_t *payload = &this->msg_rx_[payload_base + PAYLOAD_OFFSET_FROM_DESTS];
   protocol::msg_decode(payload);
-  ESP_LOGD(TAG,
-           "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, "
-           "bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x "
-           "0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]",
-           length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2,
-           payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
+
+  // JSON log for RX packet (machine-readable, tagged for WS forwarding)
+  uint8_t command = is_command_packet(typ) ? payload[payload_offset::COMMAND] : 0;
+  uint8_t state = is_status_packet(typ) ? payload[payload_offset::STATE] : 0;
+
+  // Look up blind name: for status packets src is the blind, for commands dst is the blind
+  // Store string to avoid dangling pointer from temporary std::string
+  std::string blind_name;
+  uint32_t blind_addr = is_status_packet(typ) ? src : dst;
+  auto cover_it = this->address_to_cover_mapping_.find(blind_addr);
+  if (cover_it != this->address_to_cover_mapping_.end()) {
+    blind_name = cover_it->second->get_blind_name();
+  } else {
+    auto light_it = this->address_to_light_mapping_.find(blind_addr);
+    if (light_it != this->address_to_light_mapping_.end()) {
+      blind_name = light_it->second->get_light_name();
+    }
+  }
+
+  if (!blind_name.empty()) {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"rx\",\"blind\":\"%s\",\"state_name\":\"%s\",\"cmd_name\":\"%s\","
+             "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\",\"state\":\"0x%02x\","
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
+             blind_name.c_str(), elero_state_to_string(state), elero_command_to_string(command),
+             length, cnt, typ, typ2, hop, chl, src, dst, command, state, rssi, lqi, crc);
+  } else {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"rx\",\"blind\":\"0x%06x\",\"state_name\":\"%s\",\"cmd_name\":\"%s\","
+             "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\",\"state\":\"0x%02x\","
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
+             blind_addr, elero_state_to_string(state), elero_command_to_string(command),
+             length, cnt, typ, typ2, hop, chl, src, dst, command, state, rssi, lqi, crc);
+  }
 
   // Notify RF packet callback (if registered)
   if (this->on_rf_packet_) {
@@ -755,14 +913,15 @@ void Elero::interpret_msg() {
     pkt.dst = dst;
     pkt.channel = chl;
     pkt.type = typ;
-    pkt.cmd = ((typ == 0x6a) || (typ == 0x69)) ? payload[4] : 0;
-    pkt.state = ((typ == 0xca) || (typ == 0xc9)) ? payload[6] : 0;
+    pkt.type2 = typ2;
+    pkt.command = is_command_packet(typ) ? payload[payload_offset::COMMAND] : 0;
+    pkt.state = is_status_packet(typ) ? payload[payload_offset::STATE] : 0;
     pkt.rssi = rssi;
     pkt.hop = hop;
-    pkt.pck_inf[0] = typ;
-    pkt.pck_inf[1] = typ2;
     memcpy(pkt.payload, payload, 10);
-    pkt.raw_len = (length + 3 <= CC1101_FIFO_LENGTH) ? length + 3 : CC1101_FIFO_LENGTH;
+    pkt.raw_len = (length + PACKET_TOTAL_OVERHEAD <= CC1101_FIFO_LENGTH)
+                      ? length + PACKET_TOTAL_OVERHEAD
+                      : CC1101_FIFO_LENGTH;
     memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
     this->on_rf_packet_(pkt);
   }
@@ -777,13 +936,13 @@ void Elero::interpret_msg() {
   }
 #endif
 
-  if ((typ == 0xca) || (typ == 0xc9)) {  // Status message from a blind
-                                         // Update text sensor
+  if (is_status_packet(typ)) {
+    // Status message from a blind - update text sensor
 #ifdef USE_TEXT_SENSOR
     {
       auto text_it = this->address_to_text_sensor_.find(src);
       if (text_it != this->address_to_text_sensor_.end()) {
-        text_it->second->publish_state(elero_state_to_string(payload[6]));
+        text_it->second->publish_state(elero_state_to_string(payload[payload_offset::STATE]));
       }
     }
 #endif
@@ -792,14 +951,14 @@ void Elero::interpret_msg() {
     auto search = this->address_to_cover_mapping_.find(src);
     if (search != this->address_to_cover_mapping_.end()) {
       search->second->notify_rx_meta(millis(), rssi);
-      search->second->set_rx_state(payload[6]);
+      search->second->set_rx_state(payload[payload_offset::STATE]);
     }
 
     // Check if we know the address as a configured ESPHome light
     auto light_search = this->address_to_light_mapping_.find(src);
     if (light_search != this->address_to_light_mapping_.end()) {
       light_search->second->notify_rx_meta(millis(), rssi);
-      light_search->second->set_rx_state(payload[6]);
+      light_search->second->set_rx_state(payload[payload_offset::STATE]);
     }
 
   } else {
@@ -813,26 +972,48 @@ void Elero::interpret_msg() {
       light_search->second->notify_rx_meta(millis(), rssi);
     }
 
-    // Remote command packets (0x6a/0x69): src = remote addr, dst = blind addr(s).
+    // Remote command packets: src = remote addr, dst = blind addr(s).
     // Trigger an immediate status poll on each configured blind/light that is
     // targeted, so HA state updates within ~50 ms instead of waiting for the
     // normal poll interval.
-    if ((typ == 0x6a) || (typ == 0x69)) {
-      for (uint8_t i = 0; i < num_dests; i++) {
-        uint32_t dest_addr;
-        if (typ > 0x60) {  // 3-byte addressing
-          dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) | ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
-                      this->msg_rx_[19 + i * 3];
-        } else {  // 1-byte addressing
-          dest_addr = this->msg_rx_[17 + i];
+    // IMPORTANT: Skip if src is one of our own remote addresses (echo of our TX).
+    // Otherwise we get a feedback loop: TX -> RX echo -> poll -> TX -> ...
+    if (is_command_packet(typ)) {
+      // Check if this is our own command echo by matching src against our remote addresses
+      bool is_own_command = false;
+      for (const auto &kv : this->address_to_cover_mapping_) {
+        if (kv.second->get_remote_address() == src) {
+          is_own_command = true;
+          break;
         }
-        auto c_it = this->address_to_cover_mapping_.find(dest_addr);
-        if (c_it != this->address_to_cover_mapping_.end()) {
-          c_it->second->schedule_immediate_poll();
+      }
+      if (!is_own_command) {
+        for (const auto &kv : this->address_to_light_mapping_) {
+          if (kv.second->get_remote_address() == src) {
+            is_own_command = true;
+            break;
+          }
         }
-        auto l_it = this->address_to_light_mapping_.find(dest_addr);
-        if (l_it != this->address_to_light_mapping_.end()) {
-          l_it->second->schedule_immediate_poll();
+      }
+
+      if (is_own_command) {
+        ESP_LOGV(TAG, "Ignoring own command echo from 0x%06x", src);
+      } else {
+        for (uint8_t i = 0; i < num_dests; i++) {
+          uint32_t dest_addr;
+          if (typ > msg_type::ADDR_3BYTE_THRESHOLD) {  // 3-byte addressing
+            dest_addr = extract_addr(&this->msg_rx_[rx_offset::FIRST_DEST + i * ADDR_SIZE]);
+          } else {  // 1-byte addressing
+            dest_addr = this->msg_rx_[rx_offset::FIRST_DEST + i];
+          }
+          auto c_it = this->address_to_cover_mapping_.find(dest_addr);
+          if (c_it != this->address_to_cover_mapping_.end()) {
+            c_it->second->schedule_immediate_poll();
+          }
+          auto l_it = this->address_to_light_mapping_.find(dest_addr);
+          if (l_it != this->address_to_light_mapping_.end()) {
+            l_it->second->schedule_immediate_poll();
+          }
         }
       }
     }
@@ -846,7 +1027,7 @@ void Elero::register_cover(EleroBlindBase *cover) {
     return;
   }
   this->address_to_cover_mapping_.insert({address, cover});
-  cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * 5000);
+  cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * packet::timing::POLL_OFFSET_SPACING);
 }
 
 void Elero::register_light(EleroLightBase *light) {
@@ -874,31 +1055,51 @@ bool Elero::send_command(EleroCommand *cmd) {
   ESP_LOGVV(TAG, "send_command called");
   this->build_tx_packet_(*cmd);
 
-  ESP_LOGV(TAG,
-           "send: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%02x%02x%02x, "
-           "bwd=0x%02x%02x%02x, fwd=0x%02x%02x%02x, #dst=%02d, dst=0x%02x%02x%02x, payload=[0x%02x 0x%02x 0x%02x "
-           "0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]",
-           this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2], this->msg_tx_[3], this->msg_tx_[4], this->msg_tx_[5],
-           this->msg_tx_[6], this->msg_tx_[7], this->msg_tx_[8], this->msg_tx_[9], this->msg_tx_[10], this->msg_tx_[11],
-           this->msg_tx_[12], this->msg_tx_[13], this->msg_tx_[14], this->msg_tx_[15], this->msg_tx_[16],
-           this->msg_tx_[17], this->msg_tx_[18], this->msg_tx_[19], this->msg_tx_[20], this->msg_tx_[21],
-           this->msg_tx_[22], this->msg_tx_[23], this->msg_tx_[24], this->msg_tx_[25], this->msg_tx_[26],
-           this->msg_tx_[27], this->msg_tx_[28], this->msg_tx_[29]);
+  // Look up blind name by dst address (store string to avoid dangling pointer)
+  std::string blind_name;
+  auto cover_it = this->address_to_cover_mapping_.find(cmd->dst_addr);
+  if (cover_it != this->address_to_cover_mapping_.end()) {
+    blind_name = cover_it->second->get_blind_name();
+  } else {
+    auto light_it = this->address_to_light_mapping_.find(cmd->dst_addr);
+    if (light_it != this->address_to_light_mapping_.end()) {
+      blind_name = light_it->second->get_light_name();
+    }
+  }
+
+  // JSON log for TX packet (machine-readable, tagged for WS forwarding)
+  if (!blind_name.empty()) {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"tx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
+             blind_name.c_str(), elero_command_to_string(cmd->payload[4]),
+             this->msg_tx_[0], cmd->counter, cmd->type, cmd->type2, cmd->hop,
+             cmd->channel, cmd->src_addr, cmd->dst_addr, cmd->payload[4]);
+  } else {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"tx\",\"blind\":\"0x%06x\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
+             cmd->dst_addr, elero_command_to_string(cmd->payload[4]),
+             this->msg_tx_[0], cmd->counter, cmd->type, cmd->type2, cmd->hop,
+             cmd->channel, cmd->src_addr, cmd->dst_addr, cmd->payload[4]);
+  }
   return transmit();
 }
 
-bool Elero::send_raw_command(uint32_t blind_addr, uint32_t remote_addr, uint8_t channel, uint8_t command,
-                              uint8_t payload_1, uint8_t payload_2, uint8_t pck_inf1, uint8_t pck_inf2, uint8_t hop) {
+bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t channel, uint8_t command,
+                              uint8_t payload_1, uint8_t payload_2, uint8_t type, uint8_t type2, uint8_t hop) {
   // Use a static counter for raw commands (persists across calls)
   static uint8_t raw_msg_cnt = 1;
 
   EleroCommand cmd{};
   cmd.counter = raw_msg_cnt;
-  cmd.blind_addr = blind_addr;
-  cmd.remote_addr = remote_addr;
+  cmd.dst_addr = dst_addr;
+  cmd.src_addr = src_addr;
   cmd.channel = channel;
-  cmd.pck_inf[0] = pck_inf1;
-  cmd.pck_inf[1] = pck_inf2;
+  cmd.type = type;
+  cmd.type2 = type2;
   cmd.hop = hop;
   cmd.payload[0] = payload_1;
   cmd.payload[1] = payload_2;
@@ -907,7 +1108,7 @@ bool Elero::send_raw_command(uint32_t blind_addr, uint32_t remote_addr, uint8_t 
   bool success = this->send_command(&cmd);
   if (success) {
     ++raw_msg_cnt;
-    if (raw_msg_cnt > 255)
+    if (raw_msg_cnt > packet::limits::COUNTER_MAX)
       raw_msg_cnt = 1;
   }
   return success;

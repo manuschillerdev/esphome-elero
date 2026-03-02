@@ -46,20 +46,28 @@ add_executable(test_command_sender
 target_compile_definitions(test_command_sender PRIVATE UNIT_TEST)
 target_link_libraries(test_command_sender GTest::gtest_main)
 
+# Test executable: Golden vectors from working commit fe33d186f70dd97a3fc8dc8a42bfb94dc3c7a5e5
+add_executable(test_golden_vectors
+  test_golden_vectors.cpp
+  ${ELERO_PACKET_SRC}
+)
+target_link_libraries(test_golden_vectors GTest::gtest_main)
+
 # Discover all tests
 include(GoogleTest)
 gtest_discover_tests(test_protocol)
 gtest_discover_tests(test_packet_vectors)
 gtest_discover_tests(test_command_sender)
+gtest_discover_tests(test_golden_vectors)
 
 # Combined target for running all tests
 add_custom_target(run_all_tests
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-  DEPENDS test_protocol test_packet_vectors test_command_sender
+  DEPENDS test_protocol test_packet_vectors test_command_sender test_golden_vectors
 )
 
 # JUnit XML output for CI integration
 add_custom_target(test_xml
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --output-junit ${CMAKE_BINARY_DIR}/test-results.xml
-  DEPENDS test_protocol test_packet_vectors test_command_sender
+  DEPENDS test_protocol test_packet_vectors test_command_sender test_golden_vectors
 )

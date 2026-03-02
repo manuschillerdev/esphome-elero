@@ -8,33 +8,9 @@
 
 #include <cstdint>
 #include <cstddef>
+#include "elero/elero_packet.h"
 
 namespace esphome::elero::test_vectors {
-
-// ─── Protocol Constants (for test independence) ─────────────────────────────
-
-constexpr uint8_t CMD_CHECK = 0x00;
-constexpr uint8_t CMD_STOP = 0x10;
-constexpr uint8_t CMD_UP = 0x20;
-constexpr uint8_t CMD_TILT = 0x24;
-constexpr uint8_t CMD_DOWN = 0x40;
-constexpr uint8_t CMD_INT = 0x44;
-
-constexpr uint8_t STATE_UNKNOWN = 0x00;
-constexpr uint8_t STATE_TOP = 0x01;
-constexpr uint8_t STATE_BOTTOM = 0x02;
-constexpr uint8_t STATE_INTERMEDIATE = 0x03;
-constexpr uint8_t STATE_TILT = 0x04;
-constexpr uint8_t STATE_BLOCKING = 0x05;
-constexpr uint8_t STATE_OVERHEATED = 0x06;
-constexpr uint8_t STATE_TIMEOUT = 0x07;
-constexpr uint8_t STATE_START_MOVING_UP = 0x08;
-constexpr uint8_t STATE_START_MOVING_DOWN = 0x09;
-constexpr uint8_t STATE_MOVING_UP = 0x0A;
-constexpr uint8_t STATE_MOVING_DOWN = 0x0B;
-constexpr uint8_t STATE_STOPPED = 0x0D;
-constexpr uint8_t STATE_TOP_TILT = 0x0E;
-constexpr uint8_t STATE_BOTTOM_TILT = 0x0F;
 
 // ─── Test Vector Structure ──────────────────────────────────────────────────
 
@@ -169,7 +145,7 @@ constexpr PacketVector VEC_INVALID_EMPTY = {
 //   .exp_src_addr = 0xa831e5,
 //   .exp_dst_addr = 0x123456,
 //   .exp_command = 0,
-//   .exp_state = STATE_TOP,
+//   .exp_state = packet::state::TOP,
 //   .expect_valid = true,
 //   .reject_reason = nullptr,
 // };

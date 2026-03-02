@@ -39,18 +39,41 @@ When invoked, use this reference to answer protocol questions accurately.
 
 ### Packet Format (27-30 bytes)
 
-| Offset | Length | Field | Description |
-|--------|--------|-------|-------------|
-| 0 | 1 | `pck_len` | Packet length (0x1B=27, 0x1C=28, 0x1D=29, 0x1E=30) |
-| 1 | 1 | `counter` | Rolling message counter (increments each TX) |
-| 2 | 1 | `msg_type` | Message type: 0x44=button, 0x6A=command, 0xCA/0xC9=status |
-| 3-5 | 3 | `header` | Fixed: 0x10, 0x00, 0x01 |
-| 6 | 1 | `channel` | RF channel (0x11 for channel 1, else channel number) |
-| 7-9 | 3 | `src_addr` | Source address (remote address, big-endian) |
-| 10-12 | 3 | `bwd_addr` | Backward address (usually same as src) |
-| 13-15 | 3 | `fwd_addr` | Forward address (usually same as src) |
-| 16 | 1 | `dest_count` | Destination count (0x01) |
-| 17+ | var | `payload` | Payload (format depends on msg_type) |
+| Offset | Length | Field | C++ Offset Constant | Description |
+|--------|--------|-------|---------------------|-------------|
+| 0 | 1 | `pck_len` | `rx_offset::LENGTH` / `tx_offset::LENGTH` | Packet length (0x1B=27..0x1E=30) |
+| 1 | 1 | `counter` | `rx_offset::COUNTER` / `tx_offset::COUNTER` | Rolling counter (increments each TX) |
+| 2 | 1 | `msg_type` | `rx_offset::TYPE` / `tx_offset::TYPE` | Message type (0x44/0x6A/0xCA/0xC9) |
+| 3 | 1 | `type2` | `rx_offset::TYPE2` / `tx_offset::TYPE2` | Secondary type (usually 0x00) |
+| 4 | 1 | `hop` | `rx_offset::HOP` / `tx_offset::HOP` | Hop count (usually 0x0a) |
+| 5 | 1 | `syst` | `rx_offset::SYS` / `tx_offset::SYS` | System address (fixed: 0x01) |
+| 6 | 1 | `channel` | `rx_offset::CHANNEL` / `tx_offset::CHANNEL` | RF channel number |
+| 7-9 | 3 | `src_addr` | `rx_offset::SRC_ADDR` / `tx_offset::SRC_ADDR` | Source address (big-endian) |
+| 10-12 | 3 | `bwd_addr` | `rx_offset::BWD_ADDR` / `tx_offset::BWD_ADDR` | Backward address (same as src) |
+| 13-15 | 3 | `fwd_addr` | `rx_offset::FWD_ADDR` / `tx_offset::FWD_ADDR` | Forward address (same as src) |
+| 16 | 1 | `dest_count` | `rx_offset::NUM_DESTS` / `tx_offset::NUM_DESTS` | Destination count (0x01) |
+| 17-19 | 3 | `dst_addr` | `rx_offset::FIRST_DEST` / `tx_offset::DST_ADDR` | Destination address (big-endian) |
+| 20+ | var | `payload` | `tx_offset::PAYLOAD` | Encrypted payload (type-dependent) |
+
+**Additional constants in `packet::` namespace:**
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ADDR_SIZE` | 3 | Bytes per 24-bit address |
+| `CC1101_APPEND_SIZE` | 2 | RSSI + LQI bytes appended by CC1101 |
+| `PACKET_TOTAL_OVERHEAD` | 3 | Length byte + RSSI + LQI (for buffer validation) |
+
+### Field Naming Consistency
+
+The codebase uses consistent naming across all layers:
+
+| Protocol | YAML Config | C++ Struct | JSON Log | Description |
+|----------|-------------|------------|----------|-------------|
+| dst_addr | `dst_address` | `dst_addr` | `"dst"` | Target blind/light address |
+| src_addr | `src_address` | `src_addr` | `"src"` | Remote control address |
+| msg_type | `pck_inf1` | `type` | `"type"` | Message type (0x6a, 0xca, etc.) |
+| type2 | `pck_inf2` | `type2` | `"type2"` | Secondary type (usually 0x00) |
+| hop | `hop` | `hop` | `"hop"` | Hop count (usually 0x0a) |
 
 ### Message Types
 
@@ -376,6 +399,83 @@ spi_write_reg(0x05, 0x91);  // SYNC0
 spi_write_reg(0x06, 0x3C);  // PKTLEN
 spi_write_reg(0x07, 0x8C);  // PKTCTRL1
 spi_write_reg(0x08, 0x45);  // PKTCTRL0
+```
+
+---
+
+## Protocol Ambiguities
+
+### type2 Field (Offset 3)
+
+The secondary type byte varies between devices:
+
+| Value | Observed In | Notes |
+|-------|-------------|-------|
+| 0x00 | Most devices | Default/standard |
+| 0x10 | Some remotes | Seen in button press packets |
+| 0x01 | Legacy devices | Alternate format |
+
+**Recommendation:** Use `type2=0x00` for commands unless reverse-engineering a specific remote.
+
+### hop Field (Offset 4)
+
+The hop count typically starts at 0x0a (10) and decrements with each relay:
+
+| Value | Meaning |
+|-------|---------|
+| 0x0a | Direct transmission (no relays) |
+| 0x09 | Relayed once |
+| 0x08 | Relayed twice |
+| 0x00 | Max relay depth reached |
+
+**Recommendation:** Use `hop=0x0a` for direct communication.
+
+---
+
+## Communication Flows
+
+### TX→RX Sequence: Send Command and Receive Status
+
+Typical flow when sending a command to a blind:
+
+```
+Controller                          Blind
+    |                                 |
+    |  TX: type=0x6a (command)        |
+    |  dst=0xa831e5, cmd=0x20 (UP)    |
+    |-------------------------------->|
+    |                                 |
+    |  RX: type=0xca (status)         |
+    |  src=0xa831e5, state=0x08       |
+    |<--------------------------------|
+    |       (START_MOVING_UP)         |
+    |                                 |
+    |  RX: type=0xca (status)         |
+    |  src=0xa831e5, state=0x0a       |
+    |<--------------------------------|
+    |       (MOVING_UP)               |
+    |                                 |
+    |  RX: type=0xca (status)         |
+    |  src=0xa831e5, state=0x01       |
+    |<--------------------------------|
+    |       (TOP - fully open)        |
+```
+
+### JSON Log Format
+
+Both TX and RX packets are logged in JSON format for machine parsing:
+
+**TX Log:**
+```json
+{"dir":"tx","len":29,"cnt":42,"type":"0x6a","type2":"0x00","hop":"0x0a",
+ "channel":5,"src":"0xf0d008","dst":"0xa831e5","command":"0x20"}
+```
+
+**RX Log:**
+```json
+{"dir":"rx","len":28,"cnt":12,"type":"0xca","type2":"0x00","hop":"0x0a",
+ "channel":5,"src":"0xa831e5","dst":"0xf0d008","command":"0x00","state":"0x01",
+ "rssi":-45.5,"lqi":48,"crc":1}
 ```
 
 ---

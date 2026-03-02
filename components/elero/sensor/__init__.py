@@ -11,7 +11,7 @@ from .. import CONF_ELERO_ID, elero
 
 DEPENDENCIES = ["elero"]
 
-CONF_BLIND_ADDRESS = "blind_address"
+CONF_DST_ADDRESS = "dst_address"
 
 CONFIG_SCHEMA = sensor.sensor_schema(
     unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
@@ -21,7 +21,7 @@ CONFIG_SCHEMA = sensor.sensor_schema(
 ).extend(
     {
         cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
-        cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
+        cv.Required(CONF_DST_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
     }
 )
 
@@ -29,4 +29,4 @@ CONFIG_SCHEMA = sensor.sensor_schema(
 async def to_code(config):
     var = await sensor.new_sensor(config)
     parent = await cg.get_variable(config[CONF_ELERO_ID])
-    cg.add(parent.register_rssi_sensor(config[CONF_BLIND_ADDRESS], var))
+    cg.add(parent.register_rssi_sensor(config[CONF_DST_ADDRESS], var))

@@ -1,5 +1,6 @@
 #include "EleroCover.h"
 #include "esphome/core/log.h"
+#include "../elero_packet.h"
 
 namespace esphome {
 namespace elero {
@@ -10,12 +11,12 @@ static const char *const TAG = "elero.cover";
 
 void EleroCover::dump_config() {
   LOG_COVER("", "Elero Cover", this);
-  ESP_LOGCONFIG(TAG, "  Blind Address: 0x%06x", this->sender_.command().blind_addr);
-  ESP_LOGCONFIG(TAG, "  Remote Address: 0x%06x", this->sender_.command().remote_addr);
-  ESP_LOGCONFIG(TAG, "  Channel: %d", this->sender_.command().channel);
-  ESP_LOGCONFIG(TAG, "  Hop: 0x%02x", this->sender_.command().hop);
-  ESP_LOGCONFIG(TAG, "  pck_inf1: 0x%02x, pck_inf2: 0x%02x", this->sender_.command().pck_inf[0],
-                this->sender_.command().pck_inf[1]);
+  ESP_LOGCONFIG(TAG, "  dst_address: 0x%06x", this->sender_.command().dst_addr);
+  ESP_LOGCONFIG(TAG, "  src_address: 0x%06x", this->sender_.command().src_addr);
+  ESP_LOGCONFIG(TAG, "  channel: %d", this->sender_.command().channel);
+  ESP_LOGCONFIG(TAG, "  hop: 0x%02x", this->sender_.command().hop);
+  ESP_LOGCONFIG(TAG, "  type: 0x%02x, type2: 0x%02x", this->sender_.command().type,
+                this->sender_.command().type2);
   if (this->open_duration_ > 0)
     ESP_LOGCONFIG(TAG, "  Open Duration: %dms", this->open_duration_);
   if (this->close_duration_ > 0)
@@ -31,6 +32,11 @@ void EleroCover::setup() {
     return;
   }
   this->parent_->register_cover(this);
+
+  // Initialize last_poll_ to trigger first poll immediately after poll_offset_
+  // Using unsigned wraparound: makes (now - poll_offset_ - last_poll_) > poll_intvl_ true
+  this->last_poll_ = 0 - this->poll_intvl_;
+
   auto restore = this->restore_state_();
   if (restore.has_value()) {
     restore->apply(this);
@@ -38,14 +44,28 @@ void EleroCover::setup() {
     if ((this->open_duration_ > 0) && (this->close_duration_ > 0))
       this->position = 0.5f;
   }
+
+  // After restore, force operation to IDLE. We can't know if the blind is
+  // actually moving after a reboot - the first poll will tell us the real state.
+  // This prevents rapid-polling (2s) if restore contained a stale movement state.
+  this->current_operation = COVER_OPERATION_IDLE;
+  this->movement_start_ = 0;
 }
 
 void EleroCover::loop() {
   uint32_t intvl = this->poll_intvl_;
   uint32_t now = millis();
   if (this->current_operation != COVER_OPERATION_IDLE) {
-    if ((now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT)  // Poll frequently while moving (up to 2 min timeout)
-      intvl = ELERO_POLL_INTERVAL_MOVING;
+    if ((now - this->movement_start_) < packet::timing::TIMEOUT_MOVEMENT) {
+      // Poll frequently while moving (up to 2 min timeout)
+      intvl = packet::timing::POLL_INTERVAL_MOVING;
+    } else {
+      // Movement timed out without receiving endpoint status - reset to IDLE.
+      // This handles cases where we miss the blind's status response.
+      ESP_LOGW(TAG, "Movement timeout for 0x%06x, resetting to IDLE", this->sender_.command().dst_addr);
+      this->current_operation = COVER_OPERATION_IDLE;
+      this->publish_state();
+    }
   }
 
   if ((now > this->poll_offset_) && (now - this->poll_offset_ - this->last_poll_) > intvl) {
@@ -110,71 +130,21 @@ cover::CoverTraits EleroCover::get_traits() {
 void EleroCover::set_rx_state(uint8_t state) {
   this->last_state_raw_ = state;
   ESP_LOGV(TAG, "Got state: 0x%02x (%s) for blind 0x%06x", state, elero_state_to_string(state),
-           this->sender_.command().blind_addr);
-  float pos = this->position;
-  float current_tilt = this->tilt;
-  CoverOperation op = this->current_operation;
+           this->sender_.command().dst_addr);
 
-  switch (state) {
-    case ELERO_STATE_TOP:
-      pos = COVER_OPEN;
-      op = COVER_OPERATION_IDLE;
-      current_tilt = 0.0;
-      break;
-    case ELERO_STATE_BOTTOM:
-      pos = COVER_CLOSED;
-      op = COVER_OPERATION_IDLE;
-      current_tilt = 0.0;
-      break;
-    case ELERO_STATE_INTERMEDIATE:
-      op = COVER_OPERATION_IDLE;
-      current_tilt = 0.0;
-      // Keep current position estimate
-      break;
-    case ELERO_STATE_START_MOVING_UP:
-    case ELERO_STATE_MOVING_UP:
-      op = COVER_OPERATION_OPENING;
-      current_tilt = 0.0;
-      break;
-    case ELERO_STATE_START_MOVING_DOWN:
-    case ELERO_STATE_MOVING_DOWN:
-      op = COVER_OPERATION_CLOSING;
-      current_tilt = 0.0;
-      break;
-    case ELERO_STATE_TILT:
-      op = COVER_OPERATION_IDLE;
-      current_tilt = 1.0;
-      break;
-    case ELERO_STATE_TOP_TILT:
-      pos = COVER_OPEN;
-      op = COVER_OPERATION_IDLE;
-      current_tilt = 1.0;
-      break;
-    case ELERO_STATE_BOTTOM_TILT:  // also ELERO_STATE_OFF (0x0f)
-      pos = COVER_CLOSED;
-      op = COVER_OPERATION_IDLE;
-      current_tilt = 1.0;
-      break;
-    case ELERO_STATE_STOPPED:
-      op = COVER_OPERATION_IDLE;
-      current_tilt = 0.0;
-      break;
-    case ELERO_STATE_BLOCKING:
-      ESP_LOGW(TAG, "Blind 0x%06x reports BLOCKING", this->sender_.command().blind_addr);
-      op = COVER_OPERATION_IDLE;
-      break;
-    case ELERO_STATE_OVERHEATED:
-      ESP_LOGW(TAG, "Blind 0x%06x reports OVERHEATED", this->sender_.command().blind_addr);
-      op = COVER_OPERATION_IDLE;
-      break;
-    case ELERO_STATE_TIMEOUT:
-      ESP_LOGW(TAG, "Blind 0x%06x reports TIMEOUT", this->sender_.command().blind_addr);
-      op = COVER_OPERATION_IDLE;
-      break;
-    default:
-      op = COVER_OPERATION_IDLE;
-      current_tilt = 0.0;
+  auto result = packet::map_cover_state(state);
+
+  // Log warnings
+  if (result.is_warning) {
+    ESP_LOGW(TAG, "Blind 0x%06x reports %s", this->sender_.command().dst_addr, result.warning_msg);
   }
+
+  // Map packet::CoverOp to ESPHome CoverOperation
+  CoverOperation op = static_cast<CoverOperation>(result.operation);
+
+  // Use result position, or keep current if unchanged (-1)
+  float pos = (result.position >= 0.0f) ? result.position : this->position;
+  float current_tilt = result.tilt;
 
   if ((pos != this->position) || (op != this->current_operation) || (current_tilt != this->tilt)) {
     this->position = pos;
@@ -204,7 +174,10 @@ void EleroCover::control(const cover::CoverCall &call) {
         this->tilt = 1.0;
       }
     } else {
-      this->tilt = 0.0;
+      // Send DOWN to close tilt (untilt the slats)
+      if (this->sender_.enqueue(this->command_down_)) {
+        this->tilt = 0.0;
+      }
     }
   }
   if (call.get_toggle().has_value()) {
@@ -243,7 +216,7 @@ bool EleroCover::perform_action(const char *action) {
   if (strcmp(action, "check") == 0) {
     // Check is Elero-specific status query, use raw command
     if (!this->sender_.enqueue(this->command_check_)) {
-      ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().blind_addr);
+      ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().dst_addr);
     }
     return true;
   }
@@ -272,7 +245,7 @@ void EleroCover::start_movement(CoverOperation dir) {
       // Clear any pending movement commands so STOP is sent immediately
       this->sender_.clear_queue();
       if (!this->sender_.enqueue(this->command_stop_)) {
-        ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().blind_addr);
+        ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().dst_addr);
       }
       break;
   }
@@ -288,7 +261,7 @@ void EleroCover::start_movement(CoverOperation dir) {
 
 void EleroCover::schedule_immediate_poll() {
   if (!this->sender_.enqueue(this->command_check_)) {
-    ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().blind_addr);
+    ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().dst_addr);
   }
 }
 
