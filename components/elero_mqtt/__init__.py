@@ -27,10 +27,8 @@ Native mode (YAML-defined devices) is used when this component is absent.
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
-from esphome.core import CORE
 
-# Import from parent elero component for shared namespace
-from ..elero import elero_ns, CONF_ELERO_ID
+from ..elero import CONF_ELERO_ID, elero_ns
 
 DEPENDENCIES = ["elero", "mqtt"]
 CODEOWNERS = ["@manuschillerdev"]

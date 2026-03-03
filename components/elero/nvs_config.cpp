@@ -1,5 +1,6 @@
 #include "nvs_config.h"
 #include "esphome/core/log.h"
+#include <algorithm>
 
 #ifdef USE_ESP32
 #include "nvs_flash.h"
