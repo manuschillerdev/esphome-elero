@@ -9,15 +9,31 @@
 #include "esphome/components/logger/logger.h"
 #include "mongoose.h"
 #include "../elero/elero.h"
+#include "../elero/device_manager.h"
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace esphome {
 namespace elero {
 
 /// Simplified WebSocket server - acts as RF bridge
-/// Server → Client: config (on connect), rf (packets)
-/// Client → Server: cmd (blind commands)
+///
+/// Operates in two modes based on hub configuration:
+/// - **Native mode**: RF discovery only, no device CRUD
+/// - **MQTT mode**: Full device CRUD via device manager
+///
+/// Server → Client events:
+/// - `config`: On connect, sends device info, mode, and configured devices
+/// - `rf`: Every decoded RF packet
+/// - `device_saved`: When a device is added/updated (MQTT mode)
+/// - `device_removed`: When a device is removed (MQTT mode)
+///
+/// Client → Server messages:
+/// - `cmd`: Send command to blind/light
+/// - `save_device`: Add/update a device (MQTT mode only)
+/// - `remove_device`: Remove a device (MQTT mode only)
+///
 /// Note: Log forwarding requires ESPHome 2025.12.0+ with LogListener support
 class EleroWebServer : public Component {
  public:
@@ -56,6 +72,10 @@ class EleroWebServer : public Component {
   void handle_ws_upgrade(struct mg_connection *c, struct mg_http_message *hm);
   void handle_ws_message(struct mg_connection *c, struct mg_ws_message *wm);
 
+  // Config management handlers (delegate to device manager)
+  void handle_save_device(struct mg_connection *c, const std::string &msg);
+  void handle_remove_device(struct mg_connection *c, const std::string &msg);
+
   // WebSocket helpers
   void ws_send(struct mg_connection *c, const char *event, const std::string &data);
   void ws_broadcast(const char *event, const std::string &data);
@@ -64,6 +84,16 @@ class EleroWebServer : public Component {
   // JSON builders
   std::string build_config_json();
   std::string build_rf_json(const RfPacketInfo &pkt);
+
+  // Mode helpers
+  [[nodiscard]] bool supports_crud() const {
+    auto *mgr = parent_ ? parent_->get_device_manager() : nullptr;
+    return mgr && mgr->supports_crud();
+  }
+
+  [[nodiscard]] EleroMode get_mode() const {
+    return parent_ ? parent_->get_mode() : EleroMode::NATIVE;
+  }
 };
 
 }  // namespace elero

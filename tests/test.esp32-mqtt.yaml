@@ -1,0 +1,59 @@
+# ESPHome compile test: ESP32 with MQTT mode
+# Tests the MQTT device manager and dynamic devices
+substitutions:
+  spi_clk: GPIO18
+  spi_mosi: GPIO23
+  spi_miso: GPIO19
+  spi_cs: GPIO5
+  gdo0_pin: GPIO26
+
+esphome:
+  name: test-esp32-mqtt
+  friendly_name: Test ESP32 MQTT
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test-network"
+  password: ""
+
+# Required for MQTT mode
+mqtt:
+  broker: 192.168.1.100
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+# SPI bus configuration
+spi:
+  clk_pin: ${spi_clk}
+  mosi_pin: ${spi_mosi}
+  miso_pin: ${spi_miso}
+
+# Elero RF hub (core component)
+elero:
+  id: elero_hub
+  cs_pin: ${spi_cs}
+  gdo0_pin: ${gdo0_pin}
+  freq0: 0x7a
+  freq1: 0x71
+  freq2: 0x21
+  # Web UI
+  web:
+    port: 80
+
+# MQTT mode - separate component that enables dynamic devices via NVS
+elero_mqtt:
+  topic_prefix: elero
+  discovery_prefix: homeassistant
+  max_covers: 8
+  max_lights: 4
+  device_name: "Test Elero Gateway"

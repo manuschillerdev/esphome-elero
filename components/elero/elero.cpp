@@ -970,25 +970,32 @@ void Elero::interpret_msg() {
              length, cnt, typ, typ2, hop, chl, src, dst, command, state, rssi, lqi, crc);
   }
 
-  // Notify RF packet callback (if registered)
+  // Build packet info for callbacks
+  RfPacketInfo pkt{};
+  pkt.timestamp_ms = millis();
+  pkt.src = src;
+  pkt.dst = dst;
+  pkt.channel = chl;
+  pkt.type = typ;
+  pkt.type2 = typ2;
+  pkt.command = is_command_packet(typ) ? payload[payload_offset::COMMAND] : 0;
+  pkt.state = is_status_packet(typ) ? payload[payload_offset::STATE] : 0;
+  pkt.rssi = rssi;
+  pkt.hop = hop;
+  memcpy(pkt.payload, payload, 10);
+  pkt.raw_len = (length + PACKET_TOTAL_OVERHEAD <= CC1101_FIFO_LENGTH)
+                    ? length + PACKET_TOTAL_OVERHEAD
+                    : CC1101_FIFO_LENGTH;
+  memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
+
+  // Notify RF packet callback (web server)
   if (this->on_rf_packet_) {
-    RfPacketInfo pkt{};
-    pkt.timestamp_ms = millis();
-    pkt.src = src;
-    pkt.dst = dst;
-    pkt.channel = chl;
-    pkt.type = typ;
-    pkt.type2 = typ2;
-    pkt.command = is_command_packet(typ) ? payload[payload_offset::COMMAND] : 0;
-    pkt.state = is_status_packet(typ) ? payload[payload_offset::STATE] : 0;
-    pkt.rssi = rssi;
-    pkt.hop = hop;
-    memcpy(pkt.payload, payload, 10);
-    pkt.raw_len = (length + PACKET_TOTAL_OVERHEAD <= CC1101_FIFO_LENGTH)
-                      ? length + PACKET_TOTAL_OVERHEAD
-                      : CC1101_FIFO_LENGTH;
-    memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
     this->on_rf_packet_(pkt);
+  }
+
+  // Notify device manager (MQTT mode - publishes state to MQTT)
+  if (this->device_manager_ != nullptr) {
+    this->device_manager_->on_rf_packet(pkt);
   }
 
   // Update RSSI sensor for any message from a known blind

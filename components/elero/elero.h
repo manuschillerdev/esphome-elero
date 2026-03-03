@@ -6,6 +6,7 @@
 #include "cc1101.h"
 #include "tx_client.h"
 #include "elero_packet.h"
+#include "device_manager.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -249,6 +250,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   using RfPacketCallback = std::function<void(const RfPacketInfo &)>;
   void set_rf_packet_callback(RfPacketCallback cb) { on_rf_packet_ = std::move(cb); }
 
+  // Device manager (for MQTT mode)
+  void set_device_manager(IDeviceManager *mgr) { device_manager_ = mgr; }
+  IDeviceManager *get_device_manager() const { return device_manager_; }
+  EleroMode get_mode() const { return device_manager_ ? device_manager_->mode() : EleroMode::NATIVE; }
+
   void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   uint8_t get_freq0() const { return freq0_; }
   uint8_t get_freq1() const { return freq1_; }
@@ -283,6 +289,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   // RF packet notification callback (optional, set by web server)
   RfPacketCallback on_rf_packet_{};
+
+  // Device manager (nullptr = native mode, set by elero_mqtt component)
+  IDeviceManager *device_manager_{nullptr};
 };
 
 }  // namespace elero

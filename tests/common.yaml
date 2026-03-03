@@ -19,6 +19,9 @@ elero:
   freq0: 0x7a
   freq1: 0x71
   freq2: 0x21
+  # Web UI (now nested under elero:)
+  web:
+    port: 80
 
 # Cover platform test
 cover:
@@ -52,7 +55,3 @@ text_sensor:
   - platform: elero
     dst_address: 0xa831e5
     name: "Test Status"
-
-# Elero web UI (Mongoose-based, no external dependencies)
-elero_web:
-  port: 80

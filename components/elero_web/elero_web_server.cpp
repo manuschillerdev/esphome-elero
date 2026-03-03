@@ -71,7 +71,7 @@ static uint8_t json_find_hex_or(const std::string &json, const char *key, uint8_
     if (val.empty())
       return def;
   }
-  return (uint8_t) strtoul(val.c_str(), nullptr, 0);
+  return static_cast<uint8_t>(strtoul(val.c_str(), nullptr, 0));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -103,7 +103,9 @@ void EleroWebServer::setup() {
     return;
   }
 
-  ESP_LOGI(TAG, "Web UI at http://<ip>:%d/elero", this->port_);
+  ESP_LOGI(TAG, "Web UI at http://<ip>:%d/elero (mode=%s)",
+           this->port_,
+           this->get_mode() == EleroMode::MQTT ? "mqtt" : "native");
 }
 
 void EleroWebServer::loop() {
@@ -117,8 +119,8 @@ void EleroWebServer::loop() {
 void EleroWebServer::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero Web Server:");
   ESP_LOGCONFIG(TAG, "  Port: %d", this->port_);
-  ESP_LOGCONFIG(TAG, "  URL: /elero");
-  ESP_LOGCONFIG(TAG, "  WebSocket: /elero/ws");
+  ESP_LOGCONFIG(TAG, "  Mode: %s", this->get_mode() == EleroMode::MQTT ? "MQTT" : "Native");
+  ESP_LOGCONFIG(TAG, "  CRUD: %s", this->supports_crud() ? "enabled" : "disabled");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -213,7 +215,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
   std::string msg(wm->data.buf, wm->data.len);
   std::string type = json_find_str(msg, "type");
 
-  // Only command type supported
+  // Command to blind/light
   if (type == "cmd") {
     std::string address = json_find_str(msg, "address");
     std::string action = json_find_str(msg, "action");
@@ -221,7 +223,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
     if (address.empty() || action.empty())
       return;
 
-    uint32_t addr = (uint32_t) strtoul(address.c_str(), nullptr, 0);
+    uint32_t addr = static_cast<uint32_t>(strtoul(address.c_str(), nullptr, 0));
 
     // Try configured covers first
     const auto &covers = this->parent_->get_configured_covers();
@@ -242,8 +244,21 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       return;
     }
 
-    // Unknown address - could send raw command if we had protocol params
+    // Unknown address
     ESP_LOGW(TAG, "Command for unknown address 0x%06x", addr);
+    return;
+  }
+
+  // Save device (MQTT mode only)
+  if (type == "save_device") {
+    this->handle_save_device(c, msg);
+    return;
+  }
+
+  // Remove device (MQTT mode only)
+  if (type == "remove_device") {
+    this->handle_remove_device(c, msg);
+    return;
   }
 
   // Raw TX for testing/debugging
@@ -262,10 +277,10 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       return;
     }
 
-    uint32_t dst_addr = (uint32_t) strtoul(dst_addr_s.c_str(), nullptr, 0);
-    uint32_t src_addr = (uint32_t) strtoul(src_addr_s.c_str(), nullptr, 0);
-    uint8_t channel = (uint8_t) strtoul(channel_s.c_str(), nullptr, 0);
-    uint8_t command = (uint8_t) strtoul(command_s.c_str(), nullptr, 0);
+    uint32_t dst_addr = static_cast<uint32_t>(strtoul(dst_addr_s.c_str(), nullptr, 0));
+    uint32_t src_addr = static_cast<uint32_t>(strtoul(src_addr_s.c_str(), nullptr, 0));
+    uint8_t channel = static_cast<uint8_t>(strtoul(channel_s.c_str(), nullptr, 0));
+    uint8_t command = static_cast<uint8_t>(strtoul(command_s.c_str(), nullptr, 0));
 
     uint8_t payload_1 = json_find_hex_or(msg, "payload_1", elero::packet::defaults::PAYLOAD_1);
     uint8_t payload_2 = json_find_hex_or(msg, "payload_2", elero::packet::defaults::PAYLOAD_2);
@@ -281,18 +296,134 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Config Management Handlers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void EleroWebServer::handle_save_device(struct mg_connection *c, const std::string &msg) {
+  // Check if CRUD is supported (MQTT mode only)
+  if (!this->supports_crud()) {
+    ESP_LOGW(TAG, "Device CRUD not supported in native mode");
+    this->ws_send(c, "error", "{\"message\":\"Not supported in native mode\"}");
+    return;
+  }
+
+  auto *mgr = this->parent_->get_device_manager();
+  if (mgr == nullptr) {
+    ESP_LOGE(TAG, "Device manager not configured");
+    this->ws_send(c, "error", "{\"message\":\"Device manager not configured\"}");
+    return;
+  }
+
+  // Parse device config from JSON
+  std::string device_type = json_find_str(msg, "device_type");
+  std::string dst_addr_s = json_find_str(msg, "dst_address");
+  std::string src_addr_s = json_find_str(msg, "src_address");
+  std::string channel_s = json_find_num(msg, "channel");
+  std::string name = json_find_str(msg, "name");
+
+  if (dst_addr_s.empty() || src_addr_s.empty() || channel_s.empty()) {
+    ESP_LOGW(TAG, "save_device missing required fields");
+    this->ws_send(c, "error", "{\"message\":\"Missing required fields\"}");
+    return;
+  }
+
+  uint32_t dst_addr = static_cast<uint32_t>(strtoul(dst_addr_s.c_str(), nullptr, 0));
+  uint32_t src_addr = static_cast<uint32_t>(strtoul(src_addr_s.c_str(), nullptr, 0));
+  uint8_t channel = static_cast<uint8_t>(strtoul(channel_s.c_str(), nullptr, 0));
+
+  // Create config
+  NvsDeviceConfig config;
+  if (device_type == "light") {
+    config = NvsDeviceConfig::create_light(dst_addr, src_addr, channel, name.c_str());
+  } else {
+    config = NvsDeviceConfig::create_cover(dst_addr, src_addr, channel, name.c_str());
+  }
+
+  // Parse optional timing parameters
+  std::string open_ms_s = json_find_num(msg, "open_duration_ms");
+  std::string close_ms_s = json_find_num(msg, "close_duration_ms");
+  std::string poll_ms_s = json_find_num(msg, "poll_interval_ms");
+
+  if (!open_ms_s.empty()) {
+    config.open_duration_ms = static_cast<uint32_t>(strtoul(open_ms_s.c_str(), nullptr, 10));
+  }
+  if (!close_ms_s.empty()) {
+    config.close_duration_ms = static_cast<uint32_t>(strtoul(close_ms_s.c_str(), nullptr, 10));
+  }
+  if (!poll_ms_s.empty()) {
+    config.poll_interval_ms = static_cast<uint32_t>(strtoul(poll_ms_s.c_str(), nullptr, 10));
+  }
+
+  // Delegate to device manager
+  if (!mgr->add_device(config)) {
+    ESP_LOGW(TAG, "Failed to add device 0x%06x", dst_addr);
+    this->ws_send(c, "error", "{\"message\":\"Failed to add device\"}");
+    return;
+  }
+
+  // Broadcast success
+  char buf[128];
+  snprintf(buf, sizeof(buf), "{\"address\":\"0x%06x\",\"name\":\"%s\",\"type\":\"%s\"}",
+           dst_addr, name.c_str(), config.is_cover() ? "cover" : "light");
+  this->ws_broadcast("device_saved", buf);
+
+  ESP_LOGI(TAG, "Saved %s 0x%06x '%s'", config.is_cover() ? "cover" : "light", dst_addr, name.c_str());
+}
+
+void EleroWebServer::handle_remove_device(struct mg_connection *c, const std::string &msg) {
+  // Check if CRUD is supported (MQTT mode only)
+  if (!this->supports_crud()) {
+    ESP_LOGW(TAG, "Device CRUD not supported in native mode");
+    this->ws_send(c, "error", "{\"message\":\"Not supported in native mode\"}");
+    return;
+  }
+
+  auto *mgr = this->parent_->get_device_manager();
+  if (mgr == nullptr) {
+    ESP_LOGE(TAG, "Device manager not configured");
+    this->ws_send(c, "error", "{\"message\":\"Device manager not configured\"}");
+    return;
+  }
+
+  std::string dst_addr_s = json_find_str(msg, "address");
+  std::string device_type = json_find_str(msg, "device_type");
+
+  if (dst_addr_s.empty()) {
+    ESP_LOGW(TAG, "remove_device missing address");
+    this->ws_send(c, "error", "{\"message\":\"Missing address\"}");
+    return;
+  }
+
+  uint32_t dst_addr = static_cast<uint32_t>(strtoul(dst_addr_s.c_str(), nullptr, 0));
+  DeviceType type = (device_type == "light") ? DeviceType::LIGHT : DeviceType::COVER;
+
+  // Delegate to device manager
+  if (!mgr->remove_device(dst_addr, type)) {
+    ESP_LOGW(TAG, "Failed to remove device 0x%06x", dst_addr);
+    // Not necessarily an error - device might not exist
+  }
+
+  // Broadcast success
+  char buf[64];
+  snprintf(buf, sizeof(buf), "{\"address\":\"0x%06x\"}", dst_addr);
+  this->ws_broadcast("device_removed", buf);
+
+  ESP_LOGI(TAG, "Removed device 0x%06x", dst_addr);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // WebSocket Helpers
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void EleroWebServer::ws_send(struct mg_connection *c, const char *event, const std::string &data) {
   if (c == nullptr || c->is_closing)
     return;
-  std::string msg = "{\"event\":\"";
-  msg += event;
-  msg += "\",\"data\":";
-  msg += data;
-  msg += "}";
-  mg_ws_send(c, msg.c_str(), msg.size(), WEBSOCKET_OP_TEXT);
+  std::string ws_msg = "{\"event\":\"";
+  ws_msg += event;
+  ws_msg += "\",\"data\":";
+  ws_msg += data;
+  ws_msg += "}";
+  mg_ws_send(c, ws_msg.c_str(), ws_msg.size(), WEBSOCKET_OP_TEXT);
 }
 
 void EleroWebServer::ws_broadcast(const char *event, const std::string &data) {
@@ -320,6 +451,16 @@ std::string EleroWebServer::build_config_json() {
   json += json_escape(App.get_name());
   json += "\",";
 
+  // Mode
+  json += "\"mode\":\"";
+  json += (this->get_mode() == EleroMode::MQTT) ? "mqtt" : "native";
+  json += "\",";
+
+  // CRUD support
+  json += "\"crud\":";
+  json += this->supports_crud() ? "true" : "false";
+  json += ",";
+
   // Frequency
   char freq_buf[64];
   snprintf(freq_buf, sizeof(freq_buf),
@@ -327,7 +468,7 @@ std::string EleroWebServer::build_config_json() {
            this->parent_->get_freq2(), this->parent_->get_freq1(), this->parent_->get_freq0());
   json += freq_buf;
 
-  // Configured blinds
+  // Configured blinds (from hub's registered covers)
   json += "\"blinds\":[";
   bool first = true;
   for (const auto &pair : this->parent_->get_configured_covers()) {
@@ -346,11 +487,11 @@ std::string EleroWebServer::build_config_json() {
              "\"tilt\":%s}",
              pair.first,
              json_escape(blind->get_blind_name()).c_str(),
-             (int) blind->get_channel(),
+             static_cast<int>(blind->get_channel()),
              blind->get_remote_address(),
-             (unsigned long) blind->get_open_duration_ms(),
-             (unsigned long) blind->get_close_duration_ms(),
-             (unsigned long) blind->get_poll_interval_ms(),
+             static_cast<unsigned long>(blind->get_open_duration_ms()),
+             static_cast<unsigned long>(blind->get_close_duration_ms()),
+             static_cast<unsigned long>(blind->get_poll_interval_ms()),
              blind->get_supports_tilt() ? "true" : "false");
     json += buf;
   }
@@ -372,9 +513,9 @@ std::string EleroWebServer::build_config_json() {
              "\"dim_ms\":%lu}",
              pair.first,
              json_escape(light->get_light_name()).c_str(),
-             (int) light->get_channel(),
+             static_cast<int>(light->get_channel()),
              light->get_remote_address(),
-             (unsigned long) light->get_dim_duration_ms());
+             static_cast<unsigned long>(light->get_dim_duration_ms()));
     json += buf;
   }
   json += "]";
@@ -406,7 +547,7 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
            "\"rssi\":%.1f,"
            "\"hop\":\"0x%02x\","
            "\"raw\":\"%s\"}",
-           (unsigned long) pkt.timestamp_ms,
+           static_cast<unsigned long>(pkt.timestamp_ms),
            pkt.src,
            pkt.dst,
            pkt.channel,
@@ -414,7 +555,7 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
            pkt.type2,
            pkt.command,
            pkt.state,
-           pkt.rssi,
+           static_cast<double>(pkt.rssi),
            pkt.hop,
            hex);
   return std::string(buf);
