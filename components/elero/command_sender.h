@@ -113,12 +113,8 @@ class CommandSender : public TxClient {
                      this->command_.dst_addr, this->command_.payload[4]);
             this->advance_queue_();
           } else {
-            // Exponential backoff on timeout too
-            uint8_t shift = (this->send_retries_ < 4) ? this->send_retries_ : 3;
-            uint32_t backoff_ms = packet::timing::DELAY_SEND_PACKETS << shift;
-            if (backoff_ms > 400) {
-              backoff_ms = 400;
-            }
+            // Exponential backoff on timeout
+            uint32_t backoff_ms = this->calculate_backoff_ms_();
             this->last_tx_time_ = now + backoff_ms - packet::timing::DELAY_SEND_PACKETS;
             this->state_ = State::WAIT_DELAY;
           }
@@ -181,14 +177,9 @@ class CommandSender : public TxClient {
                  this->command_.dst_addr, this->command_.payload[4]);
         this->advance_queue_();
       } else {
-        // Exponential backoff: 50ms << n → 50, 100, 200, 400ms (capped)
-        uint8_t shift = (this->send_retries_ < 4) ? this->send_retries_ : 3;  // Clamp to avoid overflow
-        uint32_t backoff_ms = packet::timing::DELAY_SEND_PACKETS << shift;
-        if (backoff_ms > 400) {
-          backoff_ms = 400;
-        }
+        // Exponential backoff on failure
+        uint32_t backoff_ms = this->calculate_backoff_ms_();
         ESP_LOGD(this->log_tag_, "Backoff %ums before retry", backoff_ms);
-        // Adjust last_tx_time_ to enforce longer delay before retry
         this->last_tx_time_ = get_time_provider().millis() + backoff_ms - packet::timing::DELAY_SEND_PACKETS;
         this->state_ = State::WAIT_DELAY;
       }
@@ -254,6 +245,14 @@ class CommandSender : public TxClient {
   const EleroCommand &command() const { return this->command_; }
 
  private:
+  /// Calculate exponential backoff delay based on retry count.
+  /// Returns backoff in ms: 100, 200, 400 (capped) for retries 1, 2, 3+
+  uint32_t calculate_backoff_ms_() const {
+    uint8_t shift = (this->send_retries_ < 4) ? this->send_retries_ : 3;  // Clamp to avoid overflow
+    uint32_t backoff_ms = packet::timing::DELAY_SEND_PACKETS << shift;
+    return (backoff_ms > 400) ? 400 : backoff_ms;
+  }
+
   /// Advance to next command in queue (called after command completes or fails).
   void advance_queue_() {
     // Guard: only pop if queue has items
