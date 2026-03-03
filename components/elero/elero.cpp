@@ -210,12 +210,37 @@ void Elero::flush_and_rx() {
     }
   }
 
+  // 1. Force IDLE to stop any current radio activity
   (void) this->write_cmd(CC1101_SIDLE);
-  (void) this->wait_idle();
+
+  // 2. Wait for IDLE with bounded timeout (no GDO0 edges possible in IDLE)
+  uint32_t start = millis();
+  bool reached_idle = false;
+  while (true) {
+    uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+    if (marc == CC1101_MARCSTATE_IDLE) {
+      reached_idle = true;
+      break;
+    }
+    if (millis() - start > TxContext::STATE_TIMEOUT_MS) {
+      ESP_LOGE(TAG, "flush_and_rx: wait_idle timeout, MARCSTATE=0x%02x", marc);
+      break;
+    }
+    delay_microseconds_safe(50);
+  }
+  if (!reached_idle) {
+    ESP_LOGW(TAG, "flush_and_rx: proceeding after timeout (best-effort recovery)");
+  }
+
+  // 3. Clear atomic flag while in IDLE (safe window - no new interrupts)
+  this->received_.store(false, std::memory_order_release);
+
+  // 4. Flush FIFOs
   (void) this->write_cmd(CC1101_SFRX);
   (void) this->write_cmd(CC1101_SFTX);
+
+  // 5. Re-enable RX
   (void) this->write_cmd(CC1101_SRX);
-  this->received_.store(false);
 }
 
 void Elero::reset() {
@@ -473,6 +498,33 @@ void Elero::abort_tx_() {
   }
   uint8_t marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
   ESP_LOGW(TAG, "TX aborted in state %d, marcstate=0x%02x", static_cast<int>(this->tx_ctx_.state), marcstate);
+
+  // Detect zombie state: 0x00 (SLEEP) or 0x1F (SPI failure/disconnected) are suspicious
+  if (marcstate == 0x00 || marcstate == 0x1F) {
+    // Retry read to filter transient SPI noise
+    bool confirmed_zombie = true;
+    for (int i = 0; i < 2; ++i) {
+      delay_microseconds_safe(100);
+      uint8_t marc2 = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+      if (marc2 != marcstate) {
+        confirmed_zombie = false;
+        break;
+      }
+    }
+    if (confirmed_zombie) {
+      // Rate-limit resets to prevent infinite loop under failing power supply
+      uint32_t now = millis();
+      if (now - this->last_chip_reset_ms_ > 10000) {  // 10s minimum gap
+        this->last_chip_reset_ms_ = now;
+        ESP_LOGE(TAG, "CC1101 zombie state confirmed (0x%02x), reinitializing chip", marcstate);
+        this->reset();
+        this->init();
+      } else {
+        ESP_LOGW(TAG, "CC1101 zombie state (0x%02x), skipping reset (rate-limited)", marcstate);
+      }
+    }
+  }
+
   this->tx_ctx_.state = TxState::IDLE;
   this->tx_ctx_.reset();  // Reset defer count
   this->tx_pending_success_ = false;
@@ -719,15 +771,28 @@ void Elero::handle_tx_state_(uint32_t now) {
       break;
 
     case TxState::VERIFY_DONE: {
-      uint8_t bytes = this->read_status(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
-      if (bytes != 0) {
-        ESP_LOGE(TAG, "TX error: %d bytes left in FIFO", bytes);
-        this->abort_tx_();
-        return;
+      // Poll TXBYTES - GDO0 may fire slightly before FIFO fully drains
+      bool fifo_empty = false;
+      for (int retry = 0; retry < 3; ++retry) {
+        uint8_t bytes = this->read_status(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
+        if (bytes == 0) {
+          fifo_empty = true;
+          break;
+        }
+        delay_microseconds_safe(100);
       }
-      ESP_LOGV(TAG, "TX successful (async)");
-      this->tx_ctx_.state = TxState::RETURN_RX;
-      this->tx_ctx_.state_enter_time = now;
+
+      if (fifo_empty) {
+        ESP_LOGV(TAG, "TX successful (async)");
+        this->tx_ctx_.state = TxState::RETURN_RX;
+        this->tx_ctx_.state_enter_time = now;
+      } else {
+        // Capture state for diagnostics
+        uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+        uint8_t bytes_final = this->read_status(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
+        ESP_LOGE(TAG, "TX error: FIFO stuck, txbytes=%u, MARCSTATE=0x%02x", bytes_final, marc);
+        this->abort_tx_();
+      }
       break;
     }
 

@@ -265,6 +265,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   TxContext tx_ctx_;
   bool tx_pending_success_{false};
   TxClient *tx_owner_{nullptr};  // Current TX owner (for non-blocking API)
+  uint32_t last_chip_reset_ms_{0};  ///< Rate-limit chip resets (zombie recovery)
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
   uint8_t freq0_{defaults::FREQ0};
