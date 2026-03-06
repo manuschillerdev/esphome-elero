@@ -40,6 +40,19 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   uint8_t get_channel() const override { return this->sender_.command().channel; }
   uint32_t get_remote_address() const override { return this->sender_.command().src_addr; }
   uint32_t get_dim_duration_ms() const override { return this->dim_duration_; }
+  float get_brightness() const override { return this->brightness_; }
+  bool get_is_on() const override { return this->is_on_; }
+  const char *get_operation_str() const override {
+    if (this->dim_direction_ == DimDirection::UP) return "dimming_up";
+    if (this->dim_direction_ == DimDirection::DOWN) return "dimming_down";
+    return "idle";
+  }
+  uint32_t get_last_seen_ms() const override { return this->last_seen_ms_; }
+  float get_last_rssi() const override { return this->last_rssi_; }
+  uint8_t get_last_state_raw() const override {
+    return this->is_on_ ? packet::state::LIGHT_ON : packet::state::LIGHT_OFF;
+  }
+  bool perform_action(const char *action) override;
 
   // RF parameter setters
   void set_elero_parent(Elero *parent) { this->parent_ = parent; }

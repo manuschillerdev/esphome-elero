@@ -113,6 +113,15 @@ class EleroLightBase {
   virtual uint8_t get_channel() const = 0;
   virtual uint32_t get_remote_address() const = 0;
   virtual uint32_t get_dim_duration_ms() const = 0;
+  // Web API helpers — state (parity with EleroBlindBase)
+  virtual float get_brightness() const = 0;
+  virtual bool get_is_on() const = 0;
+  virtual const char *get_operation_str() const = 0;
+  virtual uint32_t get_last_seen_ms() const = 0;
+  virtual float get_last_rssi() const = 0;
+  virtual uint8_t get_last_state_raw() const = 0;
+  // Web API commands (same path as HA, parity with EleroBlindBase::perform_action)
+  virtual bool perform_action(const char *action) = 0;
 };
 
 /// Abstract base class for blinds registered with the Elero hub.
