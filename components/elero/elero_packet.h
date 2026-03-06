@@ -128,6 +128,7 @@ constexpr uint32_t DELAY_SEND_PACKETS = 50;       ///< 50ms between packet repea
 constexpr uint32_t TIMEOUT_MOVEMENT = 120000;     ///< Max 2min movement timeout
 constexpr uint32_t POLL_OFFSET_SPACING = 5000;    ///< 5s spacing between blind polls
 constexpr uint32_t TX_PENDING_TIMEOUT = 500;      ///< TX completion timeout
+constexpr uint32_t RADIO_WATCHDOG_INTERVAL = 5000; ///< Radio health check every 5s
 }  // namespace timing
 
 // ═══════════════════════════════════════════════════════════════════════════════

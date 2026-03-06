@@ -260,12 +260,14 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void abort_tx_();                     // Abort TX and return to RX
   void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
   void notify_tx_owner_(bool success);  // Notify owner and clear
+  void check_radio_health_();           // Periodic watchdog for stuck radio states
 
   std::atomic<bool> received_{false};
   TxContext tx_ctx_;
   bool tx_pending_success_{false};
   TxClient *tx_owner_{nullptr};  // Current TX owner (for non-blocking API)
   uint32_t last_chip_reset_ms_{0};  ///< Rate-limit chip resets (zombie recovery)
+  uint32_t last_radio_check_ms_{0}; ///< Last radio health check timestamp
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
   uint8_t freq0_{defaults::FREQ0};

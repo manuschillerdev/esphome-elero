@@ -118,6 +118,9 @@ void Elero::loop() {
     return;  // Don't process RX while TX is in progress
   }
 
+  // Periodic radio health check (detect stuck CC1101 when idle)
+  this->check_radio_health_();
+
   // Atomically check and clear the received flag (ISR-safe)
   bool was_received = this->received_.exchange(false);
   if (was_received) {
@@ -540,6 +543,54 @@ void Elero::notify_tx_owner_(bool success) {
     this->tx_owner_ = nullptr;  // Clear BEFORE callback (re-entrancy safe)
     owner->on_tx_complete(success);
   }
+}
+
+// ─── Radio Health Watchdog ───────────────────────────────────────────────────
+// Periodically checks MARCSTATE when idle to detect and recover from stuck
+// CC1101 states that don't trigger interrupts. Covers:
+// - RXFIFO overflow without ISR (deaf radio)
+// - Stuck in IDLE (stopped listening)
+// - Any other unexpected state
+void Elero::check_radio_health_() {
+  uint32_t now = millis();
+  if (now - this->last_radio_check_ms_ < packet::timing::RADIO_WATCHDOG_INTERVAL) {
+    return;
+  }
+  this->last_radio_check_ms_ = now;
+
+  uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+
+  // RX is the expected idle state
+  if (marc == CC1101_MARCSTATE_RX) {
+    return;
+  }
+
+  // Transient calibration/synthesizer states — let them complete
+  if (marc >= CC1101_MARCSTATE_VCOON_MC && marc <= CC1101_MARCSTATE_ENDCAL) {
+    return;
+  }
+  // RX wind-down states are also transient
+  if (marc == CC1101_MARCSTATE_RX_END || marc == CC1101_MARCSTATE_RX_RST) {
+    return;
+  }
+
+  // RXFIFO overflow — radio is deaf until flushed
+  if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
+    ESP_LOGW(TAG, "Radio watchdog: RX FIFO overflow, flushing");
+    this->flush_and_rx();
+    return;
+  }
+
+  // Stuck in IDLE — radio stopped listening, one strobe restarts it
+  if (marc == CC1101_MARCSTATE_IDLE) {
+    ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
+    (void) this->write_cmd(CC1101_SRX);
+    return;
+  }
+
+  // Anything else unexpected — full reset to known-good RX state
+  ESP_LOGW(TAG, "Radio watchdog: unexpected MARCSTATE 0x%02x, reinitializing", marc);
+  this->flush_and_rx();
 }
 
 void Elero::build_tx_packet_(const EleroCommand &cmd) {
