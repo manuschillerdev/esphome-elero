@@ -11,11 +11,11 @@ function formatTime(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-function copyYaml(address: string, state: { ch?: number; dst?: string }) {
+function copyYaml(address: string, state: { channel?: number; dst?: string }) {
   const yaml = `  - platform: elero
-    blind_address: ${address}
-    channel: ${state?.ch || 0}
-    remote_address: ${state?.dst || '0x000000'}
+    dst_address: ${address}
+    channel: ${state?.channel || 0}
+    src_address: ${state?.dst || '0x000000'}
     name: "New Blind"
     # open_duration: 25s
     # close_duration: 22s`
@@ -35,9 +35,9 @@ export function DiscoveredCard({ address }: { address: string }) {
               <span className="relative inline-flex size-2 rounded-full bg-warning" />
             </span>
             <span className="font-mono text-sm font-medium">{address}</span>
-            {state?.ch && (
+            {state?.channel && (
               <Badge variant="secondary" className="font-mono text-[10px]">
-                CH {state.ch}
+                CH {state.channel}
               </Badge>
             )}
           </div>

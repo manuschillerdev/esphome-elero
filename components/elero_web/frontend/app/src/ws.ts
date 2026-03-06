@@ -54,14 +54,14 @@ export function sendCommand(address: string, action: 'up' | 'down' | 'stop' | 't
 }
 
 export interface RawTxParams {
-  blind_address: string
-  remote_address: string
+  dst_address: string
+  src_address: string
   channel: number
   command: string
   payload_1?: string
   payload_2?: string
-  pck_inf1?: string
-  pck_inf2?: string
+  msg_type?: string
+  type2?: string
   hop?: string
 }
 
@@ -69,14 +69,14 @@ export function sendRawCommand(params: RawTxParams) {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
       type: 'raw',
-      blind_address: params.blind_address,
-      remote_address: params.remote_address,
+      dst_address: params.dst_address,
+      src_address: params.src_address,
       channel: params.channel,
       command: params.command,
       payload_1: params.payload_1 ?? '0x00',
       payload_2: params.payload_2 ?? '0x04',
-      pck_inf1: params.pck_inf1 ?? '0x6a',
-      pck_inf2: params.pck_inf2 ?? '0x00',
+      msg_type: params.msg_type ?? '0x6a',
+      type2: params.type2 ?? '0x00',
       hop: params.hop ?? '0x0a',
     }))
   }

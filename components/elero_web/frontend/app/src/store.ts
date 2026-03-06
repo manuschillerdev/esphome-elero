@@ -82,11 +82,14 @@ export interface RfPacket {
   t: number        // timestamp (ms)
   src: string      // source address
   dst: string      // destination address
+  channel: number  // RF channel
   type: string     // packet type: 0x44=button, 0x6a=command, 0xca/0xc9=status
-  cmd?: string     // command (for outgoing), hex string like "0x20"
-  state?: string   // state (for incoming status), hex string like "0x01"
-  rssi?: number    // signal strength
-  ch?: number      // channel
+  type2: string    // secondary type byte
+  command: string  // command byte (hex string like "0x20")
+  state: string    // state byte (hex string like "0x01")
+  rssi: number     // signal strength (dBm)
+  hop: string      // hop count (hex string)
+  raw: string      // raw packet bytes (hex string with spaces)
 }
 
 // Device type derived from packet behavior
@@ -94,7 +97,7 @@ export type DeviceType = 'blind' | 'light' | 'remote' | 'unknown'
 
 // Light state hex codes
 const LIGHT_STATE_ON = '0x10'
-const LIGHT_STATE_OFF = '0x0f' // OFF shares value with BOTTOM_TILT
+// Note: OFF (0x0f) shares value with BOTTOM_TILT in protocol
 
 // Derive device type from message type and state
 // - 0x44 sender = remote
@@ -160,6 +163,10 @@ interface AppState {
   setConnected: (connected: boolean) => void
   setConfig: (config: DeviceConfig) => void
 
+  // Actions - config updates
+  updateBlind: (address: string, updates: Partial<BlindConfig>) => void
+  updateLight: (address: string, updates: Partial<LightConfig>) => void
+
   // Actions - RF
   addRfPacket: (pkt: RfPacket) => void
   setRfFilter: (filter: string) => void
@@ -205,6 +212,24 @@ export const useStore = create<AppState>((set) => ({
   // Actions - connection
   setConnected: (connected) => set({ connected }),
   setConfig: (config) => set({ config }),
+
+  // Actions - config updates
+  updateBlind: (address, updates) => set((s) => ({
+    config: {
+      ...s.config,
+      blinds: s.config.blinds.map((b) =>
+        b.address === address ? { ...b, ...updates } : b
+      ),
+    },
+  })),
+  updateLight: (address, updates) => set((s) => ({
+    config: {
+      ...s.config,
+      lights: s.config.lights.map((l) =>
+        l.address === address ? { ...l, ...updates } : l
+      ),
+    },
+  })),
 
   // Actions - RF
   addRfPacket: (pkt) => set((s) => ({

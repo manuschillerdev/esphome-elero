@@ -23,15 +23,15 @@ export function HubPanel() {
   const lights = useStore((s) => s.config.lights)
 
   // Raw TX form state
-  const [blindAddr, setBlindAddr] = useState('0x')
-  const [remoteAddr, setRemoteAddr] = useState('0x')
+  const [dstAddr, setDstAddr] = useState('0x')
+  const [srcAddr, setSrcAddr] = useState('0x')
   const [channel, setChannel] = useState(1)
   const [command, setCommand] = useState('0x00')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [payload1, setPayload1] = useState('0x00')
   const [payload2, setPayload2] = useState('0x04')
-  const [pckInf1, setPckInf1] = useState('0x6a')
-  const [pckInf2, setPckInf2] = useState('0x00')
+  const [msgType, setMsgType] = useState('0x6a')
+  const [type2, setType2] = useState('0x00')
   const [hop, setHop] = useState('0x0a')
 
   // Compute frequency from registers
@@ -42,21 +42,21 @@ export function HubPanel() {
 
   const handleSendRaw = () => {
     sendRawCommand({
-      blind_address: blindAddr,
-      remote_address: remoteAddr,
+      dst_address: dstAddr,
+      src_address: srcAddr,
       channel,
       command,
       payload_1: payload1,
       payload_2: payload2,
-      pck_inf1: pckInf1,
-      pck_inf2: pckInf2,
+      msg_type: msgType,
+      type2,
       hop,
     })
   }
 
   // Check if form is valid
   const isValidHex = (s: string) => /^0x[0-9a-fA-F]+$/.test(s)
-  const isFormValid = isValidHex(blindAddr) && isValidHex(remoteAddr) && isValidHex(command) && channel >= 0 && channel <= 255
+  const isFormValid = isValidHex(dstAddr) && isValidHex(srcAddr) && isValidHex(command) && channel >= 0 && channel <= 255
 
   return (
     <div className="flex flex-col gap-6">
@@ -158,21 +158,21 @@ export function HubPanel() {
           {/* Main fields */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Blind Address</label>
+              <label className="text-xs font-medium text-muted-foreground">dst_address</label>
               <input
                 type="text"
-                value={blindAddr}
-                onChange={(e) => setBlindAddr((e.target as HTMLInputElement).value)}
+                value={dstAddr}
+                onChange={(e) => setDstAddr((e.target as HTMLInputElement).value)}
                 placeholder="0x313238"
                 className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Remote Address</label>
+              <label className="text-xs font-medium text-muted-foreground">src_address</label>
               <input
                 type="text"
-                value={remoteAddr}
-                onChange={(e) => setRemoteAddr((e.target as HTMLInputElement).value)}
+                value={srcAddr}
+                onChange={(e) => setSrcAddr((e.target as HTMLInputElement).value)}
                 placeholder="0x17a753"
                 className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
@@ -235,20 +235,20 @@ export function HubPanel() {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-muted-foreground">pck_inf1</label>
+                <label className="text-xs font-medium text-muted-foreground">type</label>
                 <input
                   type="text"
-                  value={pckInf1}
-                  onChange={(e) => setPckInf1((e.target as HTMLInputElement).value)}
+                  value={msgType}
+                  onChange={(e) => setMsgType((e.target as HTMLInputElement).value)}
                   className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-muted-foreground">pck_inf2</label>
+                <label className="text-xs font-medium text-muted-foreground">type2</label>
                 <input
                   type="text"
-                  value={pckInf2}
-                  onChange={(e) => setPckInf2((e.target as HTMLInputElement).value)}
+                  value={type2}
+                  onChange={(e) => setType2((e.target as HTMLInputElement).value)}
                   className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>

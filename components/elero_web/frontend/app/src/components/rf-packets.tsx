@@ -223,13 +223,13 @@ export function RfPackets() {
                 <td className="px-3 py-2 text-muted-foreground">{formatTime(pkt.t)}</td>
                 <td className="px-3 py-2">{renderAddress(pkt.src)}</td>
                 <td className="px-3 py-2">{renderAddress(pkt.dst)}</td>
-                <td className="px-3 py-2 text-muted-foreground">{pkt.ch ?? '-'}</td>
+                <td className="px-3 py-2 text-muted-foreground">{pkt.channel ?? '-'}</td>
                 <td className="px-3 py-2">
                   <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
                     {pkt.type === '0x44' ? 'BTN' : pkt.type === '0x6a' ? 'CMD' : pkt.type === '0xca' || pkt.type === '0xc9' ? 'STS' : pkt.type}
                   </Badge>
                 </td>
-                <td className="px-3 py-2">{pkt.type === '0x6a' ? pkt.cmd : pkt.state}</td>
+                <td className="px-3 py-2">{pkt.type === '0x6a' ? pkt.command : pkt.state}</td>
                 <td className="px-3 py-2 text-muted-foreground">{pkt.rssi?.toFixed(1) ?? '-'}</td>
               </tr>
             ))}

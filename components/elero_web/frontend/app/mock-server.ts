@@ -73,6 +73,13 @@ function randomFrom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]
 }
 
+// Generate fake raw hex bytes
+function generateRawHex(len: number = 20): string {
+  return Array.from({ length: len }, () =>
+    Math.floor(Math.random() * 256).toString(16).padStart(2, '0')
+  ).join(' ')
+}
+
 // Generate realistic RF packet based on protocol spec
 // Only emits packets from configured devices (no random addresses)
 function generateRfPacket() {
@@ -86,10 +93,14 @@ function generateRfPacket() {
       t: Date.now() - startTime,
       src: blind.address,
       dst: blind.remote,
+      channel: blind.channel,
       type: Math.random() > 0.5 ? '0xca' : '0xc9',
+      type2: '0x00',
+      command: '0x00',
       state: STATE_HEX[stateKey],
       rssi: -60 - Math.random() * 30,
-      ch: blind.channel,
+      hop: '0x0a',
+      raw: generateRawHex(),
     }
   }
 
@@ -101,10 +112,14 @@ function generateRfPacket() {
       t: Date.now() - startTime,
       src: light.address,
       dst: light.remote,
+      channel: light.channel,
       type: '0xca',
+      type2: '0x00',
+      command: '0x00',
       state: STATE_HEX[stateKey],
       rssi: -65 - Math.random() * 25,
-      ch: light.channel,
+      hop: '0x0a',
+      raw: generateRawHex(),
     }
   }
 
@@ -121,10 +136,14 @@ function generateRfPacket() {
       t: Date.now() - startTime,
       src: remote.address,
       dst: target.address,
+      channel: target.channel,
       type: '0x44',
-      cmd,
+      type2: '0x00',
+      command: cmd,
+      state: '0x00',
       rssi: -55 - Math.random() * 20,
-      ch: target.channel,
+      hop: '0x0a',
+      raw: generateRawHex(),
     }
   }
 
@@ -139,10 +158,14 @@ function generateRfPacket() {
     t: Date.now() - startTime,
     src: '0x000001', // Controller address
     dst: target.address,
+    channel: target.channel,
     type: '0x6a',
-    cmd,
+    type2: '0x00',
+    command: cmd,
+    state: '0x00',
     rssi: -50 - Math.random() * 15,
-    ch: target.channel,
+    hop: '0x0a',
+    raw: generateRawHex(),
   }
 }
 
@@ -179,10 +202,14 @@ wss.on('connection', (ws: WebSocket) => {
         t: Date.now() - startTime,
         src: blind.address,
         dst: blind.remote,
+        channel: blind.channel,
         type: '0xca',
+        type2: '0x00',
+        command: '0x00',
         state: STATE_HEX[stateKey],
         rssi: -65 - Math.random() * 20,
-        ch: blind.channel,
+        hop: '0x0a',
+        raw: generateRawHex(),
       }
       ws.send(JSON.stringify({ event: 'rf', data: pkt }))
     }, 100 * (i + 1))
@@ -196,10 +223,14 @@ wss.on('connection', (ws: WebSocket) => {
         t: Date.now() - startTime,
         src: light.address,
         dst: light.remote,
+        channel: light.channel,
         type: '0xca',
+        type2: '0x00',
+        command: '0x00',
         state: STATE_HEX[stateKey],
         rssi: -70 - Math.random() * 15,
-        ch: light.channel,
+        hop: '0x0a',
+        raw: generateRawHex(),
       }
       ws.send(JSON.stringify({ event: 'rf', data: pkt }))
     }, 100 * (CONFIG.blinds.length + i + 1))
@@ -259,10 +290,14 @@ wss.on('connection', (ws: WebSocket) => {
             t: Date.now() - startTime,
             src: msg.address,
             dst: remote,
+            channel: ch,
             type: '0xca',
+            type2: '0x00',
+            command: '0x00',
             state: STATE_HEX[newStateKey],
             rssi: -70 - Math.random() * 15,
-            ch,
+            hop: '0x0a',
+            raw: generateRawHex(),
           }
           ws.send(JSON.stringify({ event: 'rf', data: pkt }))
           console.log(`→ State response: ${msg.address} → ${newStateKey}`)
@@ -275,10 +310,14 @@ wss.on('connection', (ws: WebSocket) => {
                 t: Date.now() - startTime,
                 src: msg.address,
                 dst: remote,
+                channel: ch,
                 type: '0xca',
+                type2: '0x00',
+                command: '0x00',
                 state: STATE_HEX[finalStateKey],
                 rssi: -70 - Math.random() * 15,
-                ch,
+                hop: '0x0a',
+                raw: generateRawHex(),
               }
               ws.send(JSON.stringify({ event: 'rf', data: finalPkt }))
               console.log(`→ Final state: ${msg.address} → ${finalStateKey}`)

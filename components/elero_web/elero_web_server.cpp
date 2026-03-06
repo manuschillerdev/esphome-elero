@@ -299,7 +299,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 
     uint8_t payload_1 = json_find_hex_or(msg, "payload_1", elero::packet::defaults::PAYLOAD_1);
     uint8_t payload_2 = json_find_hex_or(msg, "payload_2", elero::packet::defaults::PAYLOAD_2);
-    uint8_t msg_type = json_find_hex_or(msg, "type", elero::packet::msg_type::COMMAND);
+    uint8_t msg_type = json_find_hex_or(msg, "msg_type", elero::packet::msg_type::COMMAND);
     uint8_t type2 = json_find_hex_or(msg, "type2", elero::packet::defaults::TYPE2);
     uint8_t hop = json_find_hex_or(msg, "hop", elero::packet::defaults::HOP);
 

@@ -11,7 +11,17 @@ const deviceTarget = process.env.DEVICE_IP
   : 'ws://localhost:8080'
 
 export default defineConfig({
-  plugins: [preact(), tailwindcss(), viteSingleFile()],
+  plugins: [
+    preact(),
+    tailwindcss(),
+    viteSingleFile(),
+    {
+      name: 'log-proxy-target',
+      configureServer() {
+        console.log(`\n  ➜  WebSocket proxy: ${deviceTarget}\n`)
+      },
+    },
+  ],
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),

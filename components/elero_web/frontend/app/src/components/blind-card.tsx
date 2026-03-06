@@ -2,18 +2,12 @@ import { Card } from './ui/card'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
+import { InlineEdit, InlineEditNumber } from './ui/inline-edit'
 import { SignalIndicator } from './signal-indicator'
 import { ChevronUp, Square, ChevronDown, Shrink } from './icons'
 import { cn } from '@/lib/utils'
 import { useStore, type BlindConfig, getStateLabel, isMovingState } from '@/store'
 import { sendCommand } from '@/ws'
-
-// Format duration in ms to human-readable string
-function formatDuration(ms: number | undefined): string {
-  if (!ms || ms === 0) return '-'
-  const seconds = Math.round(ms / 1000)
-  return `${seconds}s`
-}
 
 interface BlindCardProps {
   blind: BlindConfig
@@ -22,6 +16,7 @@ interface BlindCardProps {
 
 export function BlindCard({ blind, compact }: BlindCardProps) {
   const state = useStore((s) => s.states[blind.address])
+  const updateBlind = useStore((s) => s.updateBlind)
   const stateLabel = getStateLabel(state?.state)
   const isMoving = isMovingState(state?.state)
 
@@ -31,7 +26,12 @@ export function BlindCard({ blind, compact }: BlindCardProps) {
         {/* Name + meta column */}
         <div className="flex min-w-0 flex-col gap-0.5" style={{ width: '220px', flexShrink: 0 }}>
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-foreground truncate">{blind.name}</span>
+            <span className="text-sm font-semibold text-foreground truncate">
+              <InlineEdit
+                value={blind.name}
+                onSave={(name) => updateBlind(blind.address, { name })}
+              />
+            </span>
           </div>
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <Badge
@@ -137,7 +137,10 @@ export function BlindCard({ blind, compact }: BlindCardProps) {
         <div className="flex flex-col gap-1.5 min-w-0 flex-1">
           <div className="flex items-center gap-2.5">
             <h3 className="text-base font-semibold tracking-tight text-card-foreground">
-              {blind.name}
+              <InlineEdit
+                value={blind.name}
+                onSave={(name) => updateBlind(blind.address, { name })}
+              />
             </h3>
             <Badge
               variant="secondary"
@@ -164,13 +167,29 @@ export function BlindCard({ blind, compact }: BlindCardProps) {
             )}
           </div>
           {/* Movement duration config */}
-          {(blind.open_ms > 0 || blind.close_ms > 0) && (
-            <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
-              <span>open: {formatDuration(blind.open_ms)}</span>
-              <span>|</span>
-              <span>close: {formatDuration(blind.close_ms)}</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
+            <span>
+              open:{' '}
+              <InlineEditNumber
+                value={Math.round((blind.open_ms || 0) / 1000)}
+                onSave={(s) => updateBlind(blind.address, { open_ms: s * 1000 })}
+                suffix="s"
+                min={0}
+                max={300}
+              />
+            </span>
+            <span>|</span>
+            <span>
+              close:{' '}
+              <InlineEditNumber
+                value={Math.round((blind.close_ms || 0) / 1000)}
+                onSave={(s) => updateBlind(blind.address, { close_ms: s * 1000 })}
+                suffix="s"
+                min={0}
+                max={300}
+              />
+            </span>
+          </div>
         </div>
       </div>
 

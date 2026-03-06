@@ -2,6 +2,7 @@ import { Card } from './ui/card'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
+import { InlineEdit, InlineEditNumber } from './ui/inline-edit'
 import { SignalIndicator } from './signal-indicator'
 import { Lightbulb, LightbulbOff } from './icons'
 import { cn } from '@/lib/utils'
@@ -15,6 +16,7 @@ interface LightCardProps {
 
 export function LightCard({ light, compact }: LightCardProps) {
   const state = useStore((s) => s.states[light.address])
+  const updateLight = useStore((s) => s.updateLight)
   const stateLabel = getStateLabel(state?.state)
   const isOn = stateLabel === 'ON'
 
@@ -24,7 +26,12 @@ export function LightCard({ light, compact }: LightCardProps) {
         {/* Name + meta column */}
         <div className="flex min-w-0 flex-col gap-0.5" style={{ width: '220px', flexShrink: 0 }}>
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-foreground truncate">{light.name}</span>
+            <span className="text-sm font-semibold text-foreground truncate">
+              <InlineEdit
+                value={light.name}
+                onSave={(name) => updateLight(light.address, { name })}
+              />
+            </span>
           </div>
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <Badge
@@ -98,7 +105,10 @@ export function LightCard({ light, compact }: LightCardProps) {
         <div className="flex flex-col gap-1.5 min-w-0 flex-1">
           <div className="flex items-center gap-2.5">
             <h3 className="text-base font-semibold tracking-tight text-card-foreground">
-              {light.name}
+              <InlineEdit
+                value={light.name}
+                onSave={(name) => updateLight(light.address, { name })}
+              />
             </h3>
             <Badge
               variant="secondary"
@@ -125,11 +135,18 @@ export function LightCard({ light, compact }: LightCardProps) {
             )}
           </div>
           {/* Dim duration config */}
-          {light.dim_ms > 0 && (
-            <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
-              <span>dim: {Math.round(light.dim_ms / 1000)}s</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
+            <span>
+              dim:{' '}
+              <InlineEditNumber
+                value={Math.round((light.dim_ms || 0) / 1000)}
+                onSave={(s) => updateLight(light.address, { dim_ms: s * 1000 })}
+                suffix="s"
+                min={0}
+                max={60}
+              />
+            </span>
+          </div>
         </div>
       </div>
 
