@@ -9,6 +9,7 @@
 #include "esphome/components/logger/logger.h"
 #include "mongoose.h"
 #include "../elero/elero.h"
+#include "../elero/device_manager.h"
 #include <string>
 #include <vector>
 
@@ -66,6 +67,10 @@ class EleroWebServer : public Component, public logger::LogListener {
   // JSON builders
   std::string build_config_json();
   std::string build_rf_json(const RfPacketInfo &pkt);
+
+  // Device CRUD handlers (MQTT mode)
+  void handle_save_device_(struct mg_connection *c, const std::string &msg);
+  void handle_remove_device_(struct mg_connection *c, const std::string &msg);
 };
 
 }  // namespace elero

@@ -1009,6 +1009,11 @@ void Elero::interpret_msg() {
                       : CC1101_FIFO_LENGTH;
     memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
     this->on_rf_packet_(pkt);
+
+    // Notify device manager (MQTT mode: tracks remotes, routes to dynamic devices)
+    if (this->device_manager_ != nullptr) {
+      this->device_manager_->on_rf_packet(pkt);
+    }
   }
 
   // Update RSSI sensor for any message from a known blind
