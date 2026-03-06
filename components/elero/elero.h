@@ -83,6 +83,8 @@ struct RfPacketInfo {
   uint8_t type2;          ///< Secondary type byte
   uint8_t command;        ///< Command byte (for command packets)
   uint8_t state;          ///< State byte (for status packets)
+  bool echo;              ///< true if this command packet matches a recent TX (mesh echo)
+  uint8_t cnt;            ///< Rolling counter value from packet
   float rssi;
   uint8_t hop;
   uint8_t payload[10];
@@ -257,6 +259,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
   void notify_tx_owner_(bool success);  // Notify owner and clear
   void check_radio_health_();           // Periodic watchdog for stuck radio states
+  void record_tx_(uint8_t counter);           // Record TX counter for echo detection
+  bool is_own_echo_(uint8_t counter) const;   // Check if RX counter matches a recent TX
 
   std::atomic<bool> received_{false};
   TxContext tx_ctx_;
@@ -278,6 +282,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #ifdef USE_TEXT_SENSOR
   std::map<uint32_t, text_sensor::TextSensor *> address_to_text_sensor_;
 #endif
+
+  // TX echo detection: ring buffer of recently sent counter values
+  static constexpr size_t TX_HISTORY_SIZE = 16;
+  uint8_t tx_history_[TX_HISTORY_SIZE]{};
+  uint8_t tx_history_idx_{0};
 
   // RF packet notification callback (optional, set by web server)
   RfPacketCallback on_rf_packet_{};

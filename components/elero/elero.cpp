@@ -523,6 +523,20 @@ void Elero::check_radio_health_() {
   this->flush_and_rx();
 }
 
+void Elero::record_tx_(uint8_t counter) {
+  this->tx_history_[this->tx_history_idx_] = counter;
+  this->tx_history_idx_ = (this->tx_history_idx_ + 1) % TX_HISTORY_SIZE;
+}
+
+bool Elero::is_own_echo_(uint8_t counter) const {
+  for (size_t i = 0; i < TX_HISTORY_SIZE; i++) {
+    if (this->tx_history_[i] == counter) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void Elero::build_tx_packet_(const EleroCommand &cmd) {
   // Convert EleroCommand to TxParams
   packet::TxParams params;
@@ -548,8 +562,9 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
     return false;
   }
 
-  // Build packet
+  // Build packet and record for echo detection
   this->build_tx_packet_(cmd);
+  this->record_tx_(cmd.counter);
 
   // Look up blind name by dst address (store string to avoid dangling pointer)
   std::string blind_name;
@@ -920,6 +935,7 @@ void Elero::interpret_msg() {
   bool is_status = is_status_packet(typ);
   uint8_t command = is_cmd ? payload[payload_offset::COMMAND] : 0;
   uint8_t state = is_status ? payload[payload_offset::STATE] : 0;
+  bool echo = is_cmd && this->is_own_echo_(cnt);
 
   // Look up blind name: for status packets src is the blind, for commands dst is the blind
   std::string blind_name;
@@ -956,11 +972,11 @@ void Elero::interpret_msg() {
              length, cnt, typ, typ2, hop, chl, src, dst, state, rssi, lqi, crc);
   } else if (is_cmd) {
     ESP_LOGD(TAG_RF,
-             "{\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\","
+             "{\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"echo\":%s,"
              "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\","
              "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
-             blind_buf, elero_command_to_string(command),
+             blind_buf, elero_command_to_string(command), echo ? "true" : "false",
              length, cnt, typ, typ2, hop, chl, src, dst, command, rssi, lqi, crc);
   } else {
     ESP_LOGD(TAG_RF,
@@ -983,6 +999,8 @@ void Elero::interpret_msg() {
     pkt.type2 = typ2;
     pkt.command = command;
     pkt.state = state;
+    pkt.echo = echo;
+    pkt.cnt = cnt;
     pkt.rssi = rssi;
     pkt.hop = hop;
     memcpy(pkt.payload, payload, 10);
@@ -1043,44 +1061,25 @@ void Elero::interpret_msg() {
     // Trigger an immediate status poll on each configured blind/light that is
     // targeted, so HA state updates within ~50 ms instead of waiting for the
     // normal poll interval.
-    // IMPORTANT: Skip if src is one of our own remote addresses (echo of our TX).
-    // Otherwise we get a feedback loop: TX -> RX echo -> poll -> TX -> ...
-    if (is_command_packet(typ)) {
-      // Check if this is our own command echo by matching src against our remote addresses
-      bool is_own_command = false;
-      for (const auto &kv : this->address_to_cover_mapping_) {
-        if (kv.second->get_remote_address() == src) {
-          is_own_command = true;
-          break;
+    // Skip mesh retransmissions of our own TX (matched by cnt in tx_history_)
+    // to avoid feedback loop: TX -> mesh echo -> poll -> TX -> ...
+    // Physical remote commands share our src_address but have different cnt
+    // values, so they correctly trigger the immediate poll.
+    if (is_command_packet(typ) && !echo) {
+      for (uint8_t i = 0; i < num_dests; i++) {
+        uint32_t dest_addr;
+        if (typ > msg_type::ADDR_3BYTE_THRESHOLD) {  // 3-byte addressing
+          dest_addr = extract_addr(&this->msg_rx_[pkt_offset::FIRST_DEST + i * ADDR_SIZE]);
+        } else {  // 1-byte addressing
+          dest_addr = this->msg_rx_[pkt_offset::FIRST_DEST + i];
         }
-      }
-      if (!is_own_command) {
-        for (const auto &kv : this->address_to_light_mapping_) {
-          if (kv.second->get_remote_address() == src) {
-            is_own_command = true;
-            break;
-          }
+        auto c_it = this->address_to_cover_mapping_.find(dest_addr);
+        if (c_it != this->address_to_cover_mapping_.end()) {
+          c_it->second->schedule_immediate_poll();
         }
-      }
-
-      if (is_own_command) {
-        ESP_LOGV(TAG, "Ignoring own command echo from 0x%06x", src);
-      } else {
-        for (uint8_t i = 0; i < num_dests; i++) {
-          uint32_t dest_addr;
-          if (typ > msg_type::ADDR_3BYTE_THRESHOLD) {  // 3-byte addressing
-            dest_addr = extract_addr(&this->msg_rx_[pkt_offset::FIRST_DEST + i * ADDR_SIZE]);
-          } else {  // 1-byte addressing
-            dest_addr = this->msg_rx_[pkt_offset::FIRST_DEST + i];
-          }
-          auto c_it = this->address_to_cover_mapping_.find(dest_addr);
-          if (c_it != this->address_to_cover_mapping_.end()) {
-            c_it->second->schedule_immediate_poll();
-          }
-          auto l_it = this->address_to_light_mapping_.find(dest_addr);
-          if (l_it != this->address_to_light_mapping_.end()) {
-            l_it->second->schedule_immediate_poll();
-          }
+        auto l_it = this->address_to_light_mapping_.find(dest_addr);
+        if (l_it != this->address_to_light_mapping_.end()) {
+          l_it->second->schedule_immediate_poll();
         }
       }
     }
@@ -1121,6 +1120,7 @@ void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sens
 bool Elero::send_command(EleroCommand *cmd) {
   ESP_LOGVV(TAG, "send_command called");
   this->build_tx_packet_(*cmd);
+  this->record_tx_(cmd->counter);
 
   // Look up blind name by dst address (store string to avoid dangling pointer)
   std::string blind_name;
