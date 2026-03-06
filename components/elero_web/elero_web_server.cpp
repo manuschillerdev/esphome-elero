@@ -1,6 +1,7 @@
 #include "elero_web_server.h"
 #include "elero_web_ui.h"
 #include "../elero/elero_packet.h"
+#include "../elero/nvs_config.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include "esphome/components/logger/logger.h"
@@ -243,6 +244,16 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
     ESP_LOGW(TAG, "Command for unknown address 0x%06x", addr);
   }
 
+  // Device CRUD (MQTT mode only)
+  if (type == "save_device") {
+    this->handle_save_device_(c, msg);
+    return;
+  }
+  if (type == "remove_device") {
+    this->handle_remove_device_(c, msg);
+    return;
+  }
+
   // Raw TX for testing/debugging
   if (type == "raw") {
     std::string dst_addr_s = json_find_str(msg, "dst_address");
@@ -374,7 +385,15 @@ std::string EleroWebServer::build_config_json() {
              (unsigned long) light->get_dim_duration_ms());
     json += buf;
   }
-  json += "]";
+  json += "],";
+
+  // Mode
+  auto *dm = this->parent_->get_device_manager();
+  if (dm != nullptr && dm->mode() == HubMode::MQTT) {
+    json += "\"mode\":\"mqtt\",\"crud\":true";
+  } else {
+    json += "\"mode\":\"native\",\"crud\":false";
+  }
 
   json += "}";
   return json;
@@ -419,6 +438,107 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
            pkt.hop,
            hex);
   return std::string(buf);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Device CRUD Handlers (MQTT mode)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void EleroWebServer::handle_save_device_(struct mg_connection *c, const std::string &msg) {
+  auto *dm = this->parent_->get_device_manager();
+  if (dm == nullptr || !dm->supports_crud()) {
+    this->ws_send(c, "error", "{\"msg\":\"CRUD not supported in native mode\"}");
+    return;
+  }
+
+  // Parse device config from JSON
+  NvsDeviceConfig config{};
+  std::string device_type = json_find_str(msg, "device_type");
+  if (device_type == "cover") {
+    config.type = DeviceType::COVER;
+  } else if (device_type == "light") {
+    config.type = DeviceType::LIGHT;
+  } else if (device_type == "remote") {
+    config.type = DeviceType::REMOTE;
+  } else {
+    this->ws_send(c, "error", "{\"msg\":\"Invalid device_type\"}");
+    return;
+  }
+
+  std::string dst_addr_s = json_find_str(msg, "dst_address");
+  if (dst_addr_s.empty()) {
+    this->ws_send(c, "error", "{\"msg\":\"Missing dst_address\"}");
+    return;
+  }
+  config.dst_address = (uint32_t) strtoul(dst_addr_s.c_str(), nullptr, 0);
+
+  std::string name_s = json_find_str(msg, "name");
+  if (!name_s.empty()) {
+    config.set_name(name_s.c_str());
+  }
+
+  // RF params (covers and lights only)
+  if (!config.is_remote()) {
+    std::string src_addr_s = json_find_str(msg, "src_address");
+    if (!src_addr_s.empty()) {
+      config.src_address = (uint32_t) strtoul(src_addr_s.c_str(), nullptr, 0);
+    }
+    std::string channel_s = json_find_num(msg, "channel");
+    if (!channel_s.empty()) {
+      config.channel = (uint8_t) strtoul(channel_s.c_str(), nullptr, 0);
+    }
+    config.hop = json_find_hex_or(msg, "hop", packet::defaults::HOP);
+    config.payload_1 = json_find_hex_or(msg, "payload_1", packet::defaults::PAYLOAD_1);
+    config.payload_2 = json_find_hex_or(msg, "payload_2", packet::defaults::PAYLOAD_2);
+    config.type_byte = json_find_hex_or(msg, "msg_type", packet::msg_type::COMMAND);
+    config.type2 = json_find_hex_or(msg, "type2", packet::defaults::TYPE2);
+  }
+
+  if (dm->add_device(config)) {
+    char resp[64];
+    snprintf(resp, sizeof(resp), "{\"address\":\"0x%06x\",\"device_type\":\"%s\"}",
+             config.dst_address, device_type.c_str());
+    this->ws_send(c, "device_saved", std::string(resp));
+  } else {
+    this->ws_send(c, "error", "{\"msg\":\"Failed to save device\"}");
+  }
+}
+
+void EleroWebServer::handle_remove_device_(struct mg_connection *c, const std::string &msg) {
+  auto *dm = this->parent_->get_device_manager();
+  if (dm == nullptr || !dm->supports_crud()) {
+    this->ws_send(c, "error", "{\"msg\":\"CRUD not supported in native mode\"}");
+    return;
+  }
+
+  std::string device_type = json_find_str(msg, "device_type");
+  std::string addr_s = json_find_str(msg, "dst_address");
+  if (addr_s.empty()) {
+    this->ws_send(c, "error", "{\"msg\":\"Missing dst_address\"}");
+    return;
+  }
+
+  DeviceType type;
+  if (device_type == "cover") {
+    type = DeviceType::COVER;
+  } else if (device_type == "light") {
+    type = DeviceType::LIGHT;
+  } else if (device_type == "remote") {
+    type = DeviceType::REMOTE;
+  } else {
+    this->ws_send(c, "error", "{\"msg\":\"Invalid device_type\"}");
+    return;
+  }
+
+  uint32_t addr = (uint32_t) strtoul(addr_s.c_str(), nullptr, 0);
+
+  if (dm->remove_device(type, addr)) {
+    char resp[64];
+    snprintf(resp, sizeof(resp), "{\"address\":\"0x%06x\"}", addr);
+    this->ws_send(c, "device_removed", std::string(resp));
+  } else {
+    this->ws_send(c, "error", "{\"msg\":\"Failed to remove device\"}");
+  }
 }
 
 }  // namespace elero
