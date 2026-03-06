@@ -15,7 +15,7 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
     return r;
   }
 
-  r.length = raw[rx_offset::LENGTH];
+  r.length = raw[pkt_offset::LENGTH];
 
   // Check packet length against maximum
   if (r.length > MAX_PACKET_SIZE) {
@@ -24,26 +24,26 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   }
 
   // Check we have enough data for header (need at least FIRST_DEST bytes for basic header)
-  if (raw_len < rx_offset::FIRST_DEST) {
+  if (raw_len < pkt_offset::FIRST_DEST) {
     r.reject_reason = "truncated_header";
     return r;
   }
 
   // Extract header fields
-  r.counter = raw[rx_offset::COUNTER];
-  r.type = raw[rx_offset::TYPE];
-  r.type2 = raw[rx_offset::TYPE2];
-  r.hop = raw[rx_offset::HOP];
-  r.syst = raw[rx_offset::SYS];
-  r.channel = raw[rx_offset::CHANNEL];
+  r.counter = raw[pkt_offset::COUNTER];
+  r.type = raw[pkt_offset::TYPE];
+  r.type2 = raw[pkt_offset::TYPE2];
+  r.hop = raw[pkt_offset::HOP];
+  r.syst = raw[pkt_offset::SYS];
+  r.channel = raw[pkt_offset::CHANNEL];
 
   // Extract addresses
-  r.src_addr = extract_addr(&raw[rx_offset::SRC_ADDR]);
-  r.bwd_addr = extract_addr(&raw[rx_offset::BWD_ADDR]);
-  r.fwd_addr = extract_addr(&raw[rx_offset::FWD_ADDR]);
+  r.src_addr = extract_addr(&raw[pkt_offset::SRC_ADDR]);
+  r.bwd_addr = extract_addr(&raw[pkt_offset::BWD_ADDR]);
+  r.fwd_addr = extract_addr(&raw[pkt_offset::FWD_ADDR]);
 
   // Destination count
-  r.num_dests = raw[rx_offset::NUM_DESTS];
+  r.num_dests = raw[pkt_offset::NUM_DESTS];
 
   // Validate destination count
   if (r.num_dests > MAX_DESTINATIONS) {
@@ -55,14 +55,14 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   if (r.type > msg_type::ADDR_3BYTE_THRESHOLD) {
     // 3-byte addresses (command/status packets)
     r.dests_len = r.num_dests * ADDR_SIZE;
-    if (raw_len >= rx_offset::FIRST_DEST + ADDR_SIZE) {
-      r.dst_addr = extract_addr(&raw[rx_offset::FIRST_DEST]);
+    if (raw_len >= pkt_offset::FIRST_DEST + ADDR_SIZE) {
+      r.dst_addr = extract_addr(&raw[pkt_offset::FIRST_DEST]);
     }
   } else {
     // 1-byte addresses (button packets)
     r.dests_len = r.num_dests;
-    if (raw_len >= rx_offset::FIRST_DEST + 1) {
-      r.dst_addr = raw[rx_offset::FIRST_DEST];
+    if (raw_len >= pkt_offset::FIRST_DEST + 1) {
+      r.dst_addr = raw[pkt_offset::FIRST_DEST];
     }
   }
 
@@ -71,14 +71,14 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   // Highest index is FIRST_DEST + 2 + dests_len + 7 = 26 + dests_len
   constexpr size_t PAYLOAD_OFFSET_FROM_DESTS = 2;  // payload_1 and payload_2
   constexpr size_t ENCRYPTED_SECTION_SIZE = 8;     // 8 bytes processed by msg_decode
-  size_t payload_end_idx = rx_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + r.dests_len + ENCRYPTED_SECTION_SIZE - 1;
+  size_t payload_end_idx = pkt_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + r.dests_len + ENCRYPTED_SECTION_SIZE - 1;
   if (payload_end_idx > r.length || payload_end_idx >= FIFO_LENGTH) {
     r.reject_reason = "dests_len_too_long";
     return r;
   }
 
   // Check we have enough raw data for payload
-  size_t payload_start = rx_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + r.dests_len;
+  size_t payload_start = pkt_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + r.dests_len;
   size_t payload_end = payload_start + 10;  // 10-byte payload buffer
   if (payload_end > raw_len) {
     r.reject_reason = "truncated_payload";
@@ -141,21 +141,21 @@ size_t build_tx_packet(const TxParams& params, uint8_t* out_buf) {
   out_buf[tx_offset::PAYLOAD] = params.payload_1;
   out_buf[tx_offset::PAYLOAD + 1] = params.payload_2;
 
-  // Crypto code and command go into the 8-byte encrypted section (offset 22)
-  // The section is: [crypto_hi, crypto_lo, command, 0, 0, 0, state, parity]
-  // We must zero positions 25-29 as the old code did (via payload[5-9] = 0)
+  // Build encrypted section at offset 22 using payload_offset layout:
+  // [crypto_hi, crypto_lo, command, cmd2, 0, 0, state, parity]
+  uint8_t *enc = &out_buf[tx_offset::CRYPTO_CODE];
   uint16_t code = calc_crypto_code(params.counter);
-  out_buf[tx_offset::CRYPTO_CODE] = (code >> 8) & 0xFF;
-  out_buf[tx_offset::CRYPTO_CODE + 1] = code & 0xFF;
-  out_buf[tx_offset::COMMAND] = params.command;
-  out_buf[25] = 0;  // padding
-  out_buf[26] = 0;  // padding (state position for RX, unused for TX)
-  out_buf[27] = 0;  // padding
-  out_buf[28] = 0;  // padding
-  out_buf[29] = 0;  // parity (will be set by msg_encode)
+  enc[payload_offset::CRYPTO_HIGH] = (code >> 8) & 0xFF;
+  enc[payload_offset::CRYPTO_LOW] = code & 0xFF;
+  enc[payload_offset::COMMAND] = params.command;
+  enc[payload_offset::COMMAND2] = 0;   // secondary command (unused)
+  enc[4] = 0;                          // padding
+  enc[5] = 0;                          // padding
+  enc[payload_offset::STATE] = 0;      // state (unused for TX)
+  enc[payload_offset::PARITY] = 0;     // parity (set by msg_encode)
 
-  // Encrypt the 8-byte payload starting at offset 22
-  protocol::msg_encode(&out_buf[tx_offset::CRYPTO_CODE]);
+  // Encrypt the 8-byte section in-place
+  protocol::msg_encode(enc);
 
   return TX_MSG_LENGTH + 1;
 }

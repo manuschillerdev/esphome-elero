@@ -41,18 +41,18 @@ When invoked, use this reference to answer protocol questions accurately.
 
 | Offset | Length | Field | C++ Offset Constant | Description |
 |--------|--------|-------|---------------------|-------------|
-| 0 | 1 | `pck_len` | `rx_offset::LENGTH` / `tx_offset::LENGTH` | Packet length (0x1B=27..0x1E=30) |
-| 1 | 1 | `counter` | `rx_offset::COUNTER` / `tx_offset::COUNTER` | Rolling counter (increments each TX) |
-| 2 | 1 | `msg_type` | `rx_offset::TYPE` / `tx_offset::TYPE` | Message type (0x44/0x6A/0xCA/0xC9) |
-| 3 | 1 | `type2` | `rx_offset::TYPE2` / `tx_offset::TYPE2` | Secondary type (usually 0x00) |
-| 4 | 1 | `hop` | `rx_offset::HOP` / `tx_offset::HOP` | Hop count (usually 0x0a) |
-| 5 | 1 | `syst` | `rx_offset::SYS` / `tx_offset::SYS` | System address (fixed: 0x01) |
-| 6 | 1 | `channel` | `rx_offset::CHANNEL` / `tx_offset::CHANNEL` | RF channel number |
-| 7-9 | 3 | `src_addr` | `rx_offset::SRC_ADDR` / `tx_offset::SRC_ADDR` | Source address (big-endian) |
-| 10-12 | 3 | `bwd_addr` | `rx_offset::BWD_ADDR` / `tx_offset::BWD_ADDR` | Backward address (same as src) |
-| 13-15 | 3 | `fwd_addr` | `rx_offset::FWD_ADDR` / `tx_offset::FWD_ADDR` | Forward address (same as src) |
-| 16 | 1 | `dest_count` | `rx_offset::NUM_DESTS` / `tx_offset::NUM_DESTS` | Destination count (0x01) |
-| 17-19 | 3 | `dst_addr` | `rx_offset::FIRST_DEST` / `tx_offset::DST_ADDR` | Destination address (big-endian) |
+| 0 | 1 | `pck_len` | `pkt_offset::LENGTH` | Packet length (0x1B=27..0x1E=30) |
+| 1 | 1 | `counter` | `pkt_offset::COUNTER` | Rolling counter (increments each TX) |
+| 2 | 1 | `msg_type` | `pkt_offset::TYPE` | Message type (0x44/0x6A/0xCA/0xC9) |
+| 3 | 1 | `type2` | `pkt_offset::TYPE2` | Secondary type (usually 0x00) |
+| 4 | 1 | `hop` | `pkt_offset::HOP` | Hop count (usually 0x0a) |
+| 5 | 1 | `syst` | `pkt_offset::SYS` | System address (fixed: 0x01) |
+| 6 | 1 | `channel` | `pkt_offset::CHANNEL` | RF channel number |
+| 7-9 | 3 | `src_addr` | `pkt_offset::SRC_ADDR` | Source address (big-endian) |
+| 10-12 | 3 | `bwd_addr` | `pkt_offset::BWD_ADDR` | Backward address (same as src) |
+| 13-15 | 3 | `fwd_addr` | `pkt_offset::FWD_ADDR` | Forward address (same as src) |
+| 16 | 1 | `dest_count` | `pkt_offset::NUM_DESTS` | Destination count (0x01) |
+| 17-19 | 3 | `dst_addr` | `pkt_offset::FIRST_DEST` / `tx_offset::DST_ADDR` | Destination address (big-endian) |
 | 20+ | var | `payload` | `tx_offset::PAYLOAD` | Encrypted payload (type-dependent) |
 
 **Additional constants in `packet::` namespace:**

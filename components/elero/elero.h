@@ -6,6 +6,7 @@
 #include "cc1101.h"
 #include "tx_client.h"
 #include "elero_packet.h"
+#include "elero_strings.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -89,12 +90,7 @@ struct RfPacketInfo {
   uint8_t raw[CC1101_FIFO_LENGTH];
 };
 
-const char *elero_state_to_string(uint8_t state);
-const char *elero_command_to_string(uint8_t command);
-
-/// Convert action string ("up", "down", "stop", etc.) to command byte.
-/// Returns 0xFF if action is not recognized.
-uint8_t elero_action_to_command(const char *action);
+// String conversion declarations (elero_state_to_string, etc.) are in elero_strings.h
 
 /// Abstract base class for light actuators registered with the Elero hub.
 /// EleroLight inherits from this so the hub never needs the light header.

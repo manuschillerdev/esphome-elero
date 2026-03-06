@@ -152,13 +152,13 @@ TEST(PayloadEncoding, EncodePayload_AllCommands) {
   for (uint8_t cmd : commands) {
     SCOPED_TRACE("Command: " + std::to_string(cmd));
 
-    uint8_t payload[8] = {0, 0, 0, 0, cmd, 0, 0, 0};
-    uint8_t original_cmd = payload[4];
+    uint8_t payload[8] = {0, 0, cmd, 0, 0, 0, 0, 0};
+    uint8_t original_cmd = payload[payload_offset::COMMAND];
 
     msg_encode(payload);
     msg_decode(payload);
 
-    EXPECT_EQ(payload[4], original_cmd);
+    EXPECT_EQ(payload[payload_offset::COMMAND], original_cmd);
   }
 }
 
@@ -268,11 +268,69 @@ TEST(TxPacketBuilding, BuildTxPacket_PayloadRoundtrip) {
   memcpy(payload, &buf[tx_offset::CRYPTO_CODE], 8);
   esphome::elero::protocol::msg_decode(payload);
 
-  // OUR TX packets put command at encrypted_block[2] (position 24)
-  // Note: This is different from payload_offset::COMMAND (4) which is
-  // for parsing RX packets from OTHER remotes (sniffing).
-  constexpr size_t TX_ENCRYPT_COMMAND_OFFSET = 2;
-  EXPECT_EQ(payload[TX_ENCRYPT_COMMAND_OFFSET], command::UP);
+  // Command is at encrypted_block[2] — same offset for TX and RX (payload_offset::COMMAND)
+  EXPECT_EQ(payload[payload_offset::COMMAND], command::UP);
+}
+
+// ============================================================================
+// TX Packet Building — Payload Fields
+// ============================================================================
+
+TEST(TxPacketBuilding, BuildTxPacket_Payload1Payload2) {
+  // Verify user-configurable payload_1/payload_2 land at correct offsets
+  TxParams params;
+  params.payload_1 = 0xAB;
+  params.payload_2 = 0xCD;
+
+  uint8_t buf[30] = {0};
+  build_tx_packet(params, buf);
+
+  EXPECT_EQ(buf[tx_offset::PAYLOAD], 0xAB);
+  EXPECT_EQ(buf[tx_offset::PAYLOAD + 1], 0xCD);
+}
+
+TEST(TxPacketBuilding, BuildTxPacket_DefaultPayloadValues) {
+  // Default payload_1=0x00, payload_2=0x04
+  TxParams params;  // All defaults
+
+  uint8_t buf[30] = {0};
+  build_tx_packet(params, buf);
+
+  EXPECT_EQ(buf[tx_offset::PAYLOAD], defaults::PAYLOAD_1);
+  EXPECT_EQ(buf[tx_offset::PAYLOAD + 1], defaults::PAYLOAD_2);
+}
+
+TEST(TxPacketBuilding, CalcCryptoCode_Counter0) {
+  // Counter=0: code = (0 - 0*0x708f) & 0xffff = 0x0000
+  uint16_t code = calc_crypto_code(0);
+  EXPECT_EQ(code, 0x0000);
+}
+
+TEST(TxPacketBuilding, WriteAddr_Zero) {
+  uint8_t buf[3] = {0xFF, 0xFF, 0xFF};
+  write_addr(buf, 0x000000);
+  EXPECT_EQ(buf[0], 0x00);
+  EXPECT_EQ(buf[1], 0x00);
+  EXPECT_EQ(buf[2], 0x00);
+}
+
+TEST(TxPacketBuilding, WriteAddr_Max) {
+  uint8_t buf[3] = {0x00, 0x00, 0x00};
+  write_addr(buf, 0xFFFFFF);
+  EXPECT_EQ(buf[0], 0xFF);
+  EXPECT_EQ(buf[1], 0xFF);
+  EXPECT_EQ(buf[2], 0xFF);
+}
+
+TEST(TxPacketBuilding, WriteAddrExtractAddrRoundtrip) {
+  // write_addr then extract_addr must recover original for edge addresses
+  uint32_t addresses[] = {0x000000, 0xFFFFFF, 0x800000, 0x000001, 0xA831E5};
+  for (uint32_t addr : addresses) {
+    SCOPED_TRACE("addr: 0x" + std::to_string(addr));
+    uint8_t buf[3];
+    write_addr(buf, addr);
+    EXPECT_EQ(extract_addr(buf), addr);
+  }
 }
 
 // ============================================================================
@@ -384,6 +442,48 @@ TEST(CoverStateMapping, MapState_InvalidValue) {
   EXPECT_FLOAT_EQ(result.position, -1.0f);  // Unchanged
   EXPECT_EQ(result.operation, CoverOp::IDLE);
   EXPECT_FALSE(result.is_warning);
+}
+
+TEST(CoverStateMapping, MapState_LightOn) {
+  // LIGHT_ON (0x10) falls through to default — position unchanged, IDLE
+  auto result = map_cover_state(state::LIGHT_ON);
+  EXPECT_FLOAT_EQ(result.position, -1.0f);  // Unchanged (default)
+  EXPECT_EQ(result.operation, CoverOp::IDLE);
+  EXPECT_FALSE(result.is_warning);
+  EXPECT_EQ(result.warning_msg, nullptr);
+}
+
+TEST(CoverStateMapping, MapState_Stopped_NoTilt) {
+  // Stopped should have tilt=0 (no tilt when stopped)
+  auto result = map_cover_state(state::STOPPED);
+  EXPECT_FLOAT_EQ(result.tilt, 0.0f);
+  EXPECT_FLOAT_EQ(result.position, -1.0f);  // Unchanged
+}
+
+TEST(CoverStateMapping, MapState_WarningPositionUnchanged) {
+  // All warning states should leave position unchanged (-1.0)
+  uint8_t warning_states[] = {state::BLOCKING, state::OVERHEATED, state::TIMEOUT};
+  for (uint8_t s : warning_states) {
+    SCOPED_TRACE("state: " + std::to_string(s));
+    auto result = map_cover_state(s);
+    EXPECT_FLOAT_EQ(result.position, -1.0f);
+    EXPECT_TRUE(result.is_warning);
+    EXPECT_NE(result.warning_msg, nullptr);
+  }
+}
+
+TEST(CoverStateMapping, MapState_MovingPositionUnchanged) {
+  // All moving states should leave position unchanged (-1.0)
+  uint8_t moving_states[] = {
+    state::START_MOVING_UP, state::MOVING_UP,
+    state::START_MOVING_DOWN, state::MOVING_DOWN
+  };
+  for (uint8_t s : moving_states) {
+    SCOPED_TRACE("state: " + std::to_string(s));
+    auto result = map_cover_state(s);
+    EXPECT_FLOAT_EQ(result.position, -1.0f);
+    EXPECT_FALSE(result.is_warning);
+  }
 }
 
 // ============================================================================

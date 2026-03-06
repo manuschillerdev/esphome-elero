@@ -1,6 +1,7 @@
 #include "elero.h"
 #include "elero_protocol.h"
 #include "elero_packet.h"
+#include "elero_strings.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -28,79 +29,8 @@ SpiTransaction::~SpiTransaction() {
   device_->disable();
 }
 
-const char *elero_state_to_string(uint8_t state) {
-  switch (state) {
-    case packet::state::TOP:
-      return "top";
-    case packet::state::BOTTOM:
-      return "bottom";
-    case packet::state::INTERMEDIATE:
-      return "intermediate";
-    case packet::state::TILT:
-      return "tilt";
-    case packet::state::BLOCKING:
-      return "blocking";
-    case packet::state::OVERHEATED:
-      return "overheated";
-    case packet::state::TIMEOUT:
-      return "timeout";
-    case packet::state::START_MOVING_UP:
-      return "start_moving_up";
-    case packet::state::START_MOVING_DOWN:
-      return "start_moving_down";
-    case packet::state::MOVING_UP:
-      return "moving_up";
-    case packet::state::MOVING_DOWN:
-      return "moving_down";
-    case packet::state::STOPPED:
-      return "stopped";
-    case packet::state::TOP_TILT:
-      return "top_tilt";
-    case packet::state::BOTTOM_TILT:
-      return "bottom_tilt";  // also packet::state::LIGHT_OFF (0x0f)
-    case packet::state::LIGHT_ON:
-      return "on";
-    default:
-      return "unknown";
-  }
-}
-
-const char *elero_command_to_string(uint8_t command) {
-  switch (command) {
-    case packet::command::CHECK:
-      return "CHECK";
-    case packet::command::STOP:
-      return "STOP";
-    case packet::command::UP:
-      return "UP";
-    case packet::command::TILT:
-      return "TILT";
-    case packet::command::DOWN:
-      return "DOWN";
-    case packet::command::INTERMEDIATE:
-      return "INTERMEDIATE";
-    default:
-      return "UNKNOWN";
-  }
-}
-
-uint8_t elero_action_to_command(const char *action) {
-  if (action == nullptr)
-    return packet::command::INVALID;
-  if (strcmp(action, "up") == 0 || strcmp(action, "open") == 0)
-    return packet::command::UP;
-  if (strcmp(action, "down") == 0 || strcmp(action, "close") == 0)
-    return packet::command::DOWN;
-  if (strcmp(action, "stop") == 0)
-    return packet::command::STOP;
-  if (strcmp(action, "check") == 0)
-    return packet::command::CHECK;
-  if (strcmp(action, "tilt") == 0)
-    return packet::command::TILT;
-  if (strcmp(action, "int") == 0)
-    return packet::command::INTERMEDIATE;
-  return packet::command::INVALID;
-}
+// String conversion functions (elero_state_to_string, elero_command_to_string,
+// elero_action_to_command) are defined in elero_strings.cpp for testability.
 
 void Elero::loop() {
   const uint32_t now = millis();
@@ -144,7 +74,7 @@ void Elero::loop() {
       // Log raw bytes at VERBOSE level for analysis
       ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count, format_hex_pretty(this->msg_rx_, fifo_count).c_str());
       // Sanity check: need length byte value + overhead (length byte + RSSI + LQI)
-      if (this->msg_rx_[packet::rx_offset::LENGTH] + packet::PACKET_TOTAL_OVERHEAD <= fifo_count) {
+      if (this->msg_rx_[packet::pkt_offset::LENGTH] + packet::PACKET_TOTAL_OVERHEAD <= fifo_count) {
         this->interpret_msg();
       }
     }
@@ -208,7 +138,7 @@ void Elero::flush_and_rx() {
     ESP_LOGV(TAG, "RAW RX (rescued) %d bytes: %s", fifo_count,
              format_hex_pretty(this->msg_rx_, fifo_count).c_str());
     // Sanity check: need length byte value + overhead (length byte + RSSI + LQI)
-    if (this->msg_rx_[packet::rx_offset::LENGTH] + packet::PACKET_TOTAL_OVERHEAD <= fifo_count) {
+    if (this->msg_rx_[packet::pkt_offset::LENGTH] + packet::PACKET_TOTAL_OVERHEAD <= fifo_count) {
       this->interpret_msg();
     }
   }
@@ -908,7 +838,7 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
 void Elero::interpret_msg() {
   using namespace packet;
 
-  uint8_t length = this->msg_rx_[rx_offset::LENGTH];
+  uint8_t length = this->msg_rx_[pkt_offset::LENGTH];
   // Sanity check
   if (length > MAX_PACKET_SIZE) {
     uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - PACKET_TOTAL_OVERHEAD))
@@ -919,16 +849,16 @@ void Elero::interpret_msg() {
     return;
   }
 
-  uint8_t cnt = this->msg_rx_[rx_offset::COUNTER];
-  uint8_t typ = this->msg_rx_[rx_offset::TYPE];
-  uint8_t typ2 = this->msg_rx_[rx_offset::TYPE2];
-  uint8_t hop = this->msg_rx_[rx_offset::HOP];
-  uint8_t syst = this->msg_rx_[rx_offset::SYS];
-  uint8_t chl = this->msg_rx_[rx_offset::CHANNEL];
-  uint32_t src = extract_addr(&this->msg_rx_[rx_offset::SRC_ADDR]);
-  uint32_t bwd = extract_addr(&this->msg_rx_[rx_offset::BWD_ADDR]);
-  uint32_t fwd = extract_addr(&this->msg_rx_[rx_offset::FWD_ADDR]);
-  uint8_t num_dests = this->msg_rx_[rx_offset::NUM_DESTS];
+  uint8_t cnt = this->msg_rx_[pkt_offset::COUNTER];
+  uint8_t typ = this->msg_rx_[pkt_offset::TYPE];
+  uint8_t typ2 = this->msg_rx_[pkt_offset::TYPE2];
+  uint8_t hop = this->msg_rx_[pkt_offset::HOP];
+  uint8_t syst = this->msg_rx_[pkt_offset::SYS];
+  uint8_t chl = this->msg_rx_[pkt_offset::CHANNEL];
+  uint32_t src = extract_addr(&this->msg_rx_[pkt_offset::SRC_ADDR]);
+  uint32_t bwd = extract_addr(&this->msg_rx_[pkt_offset::BWD_ADDR]);
+  uint32_t fwd = extract_addr(&this->msg_rx_[pkt_offset::FWD_ADDR]);
+  uint8_t num_dests = this->msg_rx_[pkt_offset::NUM_DESTS];
   uint32_t dst;
   uint8_t dests_len;
 
@@ -942,10 +872,10 @@ void Elero::interpret_msg() {
 
   if (typ > msg_type::ADDR_3BYTE_THRESHOLD) {
     dests_len = num_dests * ADDR_SIZE;
-    dst = extract_addr(&this->msg_rx_[rx_offset::FIRST_DEST]);
+    dst = extract_addr(&this->msg_rx_[pkt_offset::FIRST_DEST]);
   } else {
     dests_len = num_dests;
-    dst = this->msg_rx_[rx_offset::FIRST_DEST];
+    dst = this->msg_rx_[pkt_offset::FIRST_DEST];
   }
 
   // Sanity check: msg_decode accesses 8 bytes at msg_rx_[FIRST_DEST + 2 + dests_len],
@@ -953,7 +883,7 @@ void Elero::interpret_msg() {
   // This must be within both the packet (length) and the FIFO buffer.
   constexpr size_t PAYLOAD_OFFSET_FROM_DESTS = 2;  // payload_1 and payload_2 before encrypted section
   constexpr size_t ENCRYPTED_SECTION_SIZE = 8;     // 8 bytes processed by msg_decode
-  size_t payload_end = rx_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + dests_len + ENCRYPTED_SECTION_SIZE - 1;
+  size_t payload_end = pkt_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + dests_len + ENCRYPTED_SECTION_SIZE - 1;
   if (payload_end > length || payload_end >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + PACKET_TOTAL_OVERHEAD,
@@ -970,7 +900,7 @@ void Elero::interpret_msg() {
   }
 
   // Payload bytes are at FIRST_DEST + dests_len (payload_1) and +1 (payload_2)
-  size_t payload_base = rx_offset::FIRST_DEST + dests_len;
+  size_t payload_base = pkt_offset::FIRST_DEST + dests_len;
   uint8_t payload1 = this->msg_rx_[payload_base];
   uint8_t payload2 = this->msg_rx_[payload_base + 1];
   uint8_t crc = (this->msg_rx_[length + CC1101_APPEND_SIZE] & cc1101_status::CRC_OK_BIT) ? 1 : 0;
@@ -985,14 +915,15 @@ void Elero::interpret_msg() {
   uint8_t *payload = &this->msg_rx_[payload_base + PAYLOAD_OFFSET_FROM_DESTS];
   protocol::msg_decode(payload);
 
-  // JSON log for RX packet (machine-readable, tagged for WS forwarding)
-  uint8_t command = is_command_packet(typ) ? payload[payload_offset::COMMAND] : 0;
-  uint8_t state = is_status_packet(typ) ? payload[payload_offset::STATE] : 0;
+  // Extract fields relevant to this packet type
+  bool is_cmd = is_command_packet(typ);
+  bool is_status = is_status_packet(typ);
+  uint8_t command = is_cmd ? payload[payload_offset::COMMAND] : 0;
+  uint8_t state = is_status ? payload[payload_offset::STATE] : 0;
 
   // Look up blind name: for status packets src is the blind, for commands dst is the blind
-  // Store string to avoid dangling pointer from temporary std::string
   std::string blind_name;
-  uint32_t blind_addr = is_status_packet(typ) ? src : dst;
+  uint32_t blind_addr = is_status ? src : dst;
   auto cover_it = this->address_to_cover_mapping_.find(blind_addr);
   if (cover_it != this->address_to_cover_mapping_.end()) {
     blind_name = cover_it->second->get_blind_name();
@@ -1003,22 +934,42 @@ void Elero::interpret_msg() {
     }
   }
 
+  // JSON log: include only fields relevant to the packet type
+  // - Command packets (0x6a/0x69): cmd_name/command, no state
+  // - Status packets (0xca/0xc9): state_name/state, no command
+  // - Button packets (0x44): neither command nor state
+  // Use snprintf to build blind field (name string or hex address)
+  char blind_buf[32];
   if (!blind_name.empty()) {
+    snprintf(blind_buf, sizeof(blind_buf), "%s", blind_name.c_str());
+  } else {
+    snprintf(blind_buf, sizeof(blind_buf), "0x%06x", blind_addr);
+  }
+
+  if (is_status) {
     ESP_LOGD(TAG_RF,
-             "{\"dir\":\"rx\",\"blind\":\"%s\",\"state_name\":\"%s\",\"cmd_name\":\"%s\","
+             "{\"dir\":\"rx\",\"blind\":\"%s\",\"state_name\":\"%s\","
              "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
-             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\",\"state\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"state\":\"0x%02x\","
              "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
-             blind_name.c_str(), elero_state_to_string(state), elero_command_to_string(command),
-             length, cnt, typ, typ2, hop, chl, src, dst, command, state, rssi, lqi, crc);
+             blind_buf, elero_state_to_string(state),
+             length, cnt, typ, typ2, hop, chl, src, dst, state, rssi, lqi, crc);
+  } else if (is_cmd) {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\","
+             "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\","
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
+             blind_buf, elero_command_to_string(command),
+             length, cnt, typ, typ2, hop, chl, src, dst, command, rssi, lqi, crc);
   } else {
     ESP_LOGD(TAG_RF,
-             "{\"dir\":\"rx\",\"blind\":\"0x%06x\",\"state_name\":\"%s\",\"cmd_name\":\"%s\","
+             "{\"dir\":\"rx\",\"blind\":\"%s\","
              "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
-             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\",\"state\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\","
              "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
-             blind_addr, elero_state_to_string(state), elero_command_to_string(command),
-             length, cnt, typ, typ2, hop, chl, src, dst, command, state, rssi, lqi, crc);
+             blind_buf,
+             length, cnt, typ, typ2, hop, chl, src, dst, rssi, lqi, crc);
   }
 
   // Notify RF packet callback (if registered)
@@ -1030,8 +981,8 @@ void Elero::interpret_msg() {
     pkt.channel = chl;
     pkt.type = typ;
     pkt.type2 = typ2;
-    pkt.command = is_command_packet(typ) ? payload[payload_offset::COMMAND] : 0;
-    pkt.state = is_status_packet(typ) ? payload[payload_offset::STATE] : 0;
+    pkt.command = command;
+    pkt.state = state;
     pkt.rssi = rssi;
     pkt.hop = hop;
     memcpy(pkt.payload, payload, 10);
@@ -1118,9 +1069,9 @@ void Elero::interpret_msg() {
         for (uint8_t i = 0; i < num_dests; i++) {
           uint32_t dest_addr;
           if (typ > msg_type::ADDR_3BYTE_THRESHOLD) {  // 3-byte addressing
-            dest_addr = extract_addr(&this->msg_rx_[rx_offset::FIRST_DEST + i * ADDR_SIZE]);
+            dest_addr = extract_addr(&this->msg_rx_[pkt_offset::FIRST_DEST + i * ADDR_SIZE]);
           } else {  // 1-byte addressing
-            dest_addr = this->msg_rx_[rx_offset::FIRST_DEST + i];
+            dest_addr = this->msg_rx_[pkt_offset::FIRST_DEST + i];
           }
           auto c_it = this->address_to_cover_mapping_.find(dest_addr);
           if (c_it != this->address_to_cover_mapping_.end()) {

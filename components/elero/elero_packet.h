@@ -262,42 +262,42 @@ constexpr uint16_t TX_CRYPTO_MASK = crypto::MASK;        ///< 16-bit mask
 constexpr uint8_t TX_SYS_ADDR = defaults::SYS_ADDR;      ///< System address byte
 constexpr uint8_t TX_DEST_COUNT = defaults::DEST_COUNT;  ///< Single destination
 
-/// TX packet offsets (documents the packet structure)
-namespace tx_offset {
-constexpr size_t LENGTH = 0;        // Packet length byte
-constexpr size_t COUNTER = 1;       // Rolling counter
-constexpr size_t TYPE = 2;          // Message type
-constexpr size_t TYPE2 = 3;         // Secondary type
-constexpr size_t HOP = 4;           // Hop count
-constexpr size_t SYS = 5;           // System address (always 0x01)
-constexpr size_t CHANNEL = 6;       // RF channel
-constexpr size_t SRC_ADDR = 7;      // Source address (3 bytes, big-endian)
-constexpr size_t BWD_ADDR = 10;     // Backward address (same as src)
-constexpr size_t FWD_ADDR = 13;     // Forward address (same as src)
-constexpr size_t NUM_DESTS = 16;    // Number of destinations (always 1)
-constexpr size_t DST_ADDR = 17;     // Destination address (3 bytes)
-constexpr size_t PAYLOAD = 20;      // Payload start (before encryption)
-constexpr size_t CRYPTO_CODE = 22;  // XOR code bytes (start of encrypted section)
-constexpr size_t COMMAND = 24;      // Command byte (encrypted[2])
-}  // namespace tx_offset
-
-/// RX packet offsets (header matches TX, documents RX-specific access patterns)
-/// Note: For status packets (0xCA/0xC9), src is the blind, dst is the remote.
-///       For command packets (0x6A/0x69), src is the remote, dst is the blind.
-namespace rx_offset {
+/// Packet header offsets (shared by TX and RX — bytes 0-16 are identical)
+namespace pkt_offset {
 constexpr size_t LENGTH = 0;        // Packet length byte (value excludes this byte)
 constexpr size_t COUNTER = 1;       // Rolling counter
 constexpr size_t TYPE = 2;          // Message type (0x6a=cmd, 0xca=status, etc.)
 constexpr size_t TYPE2 = 3;         // Secondary type byte
 constexpr size_t HOP = 4;           // Hop count
-constexpr size_t SYS = 5;           // System address (usually 0x01)
+constexpr size_t SYS = 5;           // System address (always 0x01)
 constexpr size_t CHANNEL = 6;       // RF channel
 constexpr size_t SRC_ADDR = 7;      // Source address (3 bytes, big-endian)
 constexpr size_t BWD_ADDR = 10;     // Backward address (3 bytes)
 constexpr size_t FWD_ADDR = 13;     // Forward address (3 bytes)
 constexpr size_t NUM_DESTS = 16;    // Number of destinations
 constexpr size_t FIRST_DEST = 17;   // Start of destination address(es)
-}  // namespace rx_offset
+}  // namespace pkt_offset
+
+/// TX-specific offsets (fixed layout: always 1 destination, 3-byte addressing)
+/// For RX, destination count varies so offsets 17+ are computed dynamically.
+namespace tx_offset {
+// Header aliases (re-exported for convenience in TX building code)
+constexpr size_t LENGTH = pkt_offset::LENGTH;
+constexpr size_t COUNTER = pkt_offset::COUNTER;
+constexpr size_t TYPE = pkt_offset::TYPE;
+constexpr size_t TYPE2 = pkt_offset::TYPE2;
+constexpr size_t HOP = pkt_offset::HOP;
+constexpr size_t SYS = pkt_offset::SYS;
+constexpr size_t CHANNEL = pkt_offset::CHANNEL;
+constexpr size_t SRC_ADDR = pkt_offset::SRC_ADDR;
+constexpr size_t BWD_ADDR = pkt_offset::BWD_ADDR;
+constexpr size_t FWD_ADDR = pkt_offset::FWD_ADDR;
+constexpr size_t NUM_DESTS = pkt_offset::NUM_DESTS;
+constexpr size_t DST_ADDR = pkt_offset::FIRST_DEST;
+// Fixed offsets for single-destination TX
+constexpr size_t PAYLOAD = 20;      // Payload start (payload_1, payload_2)
+constexpr size_t CRYPTO_CODE = 22;  // Start of 8-byte encrypted section
+}  // namespace tx_offset
 
 /// Address size in bytes (big-endian 24-bit addresses)
 constexpr size_t ADDR_SIZE = 3;
@@ -310,13 +310,14 @@ constexpr uint8_t CC1101_APPEND_SIZE = 2;
 constexpr uint8_t PACKET_TOTAL_OVERHEAD = 3;
 
 /// Decrypted payload offsets (after msg_decode)
-/// These offsets are for RECEIVED packets from other sources (remotes, blinds).
-/// Note: TX building uses tx_offset, which has command at position 24 (index 2).
-/// Real remotes use a different structure with command at index 4.
+/// These offsets index into the 8-byte encrypted section (starting at absolute offset 22).
+/// Layout: [crypto_hi, crypto_lo, command, cmd2, 0, 0, state, parity]
+/// Same layout for TX and RX — verified against eleropy, andyboeh, and pfriedrich84.
 namespace payload_offset {
 constexpr size_t CRYPTO_HIGH = 0;   // Crypto code high byte
 constexpr size_t CRYPTO_LOW = 1;    // Crypto code low byte
-constexpr size_t COMMAND = 4;       // Command byte (for 0x6A/0x69 packets, from real remotes)
+constexpr size_t COMMAND = 2;       // Command byte (for 0x6A/0x69 packets)
+constexpr size_t COMMAND2 = 3;      // Secondary command byte
 constexpr size_t STATE = 6;         // State byte (for 0xCA/0xC9 packets, from blinds)
 constexpr size_t PARITY = 7;        // Parity byte
 }  // namespace payload_offset
