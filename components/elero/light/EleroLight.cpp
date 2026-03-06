@@ -166,6 +166,48 @@ void EleroLight::recompute_brightness() {
   this->last_recompute_time_ = now;
 }
 
+bool EleroLight::perform_action(const char *action) {
+  if (strcmp(action, "on") == 0 || strcmp(action, "up") == 0) {
+    if (this->state_ != nullptr) {
+      auto call = this->state_->make_call();
+      call.set_state(true);
+      if (this->dim_duration_ > 0)
+        call.set_brightness(1.0f);
+      call.perform();
+    } else {
+      this->sender_.enqueue(this->command_on_);
+    }
+    return true;
+  }
+  if (strcmp(action, "off") == 0 || strcmp(action, "down") == 0) {
+    if (this->state_ != nullptr) {
+      auto call = this->state_->make_call();
+      call.set_state(false);
+      call.perform();
+    } else {
+      this->sender_.enqueue(this->command_off_);
+    }
+    return true;
+  }
+  if (strcmp(action, "stop") == 0) {
+    this->sender_.enqueue(this->command_stop_);
+    return true;
+  }
+  if (strcmp(action, "dim_up") == 0) {
+    this->sender_.enqueue(this->command_dim_up_);
+    return true;
+  }
+  if (strcmp(action, "dim_down") == 0) {
+    this->sender_.enqueue(this->command_dim_down_);
+    return true;
+  }
+  if (strcmp(action, "check") == 0) {
+    this->sender_.enqueue(this->command_check_);
+    return true;
+  }
+  return false;
+}
+
 void EleroLight::set_rx_state(uint8_t state) {
   ESP_LOGV(TAG, "Got state: 0x%02x for light 0x%06x", state, this->sender_.command().dst_addr);
 

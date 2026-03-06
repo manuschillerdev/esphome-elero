@@ -235,10 +235,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
     const auto &lights = this->parent_->get_configured_lights();
     auto lit = lights.find(addr);
     if (lit != lights.end()) {
-      uint8_t cmd_byte = elero_action_to_command(action.c_str());
-      if (cmd_byte != packet::command::INVALID) {
-        lit->second->enqueue_command(cmd_byte);
-      }
+      lit->second->perform_action(action.c_str());
       return;
     }
 
