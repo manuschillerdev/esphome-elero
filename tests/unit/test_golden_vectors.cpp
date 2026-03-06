@@ -85,23 +85,15 @@ namespace golden {
   constexpr size_t TX_POS_PAYLOAD_START = 20;  // 10 bytes copied from cmd.payload
   constexpr size_t TX_POS_CRYPTO_HI = 22; // Overwrites payload[2]
   constexpr size_t TX_POS_CRYPTO_LO = 23; // Overwrites payload[3]
-  constexpr size_t TX_POS_COMMAND = 24;   // cmd.payload[4] - NOT OVERWRITTEN
+  constexpr size_t TX_POS_COMMAND = 24;   // CRYPTO_CODE + payload_offset::COMMAND (22 + 2)
   constexpr size_t TX_POS_ENCRYPT_START = 22; // msg_encode starts here
   constexpr size_t TX_POS_ENCRYPT_END = 29;   // msg_encode ends here (8 bytes total)
 
-  // RX payload offsets (relative to &msg_rx_[19 + dests_len])
-  // For single 3-byte dest, dests_len=3, so payload starts at position 22
-  // From interpret_msg:
-  //   uint8_t command = ((typ == 0x6a) || (typ == 0x69)) ? payload[4] : 0;
-  //   uint8_t state = ((typ == 0xca) || (typ == 0xc9)) ? payload[6] : 0;
-  constexpr size_t RX_PAYLOAD_OFFSET_COMMAND = 4;  // For sniffing OTHER remotes
-  constexpr size_t RX_PAYLOAD_OFFSET_STATE = 6;    // For status from blinds
-
-  // TX encrypted block offsets (relative to position 22)
-  // Command is at position 24 = encrypted_block[2]
-  constexpr size_t TX_ENCRYPT_OFFSET_CRYPTO_HI = 0;
-  constexpr size_t TX_ENCRYPT_OFFSET_CRYPTO_LO = 1;
-  constexpr size_t TX_ENCRYPT_OFFSET_COMMAND = 2;  // OUR packets put command here
+  // Decrypted payload layout: [crypto_hi, crypto_lo, command, cmd2, 0, 0, state, parity]
+  // Same layout for TX and RX — verified against eleropy, andyboeh, and pfriedrich84.
+  // These golden values validate payload_offset:: constants.
+  constexpr size_t RX_PAYLOAD_OFFSET_COMMAND = 2;  // Command byte
+  constexpr size_t RX_PAYLOAD_OFFSET_STATE = 6;    // State byte
 }
 
 // =============================================================================
@@ -181,7 +173,8 @@ TEST(GoldenOffsets, TxPositions) {
   EXPECT_EQ(tx_offset::DST_ADDR, golden::TX_POS_DST_ADDR);
   EXPECT_EQ(tx_offset::PAYLOAD, golden::TX_POS_PAYLOAD_START);
   EXPECT_EQ(tx_offset::CRYPTO_CODE, golden::TX_POS_CRYPTO_HI);
-  EXPECT_EQ(tx_offset::COMMAND, golden::TX_POS_COMMAND);
+  // Command position = encrypted section start + payload_offset::COMMAND
+  EXPECT_EQ(tx_offset::CRYPTO_CODE + payload_offset::COMMAND, golden::TX_POS_COMMAND);
 }
 
 TEST(GoldenOffsets, RxPayloadOffsets) {
@@ -332,7 +325,7 @@ TEST(GoldenTxPacket, CommandRoundtrip_AllCommands) {
     protocol::msg_decode(encrypted);
 
     // Command should be at offset 2 within our encrypted block
-    EXPECT_EQ(encrypted[golden::TX_ENCRYPT_OFFSET_COMMAND], cmd)
+    EXPECT_EQ(encrypted[payload_offset::COMMAND], cmd)
       << "Command 0x" << std::hex << (int)cmd << " not found at encrypted[2]";
   }
 }
@@ -420,14 +413,14 @@ TEST(GoldenRxParsing, StateOffsetIsCorrect) {
   EXPECT_EQ(decrypted_payload[payload_offset::STATE], golden::STATE_TOP);
 }
 
-TEST(GoldenRxParsing, CommandOffsetForSniffing) {
-  // Working code: payload[4] for command in command packets FROM OTHER REMOTES
-  // This is different from our TX where command is at encrypted[2]!
-
+TEST(GoldenRxParsing, CommandOffsetConsistency) {
+  // Command is at index 2 in the decrypted payload — same for TX and RX.
+  // Verified against eleropy generate_msg() and all C++ implementations.
   uint8_t decrypted_payload[10] = {0};
   decrypted_payload[golden::RX_PAYLOAD_OFFSET_COMMAND] = golden::CMD_DOWN;
 
   EXPECT_EQ(decrypted_payload[payload_offset::COMMAND], golden::CMD_DOWN);
+  EXPECT_EQ(payload_offset::COMMAND, 2u);
 }
 
 // =============================================================================
@@ -473,14 +466,14 @@ TEST(GoldenEncoding, PayloadPositionsPreserved) {
 TEST(GoldenEncoding, CommandPositionPreserved) {
   // Verify command at position 2 survives roundtrip
   uint8_t payload[8] = {0};
-  payload[golden::TX_ENCRYPT_OFFSET_COMMAND] = golden::CMD_UP;
+  payload[payload_offset::COMMAND] = golden::CMD_UP;
 
-  uint8_t original_cmd = payload[golden::TX_ENCRYPT_OFFSET_COMMAND];
+  uint8_t original_cmd = payload[payload_offset::COMMAND];
 
   protocol::msg_encode(payload);
   protocol::msg_decode(payload);
 
-  EXPECT_EQ(payload[golden::TX_ENCRYPT_OFFSET_COMMAND], original_cmd);
+  EXPECT_EQ(payload[payload_offset::COMMAND], original_cmd);
 }
 
 TEST(GoldenEncoding, StatePositionPreserved) {

@@ -24,39 +24,25 @@ Total length: 30 bytes (length byte + 29 data bytes)
 | 21 | Payload 2 | 1 | `tx_offset::PAYLOAD + 1` | `0x04` | Default |
 | **22-29** | **Encrypted** | **8** | `tx_offset::CRYPTO_CODE` | | **msg_encode() applied** |
 
-### Encrypted Section (positions 22-29, before encryption)
+### Encrypted Section (positions 22-29)
 
-| Offset | Position | Field | Value |
-|--------|----------|-------|-------|
-| 0 | 22 | Crypto Hi | `(code >> 8) & 0xFF` |
-| 1 | 23 | Crypto Lo | `code & 0xFF` |
-| 2 | 24 | **Command** | See command table |
-| 3 | 25 | Padding | `0x00` |
-| 4 | 26 | Padding | `0x00` |
-| 5 | 27 | Padding | `0x00` |
-| 6 | 28 | Padding | `0x00` |
-| 7 | 29 | Parity | Set by `msg_encode()` |
+Same layout for TX and RX. C++ constants in `payload_offset::` namespace.
+Verified against eleropy, andyboeh, and pfriedrich84 implementations.
+
+| Offset | Position | C++ Constant | Field | TX Value | RX Notes |
+|--------|----------|--------------|-------|----------|----------|
+| 0 | 22 | `payload_offset::CRYPTO_HIGH` | Crypto Hi | `(code >> 8) & 0xFF` | |
+| 1 | 23 | `payload_offset::CRYPTO_LOW` | Crypto Lo | `code & 0xFF` | |
+| 2 | 24 | `payload_offset::COMMAND` | **Command** | See command table | Command from remote |
+| 3 | 25 | `payload_offset::COMMAND2` | Command 2 | `0x00` | Secondary command byte |
+| 4 | 26 | | Padding | `0x00` | |
+| 5 | 27 | | Padding | `0x00` | |
+| 6 | 28 | `payload_offset::STATE` | **State** | `0x00` (unused) | See state table |
+| 7 | 29 | `payload_offset::PARITY` | Parity | Set by `msg_encode()` | |
 
 **Crypto code formula:** `code = (0x0000 - (counter * 0x708F)) & 0xFFFF`
 
-## RX Packet (Status from Blind)
-
-For status packets (type `0xCA`/`0xC9`), positions 0-21 match TX structure.
-
-### Decrypted Payload (after msg_decode)
-
-| Offset | Position | Field | Notes |
-|--------|----------|-------|-------|
-| 0 | 22 | Crypto Hi | |
-| 1 | 23 | Crypto Lo | |
-| 2 | 24 | (unused) | |
-| 3 | 25 | (unused) | |
-| 4 | 26 | Command* | *For sniffing other remotes |
-| 5 | 27 | (unused) | |
-| 6 | 28 | **State** | See state table |
-| 7 | 29 | Parity | |
-
-**Note:** Positions 30-31 contain RSSI (raw) and LQI (with CRC bit) appended by CC1101.
+**Note:** For RX packets, positions after the packet data contain RSSI (raw) and LQI (with CRC bit) appended by CC1101.
 
 ## Command Bytes
 

@@ -403,6 +403,8 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
            "\"type2\":\"0x%02x\","
            "\"command\":\"0x%02x\","
            "\"state\":\"0x%02x\","
+           "\"echo\":%s,"
+           "\"cnt\":%d,"
            "\"rssi\":%.1f,"
            "\"hop\":\"0x%02x\","
            "\"raw\":\"%s\"}",
@@ -414,6 +416,8 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
            pkt.type2,
            pkt.command,
            pkt.state,
+           pkt.echo ? "true" : "false",
+           pkt.cnt,
            pkt.rssi,
            pkt.hop,
            hex);

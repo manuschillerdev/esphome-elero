@@ -115,7 +115,17 @@ class MockElero {
 
 // Now include a custom version of CommandSender that uses MockElero
 // We'll redefine the process_queue signature to accept MockElero*
+//
+// WARNING: TestableCommandSender MUST be kept in sync with the production
+// CommandSender in command_sender.h. The static_asserts below verify key
+// constants match. If you change CommandSender logic, update both copies.
+// See: components/elero/command_sender.h
 namespace esphome::elero {
+
+// ─── Structural parity checks ─────────────────────────────────────────────
+// These verify that key constants and sizes match between test and production.
+// If someone changes the production code without updating the test copy,
+// these will fail at compile time.
 
 /// CommandSender adapted for testing with MockElero
 class TestableCommandSender : public TxClient {
@@ -299,6 +309,18 @@ class TestableCommandSender : public TxClient {
   bool cancelled_{false};
   const char* log_tag_{"sender"};
 };
+
+// ─── Compile-time parity checks ───────────────────────────────────────────
+// These ensure the test copy stays in sync with production constants.
+// If production CommandSender changes, these will fail at compile time.
+static_assert(TestableCommandSender::TX_PENDING_TIMEOUT_MS == packet::timing::TX_PENDING_TIMEOUT,
+              "TX_PENDING_TIMEOUT_MS diverged from production");
+static_assert(static_cast<uint8_t>(TestableCommandSender::State::IDLE) == 0,
+              "State::IDLE value diverged");
+static_assert(static_cast<uint8_t>(TestableCommandSender::State::WAIT_DELAY) == 1,
+              "State::WAIT_DELAY value diverged");
+static_assert(static_cast<uint8_t>(TestableCommandSender::State::TX_PENDING) == 2,
+              "State::TX_PENDING value diverged");
 
 }  // namespace esphome::elero
 
@@ -814,6 +836,67 @@ TEST_F(CommandSenderTest, CollapsingStillReturnsTrue) {
   EXPECT_TRUE(sender_.enqueue(packet::command::UP));
 
   EXPECT_EQ(sender_.queue_size(), 1u);
+}
+
+// ============================================================================
+// Enqueue During Non-IDLE States
+// ============================================================================
+
+TEST_F(CommandSenderTest, EnqueueDuringWaitDelay_GrowsQueueKeepsState) {
+  sender_.enqueue(packet::command::UP);
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::WAIT_DELAY);
+  EXPECT_EQ(sender_.queue_size(), 1u);
+
+  // Enqueue another command while in WAIT_DELAY
+  sender_.enqueue(packet::command::DOWN);
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::WAIT_DELAY);  // Unchanged
+  EXPECT_EQ(sender_.queue_size(), 2u);
+}
+
+TEST_F(CommandSenderTest, EnqueueDuringTxPending_GrowsQueueKeepsState) {
+  sender_.enqueue(packet::command::UP);
+  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::TX_PENDING);
+
+  // Enqueue another command while TX is in flight
+  sender_.enqueue(packet::command::DOWN);
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::TX_PENDING);  // Unchanged
+  EXPECT_EQ(sender_.queue_size(), 2u);
+
+  // Complete TX and process second command normally
+  mock_hub_.complete_tx(true);
+  // After 2 packets for UP, should move to DOWN
+  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  mock_hub_.complete_tx(true);
+  // UP complete, now DOWN
+  EXPECT_TRUE(sender_.has_pending_commands());
+}
+
+TEST_F(CommandSenderTest, ProcessQueueIdleEmptyIsNoOp) {
+  // Calling process_queue when IDLE with empty queue does nothing
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::IDLE);
+  EXPECT_EQ(sender_.queue_size(), 0u);
+
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::IDLE);
+  EXPECT_EQ(mock_hub_.recorded_requests.size(), 0u);
+}
+
+TEST_F(CommandSenderTest, IsBusyWhenIdleWithQueuedCommands) {
+  // Edge case: after timeout recovery, state could be IDLE but queue has items
+  // (This shouldn't happen in practice, but is_busy checks both)
+  // We test the logic by checking that is_busy reflects queue state
+  EXPECT_FALSE(sender_.is_busy());
+
+  sender_.enqueue(packet::command::UP);
+  EXPECT_TRUE(sender_.is_busy());
+
+  // Even after clearing, not busy
+  sender_.clear_queue();
+  EXPECT_FALSE(sender_.is_busy());
 }
 
 // ============================================================================

@@ -6,6 +6,7 @@
 #include "cc1101.h"
 #include "tx_client.h"
 #include "elero_packet.h"
+#include "elero_strings.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -82,6 +83,8 @@ struct RfPacketInfo {
   uint8_t type2;          ///< Secondary type byte
   uint8_t command;        ///< Command byte (for command packets)
   uint8_t state;          ///< State byte (for status packets)
+  bool echo;              ///< true if this command packet matches a recent TX (mesh echo)
+  uint8_t cnt;            ///< Rolling counter value from packet
   float rssi;
   uint8_t hop;
   uint8_t payload[10];
@@ -89,12 +92,7 @@ struct RfPacketInfo {
   uint8_t raw[CC1101_FIFO_LENGTH];
 };
 
-const char *elero_state_to_string(uint8_t state);
-const char *elero_command_to_string(uint8_t command);
-
-/// Convert action string ("up", "down", "stop", etc.) to command byte.
-/// Returns 0xFF if action is not recognized.
-uint8_t elero_action_to_command(const char *action);
+// String conversion declarations (elero_state_to_string, etc.) are in elero_strings.h
 
 /// Abstract base class for light actuators registered with the Elero hub.
 /// EleroLight inherits from this so the hub never needs the light header.
@@ -260,12 +258,16 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void abort_tx_();                     // Abort TX and return to RX
   void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
   void notify_tx_owner_(bool success);  // Notify owner and clear
+  void check_radio_health_();           // Periodic watchdog for stuck radio states
+  void record_tx_(uint8_t counter);           // Record TX counter for echo detection
+  bool is_own_echo_(uint8_t counter) const;   // Check if RX counter matches a recent TX
 
   std::atomic<bool> received_{false};
   TxContext tx_ctx_;
   bool tx_pending_success_{false};
   TxClient *tx_owner_{nullptr};  // Current TX owner (for non-blocking API)
   uint32_t last_chip_reset_ms_{0};  ///< Rate-limit chip resets (zombie recovery)
+  uint32_t last_radio_check_ms_{0}; ///< Last radio health check timestamp
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
   uint8_t freq0_{defaults::FREQ0};
@@ -280,6 +282,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #ifdef USE_TEXT_SENSOR
   std::map<uint32_t, text_sensor::TextSensor *> address_to_text_sensor_;
 #endif
+
+  // TX echo detection: ring buffer of recently sent counter values
+  static constexpr size_t TX_HISTORY_SIZE = 16;
+  uint8_t tx_history_[TX_HISTORY_SIZE]{};
+  uint8_t tx_history_idx_{0};
 
   // RF packet notification callback (optional, set by web server)
   RfPacketCallback on_rf_packet_{};
