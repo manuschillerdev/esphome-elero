@@ -10,6 +10,7 @@
 #include "esphome_mqtt_adapter.h"
 #include "esphome/core/preferences.h"
 #include "esphome/core/helpers.h"
+#include "esphome/components/json/json_util.h"
 #include <string>
 
 namespace esphome {
@@ -88,7 +89,6 @@ class MqttDeviceManager : public IDeviceManager, public Component {
 
   void publish_all_discoveries_();
   std::string device_id_() const;
-  std::string addr_hex_(uint32_t addr) const;
 
   // ─── Remote control tracking ───
 
@@ -98,7 +98,9 @@ class MqttDeviceManager : public IDeviceManager, public Component {
 
   // ─── CRUD event notification ───
 
-  void notify_crud_(const char *event, const char *json);
+  void notify_crud_(const char *event, const char *json_str);
+  void notify_crud_(const char *event, uint32_t addr, const char *device_type);
+  void notify_crud_enabled_(const char *event, uint32_t addr, bool enabled);
 
   // ─── Members ───
 
