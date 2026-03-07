@@ -24,7 +24,6 @@ void NativeNvsCover::sync_config_to_core() {
 void NativeNvsCover::apply_name_from_config() {
   if (config_.name[0] != '\0') {
     this->set_name(config_.name);
-    this->set_object_id(config_.name);
   }
 }
 
