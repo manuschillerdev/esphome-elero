@@ -1,18 +1,16 @@
 import { Badge } from './ui/badge'
 import { cn } from '@/lib/utils'
-import { Monitor, Radio, Settings } from './icons'
+import { LayoutGrid, Cpu } from './icons'
 import { useStore } from '@/store'
 
 export function DashboardNav() {
   const activeTab = useStore((s) => s.activeTab)
   const blinds = useStore((s) => s.config.blinds)
   const lights = useStore((s) => s.config.lights)
-  const rfPackets = useStore((s) => s.rfPackets)
 
   const tabs = [
-    { id: 'devices' as const, label: 'Devices', icon: Monitor, count: blinds.length + lights.length },
-    { id: 'packets' as const, label: 'RF Packets', icon: Radio, count: rfPackets.length },
-    { id: 'hub' as const, label: 'Hub', icon: Settings },
+    { id: 'devices' as const, label: 'Devices', icon: LayoutGrid, count: blinds.length + lights.length },
+    { id: 'hub' as const, label: 'Hub', icon: Cpu },
   ]
 
   return (
@@ -34,11 +32,8 @@ export function DashboardNav() {
           <span>{tab.label}</span>
           {tab.count !== undefined && (
             <Badge
-              variant={activeTab === tab.id ? 'default' : 'secondary'}
-              className={cn(
-                'ml-0.5 h-5 min-w-5 px-1.5 text-[10px] font-semibold',
-                activeTab === tab.id && 'bg-primary text-primary-foreground'
-              )}
+              variant="secondary"
+              className="ml-0.5 h-5 min-w-5 px-1.5 text-[10px] font-semibold"
             >
               {tab.count}
             </Badge>

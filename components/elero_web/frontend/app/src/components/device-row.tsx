@@ -14,7 +14,7 @@ export function DeviceCell({ blind }: { blind: BlindConfig }) {
   const updateBlind = useStore((s) => s.updateBlind)
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="truncate text-sm font-medium text-primary">
+      <span className="truncate text-sm font-medium text-foreground">
         <InlineEdit
           value={blind.name}
           onSave={(name) => updateBlind(blind.address, { name })}
@@ -56,7 +56,7 @@ export function LightDeviceCell({ light }: { light: LightConfig }) {
   const updateLight = useStore((s) => s.updateLight)
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="truncate text-sm font-medium text-primary">
+      <span className="truncate text-sm font-medium text-foreground">
         <InlineEdit
           value={light.name}
           onSave={(name) => updateLight(light.address, { name })}

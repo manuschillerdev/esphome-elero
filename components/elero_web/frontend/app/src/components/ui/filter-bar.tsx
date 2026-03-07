@@ -26,8 +26,8 @@ export function FilterBar<T extends string>({ options, value, onChange }: Filter
             className={cn(
               'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
               active
-                ? 'bg-card text-card-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
+                ? 'bg-card text-primary shadow-sm'
+                : 'text-muted-foreground hover:text-primary'
             )}
           >
             {opt.icon ? <opt.icon className="size-3.5" /> : opt.label}
