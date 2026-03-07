@@ -1,43 +1,18 @@
 #include "EleroDynamicCover.h"
 #include "esphome/core/log.h"
 
-namespace esphome::elero {
+namespace esphome {
+namespace elero {
 
-static constexpr const char *TAG = "elero.dyn_cover";
+// ─── DynamicEntityBase hooks ───
 
-bool EleroDynamicCover::activate(const NvsDeviceConfig &config, Elero *parent) {
-  if (active_) {
-    ESP_LOGW(TAG, "Slot already active for 0x%06x", config_.dst_address);
-    return false;
-  }
-  if (!config.is_valid() || !config.is_cover() || parent == nullptr) {
-    ESP_LOGE(TAG, "Invalid config or null parent for activation");
-    return false;
-  }
-
-  config_ = config;
-  parent_ = parent;
-  parent_->register_cover(this);
-  active_ = true;
-
-  ESP_LOGI(TAG, "Activated dynamic cover '%s' at 0x%06x", config_.name, config_.dst_address);
-  return true;
-}
-
-void EleroDynamicCover::deactivate() {
-  if (!active_) return;
-  ESP_LOGI(TAG, "Deactivating dynamic cover 0x%06x", config_.dst_address);
-  active_ = false;
-  parent_ = nullptr;
-  config_ = NvsDeviceConfig{};
+void EleroDynamicCover::reset_entity_state_() {
   position_ = 0.5f;
   tilt_ = 0.0f;
   current_operation_ = Operation::IDLE;
-  last_state_raw_ = 0;
-  last_seen_ms_ = 0;
-  // Clear command queue
-  while (!commands_.empty()) commands_.pop();
 }
+
+// ─── State handling ───
 
 void EleroDynamicCover::set_rx_state(uint8_t state) {
   last_state_raw_ = state;
@@ -70,15 +45,10 @@ void EleroDynamicCover::set_rx_state(uint8_t state) {
   }
 
   if (result.is_warning) {
-    ESP_LOGW(TAG, "Cover 0x%06x: %s", config_.dst_address, result.warning_msg);
+    ESP_LOGW(entity_tag_(), "Cover 0x%06x: %s", config_.dst_address, result.warning_msg);
   }
 
   publish_state_();
-}
-
-void EleroDynamicCover::notify_rx_meta(uint32_t ms, float rssi) {
-  last_seen_ms_ = ms;
-  last_rssi_ = rssi;
 }
 
 const char *EleroDynamicCover::get_operation_str() const {
@@ -92,17 +62,8 @@ const char *EleroDynamicCover::get_operation_str() const {
 bool EleroDynamicCover::perform_action(const char *action) {
   uint8_t cmd = elero_action_to_command(action);
   if (cmd == packet::command::INVALID) return false;
-  enqueue_command(cmd);
+  (void)sender_.enqueue(cmd);
   return true;
-}
-
-void EleroDynamicCover::enqueue_command(uint8_t cmd_byte) {
-  if (!active_ || parent_ == nullptr) return;
-  if (commands_.size() >= packet::limits::MAX_COMMAND_QUEUE) {
-    ESP_LOGW(TAG, "Command queue full for 0x%06x", config_.dst_address);
-    return;
-  }
-  commands_.push(cmd_byte);
 }
 
 void EleroDynamicCover::schedule_immediate_poll() {
@@ -110,19 +71,21 @@ void EleroDynamicCover::schedule_immediate_poll() {
 }
 
 void EleroDynamicCover::apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms, uint32_t poll_intvl_ms) {
-  config_.open_duration_ms = open_dur_ms;
-  config_.close_duration_ms = close_dur_ms;
-  config_.poll_interval_ms = poll_intvl_ms;
+  if (open_dur_ms != 0)
+    config_.open_duration_ms = open_dur_ms;
+  if (close_dur_ms != 0)
+    config_.close_duration_ms = close_dur_ms;
+  if (poll_intvl_ms != 0)
+    config_.poll_interval_ms = poll_intvl_ms;
 }
 
-void EleroDynamicCover::loop(uint32_t now) {
-  if (!active_ || parent_ == nullptr) return;
+// ─── Loop ───
 
-  // Send queued commands
-  if (!commands_.empty() && (now - last_command_ms_ >= packet::timing::DELAY_SEND_PACKETS)) {
-    send_next_command_();
-    last_command_ms_ = now;
-  }
+void EleroDynamicCover::loop(uint32_t now) {
+  if (!active_ || parent_ == nullptr || !registered_) return;
+
+  // Process command queue (handles retries, timing, non-blocking TX)
+  sender_.process_queue(now, parent_, entity_tag_());
 
   // Position estimation during movement
   if (current_operation_ != Operation::IDLE && movement_start_ms_ > 0) {
@@ -141,7 +104,7 @@ void EleroDynamicCover::loop(uint32_t now) {
 
     // Timeout
     if (elapsed > packet::timing::TIMEOUT_MOVEMENT) {
-      ESP_LOGW(TAG, "Movement timeout for 0x%06x", config_.dst_address);
+      ESP_LOGW(entity_tag_(), "Movement timeout for 0x%06x", config_.dst_address);
       current_operation_ = Operation::IDLE;
       publish_state_();
     }
@@ -155,7 +118,7 @@ void EleroDynamicCover::loop(uint32_t now) {
                      (poll_interval > 0 && poll_interval < UINT32_MAX &&
                       (now - last_poll_ms_ >= poll_interval + poll_offset_));
   if (should_poll) {
-    enqueue_command(packet::command::CHECK);
+    (void)sender_.enqueue(packet::command::CHECK);
     last_poll_ms_ = now;
     immediate_poll_ = false;
   }
@@ -167,27 +130,5 @@ void EleroDynamicCover::publish_state_() {
   }
 }
 
-void EleroDynamicCover::send_next_command_() {
-  if (commands_.empty() || parent_ == nullptr) return;
-
-  uint8_t cmd_byte = commands_.front();
-  commands_.pop();
-
-  EleroCommand cmd{};
-  cmd.counter = counter_++;
-  cmd.dst_addr = config_.dst_address;
-  cmd.src_addr = config_.src_address;
-  cmd.channel = config_.channel;
-  cmd.type = config_.type_byte;
-  cmd.type2 = config_.type2;
-  cmd.hop = config_.hop;
-  cmd.payload[0] = config_.payload_1;
-  cmd.payload[1] = config_.payload_2;
-  cmd.payload[2] = cmd_byte;
-
-  if (!parent_->send_command(&cmd)) {
-    ESP_LOGW(TAG, "TX failed for 0x%06x cmd=0x%02x", config_.dst_address, cmd_byte);
-  }
-}
-
-}  // namespace esphome::elero
+}  // namespace elero
+}  // namespace esphome

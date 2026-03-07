@@ -16,9 +16,9 @@
 namespace esphome {
 namespace elero {
 
-/// WebSocket server - acts as RF bridge and log forwarder
-/// Server → Client: config (on connect), rf (packets), log (ESPHome logs)
-/// Client → Server: cmd (blind commands), raw (raw RF packets)
+/// WebSocket server - acts as RF bridge, log forwarder, and CRUD proxy
+/// Server → Client: config (on connect), rf (packets), log (ESPHome logs), crud events
+/// Client → Server: cmd (blind commands), raw (raw RF packets), save_device, remove_device, update_device, enable_device
 class EleroWebServer : public Component, public logger::LogListener {
  public:
   void setup() override;
@@ -71,6 +71,11 @@ class EleroWebServer : public Component, public logger::LogListener {
   // Device CRUD handlers (MQTT mode)
   void handle_save_device_(struct mg_connection *c, const std::string &msg);
   void handle_remove_device_(struct mg_connection *c, const std::string &msg);
+  void handle_update_device_(struct mg_connection *c, const std::string &msg);
+  void handle_enable_device_(struct mg_connection *c, const std::string &msg);
+
+  // Parse NvsDeviceConfig from JSON message (shared by save/update)
+  bool parse_device_config_(const std::string &msg, NvsDeviceConfig &config, std::string &error);
 };
 
 }  // namespace elero

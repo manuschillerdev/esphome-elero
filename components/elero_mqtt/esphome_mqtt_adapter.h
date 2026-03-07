@@ -6,7 +6,8 @@
 #include "esphome/components/mqtt/mqtt_client.h"
 #endif
 
-namespace esphome::elero {
+namespace esphome {
+namespace elero {
 
 /// Adapts ESPHome's global MQTT client to our MqttPublisher interface.
 class EspHomeMqttAdapter : public MqttPublisher {
@@ -46,4 +47,5 @@ class EspHomeMqttAdapter : public MqttPublisher {
   }
 };
 
-}  // namespace esphome::elero
+}  // namespace elero
+}  // namespace esphome

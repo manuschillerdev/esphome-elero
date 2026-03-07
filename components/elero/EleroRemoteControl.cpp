@@ -1,16 +1,65 @@
 #include "EleroRemoteControl.h"
-#include <cstring>
+#include "esphome/core/log.h"
 
-namespace esphome::elero {
+namespace esphome {
+namespace elero {
 
-void EleroRemoteControl::set_title(const char *title) {
-  if (title == nullptr) {
-    title_[0] = '\0';
-    return;
+static constexpr const char *TAG = "elero.remote";
+
+// ─── Persistence ───
+
+bool EleroRemoteControl::restore() {
+  NvsDeviceConfig cfg{};
+  if (!pref_.load(&cfg) || !cfg.is_valid()) {
+    return false;
   }
-  strncpy(title_, title, sizeof(title_) - 1);
-  title_[sizeof(title_) - 1] = '\0';
+  config_ = cfg;
+  return true;
 }
+
+bool EleroRemoteControl::save_config() {
+  config_.type = DeviceType::REMOTE;
+  if (!pref_.save(&config_)) {
+    ESP_LOGE(TAG, "NVS save failed for remote 0x%06x", config_.dst_address);
+    return false;
+  }
+  return true;
+}
+
+void EleroRemoteControl::clear_config() {
+  NvsDeviceConfig empty{};
+  pref_.save(&empty);
+}
+
+// ─── Activation ───
+
+bool EleroRemoteControl::activate(uint32_t address, const char *name) {
+  if (active_) return false;
+  if (address == 0) return false;
+
+  config_.type = DeviceType::REMOTE;
+  config_.dst_address = address;
+  if (name != nullptr) {
+    config_.set_name(name);
+  }
+  active_ = true;
+  return true;
+}
+
+void EleroRemoteControl::deactivate() {
+  if (!active_) return;
+  clear_config();
+  active_ = false;
+  config_ = NvsDeviceConfig{};
+  rssi_ = 0.0f;
+  last_seen_ms_ = 0;
+  last_channel_ = 0;
+  last_command_ = 0;
+  last_target_ = 0;
+  state_callback_ = nullptr;
+}
+
+// ─── State ───
 
 void EleroRemoteControl::update_from_packet(uint32_t timestamp_ms, float rssi, uint8_t channel,
                                              uint8_t command, uint32_t target_addr) {
@@ -25,15 +74,5 @@ void EleroRemoteControl::update_from_packet(uint32_t timestamp_ms, float rssi, u
   }
 }
 
-void EleroRemoteControl::deactivate() {
-  address_ = 0;
-  title_[0] = '\0';
-  rssi_ = 0.0f;
-  last_seen_ms_ = 0;
-  last_channel_ = 0;
-  last_command_ = 0;
-  last_target_ = 0;
-  state_callback_ = nullptr;
-}
-
-}  // namespace esphome::elero
+}  // namespace elero
+}  // namespace esphome

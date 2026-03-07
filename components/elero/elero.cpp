@@ -1101,6 +1101,10 @@ void Elero::register_cover(EleroBlindBase *cover) {
   cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * packet::timing::POLL_OFFSET_SPACING);
 }
 
+void Elero::unregister_cover(uint32_t address) {
+  this->address_to_cover_mapping_.erase(address);
+}
+
 void Elero::register_light(EleroLightBase *light) {
   uint32_t address = light->get_blind_address();
   if (this->address_to_light_mapping_.find(address) != this->address_to_light_mapping_.end()) {
@@ -1108,6 +1112,10 @@ void Elero::register_light(EleroLightBase *light) {
     return;
   }
   this->address_to_light_mapping_.insert({address, light});
+}
+
+void Elero::unregister_light(uint32_t address) {
+  this->address_to_light_mapping_.erase(address);
 }
 
 #ifdef USE_SENSOR
