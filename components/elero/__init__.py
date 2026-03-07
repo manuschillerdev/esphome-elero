@@ -1,5 +1,3 @@
-import subprocess
-
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
@@ -8,21 +6,8 @@ from esphome.const import CONF_ID
 
 DEPENDENCIES = ["spi"]
 
+# x-release-please-version
 ELERO_VERSION = "0.9.0"
-
-
-def _get_git_commit_hash() -> str:
-    try:
-        return (
-            subprocess.check_output(
-                ["git", "rev-parse", "--short", "HEAD"],
-                stderr=subprocess.DEVNULL,
-            )
-            .decode()
-            .strip()
-        )
-    except Exception:
-        return "unknown"
 
 elero_ns = cg.esphome_ns.namespace("elero")
 elero = elero_ns.class_("Elero", spi.SPIDevice, cg.Component)
@@ -60,4 +45,3 @@ async def to_code(config):
     cg.add(var.set_freq2(config[CONF_FREQ2]))
 
     cg.add(var.set_version(ELERO_VERSION))
-    cg.add(var.set_commit_hash(_get_git_commit_hash()))

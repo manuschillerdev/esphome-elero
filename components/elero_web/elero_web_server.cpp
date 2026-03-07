@@ -322,7 +322,6 @@ std::string EleroWebServer::build_config_json() {
   return json::build_json([this](JsonObject root) {
     root["device"] = App.get_name();
     root["version"] = this->parent_->get_version();
-    root["commit"] = this->parent_->get_commit_hash();
 
     JsonObject freq = root["freq"].to<JsonObject>();
     freq["freq2"] = hex_str8(this->parent_->get_freq2());
