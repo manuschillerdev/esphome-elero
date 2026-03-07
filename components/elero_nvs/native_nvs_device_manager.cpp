@@ -65,7 +65,7 @@ void NativeNvsDeviceManager::setup() {
         // Create a LightState wrapper — ESPHome native API needs this
         auto *ls = new light::LightState(&light_slots_[i]);
         ls->set_name(light_slots_[i].config().name);
-        ls->set_object_id(light_slots_[i].config().name);
+
         App.register_light(ls);
         App.register_component(ls);
         App.register_component(&light_slots_[i]);
@@ -183,7 +183,7 @@ bool NativeNvsDeviceManager::upsert_device(const NvsDeviceConfig &config) {
       } else {
         auto *ls = new light::LightState(slot);
         ls->set_name(slot->config().name);
-        ls->set_object_id(slot->config().name);
+
         App.register_light(ls);
         App.register_component(ls);
         App.register_component(slot);
