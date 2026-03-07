@@ -15,11 +15,10 @@
 namespace esphome {
 namespace elero {
 
-/// Simplified WebSocket server - acts as RF bridge
-/// Server → Client: config (on connect), rf (packets)
-/// Client → Server: cmd (blind commands)
-/// Note: Log forwarding requires ESPHome 2025.12.0+ with LogListener support
-class EleroWebServer : public Component {
+/// WebSocket server - acts as RF bridge and log forwarder
+/// Server → Client: config (on connect), rf (packets), log (ESPHome logs)
+/// Client → Server: cmd (blind commands), raw (raw RF packets)
+class EleroWebServer : public Component, public logger::LogListener {
  public:
   void setup() override;
   void loop() override;
@@ -35,6 +34,9 @@ class EleroWebServer : public Component {
 
   // Called from hub when RF packet is received
   void on_rf_packet(const RfPacketInfo &pkt);
+
+  // LogListener interface - forward logs to WebSocket clients
+  void on_log(uint8_t level, const char *tag, const char *message, size_t message_len) override;
 
  protected:
   Elero *parent_{nullptr};
