@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks'
+import { useSignal } from '@preact/signals'
 import { Card } from './ui/card'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
@@ -23,16 +23,16 @@ export function HubPanel() {
   const lights = useStore((s) => s.config.lights)
 
   // Raw TX form state
-  const [dstAddr, setDstAddr] = useState('0x')
-  const [srcAddr, setSrcAddr] = useState('0x')
-  const [channel, setChannel] = useState(1)
-  const [command, setCommand] = useState('0x00')
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [payload1, setPayload1] = useState('0x00')
-  const [payload2, setPayload2] = useState('0x04')
-  const [msgType, setMsgType] = useState('0x6a')
-  const [type2, setType2] = useState('0x00')
-  const [hop, setHop] = useState('0x0a')
+  const dstAddr = useSignal('0x')
+  const srcAddr = useSignal('0x')
+  const channel = useSignal(1)
+  const cmd = useSignal('0x00')
+  const showAdvanced = useSignal(false)
+  const payload1 = useSignal('0x00')
+  const payload2 = useSignal('0x04')
+  const msgType = useSignal('0x6a')
+  const type2 = useSignal('0x00')
+  const hop = useSignal('0x0a')
 
   // Compute frequency from registers
   const f2 = parseFreq(freq.freq2, 0x21)
@@ -42,21 +42,21 @@ export function HubPanel() {
 
   const handleSendRaw = () => {
     sendRawCommand({
-      dst_address: dstAddr,
-      src_address: srcAddr,
-      channel,
-      command,
-      payload_1: payload1,
-      payload_2: payload2,
-      msg_type: msgType,
-      type2,
-      hop,
+      dst_address: dstAddr.value,
+      src_address: srcAddr.value,
+      channel: channel.value,
+      command: cmd.value,
+      payload_1: payload1.value,
+      payload_2: payload2.value,
+      msg_type: msgType.value,
+      type2: type2.value,
+      hop: hop.value,
     })
   }
 
   // Check if form is valid
   const isValidHex = (s: string) => /^0x[0-9a-fA-F]+$/.test(s)
-  const isFormValid = isValidHex(dstAddr) && isValidHex(srcAddr) && isValidHex(command) && channel >= 0 && channel <= 255
+  const isFormValid = isValidHex(dstAddr.value) && isValidHex(srcAddr.value) && isValidHex(cmd.value) && channel.value >= 0 && channel.value <= 255
 
   return (
     <div className="flex flex-col gap-6">
@@ -161,8 +161,8 @@ export function HubPanel() {
               <label className="text-xs font-medium text-muted-foreground">dst_address</label>
               <input
                 type="text"
-                value={dstAddr}
-                onChange={(e) => setDstAddr((e.target as HTMLInputElement).value)}
+                value={dstAddr.value}
+                onInput={(e) => { dstAddr.value = (e.target as HTMLInputElement).value }}
                 placeholder="0x313238"
                 className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
@@ -171,8 +171,8 @@ export function HubPanel() {
               <label className="text-xs font-medium text-muted-foreground">src_address</label>
               <input
                 type="text"
-                value={srcAddr}
-                onChange={(e) => setSrcAddr((e.target as HTMLInputElement).value)}
+                value={srcAddr.value}
+                onInput={(e) => { srcAddr.value = (e.target as HTMLInputElement).value }}
                 placeholder="0x17a753"
                 className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
@@ -181,8 +181,8 @@ export function HubPanel() {
               <label className="text-xs font-medium text-muted-foreground">Channel</label>
               <input
                 type="number"
-                value={channel}
-                onChange={(e) => setChannel(parseInt((e.target as HTMLInputElement).value) || 0)}
+                value={channel.value}
+                onInput={(e) => { channel.value = parseInt((e.target as HTMLInputElement).value) || 0 }}
                 min="0"
                 max="255"
                 className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
@@ -191,8 +191,8 @@ export function HubPanel() {
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-muted-foreground">Command</label>
               <select
-                value={command}
-                onChange={(e) => setCommand((e.target as HTMLSelectElement).value)}
+                value={cmd.value}
+                onChange={(e) => { cmd.value = (e.target as HTMLSelectElement).value }}
                 className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               >
                 {COMMAND_PRESETS.map((preset) => (
@@ -207,21 +207,21 @@ export function HubPanel() {
           {/* Advanced fields toggle */}
           <button
             type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
+            onClick={() => { showAdvanced.value = !showAdvanced.value }}
             className="text-xs text-muted-foreground hover:text-foreground"
           >
-            {showAdvanced ? '- Hide advanced fields' : '+ Show advanced fields'}
+            {showAdvanced.value ? '- Hide advanced fields' : '+ Show advanced fields'}
           </button>
 
           {/* Advanced fields */}
-          {showAdvanced && (
+          {showAdvanced.value && (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-medium text-muted-foreground">payload_1</label>
                 <input
                   type="text"
-                  value={payload1}
-                  onChange={(e) => setPayload1((e.target as HTMLInputElement).value)}
+                  value={payload1.value}
+                  onInput={(e) => { payload1.value = (e.target as HTMLInputElement).value }}
                   className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
@@ -229,8 +229,8 @@ export function HubPanel() {
                 <label className="text-xs font-medium text-muted-foreground">payload_2</label>
                 <input
                   type="text"
-                  value={payload2}
-                  onChange={(e) => setPayload2((e.target as HTMLInputElement).value)}
+                  value={payload2.value}
+                  onInput={(e) => { payload2.value = (e.target as HTMLInputElement).value }}
                   className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
@@ -238,8 +238,8 @@ export function HubPanel() {
                 <label className="text-xs font-medium text-muted-foreground">type</label>
                 <input
                   type="text"
-                  value={msgType}
-                  onChange={(e) => setMsgType((e.target as HTMLInputElement).value)}
+                  value={msgType.value}
+                  onInput={(e) => { msgType.value = (e.target as HTMLInputElement).value }}
                   className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
@@ -247,8 +247,8 @@ export function HubPanel() {
                 <label className="text-xs font-medium text-muted-foreground">type2</label>
                 <input
                   type="text"
-                  value={type2}
-                  onChange={(e) => setType2((e.target as HTMLInputElement).value)}
+                  value={type2.value}
+                  onInput={(e) => { type2.value = (e.target as HTMLInputElement).value }}
                   className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
@@ -256,8 +256,8 @@ export function HubPanel() {
                 <label className="text-xs font-medium text-muted-foreground">hop</label>
                 <input
                   type="text"
-                  value={hop}
-                  onChange={(e) => setHop((e.target as HTMLInputElement).value)}
+                  value={hop.value}
+                  onInput={(e) => { hop.value = (e.target as HTMLInputElement).value }}
                   className="rounded-md border bg-background px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>

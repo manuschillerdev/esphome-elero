@@ -3,7 +3,7 @@ import { useStore } from './store'
 let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
-export function connect() {
+export function initWs() {
   if (ws) {
     ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null
     ws.close()
@@ -25,7 +25,7 @@ export function connect() {
     useStore.getState().setConnected(false)
     if (ws === socket) {
       ws = null
-      reconnectTimer = setTimeout(connect, 2000)
+      reconnectTimer = setTimeout(initWs, 2000)
     }
   }
 
@@ -40,6 +40,7 @@ export function connect() {
     if (event === 'config') {
       state.setConfig(data)
     } else if (event === 'rf') {
+      data.received_at = Date.now()
       state.addRfPacket(data)
     } else if (event === 'log') {
       state.addLog(data)
@@ -47,9 +48,19 @@ export function connect() {
   }
 }
 
-export function sendCommand(address: string, action: 'up' | 'down' | 'stop' | 'tilt') {
+export function sendCommand(address: string, action: 'up' | 'down' | 'stop' | 'tilt' | 'check') {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'cmd', address, action }))
+  }
+}
+
+export function sendCheckAll() {
+  const { blinds, lights } = useStore.getState().config
+  for (const blind of blinds) {
+    sendCommand(blind.address, 'check')
+  }
+  for (const light of lights) {
+    sendCommand(light.address, 'check')
   }
 }
 
@@ -79,17 +90,5 @@ export function sendRawCommand(params: RawTxParams) {
       type2: params.type2 ?? '0x00',
       hop: params.hop ?? '0x0a',
     }))
-  }
-}
-
-export function disconnect() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-  if (ws) {
-    ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null
-    ws.close()
-    ws = null
   }
 }

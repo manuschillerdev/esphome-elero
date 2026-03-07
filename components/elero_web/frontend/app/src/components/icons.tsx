@@ -282,6 +282,18 @@ export function Blinds(props: IconProps) {
   )
 }
 
+// Handheld remote control icon (distinct from Radio which means RF signal)
+export function RemoteControl(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <rect x="6" y="2" width="12" height="20" rx="3" />
+      <circle cx="12" cy="8" r="1" fill="currentColor" stroke="none" />
+      <path d="M9 13h6" />
+      <path d="M9 16h6" />
+    </svg>
+  )
+}
+
 export function Power(props: IconProps) {
   return (
     <svg {...defaultProps} {...props}>

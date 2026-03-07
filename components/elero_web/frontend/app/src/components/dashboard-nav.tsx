@@ -1,18 +1,17 @@
 import { Badge } from './ui/badge'
 import { cn } from '@/lib/utils'
-import { Monitor, Radio, FileText, Settings } from './icons'
+import { Monitor, Radio, Settings } from './icons'
 import { useStore } from '@/store'
 
 export function DashboardNav() {
   const activeTab = useStore((s) => s.activeTab)
   const blinds = useStore((s) => s.config.blinds)
+  const lights = useStore((s) => s.config.lights)
   const rfPackets = useStore((s) => s.rfPackets)
-  const logs = useStore((s) => s.logs)
 
   const tabs = [
-    { id: 'devices' as const, label: 'Devices', icon: Monitor, count: blinds.length },
+    { id: 'devices' as const, label: 'Devices', icon: Monitor, count: blinds.length + lights.length },
     { id: 'packets' as const, label: 'RF Packets', icon: Radio, count: rfPackets.length },
-    { id: 'logs' as const, label: 'Logs', icon: FileText, count: logs.length },
     { id: 'hub' as const, label: 'Hub', icon: Settings },
   ]
 

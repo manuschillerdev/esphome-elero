@@ -1,30 +1,90 @@
-import { useMemo } from 'preact/hooks'
+import { useSignal } from '@preact/signals'
 import { Card } from './ui/card'
-import { Button } from './ui/button'
 import { Badge } from './ui/badge'
-import { Radio, Trash2, ChevronDown, Blinds, Lightbulb } from './icons'
-import { useStore, deriveDeviceType, type DeviceType, type DeviceTypeFilter } from '@/store'
+import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
+import { FilterBar, type FilterOption } from './ui/filter-bar'
+import { DataTable, type Column } from './ui/data-table'
+import { Blinds, Lightbulb, Copy, CheckCircle2, RemoteControl, Trash2 } from './icons'
+import {
+  useStore, buildConfigNames, buildAddressTypes,
+  isStatusPacket, isCommandPacket, isButtonPacket,
+  getMsgTypeLabel, getCommandLabel, getStateLabel,
+  type RfPacket, type DeviceType, type DeviceTypeFilter,
+} from '@/store'
 import { cn } from '@/lib/utils'
 
-function formatTime(ms: number): string {
-  if (!ms) return ''
-  const s = Math.floor(ms / 1000)
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function formatTime(epochMs: number | undefined): string {
+  if (!epochMs) return ''
+  const d = new Date(epochMs)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
 }
 
-const deviceTypeLabels: Record<DeviceType, string> = {
-  blind: 'Blind',
-  light: 'Light',
-  remote: 'Remote',
-  unknown: '?',
+const deviceTypeIcons: Record<DeviceType, typeof Blinds | null> = {
+  blind: Blinds,
+  light: Lightbulb,
+  remote: RemoteControl,
+  unknown: null,
 }
 
-const deviceTypeColors: Record<DeviceType, string> = {
-  blind: 'bg-primary/10 text-primary',
-  light: 'bg-warning/10 text-warning-foreground',
-  remote: 'bg-muted text-muted-foreground',
-  unknown: 'bg-muted text-muted-foreground',
+// ─── Copy Button ────────────────────────────────────────────────────────────
+
+function CopyPacketBtn({ pkt }: { pkt: RfPacket }) {
+  const copied = useSignal(false)
+
+  const onClick = () => {
+    const { received_at: _, ...rest } = pkt as Record<string, unknown>
+    navigator.clipboard.writeText(JSON.stringify(rest, null, 2))
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 1500)
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger>
+        <button
+          className={cn(
+            'flex size-6 items-center justify-center rounded transition-colors',
+            copied.value ? 'text-success' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+          )}
+          onClick={onClick}
+        >
+          {copied.value ? <CheckCircle2 className="size-3" /> : <Copy className="size-3" />}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="right-0 left-auto translate-x-0">Copy packet JSON</TooltipContent>
+    </Tooltip>
+  )
 }
+
+// ─── Address Rendering ──────────────────────────────────────────────────────
+
+function AddressCell({ addr, name, deviceType }: { addr: string; name?: string; deviceType: DeviceType }) {
+  const Icon = deviceTypeIcons[deviceType]
+  return (
+    <span className="flex items-center gap-2">
+      <span className="flex flex-col">
+        {name ? (
+          <>
+            <span className="text-foreground">{name}</span>
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              {Icon && <Icon className="size-2.5" />}
+              {addr}
+            </span>
+          </>
+        ) : (
+          <span className="flex items-center gap-1">
+            {Icon && <Icon className="size-3" />}
+            {addr}
+          </span>
+        )}
+      </span>
+    </span>
+  )
+}
+
+// ─── Main Component ─────────────────────────────────────────────────────────
 
 export function RfPackets() {
   const rfPackets = useStore((s) => s.rfPackets)
@@ -32,146 +92,116 @@ export function RfPackets() {
   const deviceTypeFilter = useStore((s) => s.deviceTypeFilter)
   const blinds = useStore((s) => s.config.blinds)
   const lights = useStore((s) => s.config.lights)
+  const remoteNames = useStore((s) => s.remoteNames)
 
-  // Build address -> name lookup from config
-  const configNames = useMemo(() => {
-    const map: Record<string, string> = {}
-    blinds.forEach((b) => { map[b.address] = b.name })
-    lights.forEach((l) => { map[l.address] = l.name })
-    return map
-  }, [blinds, lights])
+  // Derive during render — cheap, only runs when store subscriptions change
+  const configNames = buildConfigNames(blinds, lights, remoteNames)
+  const addressTypes = buildAddressTypes(blinds, lights, rfPackets)
 
-  // Build address -> derived type lookup
-  const addressTypes = useMemo(() => {
-    const map: Record<string, DeviceType> = {}
+  const uniqueAddresses = (() => {
     const seen = new Set<string>()
-    rfPackets.forEach((p) => {
-      seen.add(p.src)
-      seen.add(p.dst)
-    })
-    seen.forEach((addr) => {
-      map[addr] = deriveDeviceType(rfPackets, addr)
-    })
-    return map
-  }, [rfPackets])
-
-  // Build unique addresses for dropdown, grouped by type
-  const uniqueAddresses = useMemo(() => {
-    const seen = new Set<string>()
-    rfPackets.forEach((p) => {
-      seen.add(p.src)
-      seen.add(p.dst)
-    })
+    rfPackets.forEach((p) => { seen.add(p.src); seen.add(p.dst) })
     return Array.from(seen).sort((a, b) => {
-      // Sort by: configured first, then by type, then by address
       const aConfigured = !!configNames[a]
       const bConfigured = !!configNames[b]
       if (aConfigured && !bConfigured) return -1
       if (!aConfigured && bConfigured) return 1
-      const aType = addressTypes[a] ?? 'unknown'
-      const bType = addressTypes[b] ?? 'unknown'
-      if (aType !== bType) return aType.localeCompare(bType)
       return a.localeCompare(b)
     })
-  }, [rfPackets, configNames, addressTypes])
+  })()
 
-  const filtered = useMemo(() => {
+  const typeCounts = (() => {
+    let blindCount = 0
+    let lightCount = 0
+    rfPackets.forEach((p) => {
+      const srcType = addressTypes[p.src]
+      const dstType = addressTypes[p.dst]
+      if (srcType === 'blind' || dstType === 'blind') blindCount++
+      if (srcType === 'light' || dstType === 'light') lightCount++
+    })
+    return { all: rfPackets.length, blinds: blindCount, lights: lightCount }
+  })()
+
+  const filtered = (() => {
     let pkts = rfPackets
-
-    // Filter by address
-    if (rfFilter) {
-      pkts = pkts.filter((p) => p.src === rfFilter || p.dst === rfFilter)
-    }
-
-    // Filter by device type
+    if (rfFilter) pkts = pkts.filter((p) => p.src === rfFilter || p.dst === rfFilter)
     if (deviceTypeFilter !== 'all') {
       pkts = pkts.filter((p) => {
         const srcType = addressTypes[p.src]
         const dstType = addressTypes[p.dst]
-        if (deviceTypeFilter === 'blinds') {
-          return srcType === 'blind' || dstType === 'blind'
-        }
-        if (deviceTypeFilter === 'lights') {
-          return srcType === 'light' || dstType === 'light'
-        }
+        if (deviceTypeFilter === 'blinds') return srcType === 'blind' || dstType === 'blind'
+        if (deviceTypeFilter === 'lights') return srcType === 'light' || dstType === 'light'
         return true
       })
     }
-
     return pkts.slice(-50).reverse()
-  }, [rfPackets, rfFilter, deviceTypeFilter, addressTypes])
-
-  const renderAddress = (addr: string) => {
-    const name = configNames[addr]
-    const deviceType = addressTypes[addr] ?? 'unknown'
-
-    return (
-      <span className="flex items-center gap-2">
-        <span className="flex flex-col">
-          {name ? (
-            <>
-              <span className="text-foreground">{name}</span>
-              <span className="text-[10px] text-muted-foreground">{addr}</span>
-            </>
-          ) : (
-            <span>{addr}</span>
-          )}
-        </span>
-        {deviceType !== 'unknown' && (
-          <Badge variant="secondary" className={cn('text-[9px] px-1.5 py-0', deviceTypeColors[deviceType])}>
-            {deviceTypeLabels[deviceType]}
-          </Badge>
-        )}
-      </span>
-    )
-  }
+  })()
 
   const formatDropdownLabel = (addr: string) => {
     const name = configNames[addr]
     const deviceType = addressTypes[addr] ?? 'unknown'
-    const typeLabel = deviceType !== 'unknown' ? ` [${deviceTypeLabels[deviceType]}]` : ''
+    const typeLabel = deviceType !== 'unknown' ? ` [${deviceType}]` : ''
     return name ? `${name} (${addr})${typeLabel}` : `${addr}${typeLabel}`
   }
 
-  return (
-    <Card className="gap-0 overflow-hidden p-0">
-      <div className="flex items-center justify-between border-b border-border px-5 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <Radio className="size-4" />
-          </div>
-          <div>
-            <h2 className="text-sm font-semibold text-card-foreground">RF Packets</h2>
-            <p className="text-xs text-muted-foreground">{rfPackets.length} packets captured</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Device type filter */}
-          <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
-            {([
-              { value: 'all', label: 'All' },
-              { value: 'blinds', label: 'Blinds', icon: Blinds },
-              { value: 'lights', label: 'Lights', icon: Lightbulb },
-            ] as { value: DeviceTypeFilter; label: string; icon?: typeof Blinds }[]).map((dt) => {
-              const Icon = dt.icon
-              return (
-                <button
-                  key={dt.value}
-                  onClick={() => useStore.getState().setDeviceTypeFilter(dt.value)}
-                  className={cn(
-                    'flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
-                    deviceTypeFilter === dt.value
-                      ? 'bg-card text-card-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  {Icon ? <Icon className="size-3" /> : dt.label}
-                </button>
-              )
-            })}
-          </div>
+  const deviceTypeFilters: FilterOption<DeviceTypeFilter>[] = [
+    { value: 'all' as const, label: 'All', count: typeCounts.all },
+    { value: 'blinds' as const, icon: Blinds, count: typeCounts.blinds },
+    { value: 'lights' as const, icon: Lightbulb, count: typeCounts.lights },
+  ]
 
-          {/* Address filter */}
+  const columns: Column<RfPacket>[] = [
+    {
+      key: 'time', label: 'Time', sortable: true,
+      value: (pkt) => pkt.received_at ?? pkt.t,
+      render: (pkt) => <span className="text-muted-foreground">{formatTime(pkt.received_at)}</span>,
+    },
+    {
+      key: 'source', label: 'Source', sortable: true,
+      value: (pkt) => configNames[pkt.src] || pkt.src,
+      render: (pkt) => <AddressCell addr={pkt.src} name={configNames[pkt.src]} deviceType={addressTypes[pkt.src] ?? 'unknown'} />,
+    },
+    {
+      key: 'destination', label: 'Destination', sortable: true,
+      value: (pkt) => configNames[pkt.dst] || pkt.dst,
+      render: (pkt) => <AddressCell addr={pkt.dst} name={configNames[pkt.dst]} deviceType={addressTypes[pkt.dst] ?? 'unknown'} />,
+    },
+    {
+      key: 'channel', label: 'CH', sortable: true,
+      value: (pkt) => pkt.channel ?? 0,
+      render: (pkt) => <span className="text-muted-foreground">{pkt.channel ?? '-'}</span>,
+    },
+    {
+      key: 'type', label: 'Type', sortable: true,
+      value: (pkt) => getMsgTypeLabel(pkt.type),
+      render: (pkt) => <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{getMsgTypeLabel(pkt.type)}</Badge>,
+    },
+    {
+      key: 'command', label: 'Command', sortable: true,
+      value: (pkt) => (isCommandPacket(pkt) || isButtonPacket(pkt)) ? getCommandLabel(pkt.command) : '',
+      render: (pkt) => <span className="text-muted-foreground">{(isCommandPacket(pkt) || isButtonPacket(pkt)) ? getCommandLabel(pkt.command) : '-'}</span>,
+    },
+    {
+      key: 'state', label: 'State', sortable: true,
+      value: (pkt) => isStatusPacket(pkt) ? getStateLabel(pkt.state) : '',
+      render: (pkt) => isStatusPacket(pkt) ? getStateLabel(pkt.state) : '-',
+    },
+    {
+      key: 'rssi', label: 'RSSI', sortable: true,
+      value: (pkt) => pkt.rssi ?? 0,
+      render: (pkt) => <span className="text-muted-foreground">{pkt.rssi?.toFixed(1) ?? '-'}</span>,
+    },
+    {
+      key: 'actions', label: '',
+      render: (pkt) => <CopyPacketBtn pkt={pkt} />,
+    },
+  ]
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <FilterBar options={deviceTypeFilters} value={deviceTypeFilter} onChange={(v) => useStore.getState().setDeviceTypeFilter(v)} />
           <div className="relative">
             <select
               value={rfFilter}
@@ -184,61 +214,32 @@ export function RfPackets() {
             >
               <option value="">All addresses</option>
               {uniqueAddresses.map((addr) => (
-                <option key={addr} value={addr}>
-                  {formatDropdownLabel(addr)}
-                </option>
+                <option key={addr} value={addr}>{formatDropdownLabel(addr)}</option>
               ))}
             </select>
-            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <svg className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
           </div>
-
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5 text-xs"
-            onClick={() => useStore.getState().clearRfPackets()}
-          >
-            <Trash2 className="size-3" />
-            Clear
-          </Button>
         </div>
+        <button
+          className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
+          onClick={() => useStore.getState().clearRfPackets()}
+        >
+          <Trash2 className="size-3" />
+          Clear
+        </button>
       </div>
 
-      <div className="max-h-[500px] overflow-y-auto">
-        <table className="w-full text-xs font-mono">
-          <thead className="bg-muted/50 sticky top-0">
-            <tr>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Time</th>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Source</th>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Destination</th>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">CH</th>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Type</th>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Cmd/State</th>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">RSSI</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((pkt, i) => (
-              <tr key={`${pkt.t}-${i}`} className="border-t border-border hover:bg-muted/30">
-                <td className="px-3 py-2 text-muted-foreground">{formatTime(pkt.t)}</td>
-                <td className="px-3 py-2">{renderAddress(pkt.src)}</td>
-                <td className="px-3 py-2">{renderAddress(pkt.dst)}</td>
-                <td className="px-3 py-2 text-muted-foreground">{pkt.channel ?? '-'}</td>
-                <td className="px-3 py-2">
-                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                    {pkt.type === '0x44' ? 'BTN' : pkt.type === '0x6a' ? 'CMD' : pkt.type === '0xca' || pkt.type === '0xc9' ? 'STS' : pkt.type}
-                  </Badge>
-                </td>
-                <td className="px-3 py-2">{pkt.type === '0x6a' ? pkt.command : pkt.state}</td>
-                <td className="px-3 py-2 text-muted-foreground">{pkt.rssi?.toFixed(1) ?? '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {filtered.length === 0 && (
-          <div className="p-8 text-center text-sm text-muted-foreground">No packets</div>
-        )}
-      </div>
-    </Card>
+      <Card className="gap-0 overflow-hidden p-0">
+        <DataTable
+          columns={columns}
+          data={filtered}
+          rowKey={(pkt, i) => `${pkt.t}-${i}`}
+          defaultSort={{ key: 'time', direction: 'desc' }}
+          maxHeight="500px"
+          tableClass="font-mono"
+          emptyMessage="No packets"
+        />
+      </Card>
+    </div>
   )
 }
