@@ -220,7 +220,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   TxClient *get_tx_owner() const { return tx_owner_; }
 
   void register_cover(EleroBlindBase *cover);
+  void unregister_cover(uint32_t address);
   void register_light(EleroLightBase *light);
+  void unregister_light(uint32_t address);
 
   // Legacy blocking TX API (for backwards compatibility and simple use cases)
   [[nodiscard]] bool send_command(EleroCommand *cmd);

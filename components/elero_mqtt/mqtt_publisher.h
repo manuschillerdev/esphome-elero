@@ -3,7 +3,8 @@
 #include <cstdint>
 #include <functional>
 
-namespace esphome::elero {
+namespace esphome {
+namespace elero {
 
 /// Abstract MQTT publish interface (testable without ESPHome)
 class MqttPublisher {
@@ -15,4 +16,5 @@ class MqttPublisher {
   virtual bool is_connected() const = 0;
 };
 
-}  // namespace esphome::elero
+}  // namespace elero
+}  // namespace esphome

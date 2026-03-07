@@ -1,11 +1,16 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 
-namespace esphome::elero {
+namespace esphome {
+namespace elero {
 
-struct RfPacketInfo;  // Forward declaration
-struct NvsDeviceConfig;  // Forward declaration
+struct RfPacketInfo;      // Forward declaration
+struct NvsDeviceConfig;   // Forward declaration
+
+/// Callback for notifying external observers (e.g., web server) of CRUD events.
+using CrudEventCallback = std::function<void(const char *event, const char *json)>;
 
 /// Device type stored in NVS
 enum class DeviceType : uint8_t {
@@ -40,8 +45,13 @@ class IDeviceManager {
   virtual bool supports_crud() const = 0;
 
   /// Device CRUD (only meaningful when supports_crud() is true)
-  virtual bool add_device(const NvsDeviceConfig &config) { return false; }
-  virtual bool remove_device(DeviceType type, uint32_t dst_address) { return false; }
+  [[nodiscard]] virtual bool add_device(const NvsDeviceConfig &config) { return false; }
+  [[nodiscard]] virtual bool remove_device(DeviceType type, uint32_t dst_address) { return false; }
+  [[nodiscard]] virtual bool update_device(const NvsDeviceConfig &config) { return false; }
+  [[nodiscard]] virtual bool set_device_enabled(DeviceType type, uint32_t dst_address, bool enabled) { return false; }
+
+  /// Register a callback for CRUD event notifications (e.g., for WS broadcast)
+  virtual void set_crud_callback(CrudEventCallback cb) { (void)cb; }
 };
 
 /// No-op device manager for native (YAML) mode.
@@ -55,4 +65,5 @@ class NativeDeviceManager : public IDeviceManager {
   bool supports_crud() const override { return false; }
 };
 
-}  // namespace esphome::elero
+}  // namespace elero
+}  // namespace esphome

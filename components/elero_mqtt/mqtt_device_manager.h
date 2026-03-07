@@ -8,11 +8,12 @@
 #include "../elero/EleroRemoteControl.h"
 #include "mqtt_publisher.h"
 #include "esphome_mqtt_adapter.h"
+#include "esphome/core/preferences.h"
+#include "esphome/core/helpers.h"
 #include <string>
-#include <vector>
-#include <map>
 
-namespace esphome::elero {
+namespace esphome {
+namespace elero {
 
 /// MQTT device manager: NVS persistence + MQTT HA discovery + dynamic entities.
 class MqttDeviceManager : public IDeviceManager, public Component {
@@ -30,16 +31,16 @@ class MqttDeviceManager : public IDeviceManager, public Component {
   HubMode mode() const override { return HubMode::MQTT; }
   bool supports_crud() const override { return true; }
 
-  // ─── Device CRUD (called from web UI) ───
+  // ─── Device CRUD ───
 
-  bool add_device(const NvsDeviceConfig &config) override;
-  bool remove_device(DeviceType type, uint32_t dst_address) override;
-  bool update_device(const NvsDeviceConfig &config);
-  bool set_device_enabled(DeviceType type, uint32_t dst_address, bool enabled);
+  [[nodiscard]] bool add_device(const NvsDeviceConfig &config) override;
+  [[nodiscard]] bool remove_device(DeviceType type, uint32_t dst_address) override;
+  [[nodiscard]] bool update_device(const NvsDeviceConfig &config) override;
+  [[nodiscard]] bool set_device_enabled(DeviceType type, uint32_t dst_address, bool enabled) override;
 
-  // ─── Remote control management ───
+  // ─── CRUD event callback (for WS broadcast) ───
 
-  const std::map<uint32_t, EleroRemoteControl *> &get_remotes() const { return active_remotes_; }
+  void set_crud_callback(CrudEventCallback cb) override { crud_callback_ = std::move(cb); }
 
   // ─── Configuration setters (from codegen) ───
 
@@ -93,10 +94,15 @@ class MqttDeviceManager : public IDeviceManager, public Component {
 
   void track_remote_(const RfPacketInfo &pkt);
 
+  void init_slot_preferences_();
+
+  // ─── CRUD event notification ───
+
+  void notify_crud_(const char *event, const char *json);
+
   // ─── Members ───
 
   Elero *hub_{nullptr};
-  EspNvsStorage nvs_;
   EspHomeMqttAdapter mqtt_;
   bool mqtt_was_connected_{false};
 
@@ -111,8 +117,9 @@ class MqttDeviceManager : public IDeviceManager, public Component {
   EleroRemoteControl *remote_slots_{nullptr};
   size_t max_remotes_{0};
 
-  // Active remote tracking (address -> slot pointer)
-  std::map<uint32_t, EleroRemoteControl *> active_remotes_;
+  // CRUD event callback (optional, set by web server)
+  CrudEventCallback crud_callback_{};
 };
 
-}  // namespace esphome::elero
+}  // namespace elero
+}  // namespace esphome
