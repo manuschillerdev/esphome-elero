@@ -219,7 +219,7 @@ The system supports two mutually exclusive operating modes:
 **IDeviceManager** interface (`device_manager.h`) decouples the hub from mode-specific logic:
 - Hub holds `IDeviceManager*` — `nullptr` in native mode, `MqttDeviceManager*` in MQTT mode
 - Hub calls `device_manager_->on_rf_packet()` for every decoded packet
-- Web server calls `dm->add_device()` / `dm->remove_device()` etc. for CRUD
+- Web server calls `dm->upsert_device()` / `dm->remove_device()` for CRUD
 - `NativeDeviceManager` is a no-op implementation for native mode
 
 ### Component Hierarchy
@@ -270,7 +270,7 @@ Key patterns:
 - `update_config()` for non-destructive config update (1 NVS write, no crash window)
 - `deactivate()` is destructive: clears NVS, unregisters from hub, resets all state
 - State callbacks must be set BEFORE `activate()` to avoid missing state changes
-- `update_device()` can only change config fields, not address or type (use remove+add)
+- `upsert_device()` creates or updates a device — address+type identify the device, all other fields are updateable
 
 ### Dependency Injection
 
@@ -362,7 +362,7 @@ Key behaviors:
 - Manages pre-allocated slot pools for covers, lights, and remotes
 - On `setup()`: restores slots from NVS, sets state callbacks, activates
 - On `loop()`: detects MQTT (re)connection, publishes discoveries, loops active entities
-- CRUD operations: `add_device()` checks for duplicate addresses before allocating slots
+- CRUD operations: `upsert_device()` creates or updates devices (address+type is the key)
 - Auto-discovers remotes from RF command packets (`track_remote_()`)
 - Publishes MQTT HA discovery configs and state topics
 - `notify_crud_()` broadcasts events to WS clients via `CrudEventCallback`
@@ -385,7 +385,7 @@ Key behaviors:
 - On log (via ESPHome logger callback): broadcasts `log` event to clients
 - On `cmd` message: routes command to hub's `send_command()`
 - On `raw` message: routes to hub's `send_raw_command()`
-- In MQTT mode: handles `save_device`/`remove_device`/`update_device`/`enable_device` via `IDeviceManager`
+- In MQTT mode: handles `upsert_device`/`remove_device` via `IDeviceManager`
 - Receives CRUD event broadcasts from `MqttDeviceManager` via `CrudEventCallback`
 
 ### Why Mongoose?
@@ -407,10 +407,8 @@ The web UI communicates exclusively via WebSocket at `/elero/ws`. See `docs/ARCH
 | `config` | Sent on connect: device info, configured blinds/lights, frequency, mode |
 | `rf` | Every decoded RF packet: addresses, state, RSSI, raw bytes |
 | `log` | ESPHome log entries with `elero.*` tags |
-| `device_added` | MQTT mode: device was added (address, type) |
+| `device_upserted` | MQTT mode: device was created or updated (address, type) |
 | `device_removed` | MQTT mode: device was removed (address) |
-| `device_updated` | MQTT mode: device config was updated (address, type) |
-| `device_enabled` | MQTT mode: device enabled/disabled (address, enabled) |
 
 **Client → Server Messages:**
 
@@ -418,10 +416,8 @@ The web UI communicates exclusively via WebSocket at `/elero/ws`. See `docs/ARCH
 |------|-------------|
 | `cmd` | Send command to blind/light: `{"type":"cmd", "address":"0xADDRESS", "action":"up"}` |
 | `raw` | Send raw RF packet for testing: `{"type":"raw", "dst_address":"0x...", "channel":5, ...}` |
-| `save_device` | MQTT mode: add new device from NvsDeviceConfig fields |
+| `upsert_device` | MQTT mode: create or update device from NvsDeviceConfig fields |
 | `remove_device` | MQTT mode: remove device by `dst_address` + `device_type` |
-| `update_device` | MQTT mode: update device config (cannot change address/type) |
-| `enable_device` | MQTT mode: enable/disable device by `dst_address` + `device_type` |
 
 ### HTTP Endpoints
 

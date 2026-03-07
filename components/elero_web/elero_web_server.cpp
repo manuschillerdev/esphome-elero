@@ -241,10 +241,8 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       return true;
     }
 
-    if (type == "save_device") { this->handle_save_device_(c, root); return true; }
+    if (type == "upsert_device") { this->handle_upsert_device_(c, root); return true; }
     if (type == "remove_device") { this->handle_remove_device_(c, root); return true; }
-    if (type == "update_device") { this->handle_update_device_(c, root); return true; }
-    if (type == "enable_device") { this->handle_enable_device_(c, root); return true; }
 
     if (type == "raw") {
       uint32_t dst_addr = parse_hex32(root, "dst_address");
@@ -399,6 +397,9 @@ bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &conf
     config.set_name(name);
   }
 
+  // Enabled flag (defaults to true if not specified)
+  config.set_enabled(root["enabled"] | true);
+
   // RF params (covers and lights only)
   if (!config.is_remote()) {
     config.src_address = parse_hex32(root, "src_address");
@@ -421,7 +422,7 @@ bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &conf
 // Device CRUD Handlers (MQTT mode)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-void EleroWebServer::handle_save_device_(struct mg_connection *c, JsonObject root) {
+void EleroWebServer::handle_upsert_device_(struct mg_connection *c, JsonObject root) {
   auto *dm = this->parent_->get_device_manager();
   if (dm == nullptr || !dm->supports_crud()) {
     this->ws_send(c, "error", "{\"msg\":\"CRUD not supported in native mode\"}");
@@ -435,8 +436,8 @@ void EleroWebServer::handle_save_device_(struct mg_connection *c, JsonObject roo
     return;
   }
 
-  if (!dm->add_device(config)) {
-    this->ws_send(c, "error", "{\"msg\":\"Failed to save device\"}");
+  if (!dm->upsert_device(config)) {
+    this->ws_send(c, "error", "{\"msg\":\"Failed to upsert device\"}");
   }
 }
 
@@ -461,50 +462,6 @@ void EleroWebServer::handle_remove_device_(struct mg_connection *c, JsonObject r
 
   if (!dm->remove_device(type, addr)) {
     this->ws_send(c, "error", "{\"msg\":\"Failed to remove device\"}");
-  }
-}
-
-void EleroWebServer::handle_update_device_(struct mg_connection *c, JsonObject root) {
-  auto *dm = this->parent_->get_device_manager();
-  if (dm == nullptr || !dm->supports_crud()) {
-    this->ws_send(c, "error", "{\"msg\":\"CRUD not supported in native mode\"}");
-    return;
-  }
-
-  NvsDeviceConfig config{};
-  std::string error;
-  if (!parse_device_config_(root, config, error)) {
-    this->ws_send(c, "error", json::build_json([&](JsonObject r) { r["msg"] = error; }));
-    return;
-  }
-
-  if (!dm->update_device(config)) {
-    this->ws_send(c, "error", "{\"msg\":\"Failed to update device\"}");
-  }
-}
-
-void EleroWebServer::handle_enable_device_(struct mg_connection *c, JsonObject root) {
-  auto *dm = this->parent_->get_device_manager();
-  if (dm == nullptr || !dm->supports_crud()) {
-    this->ws_send(c, "error", "{\"msg\":\"CRUD not supported in native mode\"}");
-    return;
-  }
-
-  uint32_t addr = parse_hex32(root, "dst_address");
-  if (addr == 0) {
-    this->ws_send(c, "error", "{\"msg\":\"Missing dst_address\"}");
-    return;
-  }
-
-  DeviceType type;
-  if (!parse_device_type(root["device_type"] | "", type) || type == DeviceType::REMOTE) {
-    this->ws_send(c, "error", "{\"msg\":\"Only covers and lights can be enabled/disabled\"}");
-    return;
-  }
-
-  bool enabled = root["enabled"] | true;
-  if (!dm->set_device_enabled(type, addr, enabled)) {
-    this->ws_send(c, "error", "{\"msg\":\"Failed to set device enabled state\"}");
   }
 }
 
