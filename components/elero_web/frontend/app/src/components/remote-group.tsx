@@ -6,95 +6,97 @@ import { DataTable, type Column } from './ui/data-table'
 import { RemoteControl, Radio } from './icons'
 import { DeviceCell, LightDeviceCell, StateCell, SignalCell, BlindActions, LightActions } from './device-row'
 import { formatTime, CopyPacketBtn, AddressCell } from './packet-table'
+import { cn } from '@/lib/utils'
 import {
-  useStore, buildConfigNames, buildAddressTypes, getStateLabel,
-  isStatusPacket, isCommandPacket, isButtonPacket,
+  rfPackets, hub, displayNames, deviceTypeMap, updateDevice,
+  getStateLabel, isStatusPacket, isCommandPacket, isButtonPacket,
   getMsgTypeLabel, getCommandLabel,
-  type BlindConfig, type LightConfig, type RfPacket,
+  type Device, type DeviceGroup, type RfPacketWithTimestamp,
 } from '@/store'
 
-type DeviceRow =
-  | { type: 'blind'; address: string; name: string; channel: number; data: BlindConfig }
-  | { type: 'light'; address: string; name: string; channel: number; data: LightConfig }
+export type GroupVariant = 'persisted' | 'discovered' | 'disabled'
 
 type ViewMode = 'devices' | 'packets'
-
-interface RemoteGroupProps {
-  address: string
-  blinds: BlindConfig[]
-  lights: LightConfig[]
-}
 
 const viewOptions: FilterOption<ViewMode>[] = [
   { value: 'devices', icon: RemoteControl },
   { value: 'packets', icon: Radio },
 ]
 
-export function RemoteGroup({ address, blinds, lights }: RemoteGroupProps) {
-  const remoteName = useStore((s) => s.remoteNames[address])
-  const setRemoteName = useStore((s) => s.setRemoteName)
-  const states = useStore((s) => s.states)
-  const rfPackets = useStore((s) => s.rfPackets)
-  const allBlinds = useStore((s) => s.config.blinds)
-  const allLights = useStore((s) => s.config.lights)
-  const remoteNames = useStore((s) => s.remoteNames)
-  const view = useSignal<ViewMode>('devices')
-  const deviceCount = blinds.length + lights.length
+const variantStyles: Record<GroupVariant, { border: string; header: string; indicator?: string; badge?: string }> = {
+  persisted: {
+    border: 'border-border',
+    header: 'bg-muted/40',
+  },
+  discovered: {
+    border: 'border-success/40',
+    header: 'bg-success/5',
+    indicator: 'bg-success',
+    badge: 'text-success border-success/40',
+  },
+  disabled: {
+    border: 'border-border opacity-50',
+    header: 'bg-muted/20',
+  },
+}
 
-  // All addresses belonging to this remote group
+export function RemoteGroup({ group }: { group: DeviceGroup }) {
+  const { remoteAddress, remoteName, devices, variant } = group
+  const allPackets = rfPackets.value
+  const crudEnabled = hub.value.crud
+  const names = displayNames.value
+  const types = deviceTypeMap.value
+  const view = useSignal<ViewMode>('devices')
+  const deviceCount = devices.length
+  const styles = variantStyles[variant]
+
   const groupAddresses = new Set([
-    address,
-    ...blinds.map((b) => b.address),
-    ...lights.map((l) => l.address),
+    remoteAddress,
+    ...devices.map((d) => d.address),
   ])
 
   // ─── Device table ───────────────────────────────────────────────────────
 
-  const deviceRows: DeviceRow[] = [
-    ...blinds.map((b) => ({ type: 'blind' as const, address: b.address, name: b.name, channel: b.channel, data: b })),
-    ...lights.map((l) => ({ type: 'light' as const, address: l.address, name: l.name, channel: l.channel, data: l })),
-  ]
-
-  const deviceColumns: Column<DeviceRow>[] = [
+  const deviceColumns: Column<Device>[] = [
     {
       key: 'device', label: 'Device', sortable: true,
       value: (row) => row.name,
       headerClass: 'px-4', cellClass: 'px-4 py-2.5',
-      render: (row) => row.type === 'blind'
-        ? <DeviceCell blind={row.data as BlindConfig} />
-        : <LightDeviceCell light={row.data as LightConfig} />,
+      render: (row) => row.type === 'cover'
+        ? <DeviceCell device={row} />
+        : <LightDeviceCell device={row} />,
     },
     {
       key: 'state', label: 'State', sortable: true,
-      value: (row) => getStateLabel(states[row.address]?.state),
+      value: (row) => getStateLabel(row.lastStatus?.state),
       cellClass: 'py-2.5',
-      render: (row) => <StateCell address={row.address} />,
+      render: (row) => <StateCell device={row} />,
     },
     {
       key: 'signal', label: 'Signal', sortable: true,
-      value: (row) => states[row.address]?.rssi ?? -999,
+      value: (row) => row.lastStatus?.rssi ?? -999,
       cellClass: 'py-2.5',
-      render: (row) => <SignalCell address={row.address} />,
+      render: (row) => <SignalCell device={row} />,
     },
     {
       key: 'actions', label: 'Actions', align: 'right',
       cellClass: 'py-2.5',
-      render: (row) => row.type === 'blind'
-        ? <BlindActions blind={row.data as BlindConfig} />
-        : <LightActions light={row.data as LightConfig} />,
+      render: (row) => {
+        const canSave = variant === 'discovered' && crudEnabled
+        return row.type === 'cover'
+          ? <BlindActions device={row} showSave={canSave} />
+          : <LightActions device={row} showSave={canSave} />
+      },
     },
   ]
 
   // ─── Packet table ──────────────────────────────────────────────────────
 
-  const groupPackets = rfPackets.filter(
+  const groupPackets = allPackets.filter(
     (p) => groupAddresses.has(p.src) || groupAddresses.has(p.dst)
   ).slice(-50).reverse()
 
-  const configNames = buildConfigNames(allBlinds, allLights, remoteNames)
-  const addressTypes = buildAddressTypes(allBlinds, allLights, rfPackets)
-
-  const packetColumns: Column<RfPacket>[] = [
+  const packetColumns: Column<RfPacketWithTimestamp>[] = [
     {
       key: 'time', label: 'Time', sortable: true,
       value: (pkt) => pkt.received_at ?? pkt.t,
@@ -122,19 +124,19 @@ export function RemoteGroup({ address, blinds, lights }: RemoteGroupProps) {
       key: 'source', label: 'From', sortable: true,
       value: (pkt) => {
         if ((isCommandPacket(pkt) || isButtonPacket(pkt)) && pkt.echo) return 'Hub'
-        return configNames[pkt.src] || pkt.src
+        return names[pkt.src] || pkt.src
       },
       render: (pkt) => {
         if ((isCommandPacket(pkt) || isButtonPacket(pkt)) && pkt.echo) {
           return <span className="flex items-center gap-1"><Radio className="size-2.5 text-muted-foreground" /><span>Hub</span></span>
         }
-        return <AddressCell addr={pkt.src} name={configNames[pkt.src]} deviceType={addressTypes[pkt.src] ?? 'unknown'} />
+        return <AddressCell addr={pkt.src} name={names[pkt.src]} deviceType={types[pkt.src] ?? 'unknown'} />
       },
     },
     {
       key: 'destination', label: 'To', sortable: true,
-      value: (pkt) => configNames[pkt.dst] || pkt.dst,
-      render: (pkt) => <AddressCell addr={pkt.dst} name={configNames[pkt.dst]} deviceType={addressTypes[pkt.dst] ?? 'unknown'} />,
+      value: (pkt) => names[pkt.dst] || pkt.dst,
+      render: (pkt) => <AddressCell addr={pkt.dst} name={names[pkt.dst]} deviceType={types[pkt.dst] ?? 'unknown'} />,
     },
     {
       key: 'channel', label: 'CH', sortable: true,
@@ -152,17 +154,22 @@ export function RemoteGroup({ address, blinds, lights }: RemoteGroupProps) {
     },
   ]
 
-  // ─── Render ────────────────────────────────────────────────────────────
+  // ─── Render ──────────────────────────────────────────────────────────
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-      {/* Remote header */}
-      <div className="flex items-center justify-between bg-muted/40 px-4 py-2.5">
+    <div className={cn('overflow-hidden rounded-xl border bg-card shadow-sm', styles.border)}>
+      <div className={cn('flex items-center justify-between px-4 py-2.5', styles.header)}>
         <div className="flex items-center gap-2">
+          {styles.indicator && (
+            <span className="relative flex size-2">
+              <span className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-75', styles.indicator)} />
+              <span className={cn('relative inline-flex size-2 rounded-full', styles.indicator)} />
+            </span>
+          )}
           <span className="text-sm font-semibold text-card-foreground">
             <InlineEdit
-              value={remoteName || `Unnamed remote (${address})`}
-              onSave={(name) => setRemoteName(address, name)}
+              value={remoteName !== remoteAddress ? remoteName : `Unnamed remote (${remoteAddress})`}
+              onSave={(name) => updateDevice(remoteAddress, { name })}
             />
           </span>
           <Badge variant="secondary" className="text-[10px] px-1.5 py-0 tabular-nums">
@@ -170,9 +177,14 @@ export function RemoteGroup({ address, blinds, lights }: RemoteGroupProps) {
           </Badge>
         </div>
         <div className="flex items-center gap-2">
-          {remoteName && (
+          {styles.badge && (
+            <Badge variant="outline" className={cn('text-[10px] px-1.5 py-0', styles.badge)}>
+              NEW
+            </Badge>
+          )}
+          {remoteName !== remoteAddress && (
             <Badge variant="secondary" className="font-mono text-[9px] tracking-wider text-muted-foreground px-1.5 py-0">
-              {address}
+              {remoteAddress}
             </Badge>
           )}
           <FilterBar
@@ -183,11 +195,10 @@ export function RemoteGroup({ address, blinds, lights }: RemoteGroupProps) {
         </div>
       </div>
 
-      {/* Toggled view */}
       {view.value === 'devices' ? (
         <DataTable
           columns={deviceColumns}
-          data={deviceRows}
+          data={devices}
           rowKey={(row) => row.address}
           defaultSort={{ key: 'device', direction: 'asc' }}
         />

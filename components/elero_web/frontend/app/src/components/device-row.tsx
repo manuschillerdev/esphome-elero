@@ -3,31 +3,30 @@ import { Badge } from './ui/badge'
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 import { InlineEdit, InlineEditNumber } from './ui/inline-edit'
 import { SignalIndicator } from './signal-indicator'
-import { ChevronUp, Square, ChevronDown, Shrink, Lightbulb, LightbulbOff } from './icons'
+import { ChevronUp, Square, ChevronDown, Shrink, Lightbulb, LightbulbOff, Save } from './icons'
 import { cn } from '@/lib/utils'
-import { useStore, getStateLabel, isMovingState, type BlindConfig, type LightConfig } from '@/store'
-import { sendCommand } from '@/ws'
+import { updateDevice, getStateLabel, isMovingState, type Device } from '@/store'
+import { sendDeviceCommand, sendUpsertDevice } from '@/ws'
 
 // ─── Shared cell renderers (used by DataTable column definitions) ───────────
 
-export function DeviceCell({ blind }: { blind: BlindConfig }) {
-  const updateBlind = useStore((s) => s.updateBlind)
+export function DeviceCell({ device }: { device: Device }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="truncate text-sm font-medium text-foreground">
         <InlineEdit
-          value={blind.name}
-          onSave={(name) => updateBlind(blind.address, { name })}
+          value={device.name}
+          onSave={(name) => updateDevice(device.address, { name })}
         />
       </span>
       <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-        <span className="font-mono">{blind.address}</span>
-        <span>CH {blind.channel}</span>
+        <span className="font-mono">{device.address}</span>
+        <span>CH {device.channel}</span>
         <span className="flex items-center gap-0.5 text-muted-foreground/70">
           <span>&#x25B3;</span>
           <InlineEditNumber
-            value={+(blind.open_ms / 1000).toFixed(1)}
-            onSave={(v) => updateBlind(blind.address, { open_ms: Math.round(v * 1000) })}
+            value={+(device.open_ms / 1000).toFixed(1)}
+            onSave={(v) => updateDevice(device.address, { open_ms: Math.round(v * 1000) })}
             suffix="s"
             min={0}
             max={300}
@@ -38,8 +37,8 @@ export function DeviceCell({ blind }: { blind: BlindConfig }) {
         <span className="flex items-center gap-0.5 text-muted-foreground/70">
           <span>&#x25BD;</span>
           <InlineEditNumber
-            value={+(blind.close_ms / 1000).toFixed(1)}
-            onSave={(v) => updateBlind(blind.address, { close_ms: Math.round(v * 1000) })}
+            value={+(device.close_ms / 1000).toFixed(1)}
+            onSave={(v) => updateDevice(device.address, { close_ms: Math.round(v * 1000) })}
             suffix="s"
             min={0}
             max={300}
@@ -52,28 +51,26 @@ export function DeviceCell({ blind }: { blind: BlindConfig }) {
   )
 }
 
-export function LightDeviceCell({ light }: { light: LightConfig }) {
-  const updateLight = useStore((s) => s.updateLight)
+export function LightDeviceCell({ device }: { device: Device }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="truncate text-sm font-medium text-foreground">
         <InlineEdit
-          value={light.name}
-          onSave={(name) => updateLight(light.address, { name })}
+          value={device.name}
+          onSave={(name) => updateDevice(device.address, { name })}
         />
       </span>
       <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-        <span className="font-mono">{light.address}</span>
-        <span>CH {light.channel}</span>
+        <span className="font-mono">{device.address}</span>
+        <span>CH {device.channel}</span>
       </div>
     </div>
   )
 }
 
-export function StateCell({ address }: { address: string }) {
-  const pkt = useStore((s) => s.states[address])
-  const stateLabel = getStateLabel(pkt?.state)
-  const moving = isMovingState(pkt?.state)
+export function StateCell({ device }: { device: Device }) {
+  const stateLabel = getStateLabel(device.lastStatus?.state)
+  const moving = isMovingState(device.lastStatus?.state)
   return (
     <Badge
       variant="secondary"
@@ -87,25 +84,42 @@ export function StateCell({ address }: { address: string }) {
   )
 }
 
-export function SignalCell({ address }: { address: string }) {
-  const pkt = useStore((s) => s.states[address])
-  if (!pkt) return null
+export function SignalCell({ device }: { device: Device }) {
+  if (!device.lastStatus) return null
   return (
     <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-      <SignalIndicator rssi={pkt.rssi ?? -100} />
-      <span>{pkt.rssi?.toFixed(0)} dBm</span>
+      <SignalIndicator rssi={device.lastStatus.rssi ?? -100} />
+      <span>{device.lastStatus.rssi?.toFixed(0)} dBm</span>
     </div>
   )
 }
 
-export function BlindActions({ blind }: { blind: BlindConfig }) {
+export function BlindActions({ device, showSave }: { device: Device; showSave?: boolean }) {
   return (
     <div className="flex items-center justify-end gap-1 text-primary">
-      <div className="size-7">
-        {blind.tilt && (
+      {showSave && (
+        <>
           <Tooltip>
             <TooltipTrigger>
-              <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendCommand(blind.address, 'tilt')}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 text-success hover:text-success"
+                onClick={() => sendUpsertDevice({ address: device.address, remote: device.remote, channel: device.channel, name: device.name, device_type: 'cover' })}
+              >
+                <Save className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Save to NVS</TooltipContent>
+          </Tooltip>
+          <div className="mx-0.5 h-4 w-px bg-border" />
+        </>
+      )}
+      <div className="size-7">
+        {device.tilt && (
+          <Tooltip>
+            <TooltipTrigger>
+              <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendDeviceCommand(device, 'tilt')}>
                 <Shrink className="size-3.5" />
               </Button>
             </TooltipTrigger>
@@ -115,7 +129,7 @@ export function BlindActions({ blind }: { blind: BlindConfig }) {
       </div>
       <Tooltip>
         <TooltipTrigger>
-          <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendCommand(blind.address, 'up')}>
+          <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendDeviceCommand(device, 'up')}>
             <ChevronUp className="size-3.5" />
           </Button>
         </TooltipTrigger>
@@ -123,7 +137,7 @@ export function BlindActions({ blind }: { blind: BlindConfig }) {
       </Tooltip>
       <Tooltip>
         <TooltipTrigger>
-          <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendCommand(blind.address, 'stop')}>
+          <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendDeviceCommand(device, 'stop')}>
             <Square className="size-3" />
           </Button>
         </TooltipTrigger>
@@ -131,7 +145,7 @@ export function BlindActions({ blind }: { blind: BlindConfig }) {
       </Tooltip>
       <Tooltip>
         <TooltipTrigger>
-          <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendCommand(blind.address, 'down')}>
+          <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendDeviceCommand(device, 'down')}>
             <ChevronDown className="size-3.5" />
           </Button>
         </TooltipTrigger>
@@ -141,12 +155,30 @@ export function BlindActions({ blind }: { blind: BlindConfig }) {
   )
 }
 
-export function LightActions({ light }: { light: LightConfig }) {
+export function LightActions({ device, showSave }: { device: Device; showSave?: boolean }) {
   return (
     <div className="flex items-center justify-end gap-1">
+      {showSave && (
+        <>
+          <Tooltip>
+            <TooltipTrigger>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 text-success hover:text-success"
+                onClick={() => sendUpsertDevice({ address: device.address, remote: device.remote, channel: device.channel, name: device.name, device_type: 'light' })}
+              >
+                <Save className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Save to NVS</TooltipContent>
+          </Tooltip>
+          <div className="mx-0.5 h-4 w-px bg-border" />
+        </>
+      )}
       <Tooltip>
         <TooltipTrigger>
-          <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendCommand(light.address, 'up')}>
+          <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendDeviceCommand(device, 'up')}>
             <Lightbulb className="size-3.5" />
           </Button>
         </TooltipTrigger>
@@ -154,7 +186,7 @@ export function LightActions({ light }: { light: LightConfig }) {
       </Tooltip>
       <Tooltip>
         <TooltipTrigger>
-          <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendCommand(light.address, 'down')}>
+          <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary" onClick={() => sendDeviceCommand(device, 'down')}>
             <LightbulbOff className="size-3.5" />
           </Button>
         </TooltipTrigger>

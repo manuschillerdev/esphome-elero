@@ -6,7 +6,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 import { Send, Info } from './icons'
 import { RfPackets } from './rf-packets'
 import { cn } from '@/lib/utils'
-import { useStore, parseFreq, type BlindConfig, type LightConfig } from '@/store'
+import { hub, devices, filterCounts, parseFreq } from '@/store'
 import { sendRawCommand } from '@/ws'
 
 // ─── Frequency Presets ──────────────────────────────────────────────────────
@@ -41,10 +41,8 @@ const isValidHex = (s: string) => /^0x[0-9a-fA-F]+$/.test(s)
 // ─── Hub Info Card ──────────────────────────────────────────────────────────
 
 function HubInfoCard() {
-  const device = useStore((s) => s.config.device)
-  const blinds = useStore((s) => s.config.blinds)
-  const lights = useStore((s) => s.config.lights)
-  const freq = useStore((s) => s.config.freq)
+  const { device, freq } = hub.value
+  const counts = filterCounts.value
 
   const f2 = parseFreq(freq.freq2, 0x21)
   const f1 = parseFreq(freq.freq1, 0x71)
@@ -61,8 +59,8 @@ function HubInfoCard() {
       </div>
       <div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
         <Stat label="Device" value={device || '-'} />
-        <Stat label="Blinds" value={String(blinds.length)} />
-        <Stat label="Lights" value={String(lights.length)} />
+        <Stat label="Covers" value={String(counts.covers)} />
+        <Stat label="Lights" value={String(counts.lights)} />
         <Stat label="Frequency" value={calculatedFreq} />
       </div>
     </Card>
@@ -83,7 +81,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 // ─── Frequency Card ─────────────────────────────────────────────────────────
 
 function FrequencyCard() {
-  const freq = useStore((s) => s.config.freq)
+  const freq = hub.value.freq
   const configF2 = parseFreq(freq.freq2, 0x21)
   const configF1 = parseFreq(freq.freq1, 0x71)
   const configF0 = parseFreq(freq.freq0, 0x7a)
@@ -274,22 +272,17 @@ function PacketSummary({
 }
 
 function RawTxCard() {
-  const blinds = useStore((s) => s.config.blinds)
-  const lights = useStore((s) => s.config.lights)
-  const remoteNames = useStore((s) => s.remoteNames)
+  const devs = devices.value
 
-  // Preset options
-  const dstOptions = [
-    ...blinds.map((b: BlindConfig) => ({ label: b.name, address: b.address, channel: b.channel, kind: 'Blind' as const })),
-    ...lights.map((l: LightConfig) => ({ label: l.name, address: l.address, channel: l.channel, kind: 'Light' as const })),
-  ]
-  const srcOptions = [...new Map([
-    ...blinds.map((b: BlindConfig) => [b.remote, b.remote] as const),
-    ...lights.map((l: LightConfig) => [l.remote, l.remote] as const),
-  ]).values()].map((addr) => ({
-    address: addr,
-    label: remoteNames[addr] || addr,
-  }))
+  // Build dst/src options from device map
+  const dstOptions: Array<{ label: string; address: string; channel: number; kind: 'Blind' | 'Light' }> = []
+  const srcMap = new Map<string, string>()
+  for (const d of devs.values()) {
+    if (d.type === 'cover') dstOptions.push({ label: d.name, address: d.address, channel: d.channel, kind: 'Blind' })
+    else if (d.type === 'light') dstOptions.push({ label: d.name, address: d.address, channel: d.channel, kind: 'Light' })
+    else if (d.type === 'remote') srcMap.set(d.address, d.name)
+  }
+  const srcOptions = [...srcMap].map(([address, name]) => ({ address, label: name }))
 
   // Form state
   const dstAddr = useSignal('0x')

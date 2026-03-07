@@ -8,7 +8,8 @@
     "dev:mock": "tsx mock-server.ts & vite",
     "dev:device": "DEVICE_IP=${DEVICE_IP:-192.168.1.100} vite",
     "mock": "tsx mock-server.ts",
-    "build": "vite build",
+    "generate:types": "asyncapi generate models typescript asyncapi.yaml -o src/generated --tsModelType interface --tsEnumType union --tsExportType named --tsIncludeComments --tsRawPropertyNames",
+    "build": "pnpm generate:types && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -19,10 +20,10 @@
     "clsx": "^2.1.1",
     "preact": "^10.26.5",
     "tailwind-merge": "^3.3.1",
-    "tw-animate-css": "^1.4.0",
-    "zustand": "^5.0.3"
+    "tw-animate-css": "^1.4.0"
   },
   "devDependencies": {
+    "@asyncapi/cli": "^6.0.0",
     "@preact/preset-vite": "^2.10.1",
     "@tailwindcss/vite": "^4.2.0",
     "@types/node": "^22",

@@ -1,0 +1,688 @@
+asyncapi: 3.0.0
+
+info:
+  title: Elero WebSocket API
+  version: 1.0.0
+  description: |
+    Real-time WebSocket interface for the esphome-elero gateway.
+
+    The server is a **stateless pipe** — it forwards RF packets and logs to clients,
+    and routes commands from clients to the Elero hub. All state derivation
+    (discovery, blind positions, device states) happens client-side.
+
+    ## Connection
+
+    Connect via WebSocket at `ws://<device-ip>:<port>/elero/ws`.
+    On successful connection the server immediately sends a `config` event.
+
+    ## Message Envelope
+
+    All messages use a JSON envelope:
+
+    ```json
+    { "event": "<event_name>", "data": { ... } }
+    ```
+
+    Server-to-client messages use the `event` + `data` envelope.
+    Client-to-server messages use a flat JSON object with a `type` field.
+
+    ## Operating Modes
+
+    The `mode` field in the `config` event indicates the operating mode:
+    - `native` — devices defined in YAML (read-only, no CRUD)
+    - `mqtt` — devices stored in NVS, managed via MQTT HA discovery
+    - `native_nvs` — devices stored in NVS, managed via ESPHome native API
+
+    CRUD operations (`upsert_device`, `remove_device`) are only available
+    when `crud` is `true` in the config event (mqtt and native_nvs modes).
+
+servers:
+  device:
+    host: "{device_ip}:{port}"
+    pathname: /elero/ws
+    protocol: ws
+    description: ESP32 gateway WebSocket endpoint (Mongoose HTTP server)
+    variables:
+      device_ip:
+        description: IP address or hostname of the ESP32 device
+        default: 192.168.1.100
+      port:
+        description: HTTP server port (configured via `web_server_base`)
+        default: "80"
+
+channels:
+  eleroWs:
+    address: /elero/ws
+    messages:
+      configEvent:
+        $ref: "#/components/messages/configEvent"
+      rfEvent:
+        $ref: "#/components/messages/rfEvent"
+      deviceUpsertedEvent:
+        $ref: "#/components/messages/deviceUpsertedEvent"
+      deviceRemovedEvent:
+        $ref: "#/components/messages/deviceRemovedEvent"
+      errorEvent:
+        $ref: "#/components/messages/errorEvent"
+      cmdMessage:
+        $ref: "#/components/messages/cmdMessage"
+      rawMessage:
+        $ref: "#/components/messages/rawMessage"
+      upsertDeviceMessage:
+        $ref: "#/components/messages/upsertDeviceMessage"
+      removeDeviceMessage:
+        $ref: "#/components/messages/removeDeviceMessage"
+
+operations:
+  receiveConfig:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive device configuration on connect
+    description: Sent immediately after WebSocket upgrade. Contains configured devices, frequency, and operating mode.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/configEvent"
+
+  receiveRf:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive decoded RF packets
+    description: Every RF packet decoded by the CC1101 transceiver is broadcast to all connected clients.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/rfEvent"
+
+  receiveDeviceUpserted:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive device upserted notification
+    description: Broadcast when a device is created or updated in NVS (CRUD modes only).
+    messages:
+      - $ref: "#/channels/eleroWs/messages/deviceUpsertedEvent"
+
+  receiveDeviceRemoved:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive device removed notification
+    description: Broadcast when a device is removed from NVS (CRUD modes only).
+    messages:
+      - $ref: "#/channels/eleroWs/messages/deviceRemovedEvent"
+
+  receiveError:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive error response
+    description: Sent to the originating client when a command fails validation or execution.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/errorEvent"
+
+  sendCmd:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Send a command to a configured blind or light
+    description: Routes the action to the matching cover or light entity by address.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/cmdMessage"
+
+  sendRaw:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Send a raw RF packet
+    description: Builds and transmits a raw RF packet for protocol testing and debugging.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/rawMessage"
+
+  sendUpsertDevice:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Create or update a device in NVS
+    description: |
+      Available only when `crud` is `true` in the config event.
+      Address + device_type together identify the device. All other fields are updateable.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/upsertDeviceMessage"
+
+  sendRemoveDevice:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Remove a device from NVS
+    description: Available only when `crud` is `true` in the config event.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/removeDeviceMessage"
+
+components:
+  messages:
+    configEvent:
+      name: config
+      title: Configuration Event
+      summary: Device configuration sent on WebSocket connect
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/ConfigEventEnvelope"
+
+    rfEvent:
+      name: rf
+      title: RF Packet Event
+      summary: Decoded RF packet from the CC1101 transceiver
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RfEventEnvelope"
+
+    deviceUpsertedEvent:
+      name: device_upserted
+      title: Device Upserted Event
+      summary: A device was created or updated in NVS
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/CrudEventEnvelope"
+
+    deviceRemovedEvent:
+      name: device_removed
+      title: Device Removed Event
+      summary: A device was removed from NVS
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/CrudEventEnvelope"
+
+    errorEvent:
+      name: error
+      title: Error Event
+      summary: Error response for a failed client command
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/ErrorEventEnvelope"
+
+    cmdMessage:
+      name: cmd
+      title: Command Message
+      summary: Send a high-level action to a configured device
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/CmdPayload"
+
+    rawMessage:
+      name: raw
+      title: Raw RF Message
+      summary: Send a raw RF packet for protocol testing
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RawPayload"
+
+    upsertDeviceMessage:
+      name: upsert_device
+      title: Upsert Device Message
+      summary: Create or update a device in NVS storage
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/UpsertDevicePayload"
+
+    removeDeviceMessage:
+      name: remove_device
+      title: Remove Device Message
+      summary: Remove a device from NVS storage
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RemoveDevicePayload"
+
+  schemas:
+    # ── Server → Client Envelopes ──
+
+    ConfigEventEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: config
+        data:
+          $ref: "#/components/schemas/ConfigData"
+
+    RfEventEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: rf
+        data:
+          $ref: "#/components/schemas/RfData"
+
+    CrudEventEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      description: Envelope for device_upserted and device_removed events.
+      properties:
+        event:
+          $ref: "#/components/schemas/CrudEventType"
+        data:
+          $ref: "#/components/schemas/CrudEventData"
+
+    ErrorEventEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: error
+        data:
+          $ref: "#/components/schemas/ErrorData"
+
+    # ── Server → Client Data ──
+
+    ConfigData:
+      type: object
+      additionalProperties: false
+      required: [device, version, freq, blinds, lights, remotes, mode, crud]
+      properties:
+        device:
+          type: string
+          description: ESPHome device name (from `esphome.name` in YAML)
+          examples: ["elero-gateway"]
+        version:
+          type: string
+          description: Component version string
+          examples: ["1.2.3"]
+        freq:
+          $ref: "#/components/schemas/FreqConfig"
+        blinds:
+          type: array
+          description: Configured cover entities
+          items:
+            $ref: "#/components/schemas/BlindConfig"
+        lights:
+          type: array
+          description: Configured light entities
+          items:
+            $ref: "#/components/schemas/LightConfig"
+        remotes:
+          type: array
+          description: Known remote controls. In native mode, derived from cover/light src_address. In NVS modes, includes auto-discovered remotes.
+          items:
+            $ref: "#/components/schemas/RemoteConfig"
+        mode:
+          $ref: "#/components/schemas/HubMode"
+        crud:
+          type: boolean
+          description: Whether CRUD operations (upsert_device, remove_device) are supported
+
+    FreqConfig:
+      type: object
+      additionalProperties: false
+      required: [freq2, freq1, freq0]
+      description: CC1101 frequency register values
+      properties:
+        freq2:
+          type: string
+          description: FREQ2 register (hex string)
+          examples: ["0x21"]
+        freq1:
+          type: string
+          description: FREQ1 register (hex string)
+          examples: ["0x71"]
+        freq0:
+          type: string
+          description: FREQ0 register (hex string). 0x7a = 868.35 MHz, 0xc0 = 868.95 MHz.
+          examples: ["0x7a"]
+
+    BlindConfig:
+      type: object
+      additionalProperties: false
+      required: [address, name, channel, remote, open_ms, close_ms, poll_ms, tilt]
+      properties:
+        address:
+          type: string
+          description: 3-byte destination address (hex string)
+          examples: ["0xa831e5"]
+        name:
+          type: string
+          description: Entity name
+          examples: ["Living Room Blind"]
+        channel:
+          type: integer
+          description: RF channel number
+          examples: [5]
+        remote:
+          type: string
+          description: 3-byte source/remote address (hex string)
+          examples: ["0xb42f01"]
+        open_ms:
+          type: integer
+          description: Full open duration in milliseconds (0 = position tracking disabled)
+          examples: [25000]
+        close_ms:
+          type: integer
+          description: Full close duration in milliseconds (0 = position tracking disabled)
+          examples: [23000]
+        poll_ms:
+          type: integer
+          description: Status poll interval in milliseconds
+          examples: [300000]
+        tilt:
+          type: boolean
+          description: Whether the blind supports tilt
+
+    LightConfig:
+      type: object
+      additionalProperties: false
+      required: [address, name, channel, remote, dim_ms]
+      properties:
+        address:
+          type: string
+          description: 3-byte destination address (hex string)
+          examples: ["0xc41a2b"]
+        name:
+          type: string
+          description: Entity name
+          examples: ["Patio Light"]
+        channel:
+          type: integer
+          description: RF channel number
+          examples: [3]
+        remote:
+          type: string
+          description: 3-byte source/remote address (hex string)
+          examples: ["0xd51e03"]
+        dim_ms:
+          type: integer
+          description: Dim duration in milliseconds (0 = on/off only)
+          examples: [5000]
+
+    RemoteConfig:
+      type: object
+      additionalProperties: false
+      required: [address, name]
+      properties:
+        address:
+          type: string
+          description: 3-byte remote control address (hex string)
+          examples: ["0xb42f01"]
+        name:
+          type: string
+          description: Display name. In native mode, defaults to the hex address.
+          examples: ["Remote 0xb42f01"]
+
+    RfData:
+      type: object
+      additionalProperties: false
+      required: [t, src, dst, channel, type, type2, command, state, echo, cnt, rssi, hop, raw]
+      properties:
+        t:
+          type: integer
+          description: Timestamp in milliseconds since boot (millis())
+          examples: [1234567]
+        src:
+          type: string
+          description: Source address (hex string). Remote for commands, blind for status.
+          examples: ["0xa831e5"]
+        dst:
+          type: string
+          description: Destination address (hex string). Blind for commands, remote for status.
+          examples: ["0xb42f01"]
+        channel:
+          type: integer
+          description: RF channel
+          examples: [5]
+        type:
+          type: string
+          description: |
+            Message type byte (hex string):
+            - `0x44` — button press/release (broadcast)
+            - `0x6a` — targeted command to blind
+            - `0x69` — alternate command format
+            - `0xca` — status response from blind
+            - `0xc9` — alternate status format
+          examples: ["0xca"]
+        type2:
+          type: string
+          description: Secondary type byte (hex string)
+          examples: ["0x00"]
+        command:
+          type: string
+          description: |
+            Command byte (hex string, for command packets):
+            - `0x00` — check (request status)
+            - `0x10` — stop
+            - `0x20` — up/open
+            - `0x24` — tilt
+            - `0x40` — down/close
+            - `0x44` — intermediate position
+          examples: ["0x20"]
+        state:
+          type: string
+          description: |
+            State byte (hex string, for status packets):
+            - `0x00` — unknown
+            - `0x01` — top (fully open)
+            - `0x02` — bottom (fully closed)
+            - `0x03` — intermediate
+            - `0x04` — tilt
+            - `0x05` — blocking (obstacle)
+            - `0x06` — overheated
+            - `0x07` — timeout
+            - `0x08` — start moving up
+            - `0x09` — start moving down
+            - `0x0a` — moving up
+            - `0x0b` — moving down
+            - `0x0d` — stopped
+            - `0x0e` — top + tilted
+            - `0x0f` — bottom + tilted / light off
+            - `0x10` — light on
+          examples: ["0x01"]
+        echo:
+          type: boolean
+          description: True if this command packet matches a recent TX from this gateway (mesh echo)
+        cnt:
+          type: integer
+          description: Rolling counter value from packet (0-255)
+          examples: [42]
+        rssi:
+          type: number
+          format: float
+          description: Received signal strength in dBm
+          examples: [-65.5]
+        hop:
+          type: string
+          description: Hop count byte (hex string)
+          examples: ["0x0a"]
+        raw:
+          type: string
+          description: Space-separated hex bytes of the raw packet
+          examples: ["1d 2a 6a 00 0a 01 05 a8 31 e5 ..."]
+
+    CrudEventData:
+      type: object
+      additionalProperties: false
+      required: [address, device_type]
+      description: Payload for device_upserted and device_removed events.
+      properties:
+        address:
+          type: string
+          description: 3-byte device address (hex string)
+          examples: ["0xa831e5"]
+        device_type:
+          $ref: "#/components/schemas/DeviceType"
+
+    ErrorData:
+      type: object
+      additionalProperties: false
+      required: [msg]
+      properties:
+        msg:
+          type: string
+          description: Human-readable error message
+          examples: ["Missing dst_address", "CRUD not supported in native mode"]
+
+    # ── Client → Server Payloads ──
+
+    CmdPayload:
+      type: object
+      additionalProperties: false
+      required: [type, address, action]
+      properties:
+        type:
+          type: string
+          const: cmd
+        address:
+          type: string
+          description: 3-byte destination address of the target device (hex string)
+          examples: ["0xa831e5"]
+        action:
+          $ref: "#/components/schemas/DeviceAction"
+
+    RawPayload:
+      type: object
+      additionalProperties: false
+      required: [type, dst_address, src_address]
+      properties:
+        type:
+          type: string
+          const: raw
+        dst_address:
+          type: string
+          description: 3-byte destination address (hex string)
+          examples: ["0xa831e5"]
+        src_address:
+          type: string
+          description: 3-byte source address (hex string)
+          examples: ["0xb42f01"]
+        channel:
+          type: integer
+          description: RF channel (default 0)
+          examples: [5]
+        command:
+          type: string
+          description: Command byte (hex string, default 0x00)
+          examples: ["0x20"]
+        payload_1:
+          type: string
+          description: Payload byte 1 (hex string, default 0x00)
+          examples: ["0x00"]
+        payload_2:
+          type: string
+          description: Payload byte 2 (hex string, default 0x04)
+          examples: ["0x04"]
+        msg_type:
+          type: string
+          description: Message type byte (hex string, default 0x6a)
+          examples: ["0x6a"]
+        type2:
+          type: string
+          description: Secondary type byte (hex string, default 0x00)
+          examples: ["0x00"]
+        hop:
+          type: string
+          description: Hop count byte (hex string, default 0x0a)
+          examples: ["0x0a"]
+
+    UpsertDevicePayload:
+      type: object
+      additionalProperties: false
+      required: [type, device_type, dst_address]
+      description: |
+        Create or update a device in NVS. The combination of `dst_address` + `device_type`
+        identifies the device. All other fields are updateable.
+        Only available when `crud` is `true` in the config event.
+      properties:
+        type:
+          type: string
+          const: upsert_device
+        device_type:
+          $ref: "#/components/schemas/DeviceType"
+        dst_address:
+          type: string
+          description: 3-byte destination address (hex string)
+          examples: ["0xa831e5"]
+        name:
+          type: string
+          description: Display name for the device
+          examples: ["Living Room Blind"]
+        enabled:
+          type: boolean
+          description: Whether the device is enabled (default true)
+          default: true
+        src_address:
+          type: string
+          description: 3-byte source/remote address (hex string). Required for cover and light, ignored for remote.
+          examples: ["0xb42f01"]
+        channel:
+          type: integer
+          description: RF channel number. Required for cover and light, ignored for remote.
+          examples: [5]
+        hop:
+          type: string
+          description: Hop count (hex string, default 0x0a). Ignored for remote.
+          examples: ["0x0a"]
+        payload_1:
+          type: string
+          description: Payload byte 1 (hex string, default 0x00). Ignored for remote.
+          examples: ["0x00"]
+        payload_2:
+          type: string
+          description: Payload byte 2 (hex string, default 0x04). Ignored for remote.
+          examples: ["0x04"]
+        msg_type:
+          type: string
+          description: Message type byte (hex string, default 0x6a). Ignored for remote.
+          examples: ["0x6a"]
+        type2:
+          type: string
+          description: Secondary type byte (hex string, default 0x00). Ignored for remote.
+          examples: ["0x00"]
+        supports_tilt:
+          type: boolean
+          description: Whether the cover supports tilt (cover only, default false)
+          default: false
+
+    RemoveDevicePayload:
+      type: object
+      additionalProperties: false
+      required: [type, dst_address, device_type]
+      description: |
+        Remove a device from NVS by address and type.
+        Only available when `crud` is `true` in the config event.
+      properties:
+        type:
+          type: string
+          const: remove_device
+        dst_address:
+          type: string
+          description: 3-byte destination address (hex string)
+          examples: ["0xa831e5"]
+        device_type:
+          $ref: "#/components/schemas/DeviceType"
+
+    # ── Shared Enums ──
+
+    HubMode:
+      type: string
+      enum: [native, mqtt, native_nvs]
+      description: Operating mode of the hub
+
+    CrudEventType:
+      type: string
+      enum: [device_upserted, device_removed]
+      description: CRUD event type for device lifecycle notifications
+
+    DeviceAction:
+      type: string
+      enum: [up, down, open, close, stop, check, tilt, on, off, dim_up, dim_down, int]
+      description: |
+        Action to perform on a device:
+        - Covers: up/open, down/close, stop, check, tilt, int (intermediate)
+        - Lights: on, off, stop, check, dim_up, dim_down
+
+    DeviceType:
+      type: string
+      enum: [cover, light, remote]
+      description: Type of device (cover, light, or remote control)

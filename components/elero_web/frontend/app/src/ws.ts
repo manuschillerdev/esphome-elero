@@ -1,4 +1,8 @@
-import { useStore } from './store'
+import {
+  setConnected, setDevices, addRfPacket,
+  onDeviceUpserted, onDeviceRemoved,
+  devices,
+} from './store'
 
 let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -14,7 +18,7 @@ export function initWs() {
   const socket = ws
 
   socket.onopen = () => {
-    useStore.getState().setConnected(true)
+    setConnected(true)
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
@@ -22,7 +26,7 @@ export function initWs() {
   }
 
   socket.onclose = () => {
-    useStore.getState().setConnected(false)
+    setConnected(false)
     if (ws === socket) {
       ws = null
       reconnectTimer = setTimeout(initWs, 2000)
@@ -30,39 +34,35 @@ export function initWs() {
   }
 
   socket.onerror = () => {
-    useStore.getState().setConnected(false)
+    setConnected(false)
   }
 
   socket.onmessage = (e) => {
     const { event, data } = JSON.parse(e.data)
-    const state = useStore.getState()
-
     if (event === 'config') {
-      state.setConfig(data)
+      setDevices(data)
     } else if (event === 'rf') {
       data.received_at = Date.now()
-      state.addRfPacket(data)
-    } else if (event === 'log') {
-      state.addLog(data)
+      addRfPacket(data)
+    } else if (event === 'device_upserted') {
+      onDeviceUpserted(data)
+    } else if (event === 'device_removed') {
+      onDeviceRemoved(data)
     }
   }
 }
 
-export function sendCommand(address: string, action: 'up' | 'down' | 'stop' | 'tilt' | 'check') {
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'cmd', address, action }))
-  }
+// ─── Action → Command byte mapping ─────────────────────────────────────────
+
+const ACTION_COMMANDS: Record<string, string> = {
+  up: '0x20',
+  down: '0x40',
+  stop: '0x10',
+  tilt: '0x24',
+  check: '0x00',
 }
 
-export function sendCheckAll() {
-  const { blinds, lights } = useStore.getState().config
-  for (const blind of blinds) {
-    sendCommand(blind.address, 'check')
-  }
-  for (const light of lights) {
-    sendCommand(light.address, 'check')
-  }
-}
+// ─── Unified command sending (always uses raw protocol) ─────────────────────
 
 export interface RawTxParams {
   dst_address: string
@@ -90,5 +90,47 @@ export function sendRawCommand(params: RawTxParams) {
       type2: params.type2 ?? '0x00',
       hop: params.hop ?? '0x0a',
     }))
+  }
+}
+
+export function sendDeviceCommand(
+  device: { address: string; remote: string; channel: number },
+  action: 'up' | 'down' | 'stop' | 'tilt' | 'check',
+) {
+  const cmd = ACTION_COMMANDS[action]
+  if (!cmd) return
+  sendRawCommand({
+    dst_address: device.address,
+    src_address: device.remote,
+    channel: device.channel,
+    command: cmd,
+  })
+}
+
+export function sendUpsertDevice(device: {
+  address: string
+  remote: string
+  channel: number
+  name?: string
+  device_type?: 'cover' | 'light'
+}) {
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'upsert_device',
+      device_type: device.device_type ?? 'cover',
+      dst_address: device.address,
+      src_address: device.remote,
+      channel: device.channel,
+      name: device.name,
+      enabled: true,
+    }))
+  }
+}
+
+export function sendCheckAll() {
+  for (const d of devices.value.values()) {
+    if (d.type === 'cover' || d.type === 'light') {
+      sendDeviceCommand(d, 'check')
+    }
   }
 }

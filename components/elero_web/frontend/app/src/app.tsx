@@ -1,4 +1,5 @@
-import { useStore } from './store'
+import { effect } from '@preact/signals'
+import { ui, setActiveTab } from './store'
 import { initWs } from './ws'
 import { DashboardHeader } from './components/dashboard-header'
 import { DashboardNav } from './components/dashboard-nav'
@@ -10,7 +11,6 @@ import { HubPanel } from './components/hub-panel'
 
 // ─── Side effects (module-level, run once on import) ────────────────────────
 
-// URL hash ↔ store sync
 const VALID_TABS = new Set(['devices', 'packets', 'hub'] as const)
 type Tab = 'devices' | 'packets' | 'hub'
 
@@ -21,21 +21,20 @@ function tabFromHash(): Tab | null {
 
 // On load: hash → store
 const initial = tabFromHash()
-if (initial) useStore.getState().setActiveTab(initial)
+if (initial) setActiveTab(initial)
 
 // On hashchange: hash → store
 window.addEventListener('hashchange', () => {
   const tab = tabFromHash()
-  if (tab) useStore.getState().setActiveTab(tab)
+  if (tab) setActiveTab(tab)
 })
 
-// On store change: store → hash
-useStore.subscribe((s, prev) => {
-  if (s.activeTab !== prev.activeTab) {
-    const hash = s.activeTab === 'devices' ? '' : `#${s.activeTab}`
-    if (location.hash !== hash) {
-      history.replaceState(null, '', hash || location.pathname)
-    }
+// On signal change: store → hash
+effect(() => {
+  const tab = ui.value.activeTab
+  const hash = tab === 'devices' ? '' : `#${tab}`
+  if (location.hash !== hash) {
+    history.replaceState(null, '', hash || location.pathname)
   }
 })
 
@@ -45,7 +44,7 @@ initWs()
 // ─── App Component ──────────────────────────────────────────────────────────
 
 export function App() {
-  const activeTab = useStore((s) => s.activeTab)
+  const activeTab = ui.value.activeTab
 
   return (
     <div className="min-h-screen bg-background">

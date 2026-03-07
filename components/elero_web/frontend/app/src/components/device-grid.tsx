@@ -1,6 +1,5 @@
 import { RemoteGroup } from './remote-group'
-import { DiscoveredCard } from './discovered-card'
-import { useStore, buildRemoteGroups, buildDiscoveredAddresses } from '@/store'
+import { deviceGroups, ui } from '@/store'
 
 function EmptyState({ title, description }: { title: string; description: string }) {
   return (
@@ -12,56 +11,31 @@ function EmptyState({ title, description }: { title: string; description: string
 }
 
 export function DeviceGrid() {
-  const filter = useStore((s) => s.filter)
-  const blinds = useStore((s) => s.config.blinds)
-  const lights = useStore((s) => s.config.lights)
-  const states = useStore((s) => s.states)
-  const deviceTypeFilter = useStore((s) => s.deviceTypeFilter)
-  const remoteGroups = buildRemoteGroups(blinds, lights, deviceTypeFilter)
-  const discovered = buildDiscoveredAddresses(blinds, lights, states)
-
-  const showConfigured = filter === 'all' || filter === 'configured'
-  const showDiscovered = filter === 'all' || filter === 'discovered'
-
-  const hasConfiguredContent = showConfigured && remoteGroups.length > 0
-  const hasDiscoveredContent = showDiscovered && discovered.length > 0
-  const hasContent = hasConfiguredContent || hasDiscoveredContent
+  const groups = deviceGroups.value
+  const { status: statusFilter, deviceType: deviceTypeFilter } = ui.value.filters
 
   return (
     <div className="flex flex-col gap-4">
-      {showDiscovered && discovered.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {discovered.map((address) => (
-            <DiscoveredCard key={address} address={address} />
-          ))}
-        </div>
-      )}
-
-      {showConfigured && remoteGroups.map((group) => (
-        <RemoteGroup
-          key={group.address}
-          address={group.address}
-          blinds={group.blinds}
-          lights={group.lights}
-        />
+      {groups.map((group) => (
+        <RemoteGroup key={group.remoteAddress} group={group} />
       ))}
 
-      {!hasContent && filter === 'discovered' && (
+      {groups.length === 0 && statusFilter === 'discovered' && (
         <EmptyState
           title="No devices discovered yet"
           description="Press buttons on your physical Elero remotes — new RF addresses will appear here automatically. If nothing shows up, check your frequency and pin configuration on the Hub page."
         />
       )}
 
-      {!hasContent && filter === 'configured' && (
+      {groups.length === 0 && statusFilter === 'configured' && (
         <EmptyState
           title={
-            deviceTypeFilter === 'blinds' ? 'No blinds configured'
+            deviceTypeFilter === 'covers' ? 'No covers configured'
             : deviceTypeFilter === 'lights' ? 'No lights configured'
             : 'No devices configured'
           }
           description={
-            deviceTypeFilter === 'blinds'
+            deviceTypeFilter === 'covers'
               ? 'Add a cover with platform: elero to your ESPHome YAML, specifying dst_address, src_address, and channel. Then reflash.'
               : deviceTypeFilter === 'lights'
               ? 'Add a light with platform: elero to your ESPHome YAML, specifying dst_address, src_address, and channel. Then reflash.'
@@ -70,15 +44,15 @@ export function DeviceGrid() {
         />
       )}
 
-      {!hasContent && filter === 'all' && (
+      {groups.length === 0 && statusFilter === 'all' && (
         <EmptyState
           title={
-            deviceTypeFilter === 'blinds' ? 'No blinds configured'
+            deviceTypeFilter === 'covers' ? 'No covers configured'
             : deviceTypeFilter === 'lights' ? 'No lights configured'
             : 'No devices yet'
           }
           description={
-            deviceTypeFilter === 'blinds'
+            deviceTypeFilter === 'covers'
               ? 'Add a cover with platform: elero to your ESPHome YAML, specifying dst_address, src_address, and channel. Then reflash.'
               : deviceTypeFilter === 'lights'
               ? 'Add a light with platform: elero to your ESPHome YAML, specifying dst_address, src_address, and channel. Then reflash.'

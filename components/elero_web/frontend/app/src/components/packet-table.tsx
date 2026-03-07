@@ -1,11 +1,11 @@
 import { useSignal } from '@preact/signals'
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
-import { DataTable, type Column } from './ui/data-table'
+import { type Column } from './ui/data-table'
 import { Blinds, Lightbulb, Copy, CheckCircle2, RemoteControl } from './icons'
 import {
   isStatusPacket, isCommandPacket, isButtonPacket,
   getMsgTypeLabel, getCommandLabel, getStateLabel,
-  type RfPacket, type DeviceType,
+  type RfPacketWithTimestamp, type AppDeviceType,
 } from '@/store'
 import { cn } from '@/lib/utils'
 
@@ -17,8 +17,8 @@ export function formatTime(epochMs: number | undefined): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
 }
 
-const deviceTypeIcons: Record<DeviceType, typeof Blinds | null> = {
-  blind: Blinds,
+const deviceTypeIcons: Record<AppDeviceType, typeof Blinds | null> = {
+  cover: Blinds,
   light: Lightbulb,
   remote: RemoteControl,
   unknown: null,
@@ -26,7 +26,7 @@ const deviceTypeIcons: Record<DeviceType, typeof Blinds | null> = {
 
 // ─── Copy Button ────────────────────────────────────────────────────────────
 
-export function CopyPacketBtn({ pkt }: { pkt: RfPacket }) {
+export function CopyPacketBtn({ pkt }: { pkt: RfPacketWithTimestamp }) {
   const copied = useSignal(false)
 
   const onClick = () => {
@@ -56,7 +56,7 @@ export function CopyPacketBtn({ pkt }: { pkt: RfPacket }) {
 
 // ─── Address Rendering ──────────────────────────────────────────────────────
 
-export function AddressCell({ addr, name, deviceType }: { addr: string; name?: string; deviceType: DeviceType }) {
+export function AddressCell({ addr, name, deviceType }: { addr: string; name?: string; deviceType: AppDeviceType }) {
   const Icon = deviceTypeIcons[deviceType]
   return (
     <span className="flex items-center gap-2">
@@ -84,8 +84,8 @@ export function AddressCell({ addr, name, deviceType }: { addr: string; name?: s
 
 export function buildFullColumns(
   configNames: Record<string, string>,
-  addressTypes: Record<string, DeviceType>,
-): Column<RfPacket>[] {
+  addressTypes: Record<string, AppDeviceType>,
+): Column<RfPacketWithTimestamp>[] {
   return [
     {
       key: 'time', label: 'Time', sortable: true,
@@ -138,8 +138,8 @@ export function buildFullColumns(
 
 export function buildCompactColumns(
   configNames: Record<string, string>,
-  addressTypes: Record<string, DeviceType>,
-): Column<RfPacket>[] {
+  addressTypes: Record<string, AppDeviceType>,
+): Column<RfPacketWithTimestamp>[] {
   return [
     {
       key: 'time', label: 'Time', sortable: true,
