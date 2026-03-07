@@ -6,16 +6,10 @@
 #include "esphome/components/light/light_traits.h"
 #include "../elero.h"
 #include "../command_sender.h"
+#include "../light_core.h"
 
 namespace esphome {
 namespace elero {
-
-/// Direction of dimming operation for EleroLight brightness control.
-enum class DimDirection : uint8_t {
-  NONE,  ///< Not currently dimming
-  UP,    ///< Dimming towards higher brightness
-  DOWN   ///< Dimming towards lower brightness
-};
 
 class EleroLight : public light::LightOutput, public Component, public EleroLightBase {
  public:
@@ -39,18 +33,14 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   std::string get_light_name() const override { return this->state_ ? std::string(this->state_->get_name().c_str()) : std::string(); }
   uint8_t get_channel() const override { return this->sender_.command().channel; }
   uint32_t get_remote_address() const override { return this->sender_.command().src_addr; }
-  uint32_t get_dim_duration_ms() const override { return this->dim_duration_; }
-  float get_brightness() const override { return this->brightness_; }
-  bool get_is_on() const override { return this->is_on_; }
-  const char *get_operation_str() const override {
-    if (this->dim_direction_ == DimDirection::UP) return "dimming_up";
-    if (this->dim_direction_ == DimDirection::DOWN) return "dimming_down";
-    return "idle";
-  }
+  uint32_t get_dim_duration_ms() const override { return this->core_.config.dim_duration_ms; }
+  float get_brightness() const override { return this->core_.brightness; }
+  bool get_is_on() const override { return this->core_.is_on; }
+  const char *get_operation_str() const override { return this->core_.operation_str(); }
   uint32_t get_last_seen_ms() const override { return this->last_seen_ms_; }
   float get_last_rssi() const override { return this->last_rssi_; }
   uint8_t get_last_state_raw() const override {
-    return this->is_on_ ? packet::state::LIGHT_ON : packet::state::LIGHT_OFF;
+    return this->core_.is_on ? packet::state::LIGHT_ON : packet::state::LIGHT_OFF;
   }
   bool perform_action(const char *action) override;
 
@@ -64,30 +54,21 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   void set_hop(uint8_t hop) { this->sender_.command().hop = hop; }
   void set_type(uint8_t type) { this->sender_.command().type = type; }
   void set_type2(uint8_t type2) { this->sender_.command().type2 = type2; }
-  void set_dim_duration(uint32_t dur) { this->dim_duration_ = dur; }
-  void set_command_on(uint8_t cmd) { this->command_on_ = cmd; }
-  void set_command_off(uint8_t cmd) { this->command_off_ = cmd; }
-  void set_command_dim_up(uint8_t cmd) { this->command_dim_up_ = cmd; }
-  void set_command_dim_down(uint8_t cmd) { this->command_dim_down_ = cmd; }
-  void set_command_stop(uint8_t cmd) { this->command_stop_ = cmd; }
+  void set_dim_duration(uint32_t dur) { this->core_.config.dim_duration_ms = dur; }
+  void set_command_on(uint8_t cmd) { this->core_.command_on = cmd; }
+  void set_command_off(uint8_t cmd) { this->core_.command_off = cmd; }
+  void set_command_dim_up(uint8_t cmd) { this->core_.command_dim_up = cmd; }
+  void set_command_dim_down(uint8_t cmd) { this->core_.command_dim_down = cmd; }
+  void set_command_stop(uint8_t cmd) { this->core_.command_stop = cmd; }
   void set_command_check(uint8_t cmd) { this->command_check_ = cmd; }
 
-  void recompute_brightness();
-
  protected:
+  LightCore core_;
   CommandSender sender_;
   Elero *parent_{nullptr};
   light::LightState *state_{nullptr};
 
-  // Brightness tracking (0.0 = off, 1.0 = full brightness)
-  float brightness_{0.0f};
-  float target_brightness_{0.0f};
-  bool is_on_{false};
-  DimDirection dim_direction_{DimDirection::NONE};  ///< Current dimming direction (NONE = not dimming)
-  uint32_t dimming_start_{0};
-  uint32_t last_recompute_time_{0};
   uint32_t last_publish_{0};
-  uint32_t dim_duration_{0};
 
   // Metadata
   uint32_t last_seen_ms_{0};
@@ -96,12 +77,6 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   // Prevents feedback loop: set_rx_state() -> call.perform() -> write_state() -> send command
   bool ignore_write_state_{false};
 
-  // Configurable command bytes
-  uint8_t command_on_{packet::command::UP};      // ON uses UP command
-  uint8_t command_off_{packet::command::DOWN};   // OFF uses DOWN command
-  uint8_t command_dim_up_{packet::command::UP};
-  uint8_t command_dim_down_{packet::command::DOWN};
-  uint8_t command_stop_{packet::command::STOP};
   uint8_t command_check_{packet::command::CHECK};
 };
 
