@@ -3,6 +3,7 @@
 #include "../elero/elero_strings.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
+#include "esphome/components/json/json_util.h"
 #include <cstdio>
 #include <cstring>
 
@@ -11,21 +12,25 @@ namespace elero {
 
 static const char *const TAG = "elero.mqtt";
 
-/// Escape a string for safe embedding in JSON values.
-static std::string json_escape(const std::string &s) {
-  std::string out;
-  out.reserve(s.size());
-  for (char c : s) {
-    switch (c) {
-      case '"': out += "\\\""; break;
-      case '\\': out += "\\\\"; break;
-      case '\n': out += "\\n"; break;
-      case '\r': out += "\\r"; break;
-      case '\t': out += "\\t"; break;
-      default: out += c;
-    }
-  }
-  return out;
+/// Format a uint32_t as "0x%06x" for MQTT topic construction (no "0x" prefix)
+static std::string addr_hex(uint32_t addr) {
+  char buf[12];
+  snprintf(buf, sizeof(buf), "%06x", addr);
+  return buf;
+}
+
+/// Format as "0x%06x" for JSON values
+static std::string hex_str(uint32_t addr) {
+  char buf[12];
+  snprintf(buf, sizeof(buf), "0x%06x", addr);
+  return buf;
+}
+
+/// Format as "0x%02x" for JSON values
+static std::string hex_str8(uint8_t val) {
+  char buf[8];
+  snprintf(buf, sizeof(buf), "0x%02x", val);
+  return buf;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -171,15 +176,13 @@ bool MqttDeviceManager::add_device(const NvsDeviceConfig &config) {
       ESP_LOGW(TAG, "Failed to activate cover 0x%06x", config.dst_address);
       return false;
     }
-    (void)slot->save_config();  // Best-effort; save_config logs on failure
+    (void)slot->save_config();
     if (config.is_enabled()) {
       publish_cover_discovery_(slot);
       subscribe_cover_commands_(slot);
     }
 
-    char resp[96];
-    snprintf(resp, sizeof(resp), "{\"address\":\"0x%06x\",\"device_type\":\"cover\"}", config.dst_address);
-    notify_crud_("device_added", resp);
+    notify_crud_("device_added", config.dst_address, "cover");
     return true;
   }
 
@@ -198,15 +201,13 @@ bool MqttDeviceManager::add_device(const NvsDeviceConfig &config) {
       ESP_LOGW(TAG, "Failed to activate light 0x%06x", config.dst_address);
       return false;
     }
-    (void)slot->save_config();  // Best-effort; save_config logs on failure
+    (void)slot->save_config();
     if (config.is_enabled()) {
       publish_light_discovery_(slot);
       subscribe_light_commands_(slot);
     }
 
-    char resp[96];
-    snprintf(resp, sizeof(resp), "{\"address\":\"0x%06x\",\"device_type\":\"light\"}", config.dst_address);
-    notify_crud_("device_added", resp);
+    notify_crud_("device_added", config.dst_address, "light");
     return true;
   }
 
@@ -225,12 +226,10 @@ bool MqttDeviceManager::add_device(const NvsDeviceConfig &config) {
       ESP_LOGW(TAG, "Failed to activate remote 0x%06x", config.dst_address);
       return false;
     }
-    (void)slot->save_config();  // Best-effort; save_config logs on failure
+    (void)slot->save_config();
     publish_remote_discovery_(slot);
 
-    char resp[96];
-    snprintf(resp, sizeof(resp), "{\"address\":\"0x%06x\",\"device_type\":\"remote\"}", config.dst_address);
-    notify_crud_("device_added", resp);
+    notify_crud_("device_added", config.dst_address, "remote");
     return true;
   }
 
@@ -269,9 +268,10 @@ bool MqttDeviceManager::remove_device(DeviceType type, uint32_t dst_address) {
   }
 
   if (removed) {
-    char resp[64];
-    snprintf(resp, sizeof(resp), "{\"address\":\"0x%06x\"}", dst_address);
-    notify_crud_("device_removed", resp);
+    std::string resp = json::build_json([&](JsonObject root) {
+      root["address"] = hex_str(dst_address);
+    });
+    notify_crud_("device_removed", resp.c_str());
   }
   return removed;
 }
@@ -286,10 +286,7 @@ bool MqttDeviceManager::update_device(const NvsDeviceConfig &config) {
       return false;
     }
 
-    // Remove old MQTT discovery (name/config may have changed)
     remove_discovery_("cover", config.dst_address);
-
-    // Non-destructive in-place update (handles unregister/re-register internally)
     slot->update_config(config);
 
     if (config.is_enabled()) {
@@ -315,10 +312,7 @@ bool MqttDeviceManager::update_device(const NvsDeviceConfig &config) {
     return false;
   }
 
-  char resp[96];
-  snprintf(resp, sizeof(resp), "{\"address\":\"0x%06x\",\"device_type\":\"%s\"}",
-           config.dst_address, config.is_cover() ? "cover" : "light");
-  notify_crud_("device_updated", resp);
+  notify_crud_("device_updated", config.dst_address, config.is_cover() ? "cover" : "light");
   return true;
 }
 
@@ -329,7 +323,7 @@ bool MqttDeviceManager::set_device_enabled(DeviceType type, uint32_t dst_address
       if (slot == nullptr) return false;
 
       slot->set_config_enabled(enabled);
-      (void)slot->save_config();  // Best-effort; save_config logs on failure
+      (void)slot->save_config();
 
       if (enabled && !slot->is_registered()) {
         slot->register_with_hub();
@@ -340,10 +334,7 @@ bool MqttDeviceManager::set_device_enabled(DeviceType type, uint32_t dst_address
         remove_discovery_("cover", dst_address);
       }
 
-      char resp[96];
-      snprintf(resp, sizeof(resp), "{\"address\":\"0x%06x\",\"enabled\":%s}",
-               dst_address, enabled ? "true" : "false");
-      notify_crud_("device_enabled", resp);
+      notify_crud_enabled_("device_enabled", dst_address, enabled);
       return true;
     }
     case DeviceType::LIGHT: {
@@ -351,7 +342,7 @@ bool MqttDeviceManager::set_device_enabled(DeviceType type, uint32_t dst_address
       if (slot == nullptr) return false;
 
       slot->set_config_enabled(enabled);
-      (void)slot->save_config();  // Best-effort; save_config logs on failure
+      (void)slot->save_config();
 
       if (enabled && !slot->is_registered()) {
         slot->register_with_hub();
@@ -362,10 +353,7 @@ bool MqttDeviceManager::set_device_enabled(DeviceType type, uint32_t dst_address
         remove_discovery_("light", dst_address);
       }
 
-      char resp[96];
-      snprintf(resp, sizeof(resp), "{\"address\":\"0x%06x\",\"enabled\":%s}",
-               dst_address, enabled ? "true" : "false");
-      notify_crud_("device_enabled", resp);
+      notify_crud_enabled_("device_enabled", dst_address, enabled);
       return true;
     }
     default:
@@ -403,7 +391,7 @@ void MqttDeviceManager::track_remote_(const RfPacketInfo &pkt) {
   slot->activate(remote_addr, auto_name);
   slot->update_from_packet(pkt.timestamp_ms, pkt.rssi, pkt.channel, pkt.command, pkt.dst);
 
-  (void)slot->save_config();  // Best-effort; save_config logs on failure
+  (void)slot->save_config();
   publish_remote_discovery_(slot);
 
   ESP_LOGI(TAG, "Auto-discovered remote 0x%06x", remote_addr);
@@ -468,17 +456,11 @@ EleroRemoteControl *MqttDeviceManager::find_active_remote_(uint32_t addr) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MQTT Publishing (using std::string for safe JSON construction)
+// MQTT Publishing (using ArduinoJson via ESPHome json component)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 std::string MqttDeviceManager::device_id_() const {
   return App.get_name();
-}
-
-std::string MqttDeviceManager::addr_hex_(uint32_t addr) const {
-  char buf[12];
-  snprintf(buf, sizeof(buf), "%06x", addr);
-  return std::string(buf);
 }
 
 void MqttDeviceManager::publish_all_discoveries_() {
@@ -508,146 +490,140 @@ void MqttDeviceManager::publish_all_discoveries_() {
 }
 
 void MqttDeviceManager::publish_cover_discovery_(EleroDynamicCover *cover) {
-  auto hex = addr_hex_(cover->get_blind_address());
+  auto hex = addr_hex(cover->get_blind_address());
   auto dev_id = device_id_();
 
-  // Discovery topic
   std::string topic = discovery_prefix_ + "/cover/" + dev_id + "_" + hex + "/config";
-
-  // State/command topics
   std::string state_topic = topic_prefix_ + "/cover/" + hex + "/state";
   std::string cmd_topic = topic_prefix_ + "/cover/" + hex + "/set";
 
-  // Build discovery payload using string concatenation (safe for any name length)
-  std::string payload = "{";
-  payload += "\"name\":\"" + json_escape(cover->get_blind_name()) + "\",";
-  payload += "\"unique_id\":\"" + dev_id + "_" + hex + "\",";
-  payload += "\"command_topic\":\"" + cmd_topic + "\",";
-  payload += "\"state_topic\":\"" + state_topic + "\",";
-  payload += "\"position_topic\":\"" + state_topic + "\",";
-  payload += "\"payload_open\":\"open\",";
-  payload += "\"payload_close\":\"close\",";
-  payload += "\"payload_stop\":\"stop\",";
-  payload += "\"device\":{\"identifiers\":[\"" + dev_id + "\"],";
-  payload += "\"name\":\"" + json_escape(device_name_) + "\",\"manufacturer\":\"Elero\"}}";
+  std::string payload = json::build_json([&](JsonObject root) {
+    root["name"] = cover->get_blind_name();
+    root["unique_id"] = dev_id + "_" + hex;
+    root["command_topic"] = cmd_topic;
+    root["state_topic"] = state_topic;
+    root["position_topic"] = state_topic;
+    root["payload_open"] = "open";
+    root["payload_close"] = "close";
+    root["payload_stop"] = "stop";
+    JsonObject dev = root["device"].to<JsonObject>();
+    dev["identifiers"][0] = dev_id;
+    dev["name"] = device_name_;
+    dev["manufacturer"] = "Elero";
+  });
 
   mqtt_.publish(topic.c_str(), payload.c_str(), true);
   ESP_LOGD(TAG, "Published cover discovery for 0x%06x", cover->get_blind_address());
 }
 
 void MqttDeviceManager::publish_light_discovery_(EleroDynamicLight *light) {
-  auto hex = addr_hex_(light->get_blind_address());
+  auto hex = addr_hex(light->get_blind_address());
   auto dev_id = device_id_();
 
   std::string topic = discovery_prefix_ + "/light/" + dev_id + "_" + hex + "/config";
   std::string state_topic = topic_prefix_ + "/light/" + hex + "/state";
   std::string cmd_topic = topic_prefix_ + "/light/" + hex + "/set";
 
-  std::string payload = "{";
-  payload += "\"name\":\"" + json_escape(light->get_light_name()) + "\",";
-  payload += "\"unique_id\":\"" + dev_id + "_" + hex + "\",";
-  payload += "\"command_topic\":\"" + cmd_topic + "\",";
-  payload += "\"state_topic\":\"" + state_topic + "\",";
-  payload += "\"payload_on\":\"on\",";
-  payload += "\"payload_off\":\"off\",";
-  payload += "\"device\":{\"identifiers\":[\"" + dev_id + "\"],";
-  payload += "\"name\":\"" + json_escape(device_name_) + "\",\"manufacturer\":\"Elero\"}}";
+  std::string payload = json::build_json([&](JsonObject root) {
+    root["name"] = light->get_light_name();
+    root["unique_id"] = dev_id + "_" + hex;
+    root["command_topic"] = cmd_topic;
+    root["state_topic"] = state_topic;
+    root["payload_on"] = "on";
+    root["payload_off"] = "off";
+    JsonObject dev = root["device"].to<JsonObject>();
+    dev["identifiers"][0] = dev_id;
+    dev["name"] = device_name_;
+    dev["manufacturer"] = "Elero";
+  });
 
   mqtt_.publish(topic.c_str(), payload.c_str(), true);
   ESP_LOGD(TAG, "Published light discovery for 0x%06x", light->get_blind_address());
 }
 
 void MqttDeviceManager::publish_remote_discovery_(EleroRemoteControl *remote) {
-  auto hex = addr_hex_(remote->get_address());
+  auto hex = addr_hex(remote->get_address());
   auto dev_id = device_id_();
 
   std::string topic = discovery_prefix_ + "/sensor/" + dev_id + "_remote_" + hex + "/config";
   std::string state_topic = topic_prefix_ + "/remote/" + hex + "/state";
 
-  std::string payload = "{";
-  payload += "\"name\":\"" + json_escape(std::string(remote->get_title())) + "\",";
-  payload += "\"unique_id\":\"" + dev_id + "_remote_" + hex + "\",";
-  payload += "\"state_topic\":\"" + state_topic + "\",";
-  payload += "\"value_template\":\"{{ value_json.rssi }}\",";
-  payload += "\"unit_of_measurement\":\"dBm\",";
-  payload += "\"device_class\":\"signal_strength\",";
-  payload += "\"json_attributes_topic\":\"" + state_topic + "\",";
-  payload += "\"json_attributes_template\":\"{{ value_json | tojson }}\",";
-  payload += "\"device\":{\"identifiers\":[\"" + dev_id + "\"],";
-  payload += "\"name\":\"" + json_escape(device_name_) + "\",\"manufacturer\":\"Elero\"}}";
+  std::string payload = json::build_json([&](JsonObject root) {
+    root["name"] = remote->get_title();
+    root["unique_id"] = dev_id + "_remote_" + hex;
+    root["state_topic"] = state_topic;
+    root["value_template"] = "{{ value_json.rssi }}";
+    root["unit_of_measurement"] = "dBm";
+    root["device_class"] = "signal_strength";
+    root["json_attributes_topic"] = state_topic;
+    root["json_attributes_template"] = "{{ value_json | tojson }}";
+    JsonObject dev = root["device"].to<JsonObject>();
+    dev["identifiers"][0] = dev_id;
+    dev["name"] = device_name_;
+    dev["manufacturer"] = "Elero";
+  });
 
   mqtt_.publish(topic.c_str(), payload.c_str(), true);
   ESP_LOGD(TAG, "Published remote discovery for 0x%06x", remote->get_address());
 }
 
 void MqttDeviceManager::remove_discovery_(const char *component, uint32_t addr) {
-  auto hex = addr_hex_(addr);
+  auto hex = addr_hex(addr);
   auto dev_id = device_id_();
 
   std::string topic = discovery_prefix_ + "/" + component + "/" + dev_id + "_" + hex + "/config";
-
-  // Empty payload removes discovery
   mqtt_.publish(topic.c_str(), "", true);
 }
 
 void MqttDeviceManager::publish_cover_state_(EleroDynamicCover *cover) {
   if (!mqtt_.is_connected()) return;
 
-  auto hex = addr_hex_(cover->get_blind_address());
+  auto hex = addr_hex(cover->get_blind_address());
   std::string topic = topic_prefix_ + "/cover/" + hex + "/state";
 
-  char payload[128];
-  snprintf(payload, sizeof(payload),
-           "{\"state\":\"%s\",\"position\":%.0f,\"rssi\":%.1f}",
-           cover->get_operation_str(),
-           cover->get_cover_position() * 100.0f,
-           cover->get_last_rssi());
+  std::string payload = json::build_json([&](JsonObject root) {
+    root["state"] = cover->get_operation_str();
+    root["position"] = static_cast<int>(cover->get_cover_position() * 100.0f);
+    root["rssi"] = static_cast<float>(static_cast<int>(cover->get_last_rssi() * 10)) / 10.0f;
+  });
 
-  mqtt_.publish(topic.c_str(), payload, false);
+  mqtt_.publish(topic.c_str(), payload.c_str(), false);
 }
 
 void MqttDeviceManager::publish_light_state_(EleroDynamicLight *light) {
   if (!mqtt_.is_connected()) return;
 
-  auto hex = addr_hex_(light->get_blind_address());
+  auto hex = addr_hex(light->get_blind_address());
   std::string topic = topic_prefix_ + "/light/" + hex + "/state";
 
-  char payload[64];
-  snprintf(payload, sizeof(payload),
-           "{\"state\":\"%s\"}",
-           light->get_is_on() ? "ON" : "OFF");
+  std::string payload = json::build_json([&](JsonObject root) {
+    root["state"] = light->get_is_on() ? "ON" : "OFF";
+  });
 
-  mqtt_.publish(topic.c_str(), payload, false);
+  mqtt_.publish(topic.c_str(), payload.c_str(), false);
 }
 
 void MqttDeviceManager::publish_remote_state_(EleroRemoteControl *remote) {
   if (!mqtt_.is_connected()) return;
 
-  auto hex = addr_hex_(remote->get_address());
+  auto hex = addr_hex(remote->get_address());
   std::string topic = topic_prefix_ + "/remote/" + hex + "/state";
 
-  char buf[196];
-  snprintf(buf, sizeof(buf),
-           "{\"rssi\":%.1f,"
-           "\"address\":\"0x%06x\","
-           "\"title\":\"%s\","
-           "\"last_seen\":%lu,"
-           "\"last_channel\":%d,"
-           "\"last_command\":\"0x%02x\","
-           "\"last_target\":\"0x%06x\"}",
-           remote->get_rssi(),
-           remote->get_address(),
-           json_escape(std::string(remote->get_title())).c_str(),
-           (unsigned long) remote->get_last_seen_ms(),
-           remote->get_last_channel(),
-           remote->get_last_command(),
-           remote->get_last_target());
+  std::string payload = json::build_json([&](JsonObject root) {
+    root["rssi"] = remote->get_rssi();
+    root["address"] = hex_str(remote->get_address());
+    root["title"] = remote->get_title();
+    root["last_seen"] = remote->get_last_seen_ms();
+    root["last_channel"] = remote->get_last_channel();
+    root["last_command"] = hex_str8(remote->get_last_command());
+    root["last_target"] = hex_str(remote->get_last_target());
+  });
 
-  mqtt_.publish(topic.c_str(), buf, false);
+  mqtt_.publish(topic.c_str(), payload.c_str(), false);
 }
 
 void MqttDeviceManager::subscribe_cover_commands_(EleroDynamicCover *cover) {
-  auto hex = addr_hex_(cover->get_blind_address());
+  auto hex = addr_hex(cover->get_blind_address());
   std::string topic = topic_prefix_ + "/cover/" + hex + "/set";
 
   uint32_t addr = cover->get_blind_address();
@@ -660,7 +636,7 @@ void MqttDeviceManager::subscribe_cover_commands_(EleroDynamicCover *cover) {
 }
 
 void MqttDeviceManager::subscribe_light_commands_(EleroDynamicLight *light) {
-  auto hex = addr_hex_(light->get_blind_address());
+  auto hex = addr_hex(light->get_blind_address());
   std::string topic = topic_prefix_ + "/light/" + hex + "/set";
 
   uint32_t addr = light->get_blind_address();
@@ -676,10 +652,26 @@ void MqttDeviceManager::subscribe_light_commands_(EleroDynamicLight *light) {
 // CRUD Event Notification
 // ═══════════════════════════════════════════════════════════════════════════════
 
-void MqttDeviceManager::notify_crud_(const char *event, const char *json) {
+void MqttDeviceManager::notify_crud_(const char *event, const char *json_str) {
   if (crud_callback_) {
-    crud_callback_(event, json);
+    crud_callback_(event, json_str);
   }
+}
+
+void MqttDeviceManager::notify_crud_(const char *event, uint32_t addr, const char *device_type) {
+  std::string resp = json::build_json([&](JsonObject root) {
+    root["address"] = hex_str(addr);
+    root["device_type"] = device_type;
+  });
+  notify_crud_(event, resp.c_str());
+}
+
+void MqttDeviceManager::notify_crud_enabled_(const char *event, uint32_t addr, bool enabled) {
+  std::string resp = json::build_json([&](JsonObject root) {
+    root["address"] = hex_str(addr);
+    root["enabled"] = enabled;
+  });
+  notify_crud_(event, resp.c_str());
 }
 
 }  // namespace elero

@@ -10,6 +10,7 @@ from esphome.const import CONF_ID, CONF_PORT
 _LOGGER = logging.getLogger(__name__)
 
 DEPENDENCIES = ["elero", "network", "logger"]
+AUTO_LOAD = ["json"]
 CODEOWNERS = ["@manuschillerdev"]
 
 # Exported so the switch sub-platform can reference the web server class

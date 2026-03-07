@@ -10,6 +10,7 @@
 #include "mongoose.h"
 #include "../elero/elero.h"
 #include "../elero/device_manager.h"
+#include "esphome/components/json/json_util.h"
 #include <string>
 #include <vector>
 
@@ -69,13 +70,13 @@ class EleroWebServer : public Component, public logger::LogListener {
   std::string build_rf_json(const RfPacketInfo &pkt);
 
   // Device CRUD handlers (MQTT mode)
-  void handle_save_device_(struct mg_connection *c, const std::string &msg);
-  void handle_remove_device_(struct mg_connection *c, const std::string &msg);
-  void handle_update_device_(struct mg_connection *c, const std::string &msg);
-  void handle_enable_device_(struct mg_connection *c, const std::string &msg);
+  void handle_save_device_(struct mg_connection *c, JsonObject root);
+  void handle_remove_device_(struct mg_connection *c, JsonObject root);
+  void handle_update_device_(struct mg_connection *c, JsonObject root);
+  void handle_enable_device_(struct mg_connection *c, JsonObject root);
 
-  // Parse NvsDeviceConfig from JSON message (shared by save/update)
-  bool parse_device_config_(const std::string &msg, NvsDeviceConfig &config, std::string &error);
+  // Parse NvsDeviceConfig from JSON object (shared by save/update)
+  bool parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error);
 };
 
 }  // namespace elero

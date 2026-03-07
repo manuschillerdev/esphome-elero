@@ -5,6 +5,7 @@ from esphome.const import CONF_ID
 from ..elero import CONF_ELERO_ID, elero_ns
 
 DEPENDENCIES = ["elero", "mqtt"]
+AUTO_LOAD = ["json"]
 CODEOWNERS = ["@manuschillerdev"]
 
 # Classes
