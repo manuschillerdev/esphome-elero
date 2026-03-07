@@ -45,10 +45,8 @@ class IDeviceManager {
   virtual bool supports_crud() const = 0;
 
   /// Device CRUD (only meaningful when supports_crud() is true)
-  [[nodiscard]] virtual bool add_device(const NvsDeviceConfig &config) { return false; }
+  [[nodiscard]] virtual bool upsert_device(const NvsDeviceConfig &config) { return false; }
   [[nodiscard]] virtual bool remove_device(DeviceType type, uint32_t dst_address) { return false; }
-  [[nodiscard]] virtual bool update_device(const NvsDeviceConfig &config) { return false; }
-  [[nodiscard]] virtual bool set_device_enabled(DeviceType type, uint32_t dst_address, bool enabled) { return false; }
 
   /// Register a callback for CRUD event notifications (e.g., for WS broadcast)
   virtual void set_crud_callback(CrudEventCallback cb) { (void)cb; }

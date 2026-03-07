@@ -75,7 +75,7 @@ void MqttDeviceManager::setup() {
     for (size_t i = 0; i < max_remotes_; i++) {
       if (!remote_slots_[i].restore()) continue;
       remote_slots_[i].set_state_callback([this](EleroRemoteControl *r) { publish_remote_state_(r); });
-      if (remote_slots_[i].activate(remote_slots_[i].get_address(), remote_slots_[i].get_title())) {
+      if (remote_slots_[i].activate(remote_slots_[i].config())) {
         remotes++;
       }
     }
@@ -159,81 +159,91 @@ void MqttDeviceManager::on_rf_packet(const RfPacketInfo &pkt) {
 // Device CRUD
 // ═══════════════════════════════════════════════════════════════════════════════
 
-bool MqttDeviceManager::add_device(const NvsDeviceConfig &config) {
+bool MqttDeviceManager::upsert_device(const NvsDeviceConfig &config) {
   if (config.is_cover()) {
-    if (find_active_cover_(config.dst_address) != nullptr) {
-      ESP_LOGW(TAG, "Cover 0x%06x already exists", config.dst_address);
-      return false;
+    auto *slot = find_active_cover_(config.dst_address);
+    if (slot != nullptr) {
+      // Update existing cover
+      remove_discovery_("cover", config.dst_address);
+      slot->update_config(config);
+    } else {
+      // Create new cover
+      slot = find_free_cover_slot_();
+      if (slot == nullptr) {
+        ESP_LOGE(TAG, "No free cover slot for 0x%06x", config.dst_address);
+        return false;
+      }
+      slot->set_state_callback([this](EleroDynamicCover *c) { publish_cover_state_(c); });
+      if (!slot->activate(config, hub_)) {
+        ESP_LOGW(TAG, "Failed to activate cover 0x%06x", config.dst_address);
+        return false;
+      }
+      (void)slot->save_config();
     }
-    auto *slot = find_free_cover_slot_();
-    if (slot == nullptr) {
-      ESP_LOGE(TAG, "No free cover slot for 0x%06x", config.dst_address);
-      return false;
-    }
-    // Set callback BEFORE activate to avoid missing state changes
-    slot->set_state_callback([this](EleroDynamicCover *c) { publish_cover_state_(c); });
-    if (!slot->activate(config, hub_)) {
-      ESP_LOGW(TAG, "Failed to activate cover 0x%06x", config.dst_address);
-      return false;
-    }
-    (void)slot->save_config();
+
     if (config.is_enabled()) {
       publish_cover_discovery_(slot);
       subscribe_cover_commands_(slot);
     }
 
-    notify_crud_("device_added", config.dst_address, "cover");
+    notify_crud_("device_upserted", config.dst_address, "cover");
     return true;
   }
 
   if (config.is_light()) {
-    if (find_active_light_(config.dst_address) != nullptr) {
-      ESP_LOGW(TAG, "Light 0x%06x already exists", config.dst_address);
-      return false;
+    auto *slot = find_active_light_(config.dst_address);
+    if (slot != nullptr) {
+      remove_discovery_("light", config.dst_address);
+      slot->update_config(config);
+    } else {
+      slot = find_free_light_slot_();
+      if (slot == nullptr) {
+        ESP_LOGE(TAG, "No free light slot for 0x%06x", config.dst_address);
+        return false;
+      }
+      slot->set_state_callback([this](EleroDynamicLight *l) { publish_light_state_(l); });
+      if (!slot->activate(config, hub_)) {
+        ESP_LOGW(TAG, "Failed to activate light 0x%06x", config.dst_address);
+        return false;
+      }
+      (void)slot->save_config();
     }
-    auto *slot = find_free_light_slot_();
-    if (slot == nullptr) {
-      ESP_LOGE(TAG, "No free light slot for 0x%06x", config.dst_address);
-      return false;
-    }
-    slot->set_state_callback([this](EleroDynamicLight *l) { publish_light_state_(l); });
-    if (!slot->activate(config, hub_)) {
-      ESP_LOGW(TAG, "Failed to activate light 0x%06x", config.dst_address);
-      return false;
-    }
-    (void)slot->save_config();
+
     if (config.is_enabled()) {
       publish_light_discovery_(slot);
       subscribe_light_commands_(slot);
     }
 
-    notify_crud_("device_added", config.dst_address, "light");
+    notify_crud_("device_upserted", config.dst_address, "light");
     return true;
   }
 
   if (config.is_remote()) {
-    if (find_active_remote_(config.dst_address) != nullptr) {
-      ESP_LOGW(TAG, "Remote 0x%06x already exists", config.dst_address);
-      return false;
+    auto *slot = find_active_remote_(config.dst_address);
+    if (slot != nullptr) {
+      slot->update_config(config);
+      remove_discovery_("sensor", config.dst_address);
+      publish_remote_discovery_(slot);
+    } else {
+      slot = find_free_remote_slot_();
+      if (slot == nullptr) {
+        ESP_LOGE(TAG, "No free remote slot for 0x%06x", config.dst_address);
+        return false;
+      }
+      slot->set_state_callback([this](EleroRemoteControl *r) { publish_remote_state_(r); });
+      if (!slot->activate(config)) {
+        ESP_LOGW(TAG, "Failed to activate remote 0x%06x", config.dst_address);
+        return false;
+      }
+      (void)slot->save_config();
+      publish_remote_discovery_(slot);
     }
-    auto *slot = find_free_remote_slot_();
-    if (slot == nullptr) {
-      ESP_LOGE(TAG, "No free remote slot for 0x%06x", config.dst_address);
-      return false;
-    }
-    slot->set_state_callback([this](EleroRemoteControl *r) { publish_remote_state_(r); });
-    if (!slot->activate(config.dst_address, config.name)) {
-      ESP_LOGW(TAG, "Failed to activate remote 0x%06x", config.dst_address);
-      return false;
-    }
-    (void)slot->save_config();
-    publish_remote_discovery_(slot);
 
-    notify_crud_("device_added", config.dst_address, "remote");
+    notify_crud_("device_upserted", config.dst_address, "remote");
     return true;
   }
 
-  ESP_LOGW(TAG, "add_device: unknown device type %d", static_cast<int>(config.type));
+  ESP_LOGW(TAG, "upsert_device: unknown device type %d", static_cast<int>(config.type));
   return false;
 }
 
@@ -276,91 +286,6 @@ bool MqttDeviceManager::remove_device(DeviceType type, uint32_t dst_address) {
   return removed;
 }
 
-bool MqttDeviceManager::update_device(const NvsDeviceConfig &config) {
-  // NOTE: update_device() can only change config fields (name, RF params, timing).
-  // It cannot change address or device type — use remove_device() + add_device() for that.
-  if (config.is_cover()) {
-    auto *slot = find_active_cover_(config.dst_address);
-    if (slot == nullptr) {
-      ESP_LOGW(TAG, "update_device: no active cover at 0x%06x", config.dst_address);
-      return false;
-    }
-
-    remove_discovery_("cover", config.dst_address);
-    slot->update_config(config);
-
-    if (config.is_enabled()) {
-      publish_cover_discovery_(slot);
-      subscribe_cover_commands_(slot);
-    }
-  } else if (config.is_light()) {
-    auto *slot = find_active_light_(config.dst_address);
-    if (slot == nullptr) {
-      ESP_LOGW(TAG, "update_device: no active light at 0x%06x", config.dst_address);
-      return false;
-    }
-
-    remove_discovery_("light", config.dst_address);
-    slot->update_config(config);
-
-    if (config.is_enabled()) {
-      publish_light_discovery_(slot);
-      subscribe_light_commands_(slot);
-    }
-  } else {
-    ESP_LOGW(TAG, "update_device: unsupported type %d", static_cast<int>(config.type));
-    return false;
-  }
-
-  notify_crud_("device_updated", config.dst_address, config.is_cover() ? "cover" : "light");
-  return true;
-}
-
-bool MqttDeviceManager::set_device_enabled(DeviceType type, uint32_t dst_address, bool enabled) {
-  switch (type) {
-    case DeviceType::COVER: {
-      auto *slot = find_active_cover_(dst_address);
-      if (slot == nullptr) return false;
-
-      slot->set_config_enabled(enabled);
-      (void)slot->save_config();
-
-      if (enabled && !slot->is_registered()) {
-        slot->register_with_hub();
-        publish_cover_discovery_(slot);
-        subscribe_cover_commands_(slot);
-      } else if (!enabled && slot->is_registered()) {
-        slot->unregister_from_hub();
-        remove_discovery_("cover", dst_address);
-      }
-
-      notify_crud_enabled_("device_enabled", dst_address, enabled);
-      return true;
-    }
-    case DeviceType::LIGHT: {
-      auto *slot = find_active_light_(dst_address);
-      if (slot == nullptr) return false;
-
-      slot->set_config_enabled(enabled);
-      (void)slot->save_config();
-
-      if (enabled && !slot->is_registered()) {
-        slot->register_with_hub();
-        publish_light_discovery_(slot);
-        subscribe_light_commands_(slot);
-      } else if (!enabled && slot->is_registered()) {
-        slot->unregister_from_hub();
-        remove_discovery_("light", dst_address);
-      }
-
-      notify_crud_enabled_("device_enabled", dst_address, enabled);
-      return true;
-    }
-    default:
-      return false;
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Remote Control Tracking
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -384,11 +309,13 @@ void MqttDeviceManager::track_remote_(const RfPacketInfo &pkt) {
     return;
   }
 
-  char auto_name[NVS_NAME_MAX];
-  snprintf(auto_name, sizeof(auto_name), "Remote 0x%06x", remote_addr);
+  NvsDeviceConfig cfg{};
+  cfg.type = DeviceType::REMOTE;
+  cfg.dst_address = remote_addr;
+  snprintf(cfg.name, sizeof(cfg.name), "Remote 0x%06x", remote_addr);
 
   slot->set_state_callback([this](EleroRemoteControl *r) { publish_remote_state_(r); });
-  slot->activate(remote_addr, auto_name);
+  slot->activate(cfg);
   slot->update_from_packet(pkt.timestamp_ms, pkt.rssi, pkt.channel, pkt.command, pkt.dst);
 
   (void)slot->save_config();
@@ -666,13 +593,6 @@ void MqttDeviceManager::notify_crud_(const char *event, uint32_t addr, const cha
   notify_crud_(event, resp.c_str());
 }
 
-void MqttDeviceManager::notify_crud_enabled_(const char *event, uint32_t addr, bool enabled) {
-  std::string resp = json::build_json([&](JsonObject root) {
-    root["address"] = hex_str(addr);
-    root["enabled"] = enabled;
-  });
-  notify_crud_(event, resp.c_str());
-}
 
 }  // namespace elero
 }  // namespace esphome

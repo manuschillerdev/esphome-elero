@@ -34,10 +34,8 @@ class MqttDeviceManager : public IDeviceManager, public Component {
 
   // ─── Device CRUD ───
 
-  [[nodiscard]] bool add_device(const NvsDeviceConfig &config) override;
+  [[nodiscard]] bool upsert_device(const NvsDeviceConfig &config) override;
   [[nodiscard]] bool remove_device(DeviceType type, uint32_t dst_address) override;
-  [[nodiscard]] bool update_device(const NvsDeviceConfig &config) override;
-  [[nodiscard]] bool set_device_enabled(DeviceType type, uint32_t dst_address, bool enabled) override;
 
   // ─── CRUD event callback (for WS broadcast) ───
 
@@ -100,7 +98,6 @@ class MqttDeviceManager : public IDeviceManager, public Component {
 
   void notify_crud_(const char *event, const char *json_str);
   void notify_crud_(const char *event, uint32_t addr, const char *device_type);
-  void notify_crud_enabled_(const char *event, uint32_t addr, bool enabled);
 
   // ─── Members ───
 

@@ -33,17 +33,19 @@ void EleroRemoteControl::clear_config() {
 
 // ─── Activation ───
 
-bool EleroRemoteControl::activate(uint32_t address, const char *name) {
+bool EleroRemoteControl::activate(const NvsDeviceConfig &config) {
   if (active_) return false;
-  if (address == 0) return false;
+  if (!config.is_valid() || !config.is_remote()) return false;
 
-  config_.type = DeviceType::REMOTE;
-  config_.dst_address = address;
-  if (name != nullptr) {
-    config_.set_name(name);
-  }
+  config_ = config;
   active_ = true;
   return true;
+}
+
+void EleroRemoteControl::update_config(const NvsDeviceConfig &config) {
+  if (!active_) return;
+  config_ = config;
+  (void)save_config();
 }
 
 void EleroRemoteControl::deactivate() {

@@ -32,13 +32,16 @@ class EleroRemoteControl {
 
   // ─── Activation ───
 
-  /// Activate with address and name. Returns true on success.
-  bool activate(uint32_t address, const char *name);
+  /// Activate from config. Returns true on success.
+  bool activate(const NvsDeviceConfig &config);
+  /// Update config of an active remote (non-destructive, preserves RF state).
+  void update_config(const NvsDeviceConfig &config);
   void deactivate();
   bool is_active() const { return active_; }
 
   // ─── Accessors ───
 
+  const NvsDeviceConfig &config() const { return config_; }
   uint32_t get_address() const { return config_.dst_address; }
   const char *get_title() const { return config_.name; }
   float get_rssi() const { return rssi_; }
