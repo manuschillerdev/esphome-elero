@@ -91,6 +91,7 @@ void IRAM_ATTR Elero::set_received() {
 
 void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero CC1101:");
+  ESP_LOGCONFIG(TAG, "  Version: %s", this->version_);
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
@@ -1009,6 +1010,11 @@ void Elero::interpret_msg() {
                       : CC1101_FIFO_LENGTH;
     memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
     this->on_rf_packet_(pkt);
+
+    // Notify device manager (MQTT mode: tracks remotes, routes to dynamic devices)
+    if (this->device_manager_ != nullptr) {
+      this->device_manager_->on_rf_packet(pkt);
+    }
   }
 
   // Update RSSI sensor for any message from a known blind
@@ -1096,6 +1102,10 @@ void Elero::register_cover(EleroBlindBase *cover) {
   cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * packet::timing::POLL_OFFSET_SPACING);
 }
 
+void Elero::unregister_cover(uint32_t address) {
+  this->address_to_cover_mapping_.erase(address);
+}
+
 void Elero::register_light(EleroLightBase *light) {
   uint32_t address = light->get_blind_address();
   if (this->address_to_light_mapping_.find(address) != this->address_to_light_mapping_.end()) {
@@ -1103,6 +1113,10 @@ void Elero::register_light(EleroLightBase *light) {
     return;
   }
   this->address_to_light_mapping_.insert({address, light});
+}
+
+void Elero::unregister_light(uint32_t address) {
+  this->address_to_light_mapping_.erase(address);
 }
 
 #ifdef USE_SENSOR

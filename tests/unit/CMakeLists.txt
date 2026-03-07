@@ -25,6 +25,8 @@ include_directories(${CMAKE_SOURCE_DIR})        # test_vectors.h
 set(ELERO_PACKET_SRC ${COMPONENTS_DIR}/elero/elero_packet.cpp)
 set(ELERO_STRINGS_SRC ${COMPONENTS_DIR}/elero/elero_strings.cpp)
 set(ELERO_TIME_PROVIDER_SRC ${COMPONENTS_DIR}/elero/time_provider.cpp)
+set(ELERO_COVER_CORE_SRC ${COMPONENTS_DIR}/elero/cover_core.cpp)
+set(ELERO_LIGHT_CORE_SRC ${COMPONENTS_DIR}/elero/light_core.cpp)
 
 # Test executable: Protocol encoding/decoding
 add_executable(test_protocol
@@ -75,6 +77,22 @@ add_executable(test_string_functions
 )
 target_link_libraries(test_string_functions GTest::gtest_main)
 
+# Test executable: CoverCore position tracking, state mapping, polling
+add_executable(test_cover_core
+  test_cover_core.cpp
+  ${ELERO_COVER_CORE_SRC}
+  ${ELERO_PACKET_SRC}
+)
+target_link_libraries(test_cover_core GTest::gtest_main)
+
+# Test executable: LightCore brightness, dimming, state mapping
+add_executable(test_light_core
+  test_light_core.cpp
+  ${ELERO_LIGHT_CORE_SRC}
+  ${ELERO_PACKET_SRC}
+)
+target_link_libraries(test_light_core GTest::gtest_main)
+
 # Discover all tests
 include(GoogleTest)
 gtest_discover_tests(test_protocol)
@@ -84,11 +102,14 @@ gtest_discover_tests(test_golden_vectors)
 gtest_discover_tests(test_encryption_vectors)
 gtest_discover_tests(test_parse_roundtrip)
 gtest_discover_tests(test_string_functions)
+gtest_discover_tests(test_cover_core)
+gtest_discover_tests(test_light_core)
 
 # All test targets
 set(ALL_TEST_TARGETS
   test_protocol test_packet_vectors test_command_sender test_golden_vectors
   test_encryption_vectors test_parse_roundtrip test_string_functions
+  test_cover_core test_light_core
 )
 
 # Combined target for running all tests

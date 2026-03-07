@@ -9,6 +9,8 @@
 #include "esphome/components/logger/logger.h"
 #include "mongoose.h"
 #include "../elero/elero.h"
+#include "../elero/device_manager.h"
+#include "esphome/components/json/json_util.h"
 #include <string>
 #include <vector>
 
@@ -16,8 +18,8 @@ namespace esphome {
 namespace elero {
 
 /// Simplified WebSocket server - acts as RF bridge
-/// Server → Client: config (on connect), rf (packets)
-/// Client → Server: cmd (blind commands)
+/// Server → Client: config (on connect), rf (packets), crud events
+/// Client → Server: cmd (blind commands), upsert_device, remove_device
 /// Note: Log forwarding requires ESPHome 2025.12.0+ with LogListener support
 class EleroWebServer : public Component {
  public:
@@ -64,6 +66,13 @@ class EleroWebServer : public Component {
   // JSON builders
   std::string build_config_json();
   std::string build_rf_json(const RfPacketInfo &pkt);
+
+  // Device CRUD handlers (MQTT mode)
+  void handle_upsert_device_(struct mg_connection *c, JsonObject root);
+  void handle_remove_device_(struct mg_connection *c, JsonObject root);
+
+  // Parse NvsDeviceConfig from JSON object
+  bool parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error);
 };
 
 }  // namespace elero

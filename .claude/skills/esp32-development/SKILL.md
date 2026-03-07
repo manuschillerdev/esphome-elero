@@ -427,28 +427,64 @@ vTaskDelay(pdMS_TO_TICKS(10));
 
 ---
 
-## Flash/NVS Storage
+## Persistent Storage
 
-### NVS for Configuration
+### ESPHome Preferences (Recommended)
+
+**Always prefer ESPHome's preference system over raw NVS.** It handles caching, batched writes, and wear leveling automatically.
+
+**Docs:** [developers.esphome.io/blog/2026/02/12/entity-preferences](https://developers.esphome.io/blog/2026/02/12/entity-preferences-use-make_entity_preference-instead-of-get_preference_hash/)
+
+```cpp
+#include "esphome/core/preferences.h"
+#include "esphome/core/helpers.h"  // for fnv1_hash
+
+// Type constraint: T must be trivially copyable (POD structs, scalars — no std::string, no pointers)
+struct MyConfig {
+  uint32_t address{0};
+  uint8_t channel{0};
+  char name[24]{};
+  bool is_valid() const { return address != 0; }
+};
+
+// ─── For EntityBase subclasses (Cover, Light, Switch, etc.) ───
+// Hash is auto-derived from entity's object_id.
+this->pref_ = this->make_entity_preference<MyConfig>(VERSION);
+
+// ─── For non-entity classes (dynamic slots, managers) ───
+// Compute a deterministic hash from a readable string + slot index.
+uint32_t hash = fnv1_hash("my_component_slot") + slot_index;
+auto pref = global_preferences->make_preference<MyConfig>(hash);
+
+// Save and load:
+MyConfig cfg{};
+pref.save(&cfg);         // returns bool
+pref.load(&cfg);         // returns bool (false if no data stored)
+
+// To "delete" a preference, save an invalid/empty value:
+MyConfig empty{};
+pref.save(&empty);       // load() will succeed but is_valid() returns false
+```
+
+**Key rules:**
+- `global_preferences` is available after `setup_priority::HARDWARE`
+- Hashes must be unique across all preferences in the firmware
+- Use `fnv1_hash("descriptive_string") + index` for stable, readable hashes
+- The `version` parameter in `make_entity_preference<T>(version)` is XOR'd into the hash — bumping it silently invalidates old data
+- Writes are cached in RAM and flushed periodically — no flash wear concern for infrequent config changes
+
+### Raw NVS (Low-Level)
+
+Only use raw NVS when ESPHome preferences don't fit (e.g., variable-length data, custom namespaces):
 
 ```cpp
 #include "nvs_flash.h"
 #include "nvs.h"
 
-// Initialize once
-nvs_flash_init();
-
-// Write
 nvs_handle_t handle;
 nvs_open("storage", NVS_READWRITE, &handle);
 nvs_set_i32(handle, "counter", 42);
 nvs_commit(handle);
-nvs_close(handle);
-
-// Read
-nvs_open("storage", NVS_READONLY, &handle);
-int32_t value;
-nvs_get_i32(handle, "counter", &value);
 nvs_close(handle);
 ```
 

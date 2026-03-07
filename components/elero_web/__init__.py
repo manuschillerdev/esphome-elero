@@ -4,6 +4,7 @@ from esphome.components.elero import CONF_ELERO_ID, elero, elero_ns
 from esphome.const import CONF_ID, CONF_PORT
 
 DEPENDENCIES = ["elero", "network", "logger"]
+AUTO_LOAD = ["json"]
 CODEOWNERS = ["@manuschillerdev"]
 
 # Exported so the switch sub-platform can reference the web server class

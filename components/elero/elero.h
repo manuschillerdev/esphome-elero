@@ -7,6 +7,7 @@
 #include "tx_client.h"
 #include "elero_packet.h"
 #include "elero_strings.h"
+#include "device_manager.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -219,7 +220,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   TxClient *get_tx_owner() const { return tx_owner_; }
 
   void register_cover(EleroBlindBase *cover);
+  void unregister_cover(uint32_t address);
   void register_light(EleroLightBase *light);
+  void unregister_light(uint32_t address);
 
   // Legacy blocking TX API (for backwards compatibility and simple use cases)
   [[nodiscard]] bool send_command(EleroCommand *cmd);
@@ -252,9 +255,16 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_freq1(uint8_t freq) { freq1_ = freq; }
   void set_freq2(uint8_t freq) { freq2_ = freq; }
 
+  void set_version(const char *version) { version_ = version; }
+  const char *get_version() const { return version_; }
+
   // RF packet notification callback (used by web server)
   using RfPacketCallback = std::function<void(const RfPacketInfo &)>;
   void set_rf_packet_callback(RfPacketCallback cb) { on_rf_packet_ = std::move(cb); }
+
+  // Device manager (MQTT mode)
+  void set_device_manager(IDeviceManager *mgr) { device_manager_ = mgr; }
+  IDeviceManager *get_device_manager() const { return device_manager_; }
 
   void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   uint8_t get_freq0() const { return freq0_; }
@@ -299,6 +309,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   // RF packet notification callback (optional, set by web server)
   RfPacketCallback on_rf_packet_{};
+
+  // Device manager (nullptr in native mode, set by MqttDeviceManager in MQTT mode)
+  IDeviceManager *device_manager_{nullptr};
+
+  const char *version_{"unknown"};
 };
 
 }  // namespace elero

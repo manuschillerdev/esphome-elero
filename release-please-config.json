@@ -18,7 +18,10 @@
   ],
   "packages": {
     ".": {
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        "components/elero/__init__.py"
+      ]
     }
   }
 }

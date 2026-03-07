@@ -250,7 +250,7 @@ class CommandSender : public TxClient {
   uint32_t calculate_backoff_ms_() const {
     uint8_t shift = (this->send_retries_ < 4) ? this->send_retries_ : 3;  // Clamp to avoid overflow
     uint32_t backoff_ms = packet::timing::DELAY_SEND_PACKETS << shift;
-    return (backoff_ms > 400) ? 400 : backoff_ms;
+    return (backoff_ms > packet::timing::MAX_BACKOFF_MS) ? packet::timing::MAX_BACKOFF_MS : backoff_ms;
   }
 
   /// Advance to next command in queue (called after command completes or fails).
