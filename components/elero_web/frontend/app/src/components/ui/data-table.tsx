@@ -177,7 +177,7 @@ export function DataTable<T>({
                 {col.sortable ? (
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1 text-primary cursor-pointer select-none hover:text-primary/80 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded"
+                    className="inline-flex items-center gap-1 text-primary select-none hover:text-primary/80 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded"
                     onClick={() => handleSort(col)}
                   >
                     {col.label}

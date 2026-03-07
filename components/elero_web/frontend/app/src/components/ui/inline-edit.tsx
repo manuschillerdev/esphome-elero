@@ -77,7 +77,7 @@ export function InlineEdit({
       onClick={() => { editing.value = true }}
       onKeyDown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); editing.value = true } }}
       className={cn(
-        'cursor-pointer hover:bg-muted/50 focus:bg-muted/50 rounded px-0.5 -mx-0.5 transition-colors',
+        'hover:bg-muted/50 focus:bg-muted/50 rounded px-0.5 -mx-0.5 transition-colors',
         'border-b border-transparent hover:border-muted-foreground/30 focus:border-muted-foreground/30',
         'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
         className
@@ -178,7 +178,7 @@ export function InlineEditNumber({
       onClick={() => { editing.value = true }}
       onKeyDown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); editing.value = true } }}
       className={cn(
-        'inline-flex items-baseline cursor-pointer rounded px-0.5 -mx-0.5 transition-colors tabular-nums',
+        'inline-flex items-baseline rounded px-0.5 -mx-0.5 transition-colors tabular-nums',
         'hover:bg-muted/50 focus:bg-muted/50 border-b border-transparent hover:border-muted-foreground/30 focus:border-muted-foreground/30',
         'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
         className
