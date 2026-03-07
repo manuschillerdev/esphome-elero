@@ -66,17 +66,17 @@ const char *elero_command_to_string(uint8_t command) {
 uint8_t elero_action_to_command(const char *action) {
   if (action == nullptr)
     return packet::command::INVALID;
-  if (strcmp(action, "up") == 0 || strcmp(action, "open") == 0)
+  if (strcmp(action, action::UP) == 0 || strcmp(action, action::OPEN) == 0)
     return packet::command::UP;
-  if (strcmp(action, "down") == 0 || strcmp(action, "close") == 0)
+  if (strcmp(action, action::DOWN) == 0 || strcmp(action, action::CLOSE) == 0)
     return packet::command::DOWN;
-  if (strcmp(action, "stop") == 0)
+  if (strcmp(action, action::STOP) == 0)
     return packet::command::STOP;
-  if (strcmp(action, "check") == 0)
+  if (strcmp(action, action::CHECK) == 0)
     return packet::command::CHECK;
-  if (strcmp(action, "tilt") == 0)
+  if (strcmp(action, action::TILT) == 0)
     return packet::command::TILT;
-  if (strcmp(action, "int") == 0)
+  if (strcmp(action, action::INT) == 0)
     return packet::command::INTERMEDIATE;
   return packet::command::INVALID;
 }

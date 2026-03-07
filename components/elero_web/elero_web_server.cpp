@@ -1,6 +1,7 @@
 #include "elero_web_server.h"
 #include "elero_web_ui.h"
 #include "../elero/elero_packet.h"
+#include "../elero/elero_strings.h"
 #include "../elero/nvs_config.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
@@ -17,22 +18,6 @@ static const char *const TAG = "elero.web";
 
 // Global instance pointer for Mongoose's C callback
 static EleroWebServer *g_server = nullptr;
-
-// ─── JSON helpers ─────────────────────────────────────────────────────────────
-
-/// Format a uint32_t as "0xNNNNNN" hex string
-static std::string hex_str(uint32_t val) {
-  char buf[12];
-  snprintf(buf, sizeof(buf), "0x%06x", val);
-  return buf;
-}
-
-/// Format a uint8_t as "0xNN" hex string
-static std::string hex_str8(uint8_t val) {
-  char buf[8];
-  snprintf(buf, sizeof(buf), "0x%02x", val);
-  return buf;
-}
 
 /// Parse hex string ("0xNN" or decimal) to uint8_t, returning default if missing/null
 static uint8_t parse_hex_or(JsonObject root, const char *key, uint8_t def) {
@@ -55,9 +40,9 @@ static uint32_t parse_hex32(JsonObject root, const char *key) {
 /// Parse "cover"/"light"/"remote" into DeviceType enum. Returns false if invalid.
 static bool parse_device_type(const char *str, DeviceType &out) {
   if (str == nullptr) return false;
-  if (strcmp(str, "cover") == 0) { out = DeviceType::COVER; return true; }
-  if (strcmp(str, "light") == 0) { out = DeviceType::LIGHT; return true; }
-  if (strcmp(str, "remote") == 0) { out = DeviceType::REMOTE; return true; }
+  if (strcmp(str, device_type_str(DeviceType::COVER)) == 0) { out = DeviceType::COVER; return true; }
+  if (strcmp(str, device_type_str(DeviceType::LIGHT)) == 0) { out = DeviceType::LIGHT; return true; }
+  if (strcmp(str, device_type_str(DeviceType::REMOTE)) == 0) { out = DeviceType::REMOTE; return true; }
   return false;
 }
 
@@ -338,11 +323,11 @@ std::string EleroWebServer::build_config_json() {
     }
 
     auto *dm = this->parent_->get_device_manager();
-    if (dm != nullptr && dm->mode() == HubMode::MQTT) {
-      root["mode"] = "mqtt";
-      root["crud"] = true;
+    if (dm != nullptr) {
+      root["mode"] = hub_mode_str(dm->mode());
+      root["crud"] = dm->supports_crud();
     } else {
-      root["mode"] = "native";
+      root["mode"] = hub_mode_str(HubMode::NATIVE);
       root["crud"] = false;
     }
   });
@@ -369,7 +354,7 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
     root["state"] = hex_str8(pkt.state);
     root["echo"] = pkt.echo;
     root["cnt"] = pkt.cnt;
-    root["rssi"] = static_cast<float>(static_cast<int>(pkt.rssi * 10)) / 10.0f;
+    root["rssi"] = round_rssi(pkt.rssi);
     root["hop"] = hex_str8(pkt.hop);
     root["raw"] = raw_hex;
   });

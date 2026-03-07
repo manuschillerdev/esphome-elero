@@ -16,11 +16,12 @@ void EleroLight::dump_config() {
   ESP_LOGCONFIG(TAG, "  hop: 0x%02x", this->sender_.command().hop);
   ESP_LOGCONFIG(TAG, "  type: 0x%02x, type2: 0x%02x", this->sender_.command().type,
                 this->sender_.command().type2);
-  if (this->dim_duration_ > 0)
-    ESP_LOGCONFIG(TAG, "  Dim Duration: %dms", this->dim_duration_);
-  ESP_LOGCONFIG(TAG, "  cmd_on: 0x%02x, cmd_off: 0x%02x, cmd_stop: 0x%02x", this->command_on_, this->command_off_,
-                this->command_stop_);
-  ESP_LOGCONFIG(TAG, "  cmd_dim_up: 0x%02x, cmd_dim_down: 0x%02x", this->command_dim_up_, this->command_dim_down_);
+  if (this->core_.config.dim_duration_ms > 0)
+    ESP_LOGCONFIG(TAG, "  Dim Duration: %dms", this->core_.config.dim_duration_ms);
+  ESP_LOGCONFIG(TAG, "  cmd_on: 0x%02x, cmd_off: 0x%02x, cmd_stop: 0x%02x",
+                this->core_.command_on, this->core_.command_off, this->core_.command_stop);
+  ESP_LOGCONFIG(TAG, "  cmd_dim_up: 0x%02x, cmd_dim_down: 0x%02x",
+                this->core_.command_dim_up, this->core_.command_dim_down);
 }
 
 void EleroLight::setup() {
@@ -34,7 +35,7 @@ void EleroLight::setup() {
 
 LightTraits EleroLight::get_traits() {
   auto traits = LightTraits();
-  if (this->dim_duration_ > 0) {
+  if (this->core_.supports_brightness()) {
     traits.set_supported_color_modes({ColorMode::BRIGHTNESS});
   } else {
     traits.set_supported_color_modes({ColorMode::ON_OFF});
@@ -50,70 +51,33 @@ void EleroLight::write_state(LightState *state) {
   bool new_on = state->current_values.is_on();
   float new_brightness = state->current_values.get_brightness();
 
-  if (!new_on) {
-    if (!this->sender_.enqueue(this->command_off_)) {
+  auto action = this->core_.compute_write_action(new_on, new_brightness);
+
+  if (action.command != 0) {
+    if (!this->sender_.enqueue(action.command)) {
       ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().dst_addr);
     }
-    this->is_on_ = false;
-    this->dim_direction_ = DimDirection::NONE;
-    this->brightness_ = 0.0f;
-    return;
   }
 
-  // Light should be on
-  this->is_on_ = true;
-
-  if (this->dim_duration_ == 0) {
-    // No brightness support: just toggle on
-    if (!this->sender_.enqueue(this->command_on_)) {
-      ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().dst_addr);
-    }
-    this->brightness_ = 1.0f;
-    return;
+  if (action.start_dimming) {
+    ESP_LOGD(TAG, "Dimming %s 0x%06x from %.2f to %.2f",
+             action.dim_dir == DimDirection::UP ? "up" : "down",
+             this->sender_.command().dst_addr, this->core_.brightness, new_brightness);
   }
 
-  // Brightness control via timing
-  this->target_brightness_ = new_brightness;
-  this->dim_direction_ = DimDirection::NONE;
+  uint32_t now = millis();
+  this->core_.apply_write_action(new_on, new_brightness, action, now);
 
-  if (new_brightness >= 1.0f) {
-    // Full brightness shortcut
-    if (!this->sender_.enqueue(this->command_on_)) {
-      ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().dst_addr);
+  // If we just turned on from off and target < 1.0, we need a second pass for dimming
+  if (new_on && new_brightness < 1.0f - BRIGHTNESS_EPSILON && !action.start_dimming && this->core_.brightness >= 1.0f) {
+    auto dim_action = this->core_.compute_write_action(true, new_brightness);
+    if (dim_action.command != 0) {
+      if (!this->sender_.enqueue(dim_action.command)) {
+        ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().dst_addr);
+      }
     }
-    this->brightness_ = 1.0f;
-    return;
+    this->core_.apply_write_action(true, new_brightness, dim_action, now);
   }
-
-  if (this->brightness_ < 0.01f) {
-    // Currently off; turn on to full first, then dim down
-    if (!this->sender_.enqueue(this->command_on_)) {
-      ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().dst_addr);
-    }
-    this->brightness_ = 1.0f;
-    // Now fall through and initiate dim-down
-  }
-
-  if (new_brightness > this->brightness_ + 0.01f) {
-    ESP_LOGD(TAG, "Dimming up 0x%06x from %.2f to %.2f", this->sender_.command().dst_addr, this->brightness_,
-             new_brightness);
-    if (!this->sender_.enqueue(this->command_dim_up_)) {
-      ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().dst_addr);
-    }
-    this->dim_direction_ = DimDirection::UP;
-    this->dimming_start_ = millis();
-    this->last_recompute_time_ = millis();
-  } else if (new_brightness < this->brightness_ - 0.01f) {
-    ESP_LOGD(TAG, "Dimming down 0x%06x from %.2f to %.2f", this->sender_.command().dst_addr, this->brightness_,
-             new_brightness);
-    if (!this->sender_.enqueue(this->command_dim_down_)) {
-      ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().dst_addr);
-    }
-    this->dim_direction_ = DimDirection::DOWN;
-    this->dimming_start_ = millis();
-    this->last_recompute_time_ = millis();
-  }
-  // If within tolerance: no action needed, current level is already correct
 }
 
 void EleroLight::loop() {
@@ -121,26 +85,21 @@ void EleroLight::loop() {
 
   this->sender_.process_queue(now, this->parent_, TAG);
 
-  if (this->dim_direction_ != DimDirection::NONE && this->dim_duration_ > 0) {
-    this->recompute_brightness();
+  if (this->core_.dim_direction != DimDirection::NONE && this->core_.supports_brightness()) {
+    this->core_.recompute_brightness(now);
 
-    bool at_target;
-    if (this->dim_direction_ == DimDirection::UP) {
-      at_target = this->brightness_ >= this->target_brightness_;
-    } else {
-      at_target = this->brightness_ <= this->target_brightness_;
-    }
-
-    if (at_target) {
-      if (!this->sender_.enqueue(this->command_stop_)) {
+    if (this->core_.is_at_target()) {
+      if (!this->sender_.enqueue(this->core_.command_stop)) {
         ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().dst_addr);
       }
-      this->brightness_ = this->target_brightness_;
-      this->dim_direction_ = DimDirection::NONE;
+      this->core_.brightness = this->core_.target_brightness;
+      this->core_.dim_direction = DimDirection::NONE;
+      if (this->state_ != nullptr)
+        this->state_->publish_state();
     }
 
     // Publish estimated brightness every second while dimming
-    if (now - this->last_publish_ > 1000) {
+    if (now - this->last_publish_ > packet::timing::PUBLISH_THROTTLE_MS) {
       if (this->state_ != nullptr)
         this->state_->publish_state();
       this->last_publish_ = now;
@@ -154,54 +113,42 @@ void EleroLight::schedule_immediate_poll() {
   }
 }
 
-void EleroLight::recompute_brightness() {
-  if (this->dim_direction_ == DimDirection::NONE)
-    return;
-
-  const uint32_t now = millis();
-  float dir = (this->dim_direction_ == DimDirection::UP) ? 1.0f : -1.0f;
-  this->brightness_ +=
-      dir * static_cast<float>(now - this->last_recompute_time_) / static_cast<float>(this->dim_duration_);
-  this->brightness_ = clamp(this->brightness_, 0.0f, 1.0f);
-  this->last_recompute_time_ = now;
-}
-
 bool EleroLight::perform_action(const char *action) {
-  if (strcmp(action, "on") == 0 || strcmp(action, "up") == 0) {
+  if (strcmp(action, action::ON) == 0 || strcmp(action, action::UP) == 0) {
     if (this->state_ != nullptr) {
       auto call = this->state_->make_call();
       call.set_state(true);
-      if (this->dim_duration_ > 0)
+      if (this->core_.supports_brightness())
         call.set_brightness(1.0f);
       call.perform();
     } else {
-      this->sender_.enqueue(this->command_on_);
+      this->sender_.enqueue(this->core_.command_on);
     }
     return true;
   }
-  if (strcmp(action, "off") == 0 || strcmp(action, "down") == 0) {
+  if (strcmp(action, action::OFF) == 0 || strcmp(action, action::DOWN) == 0) {
     if (this->state_ != nullptr) {
       auto call = this->state_->make_call();
       call.set_state(false);
       call.perform();
     } else {
-      this->sender_.enqueue(this->command_off_);
+      this->sender_.enqueue(this->core_.command_off);
     }
     return true;
   }
-  if (strcmp(action, "stop") == 0) {
-    this->sender_.enqueue(this->command_stop_);
+  if (strcmp(action, action::STOP) == 0) {
+    this->sender_.enqueue(this->core_.command_stop);
     return true;
   }
-  if (strcmp(action, "dim_up") == 0) {
-    this->sender_.enqueue(this->command_dim_up_);
+  if (strcmp(action, action::DIM_UP) == 0) {
+    this->sender_.enqueue(this->core_.command_dim_up);
     return true;
   }
-  if (strcmp(action, "dim_down") == 0) {
-    this->sender_.enqueue(this->command_dim_down_);
+  if (strcmp(action, action::DIM_DOWN) == 0) {
+    this->sender_.enqueue(this->core_.command_dim_down);
     return true;
   }
-  if (strcmp(action, "check") == 0) {
+  if (strcmp(action, action::CHECK) == 0) {
     this->sender_.enqueue(this->command_check_);
     return true;
   }
@@ -211,32 +158,15 @@ bool EleroLight::perform_action(const char *action) {
 void EleroLight::set_rx_state(uint8_t state) {
   ESP_LOGV(TAG, "Got state: 0x%02x for light 0x%06x", state, this->sender_.command().dst_addr);
 
-  if (state == packet::state::LIGHT_ON) {
-    if (!this->is_on_) {
-      this->is_on_ = true;
-      this->brightness_ = 1.0f;
-      if (this->state_ != nullptr) {
-        this->ignore_write_state_ = true;
-        auto call = this->state_->make_call();
-        call.set_state(true);
-        if (this->dim_duration_ > 0)
-          call.set_brightness(1.0f);
-        call.perform();
-        this->ignore_write_state_ = false;
-      }
-    }
-  } else if (state == packet::state::LIGHT_OFF) {
-    if (this->is_on_) {
-      this->is_on_ = false;
-      this->brightness_ = 0.0f;
-      if (this->state_ != nullptr) {
-        this->ignore_write_state_ = true;
-        auto call = this->state_->make_call();
-        call.set_state(false);
-        call.perform();
-        this->ignore_write_state_ = false;
-      }
-    }
+  bool changed = this->core_.on_rx_state(state);
+  if (changed && this->state_ != nullptr) {
+    this->ignore_write_state_ = true;
+    auto call = this->state_->make_call();
+    call.set_state(this->core_.is_on);
+    if (this->core_.supports_brightness() && this->core_.is_on)
+      call.set_brightness(this->core_.brightness);
+    call.perform();
+    this->ignore_write_state_ = false;
   }
 }
 
