@@ -255,6 +255,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_freq1(uint8_t freq) { freq1_ = freq; }
   void set_freq2(uint8_t freq) { freq2_ = freq; }
 
+  void set_version(const char *version) { version_ = version; }
+  void set_commit_hash(const char *hash) { commit_hash_ = hash; }
+  const char *get_version() const { return version_; }
+  const char *get_commit_hash() const { return commit_hash_; }
+
   // RF packet notification callback (used by web server)
   using RfPacketCallback = std::function<void(const RfPacketInfo &)>;
   void set_rf_packet_callback(RfPacketCallback cb) { on_rf_packet_ = std::move(cb); }
@@ -309,6 +314,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   // Device manager (nullptr in native mode, set by MqttDeviceManager in MQTT mode)
   IDeviceManager *device_manager_{nullptr};
+
+  const char *version_{"unknown"};
+  const char *commit_hash_{"unknown"};
 };
 
 }  // namespace elero

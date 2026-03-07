@@ -91,6 +91,7 @@ void IRAM_ATTR Elero::set_received() {
 
 void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero CC1101:");
+  ESP_LOGCONFIG(TAG, "  Version: %s (%s)", this->version_, this->commit_hash_);
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
