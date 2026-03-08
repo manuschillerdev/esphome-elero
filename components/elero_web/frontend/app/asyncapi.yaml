@@ -181,7 +181,7 @@ components:
       summary: A device was created or updated in NVS
       contentType: application/json
       payload:
-        $ref: "#/components/schemas/CrudEventEnvelope"
+        $ref: "#/components/schemas/DeviceUpsertedEnvelope"
 
     deviceRemovedEvent:
       name: device_removed
@@ -256,14 +256,27 @@ components:
         data:
           $ref: "#/components/schemas/RfData"
 
+    DeviceUpsertedEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      description: Envelope for device_upserted events with full device config.
+      properties:
+        event:
+          type: string
+          const: device_upserted
+        data:
+          $ref: "#/components/schemas/DeviceUpsertedData"
+
     CrudEventEnvelope:
       type: object
       additionalProperties: false
       required: [event, data]
-      description: Envelope for device_upserted and device_removed events.
+      description: Envelope for device_removed events.
       properties:
         event:
-          $ref: "#/components/schemas/CrudEventType"
+          type: string
+          const: device_removed
         data:
           $ref: "#/components/schemas/CrudEventData"
 
@@ -338,7 +351,7 @@ components:
     BlindConfig:
       type: object
       additionalProperties: false
-      required: [address, name, channel, remote, open_ms, close_ms, poll_ms, tilt]
+      required: [address, name, channel, remote, open_ms, close_ms, poll_ms, supports_tilt, enabled]
       properties:
         address:
           type: string
@@ -356,6 +369,9 @@ components:
           type: string
           description: 3-byte source/remote address (hex string)
           examples: ["0xb42f01"]
+        enabled:
+          type: boolean
+          description: Whether the device is published to Home Assistant
         open_ms:
           type: integer
           description: Full open duration in milliseconds (0 = position tracking disabled)
@@ -368,14 +384,18 @@ components:
           type: integer
           description: Status poll interval in milliseconds
           examples: [300000]
-        tilt:
+        supports_tilt:
           type: boolean
           description: Whether the blind supports tilt
+        updated_at:
+          type: integer
+          description: Timestamp (millis()) when last persisted to NVS (0 = YAML-defined)
+          examples: [1234567]
 
     LightConfig:
       type: object
       additionalProperties: false
-      required: [address, name, channel, remote, dim_ms]
+      required: [address, name, channel, remote, dim_ms, enabled]
       properties:
         address:
           type: string
@@ -393,10 +413,17 @@ components:
           type: string
           description: 3-byte source/remote address (hex string)
           examples: ["0xd51e03"]
+        enabled:
+          type: boolean
+          description: Whether the device is published to Home Assistant
         dim_ms:
           type: integer
           description: Dim duration in milliseconds (0 = on/off only)
           examples: [5000]
+        updated_at:
+          type: integer
+          description: Timestamp (millis()) when last persisted to NVS (0 = YAML-defined)
+          examples: [1234567]
 
     RemoteConfig:
       type: object
@@ -411,6 +438,10 @@ components:
           type: string
           description: Display name. In native mode, defaults to the hex address.
           examples: ["Remote 0xb42f01"]
+        updated_at:
+          type: integer
+          description: Timestamp (millis()) when last persisted to NVS (0 = derived from config)
+          examples: [1234567]
 
     RfData:
       type: object
@@ -500,11 +531,66 @@ components:
           description: Space-separated hex bytes of the raw packet
           examples: ["1d 2a 6a 00 0a 01 05 a8 31 e5 ..."]
 
+    DeviceUpsertedData:
+      type: object
+      additionalProperties: false
+      required: [address, device_type]
+      description: |
+        Full device config returned by the server after a successful upsert.
+        Contains all fields needed to construct a client-side Device entry.
+        Fields vary by device_type: covers include open_ms/close_ms/poll_ms/supports_tilt,
+        lights include dim_ms, remotes have only address/device_type/name.
+      properties:
+        address:
+          type: string
+          description: 3-byte device address (hex string)
+          examples: ["0xa831e5"]
+        device_type:
+          $ref: "#/components/schemas/DeviceType"
+        name:
+          type: string
+          description: Display name
+          examples: ["Living Room Blind"]
+        channel:
+          type: integer
+          description: RF channel number (covers and lights only)
+          examples: [5]
+        remote:
+          type: string
+          description: 3-byte remote address (hex string, covers and lights only)
+          examples: ["0xb42f01"]
+        enabled:
+          type: boolean
+          description: Whether the device is published to Home Assistant
+        open_ms:
+          type: integer
+          description: Full open duration in ms (covers only)
+          examples: [25000]
+        close_ms:
+          type: integer
+          description: Full close duration in ms (covers only)
+          examples: [23000]
+        poll_ms:
+          type: integer
+          description: Status poll interval in ms (covers only)
+          examples: [300000]
+        supports_tilt:
+          type: boolean
+          description: Whether the cover supports tilt (covers only)
+        dim_ms:
+          type: integer
+          description: Dim duration in ms (lights only, 0 = on/off only)
+          examples: [5000]
+        updated_at:
+          type: integer
+          description: Timestamp (millis()) when the device was last persisted to NVS. Non-zero means the device is server-confirmed.
+          examples: [1234567]
+
     CrudEventData:
       type: object
       additionalProperties: false
       required: [address, device_type]
-      description: Payload for device_upserted and device_removed events.
+      description: Payload for device_removed events.
       properties:
         address:
           type: string
@@ -639,6 +725,22 @@ components:
           type: string
           description: Secondary type byte (hex string, default 0x00). Ignored for remote.
           examples: ["0x00"]
+        open_duration_ms:
+          type: integer
+          description: Full open duration in milliseconds (cover only, 0 = position tracking disabled)
+          examples: [25000]
+        close_duration_ms:
+          type: integer
+          description: Full close duration in milliseconds (cover only, 0 = position tracking disabled)
+          examples: [23000]
+        poll_interval_ms:
+          type: integer
+          description: Status poll interval in milliseconds (cover only)
+          examples: [300000]
+        dim_duration_ms:
+          type: integer
+          description: Dim duration in milliseconds (light only, 0 = on/off only)
+          examples: [5000]
         supports_tilt:
           type: boolean
           description: Whether the cover supports tilt (cover only, default false)
@@ -668,11 +770,6 @@ components:
       type: string
       enum: [native, mqtt, native_nvs]
       description: Operating mode of the hub
-
-    CrudEventType:
-      type: string
-      enum: [device_upserted, device_removed]
-      description: CRUD event type for device lifecycle notifications
 
     DeviceAction:
       type: string

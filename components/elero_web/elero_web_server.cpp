@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <set>
 
 namespace esphome {
 namespace elero {
@@ -67,15 +68,6 @@ void EleroWebServer::setup() {
     logger::global_logger->add_log_listener(this);
   }
 
-  // Register CRUD event callback with device manager (if MQTT mode)
-  // This broadcasts manager-initiated events (e.g., remote auto-discovery) to WS clients
-  auto *dm = this->parent_->get_device_manager();
-  if (dm != nullptr && dm->supports_crud()) {
-    dm->set_crud_callback([this](const char *event, const char *json_data) {
-      this->ws_broadcast(event, std::string(json_data));
-    });
-  }
-
   if (g_server != nullptr) {
     ESP_LOGE(TAG, "Only one EleroWebServer instance is supported");
     this->mark_failed();
@@ -98,6 +90,18 @@ void EleroWebServer::setup() {
 }
 
 void EleroWebServer::loop() {
+  // Lazy CRUD callback registration — device manager setup() runs after web server setup()
+  if (!this->crud_callback_set_) {
+    auto *dm = this->parent_->get_device_manager();
+    if (dm != nullptr && dm->supports_crud()) {
+      dm->set_crud_callback([this](const char *event, const char *json_data) {
+        this->ws_broadcast(event, std::string(json_data));
+      });
+      this->crud_callback_set_ = true;
+      ESP_LOGI(TAG, "CRUD callback registered with device manager");
+    }
+  }
+
   // Poll mongoose (non-blocking)
   mg_mgr_poll(&this->mgr_, 0);
 
@@ -134,17 +138,32 @@ void EleroWebServer::on_log(uint8_t level, const char *tag, const char *message,
   if (tag == nullptr || strncmp(tag, "elero", 5) != 0)
     return;
 
-  // Build JSON: {"t":<ms>,"level":<n>,"tag":"...","msg":"..."}
-  std::string escaped_msg = json_escape(std::string(message, message_len));
-  char buf[512];
-  snprintf(buf, sizeof(buf),
-           "{\"t\":%lu,\"level\":%d,\"tag\":\"%s\",\"msg\":\"%s\"}",
-           (unsigned long) millis(),
-           (int) level,
-           tag,
-           escaped_msg.c_str());
+  // Strip ANSI escape sequences — ESPHome LogBuffer embeds color codes
+  // (e.g. \033[0;36m) which are invalid control characters in JSON
+  std::string msg;
+  msg.reserve(message_len);
+  bool in_escape = false;
+  for (size_t i = 0; i < message_len; i++) {
+    char c = message[i];
+    if (!in_escape) {
+      if (c == '\033') {
+        in_escape = true;
+      } else {
+        msg += c;
+      }
+    } else if (isalpha(c)) {
+      in_escape = false;
+    }
+  }
 
-  this->ws_broadcast("log", std::string(buf));
+  std::string log_json = json::build_json([&](JsonObject root) {
+    root["t"] = millis();
+    root["level"] = level;
+    root["tag"] = tag;
+    root["msg"] = msg;
+  });
+
+  this->ws_broadcast("log", log_json);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -202,7 +221,13 @@ void EleroWebServer::event_handler(struct mg_connection *c, int ev, void *ev_dat
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void EleroWebServer::handle_index(struct mg_connection *c) {
-  mg_http_reply(c, 200, "Content-Type: text/html\r\n", "%s", ELERO_WEB_UI_HTML);
+  mg_printf(c,
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Type: text/html\r\n"
+      "Content-Encoding: gzip\r\n"
+      "Content-Length: %lu\r\n\r\n",
+      (unsigned long) ELERO_WEB_UI_GZ_LEN);
+  mg_send(c, ELERO_WEB_UI_GZ, ELERO_WEB_UI_GZ_LEN);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -272,7 +297,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 
       uint8_t payload_1 = parse_hex_or(root, "payload_1", packet::defaults::PAYLOAD_1);
       uint8_t payload_2 = parse_hex_or(root, "payload_2", packet::defaults::PAYLOAD_2);
-      uint8_t msg_type = parse_hex_or(root, "type", packet::msg_type::COMMAND);
+      uint8_t msg_type = parse_hex_or(root, "msg_type", packet::msg_type::COMMAND);
       uint8_t type2_val = parse_hex_or(root, "type2", packet::defaults::TYPE2);
       uint8_t hop = parse_hex_or(root, "hop", packet::defaults::HOP);
 
@@ -339,7 +364,9 @@ std::string EleroWebServer::build_config_json() {
       obj["open_ms"] = blind->get_open_duration_ms();
       obj["close_ms"] = blind->get_close_duration_ms();
       obj["poll_ms"] = blind->get_poll_interval_ms();
-      obj["tilt"] = blind->get_supports_tilt();
+      obj["supports_tilt"] = blind->get_supports_tilt();
+      obj["enabled"] = blind->is_enabled();
+      obj["updated_at"] = blind->get_updated_at();
     }
 
     JsonArray lights_arr = root["lights"].to<JsonArray>();
@@ -351,13 +378,38 @@ std::string EleroWebServer::build_config_json() {
       obj["channel"] = light->get_channel();
       obj["remote"] = hex_str(light->get_remote_address());
       obj["dim_ms"] = light->get_dim_duration_ms();
+      obj["enabled"] = light->is_enabled();
+      obj["updated_at"] = light->get_updated_at();
     }
 
+    // Collect unique remote addresses from covers and lights
+    std::set<uint32_t> remote_addrs;
+    for (const auto &pair : this->parent_->get_configured_covers()) {
+      remote_addrs.insert(pair.second->get_remote_address());
+    }
+    for (const auto &pair : this->parent_->get_configured_lights()) {
+      remote_addrs.insert(pair.second->get_remote_address());
+    }
+
+    JsonArray remotes_arr = root["remotes"].to<JsonArray>();
     auto *dm = this->parent_->get_device_manager();
+
     if (dm != nullptr) {
+      dm->for_each_active_remote([&](uint32_t addr, const char *name, uint32_t updated_at) {
+        JsonObject obj = remotes_arr.add<JsonObject>();
+        obj["address"] = hex_str(addr);
+        obj["name"] = name;
+        obj["updated_at"] = updated_at;
+      });
       root["mode"] = hub_mode_str(dm->mode());
       root["crud"] = dm->supports_crud();
     } else {
+      // Native mode: derive remotes from covers/lights src_addresses
+      for (uint32_t addr : remote_addrs) {
+        JsonObject obj = remotes_arr.add<JsonObject>();
+        obj["address"] = hex_str(addr);
+        obj["name"] = hex_str(addr);
+      }
       root["mode"] = hub_mode_str(HubMode::NATIVE);
       root["crud"] = false;
     }
@@ -426,8 +478,16 @@ bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &conf
     config.type_byte = parse_hex_or(root, "msg_type", packet::msg_type::COMMAND);
     config.type2 = parse_hex_or(root, "type2", packet::defaults::TYPE2);
 
+    // Timing
+    if (root["open_duration_ms"].is<uint32_t>()) config.open_duration_ms = root["open_duration_ms"].as<uint32_t>();
+    if (root["close_duration_ms"].is<uint32_t>()) config.close_duration_ms = root["close_duration_ms"].as<uint32_t>();
+    if (root["poll_interval_ms"].is<uint32_t>()) config.poll_interval_ms = root["poll_interval_ms"].as<uint32_t>();
+
     if (config.is_cover()) {
       config.supports_tilt = (root["supports_tilt"] | false) ? 1 : 0;
+    }
+    if (config.is_light()) {
+      if (root["dim_duration_ms"].is<uint32_t>()) config.dim_duration_ms = root["dim_duration_ms"].as<uint32_t>();
     }
   }
 

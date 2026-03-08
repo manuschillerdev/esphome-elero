@@ -163,7 +163,7 @@ bool NvsDeviceManagerBase::upsert_device(const NvsDeviceConfig &config) {
       on_cover_activated_(slot);
     }
 
-    notify_crud_(crud_event::DEVICE_UPSERTED, config.dst_address, device_type_str(DeviceType::COVER));
+    notify_crud_upserted_(slot->config());
     return true;
   }
 
@@ -189,7 +189,7 @@ bool NvsDeviceManagerBase::upsert_device(const NvsDeviceConfig &config) {
       on_light_activated_(slot);
     }
 
-    notify_crud_(crud_event::DEVICE_UPSERTED, config.dst_address, device_type_str(DeviceType::LIGHT));
+    notify_crud_upserted_(slot->config());
     return true;
   }
 
@@ -213,7 +213,7 @@ bool NvsDeviceManagerBase::upsert_device(const NvsDeviceConfig &config) {
       on_remote_activated_(slot);
     }
 
-    notify_crud_(crud_event::DEVICE_UPSERTED, config.dst_address, device_type_str(DeviceType::REMOTE));
+    notify_crud_upserted_(slot->config());
     return true;
   }
 
@@ -367,6 +367,30 @@ void NvsDeviceManagerBase::notify_crud_(const char *event, uint32_t addr, const 
     root["device_type"] = device_type;
   });
   notify_crud_(event, resp.c_str());
+}
+
+void NvsDeviceManagerBase::notify_crud_upserted_(const NvsDeviceConfig &config) {
+  std::string resp = json::build_json([&](JsonObject root) {
+    root["address"] = hex_str(config.dst_address);
+    root["device_type"] = device_type_str(config.type);
+    root["name"] = config.name;
+    root["enabled"] = config.is_enabled();
+    root["updated_at"] = config.updated_at;
+    if (!config.is_remote()) {
+      root["channel"] = config.channel;
+      root["remote"] = hex_str(config.src_address);
+    }
+    if (config.is_cover()) {
+      root["open_ms"] = config.open_duration_ms;
+      root["close_ms"] = config.close_duration_ms;
+      root["poll_ms"] = config.poll_interval_ms;
+      root["supports_tilt"] = config.supports_tilt != 0;
+    }
+    if (config.is_light()) {
+      root["dim_ms"] = config.dim_duration_ms;
+    }
+  });
+  notify_crud_(crud_event::DEVICE_UPSERTED, resp.c_str());
 }
 
 }  // namespace elero

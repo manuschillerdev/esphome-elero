@@ -44,6 +44,7 @@ class EleroWebServer : public Component, public logger::LogListener {
   Elero *parent_{nullptr};
   uint16_t port_{80};
   bool enabled_{true};
+  bool crud_callback_set_{false};
 
   // Mongoose state
   struct mg_mgr mgr_;

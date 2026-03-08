@@ -17,30 +17,24 @@ export function DeviceGrid() {
   return (
     <div className="flex flex-col gap-4">
       {groups.map((group) => (
-        <RemoteGroup key={group.remoteAddress} group={group} />
+        <RemoteGroup key={group.remote.address} group={group} />
       ))}
 
-      {groups.length === 0 && statusFilter === 'discovered' && (
+      {groups.length === 0 && statusFilter === 'unsaved' && (
         <EmptyState
-          title="No devices discovered yet"
-          description="Press buttons on your physical Elero remotes — new RF addresses will appear here automatically. If nothing shows up, check your frequency and pin configuration on the Hub page."
+          title="No unsaved changes"
+          description="Press buttons on your physical Elero remotes to discover new devices, or edit settings on existing devices. Unsaved changes will appear here."
         />
       )}
 
-      {groups.length === 0 && statusFilter === 'configured' && (
+      {groups.length === 0 && statusFilter === 'saved' && (
         <EmptyState
           title={
-            deviceTypeFilter === 'covers' ? 'No covers configured'
-            : deviceTypeFilter === 'lights' ? 'No lights configured'
-            : 'No devices configured'
+            deviceTypeFilter === 'covers' ? 'No saved covers'
+            : deviceTypeFilter === 'lights' ? 'No saved lights'
+            : 'No saved devices'
           }
-          description={
-            deviceTypeFilter === 'covers'
-              ? 'Add a cover with platform: elero to your ESPHome YAML, specifying dst_address, src_address, and channel. Then reflash.'
-              : deviceTypeFilter === 'lights'
-              ? 'Add a light with platform: elero to your ESPHome YAML, specifying dst_address, src_address, and channel. Then reflash.'
-              : 'Add blinds or lights to your ESPHome YAML configuration with their addresses and channels, then reflash. Use the Discovered filter to find addresses from nearby remotes.'
-          }
+          description="Save discovered devices to NVS using the save button, or add devices to your ESPHome YAML configuration."
         />
       )}
 

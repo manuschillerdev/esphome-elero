@@ -114,6 +114,8 @@ class EleroLightBase {
   virtual uint8_t get_channel() const = 0;
   virtual uint32_t get_remote_address() const = 0;
   virtual uint32_t get_dim_duration_ms() const = 0;
+  virtual bool is_enabled() const { return true; }  ///< true = published to HA (YAML-defined always true)
+  virtual uint32_t get_updated_at() const { return 0; }  ///< millis() when last persisted (0 = YAML-defined)
   // Web API helpers — state (parity with EleroBlindBase)
   virtual float get_brightness() const = 0;
   virtual bool get_is_on() const = 0;
@@ -149,6 +151,8 @@ class EleroBlindBase {
   virtual uint32_t get_open_duration_ms() const = 0;
   virtual uint32_t get_close_duration_ms() const = 0;
   virtual bool get_supports_tilt() const = 0;
+  virtual bool is_enabled() const { return true; }  ///< true = published to HA (YAML-defined always true)
+  virtual uint32_t get_updated_at() const { return 0; }  ///< millis() when last persisted (0 = YAML-defined)
   // Web API commands — use perform_action() for standard commands (same path as HA)
   virtual bool perform_action(const char *action) = 0;
   // Low-level command queue (bypasses entity logic, use only for protocol-specific commands like "check")

@@ -13,6 +13,7 @@ class MqttPublisher {
 
   virtual bool publish(const char *topic, const char *payload, bool retain) = 0;
   virtual bool subscribe(const char *topic, std::function<void(const char *topic, const char *payload)> cb) = 0;
+  virtual void unsubscribe(const char *topic) = 0;
   virtual bool is_connected() const = 0;
 };
 

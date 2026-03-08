@@ -8,8 +8,8 @@ export function ControlBar() {
 
   const filters: FilterOption<StatusFilter>[] = [
     { value: 'all', label: 'All', count: counts.all },
-    { value: 'configured', label: 'Configured', count: counts.configured },
-    { value: 'discovered', label: 'Discovered', count: counts.discovered },
+    { value: 'saved', label: 'Saved', count: counts.saved },
+    { value: 'unsaved', label: 'Unsaved', count: counts.unsaved },
   ]
 
   const deviceTypes: FilterOption<DeviceTypeFilter>[] = [

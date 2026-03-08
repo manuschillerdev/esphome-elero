@@ -1,14 +1,20 @@
 #pragma once
 
 #include "../elero/nvs_device_manager_base.h"
-#include "mqtt_publisher.h"
+#include "mqtt_context.h"
+#include "mqtt_cover_handler.h"
+#include "mqtt_light_handler.h"
+#include "mqtt_remote_handler.h"
 #include "esphome_mqtt_adapter.h"
 #include <string>
+#include <vector>
 
 namespace esphome {
 namespace elero {
 
 /// MQTT device manager: extends NvsDeviceManagerBase with MQTT HA discovery and state publishing.
+/// All device-type-specific MQTT logic is delegated to handler modules
+/// (mqtt_cover_handler, mqtt_light_handler, mqtt_remote_handler).
 class MqttDeviceManager : public NvsDeviceManagerBase {
  public:
   // ─── IDeviceManager ───
@@ -21,9 +27,9 @@ class MqttDeviceManager : public NvsDeviceManagerBase {
 
   // ─── Configuration setters (from codegen) ───
 
-  void set_topic_prefix(const std::string &prefix) { topic_prefix_ = prefix; }
-  void set_discovery_prefix(const std::string &prefix) { discovery_prefix_ = prefix; }
-  void set_device_name(const std::string &name) { device_name_ = name; }
+  void set_topic_prefix(const std::string &prefix) { ctx_.topic_prefix = prefix; }
+  void set_discovery_prefix(const std::string &prefix) { ctx_.discovery_prefix = prefix; }
+  void set_device_name(const std::string &name) { ctx_.device_name = name; }
 
  protected:
   // ─── NvsDeviceManagerBase hooks ───
@@ -47,38 +53,32 @@ class MqttDeviceManager : public NvsDeviceManagerBase {
   void loop_hook_() override;
   const char *manager_tag_() const override { return "elero.mqtt"; }
 
-  // ─── HA MQTT discovery component types ───
-
-  static constexpr const char *HA_COVER = "cover";
-  static constexpr const char *HA_LIGHT = "light";
-  static constexpr const char *HA_SENSOR = "sensor";
-
  private:
-  // ─── MQTT publishing ───
-
-  void publish_cover_discovery_(EleroDynamicCover *cover);
-  void publish_light_discovery_(EleroDynamicLight *light);
-  void publish_remote_discovery_(EleroRemoteControl *remote);
-  void remove_discovery_(const char *component, uint32_t addr);
-
-  void publish_cover_state_(EleroDynamicCover *cover);
-  void publish_light_state_(EleroDynamicLight *light);
-  void publish_remote_state_(EleroRemoteControl *remote);
-
-  void subscribe_cover_commands_(EleroDynamicCover *cover);
-  void subscribe_light_commands_(EleroDynamicLight *light);
-
+  void ensure_context_();
+  void start_stale_collection_();
+  void finish_stale_cleanup_();
   void publish_all_discoveries_();
-  std::string device_id_() const;
+  void publish_gateway_discovery_();
+  void publish_gateway_state_();
+
+  // ─── Finder helpers (passed to handlers for command subscriptions) ───
+
+  mqtt_cover::CoverFinder cover_finder_();
+  mqtt_light::LightFinder light_finder_();
 
   // ─── Members ───
 
-  EspHomeMqttAdapter mqtt_;
+  EspHomeMqttAdapter mqtt_adapter_;
+  MqttContext ctx_;
   bool mqtt_was_connected_{false};
+  bool context_ready_{false};
 
-  std::string topic_prefix_{"elero"};
-  std::string discovery_prefix_{"homeassistant"};
-  std::string device_name_{"Elero Gateway"};
+  // ─── Stale discovery cleanup ───
+
+  enum class CleanupState : uint8_t { IDLE, COLLECTING, DONE };
+  CleanupState cleanup_state_{CleanupState::IDLE};
+  uint32_t collect_start_ms_{0};
+  std::vector<std::string> collected_topics_;
 };
 
 }  // namespace elero

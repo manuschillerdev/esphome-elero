@@ -8,8 +8,8 @@
 namespace esphome {
 namespace elero {
 
-/// NVS config version — bump when struct layout changes
-constexpr uint8_t NVS_CONFIG_VERSION = 2;
+/// NVS config version — bump when struct layout changes (v3: added updated_at)
+constexpr uint8_t NVS_CONFIG_VERSION = 3;
 
 /// Maximum name length (including null terminator)
 constexpr size_t NVS_NAME_MAX = 24;
@@ -54,6 +54,9 @@ struct NvsDeviceConfig {
   uint32_t poll_interval_ms{packet::timing::DEFAULT_POLL_INTERVAL_MS};  ///< 5 minutes default
   uint32_t dim_duration_ms{0};        ///< Light: 0 = on/off only, >0 = brightness control
 
+  // Metadata (4 bytes)
+  uint32_t updated_at{0};  ///< millis() when last persisted (0 = never)
+
   // Name (24 bytes)
   char name[NVS_NAME_MAX]{};
 
@@ -77,7 +80,7 @@ struct NvsDeviceConfig {
   }
 };
 
-static_assert(sizeof(NvsDeviceConfig) == 60, "NvsDeviceConfig must be 60 bytes for NVS storage");
+static_assert(sizeof(NvsDeviceConfig) == 64, "NvsDeviceConfig must be 64 bytes for NVS storage");
 
 }  // namespace elero
 }  // namespace esphome

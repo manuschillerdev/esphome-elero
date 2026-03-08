@@ -16,6 +16,7 @@ bool DynamicEntityBase::restore() {
 }
 
 bool DynamicEntityBase::save_config() {
+  config_.updated_at = millis();
   if (!pref_.save(&config_)) {
     ESP_LOGE(entity_tag_(), "NVS save failed for 0x%06x", config_.dst_address);
     return false;

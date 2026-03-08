@@ -21,6 +21,10 @@ interface BlindConfig {
    */
   'remote': string;
   /**
+   * Whether the device is published to Home Assistant
+   */
+  'enabled': boolean;
+  /**
    * Full open duration in milliseconds (0 = position tracking disabled)
    * @example 25000
    */
@@ -38,6 +42,11 @@ interface BlindConfig {
   /**
    * Whether the blind supports tilt
    */
-  'tilt': boolean;
+  'supports_tilt': boolean;
+  /**
+   * Timestamp (millis()) when last persisted to NVS (0 = YAML-defined)
+   * @example 1234567
+   */
+  'updated_at'?: number;
 }
 export { BlindConfig };

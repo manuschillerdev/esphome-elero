@@ -33,6 +33,8 @@ class EleroDynamicCover : public EleroBlindBase, public DynamicEntityBase {
   uint32_t get_open_duration_ms() const override { return config().open_duration_ms; }
   uint32_t get_close_duration_ms() const override { return config().close_duration_ms; }
   bool get_supports_tilt() const override { return config().supports_tilt != 0; }
+  bool is_enabled() const override { return config().is_enabled(); }
+  uint32_t get_updated_at() const override { return config().updated_at; }
   bool perform_action(const char *action) override;
   void enqueue_command(uint8_t cmd_byte) override { (void)sender_.enqueue(cmd_byte); }
   void schedule_immediate_poll() override;

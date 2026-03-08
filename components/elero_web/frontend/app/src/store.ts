@@ -1,11 +1,11 @@
 import { signal, computed, batch } from '@preact/signals'
 import type {
-  ConfigData, RfData, DeviceType, CrudEventData,
+  ConfigData, RfData, DeviceType, CrudEventData, DeviceUpsertedData,
   FreqConfig, HubMode, BlindConfig, LightConfig, RemoteConfig,
 } from '@/generated'
 
 // Re-export generated types used by components
-export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, CrudEventData }
+export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, CrudEventData, DeviceUpsertedData }
 
 // ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
 
@@ -106,30 +106,27 @@ export function parseFreq(val: number | string | undefined, defaultVal: number):
 
 // ─── Device Types ────────────────────────────────────────────────────────────
 
-export type DeviceSource = 'config' | 'discovered'
 export type AppDeviceType = 'cover' | 'light' | 'remote' | 'unknown'
 
 export interface Device {
   address: string
   type: DeviceType
-  source: DeviceSource
-  persisted: boolean
+  updated_at: number | null  // non-null = saved (server-confirmed), null = unsaved
+  enabled: boolean
   channel: number
   remote: string
   name: string
   open_ms: number
   close_ms: number
   poll_ms: number
-  tilt: boolean
+  supports_tilt: boolean
   dim_ms: number
   lastStatus: RfPacketWithTimestamp | null
 }
 
 export interface DeviceGroup {
-  remoteAddress: string
-  remoteName: string
+  remote: Device
   devices: Device[]
-  variant: 'persisted' | 'discovered'
 }
 
 // ─── Primary Signals ────────────────────────────────────────────────────────
@@ -154,7 +151,7 @@ export const devices = signal<Map<string, Device>>(new Map())
 
 export const rfPackets = signal<RfPacketWithTimestamp[]>([])
 
-export type StatusFilter = 'all' | 'configured' | 'discovered'
+export type StatusFilter = 'all' | 'saved' | 'unsaved'
 export type DeviceTypeFilter = 'all' | 'covers' | 'lights'
 export type ActiveTab = 'devices' | 'packets' | 'hub'
 
@@ -178,8 +175,8 @@ export const deviceGroups = computed<DeviceGroup[]>(() => {
   const groups = new Map<string, Device[]>()
   for (const d of devs.values()) {
     if (d.type === 'remote') continue
-    if (status === 'configured' && d.source !== 'config') continue
-    if (status === 'discovered' && d.source !== 'discovered') continue
+    if (status === 'saved' && d.updated_at === null) continue
+    if (status === 'unsaved' && d.updated_at !== null) continue
     if (deviceType === 'covers' && d.type !== 'cover') continue
     if (deviceType === 'lights' && d.type !== 'light') continue
     const key = d.remote || 'unknown'
@@ -187,28 +184,28 @@ export const deviceGroups = computed<DeviceGroup[]>(() => {
     if (arr) arr.push(d)
     else groups.set(key, [d])
   }
-  return [...groups].map(([addr, items]) => ({
-    remoteAddress: addr,
-    remoteName: devs.get(addr)?.name ?? addr,
-    devices: items,
-    variant: items.some(d => d.source === 'discovered') ? 'discovered' as const : 'persisted' as const,
-  }))
+  return [...groups]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([addr, items]) => ({
+      remote: devs.get(addr) ?? makeDevice({ address: addr, type: 'remote' }),
+      devices: items.sort((a, b) => a.address.localeCompare(b.address)),
+    }))
 })
 
 export const filterCounts = computed(() => {
-  let configured = 0, discovered = 0, covers = 0, lights = 0
+  let saved = 0, unsaved = 0, covers = 0, lights = 0
   for (const d of devices.value.values()) {
     if (d.type === 'remote') continue
-    if (d.source === 'config') configured++; else discovered++
+    if (d.updated_at !== null) saved++; else unsaved++
     if (d.type === 'cover') covers++
     if (d.type === 'light') lights++
   }
-  return { all: configured + discovered, configured, discovered, covers, lights }
+  return { all: saved + unsaved, saved, unsaved, covers, lights }
 })
 
 export const displayNames = computed<Record<string, string>>(() => {
   const result: Record<string, string> = {}
-  for (const [addr, d] of devices.value) result[addr] = d.name
+  for (const [addr, d] of devices.value) result[addr] = d.name || addr
   return result
 })
 
@@ -222,15 +219,15 @@ export const deviceTypeMap = computed<Record<string, AppDeviceType>>(() => {
 
 function makeDevice(partial: Partial<Device> & { address: string; type: DeviceType }): Device {
   return {
-    source: 'discovered',
-    persisted: false,
+    updated_at: null,
+    enabled: true,
     channel: 0,
     remote: '',
-    name: partial.address,
+    name: '',
     open_ms: 0,
     close_ms: 0,
     poll_ms: 0,
-    tilt: false,
+    supports_tilt: false,
     dim_ms: 0,
     lastStatus: null,
     ...partial,
@@ -239,22 +236,22 @@ function makeDevice(partial: Partial<Device> & { address: string; type: DeviceTy
 
 function blindToDevice(b: BlindConfig): Device {
   return makeDevice({
-    address: b.address, type: 'cover', source: 'config', persisted: true,
+    address: b.address, type: 'cover', updated_at: b.updated_at ?? null, enabled: b.enabled,
     name: b.name, channel: b.channel, remote: b.remote,
-    open_ms: b.open_ms, close_ms: b.close_ms, poll_ms: b.poll_ms, tilt: b.tilt,
+    open_ms: b.open_ms, close_ms: b.close_ms, poll_ms: b.poll_ms, supports_tilt: b.supports_tilt,
   })
 }
 
 function lightToDevice(l: LightConfig): Device {
   return makeDevice({
-    address: l.address, type: 'light', source: 'config', persisted: true,
+    address: l.address, type: 'light', updated_at: l.updated_at ?? null, enabled: l.enabled,
     name: l.name, channel: l.channel, remote: l.remote, dim_ms: l.dim_ms,
   })
 }
 
 function remoteToDevice(r: RemoteConfig): Device {
   return makeDevice({
-    address: r.address, type: 'remote', source: 'config', persisted: true, name: r.name,
+    address: r.address, type: 'remote', updated_at: r.updated_at ?? null, name: r.name,
   })
 }
 
@@ -274,17 +271,17 @@ export function setDevices(data: ConfigData) {
     const existing = next.get(l.address)
     next.set(l.address, { ...lightToDevice(l), lastStatus: existing?.lastStatus ?? null })
   }
-  for (const r of data.remotes) {
+  for (const r of data.remotes ?? []) {
     const existing = next.get(r.address)
-    if (!existing || existing.source === 'discovered') {
+    if (!existing || existing.updated_at === null) {
       next.set(r.address, { ...remoteToDevice(r), lastStatus: existing?.lastStatus ?? null })
     }
   }
   for (const b of data.blinds) {
-    if (!next.has(b.remote)) next.set(b.remote, makeDevice({ address: b.remote, type: 'remote', source: 'config', persisted: true, name: b.remote }))
+    if (!next.has(b.remote)) next.set(b.remote, makeDevice({ address: b.remote, type: 'remote' }))
   }
   for (const l of data.lights) {
-    if (!next.has(l.remote)) next.set(l.remote, makeDevice({ address: l.remote, type: 'remote', source: 'config', persisted: true, name: l.remote }))
+    if (!next.has(l.remote)) next.set(l.remote, makeDevice({ address: l.remote, type: 'remote' }))
   }
   batch(() => {
     devices.value = next
@@ -292,8 +289,8 @@ export function setDevices(data: ConfigData) {
       device: data.device,
       version: data.version,
       freq: data.freq,
-      mode: data.mode,
-      crud: data.crud,
+      mode: data.mode ?? 'native',
+      crud: data.crud ?? false,
     }
   })
 }
@@ -302,7 +299,7 @@ export function updateDevice(address: string, updates: Partial<Device>) {
   const d = devices.value.get(address)
   if (!d) return
   const next = new Map(devices.value)
-  next.set(address, { ...d, ...updates })
+  next.set(address, { ...d, updated_at: null, ...updates })
   devices.value = next
 }
 
@@ -346,19 +343,37 @@ export function clearRfPackets() {
   })
 }
 
-export function onDeviceUpserted({ address }: CrudEventData) {
-  const d = devices.value.get(address)
-  if (!d) return
+export function onDeviceUpserted(data: DeviceUpsertedData) {
+  const existing = devices.value.get(data.address)
   const next = new Map(devices.value)
-  next.set(address, { ...d, source: 'config', persisted: true })
+
+  next.set(data.address, makeDevice({
+    address: data.address,
+    type: data.device_type,
+    updated_at: data.updated_at ?? null,
+    enabled: data.enabled ?? true,
+    name: data.name ?? '',
+    channel: data.channel ?? 0,
+    remote: data.remote ?? '',
+    open_ms: data.open_ms ?? 0,
+    close_ms: data.close_ms ?? 0,
+    poll_ms: data.poll_ms ?? 0,
+    supports_tilt: data.supports_tilt ?? false,
+    dim_ms: data.dim_ms ?? 0,
+    lastStatus: existing?.lastStatus ?? null,
+  }))
+
+  // Ensure remote entry exists for non-remote devices
+  if (data.device_type !== 'remote' && data.remote && !next.has(data.remote)) {
+    next.set(data.remote, makeDevice({ address: data.remote, type: 'remote' }))
+  }
+
   devices.value = next
 }
 
 export function onDeviceRemoved({ address }: CrudEventData) {
-  const d = devices.value.get(address)
-  if (!d) return
   const next = new Map(devices.value)
-  next.set(address, { ...d, source: 'discovered', persisted: false })
+  next.delete(address)
   devices.value = next
 }
 

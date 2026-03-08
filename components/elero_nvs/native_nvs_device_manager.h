@@ -46,6 +46,14 @@ class NativeNvsDeviceManager : public IDeviceManager, public Component {
 
   void set_crud_callback(CrudEventCallback cb) override { crud_callback_ = std::move(cb); }
 
+  void for_each_active_remote(const RemoteVisitor &visitor) const override {
+    for (size_t i = 0; i < max_remotes_; i++) {
+      if (remote_slots_[i].is_active()) {
+        visitor(remote_slots_[i].get_address(), remote_slots_[i].get_title(), remote_slots_[i].config().updated_at);
+      }
+    }
+  }
+
   // ─── Configuration setters (from codegen) ───
 
   void set_hub(Elero *hub) { hub_ = hub; }
@@ -85,6 +93,7 @@ class NativeNvsDeviceManager : public IDeviceManager, public Component {
 
   void notify_crud_(const char *event, const char *json_str);
   void notify_crud_(const char *event, uint32_t addr, const char *device_type);
+  void notify_crud_upserted_(const NvsDeviceConfig &config);
 
   // ─── Members ───
 

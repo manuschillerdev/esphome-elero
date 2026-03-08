@@ -1,6 +1,6 @@
 import {DeviceType} from './DeviceType';
 /**
- * Payload for device_upserted and device_removed events.
+ * Payload for device_removed events.
  */
 interface CrudEventData {
   /**

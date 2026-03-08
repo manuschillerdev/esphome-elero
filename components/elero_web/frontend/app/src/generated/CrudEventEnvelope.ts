@@ -1,15 +1,11 @@
-import {CrudEventType} from './CrudEventType';
 import {CrudEventData} from './CrudEventData';
 /**
- * Envelope for device_upserted and device_removed events.
+ * Envelope for device_removed events.
  */
 interface CrudEventEnvelope {
+  'event': 'device_removed';
   /**
-   * CRUD event type for device lifecycle notifications
-   */
-  'event': CrudEventType;
-  /**
-   * Payload for device_upserted and device_removed events.
+   * Payload for device_removed events.
    */
   'data': CrudEventData;
 }

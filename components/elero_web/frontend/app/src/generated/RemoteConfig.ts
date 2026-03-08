@@ -10,5 +10,10 @@ interface RemoteConfig {
    * @example Remote 0xb42f01
    */
   'name': string;
+  /**
+   * Timestamp (millis()) when last persisted to NVS (0 = derived from config)
+   * @example 1234567
+   */
+  'updated_at'?: number;
 }
 export { RemoteConfig };

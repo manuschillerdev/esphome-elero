@@ -4,8 +4,14 @@ version = "0.2.0"
 description = "ESPHome external component for Elero wireless blinds"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = [
-    "esphome==2026.2.2",
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "esphome==2026.2.4",
+    # PlatformIO ESP32 build deps (pioarduino builder imports these unconditionally)
+    "littlefs-python>=0.17.1",
+    "fatfs-ng>=0.1.15",
 ]
 
 [tool.ruff]

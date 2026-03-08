@@ -79,6 +79,11 @@ class IDeviceManager {
 
   /// Register a callback for CRUD event notifications (e.g., for WS broadcast)
   virtual void set_crud_callback(CrudEventCallback cb) { (void)cb; }
+
+  /// Iterate over active remotes tracked by this manager.
+  /// Callback receives (address, name, updated_at) for each active remote.
+  using RemoteVisitor = std::function<void(uint32_t address, const char *name, uint32_t updated_at)>;
+  virtual void for_each_active_remote(const RemoteVisitor &) const {}
 };
 
 /// No-op device manager for native (YAML) mode.

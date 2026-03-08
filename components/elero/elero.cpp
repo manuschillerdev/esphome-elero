@@ -934,7 +934,8 @@ void Elero::interpret_msg() {
   // Extract fields relevant to this packet type
   bool is_cmd = is_command_packet(typ);
   bool is_status = is_status_packet(typ);
-  uint8_t command = is_cmd ? payload[payload_offset::COMMAND] : 0;
+  bool is_button = packet::is_button_packet(typ);
+  uint8_t command = (is_cmd || is_button) ? payload[payload_offset::COMMAND] : 0;
   uint8_t state = is_status ? payload[payload_offset::STATE] : 0;
   bool echo = is_cmd && this->is_own_echo_(cnt);
 
@@ -952,9 +953,9 @@ void Elero::interpret_msg() {
   }
 
   // JSON log: include only fields relevant to the packet type
-  // - Command packets (0x6a/0x69): cmd_name/command, no state
+  // - Command packets (0x6a/0x69): cmd_name/command, echo, no state
+  // - Button packets (0x44): cmd_name/command, no echo/state
   // - Status packets (0xca/0xc9): state_name/state, no command
-  // - Button packets (0x44): neither command nor state
   // Use snprintf to build blind field (name string or hex address)
   char blind_buf[32];
   if (!blind_name.empty()) {
@@ -978,6 +979,14 @@ void Elero::interpret_msg() {
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\","
              "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
              blind_buf, elero_command_to_string(command), echo ? "true" : "false",
+             length, cnt, typ, typ2, hop, chl, src, dst, command, rssi, lqi, crc);
+  } else if (is_button) {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\","
+             "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\","
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
+             blind_buf, elero_command_to_string(command),
              length, cnt, typ, typ2, hop, chl, src, dst, command, rssi, lqi, crc);
   } else {
     ESP_LOGD(TAG_RF,

@@ -1,7 +1,9 @@
+import type { RawPayload, UpsertDevicePayload, RemoveDevicePayload, DeviceAction } from '@/generated'
 import {
   setConnected, setDevices, addRfPacket,
   onDeviceUpserted, onDeviceRemoved,
   devices,
+  type Device,
 } from './store'
 
 let ws: WebSocket | null = null
@@ -62,40 +64,21 @@ const ACTION_COMMANDS: Record<string, string> = {
   check: '0x00',
 }
 
-// ─── Unified command sending (always uses raw protocol) ─────────────────────
+// ─── Send helpers ───────────────────────────────────────────────────────────
 
-export interface RawTxParams {
-  dst_address: string
-  src_address: string
-  channel: number
-  command: string
-  payload_1?: string
-  payload_2?: string
-  msg_type?: string
-  type2?: string
-  hop?: string
-}
-
-export function sendRawCommand(params: RawTxParams) {
+function send(payload: RawPayload | UpsertDevicePayload | RemoveDevicePayload) {
   if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({
-      type: 'raw',
-      dst_address: params.dst_address,
-      src_address: params.src_address,
-      channel: params.channel,
-      command: params.command,
-      payload_1: params.payload_1 ?? '0x00',
-      payload_2: params.payload_2 ?? '0x04',
-      msg_type: params.msg_type ?? '0x6a',
-      type2: params.type2 ?? '0x00',
-      hop: params.hop ?? '0x0a',
-    }))
+    ws.send(JSON.stringify(payload))
   }
 }
 
+export function sendRawCommand(params: Omit<RawPayload, 'type'>) {
+  send({ type: 'raw', ...params })
+}
+
 export function sendDeviceCommand(
-  device: { address: string; remote: string; channel: number },
-  action: 'up' | 'down' | 'stop' | 'tilt' | 'check',
+  device: Pick<Device, 'address' | 'remote' | 'channel'>,
+  action: DeviceAction,
 ) {
   const cmd = ACTION_COMMANDS[action]
   if (!cmd) return
@@ -107,24 +90,26 @@ export function sendDeviceCommand(
   })
 }
 
-export function sendUpsertDevice(device: {
-  address: string
-  remote: string
-  channel: number
-  name?: string
-  device_type?: 'cover' | 'light'
-}) {
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({
-      type: 'upsert_device',
-      device_type: device.device_type ?? 'cover',
-      dst_address: device.address,
-      src_address: device.remote,
-      channel: device.channel,
-      name: device.name,
-      enabled: true,
-    }))
+export function sendUpsertDevice(device: Device) {
+  const payload: UpsertDevicePayload = {
+    type: 'upsert_device',
+    device_type: device.type,
+    dst_address: device.address,
+    src_address: device.remote,
+    channel: device.channel,
+    name: device.name,
+    enabled: device.enabled,
+    open_duration_ms: device.open_ms,
+    close_duration_ms: device.close_ms,
+    poll_interval_ms: device.poll_ms,
+    supports_tilt: device.supports_tilt,
+    dim_duration_ms: device.dim_ms,
   }
+  send(payload)
+}
+
+export function sendRemoveDevice(address: string, device_type: RemoveDevicePayload['device_type']) {
+  send({ type: 'remove_device', dst_address: address, device_type })
 }
 
 export function sendCheckAll() {

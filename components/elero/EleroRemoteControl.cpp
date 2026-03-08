@@ -1,4 +1,5 @@
 #include "EleroRemoteControl.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -19,6 +20,7 @@ bool EleroRemoteControl::restore() {
 
 bool EleroRemoteControl::save_config() {
   config_.type = DeviceType::REMOTE;
+  config_.updated_at = millis();
   if (!pref_.save(&config_)) {
     ESP_LOGE(TAG, "NVS save failed for remote 0x%06x", config_.dst_address);
     return false;

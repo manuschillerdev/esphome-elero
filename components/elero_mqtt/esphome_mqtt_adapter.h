@@ -37,6 +37,13 @@ class EspHomeMqttAdapter : public MqttPublisher {
 #endif
   }
 
+  void unsubscribe(const char *topic) override {
+#ifdef USE_MQTT
+    if (mqtt::global_mqtt_client != nullptr)
+      mqtt::global_mqtt_client->unsubscribe(topic);
+#endif
+  }
+
   bool is_connected() const override {
 #ifdef USE_MQTT
     if (mqtt::global_mqtt_client == nullptr) return false;

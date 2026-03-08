@@ -26,6 +26,8 @@ class EleroDynamicLight : public EleroLightBase, public DynamicEntityBase {
   uint8_t get_channel() const override { return config().channel; }
   uint32_t get_remote_address() const override { return config().src_address; }
   uint32_t get_dim_duration_ms() const override { return config().dim_duration_ms; }
+  bool is_enabled() const override { return config().is_enabled(); }
+  uint32_t get_updated_at() const override { return config().updated_at; }
   float get_brightness() const override { return core_.brightness; }
   bool get_is_on() const override { return core_.is_on; }
   const char *get_operation_str() const override { return core_.operation_str(); }

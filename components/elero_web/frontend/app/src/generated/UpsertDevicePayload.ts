@@ -60,6 +60,26 @@ interface UpsertDevicePayload {
    */
   'type2'?: string;
   /**
+   * Full open duration in milliseconds (cover only, 0 = position tracking disabled)
+   * @example 25000
+   */
+  'open_duration_ms'?: number;
+  /**
+   * Full close duration in milliseconds (cover only, 0 = position tracking disabled)
+   * @example 23000
+   */
+  'close_duration_ms'?: number;
+  /**
+   * Status poll interval in milliseconds (cover only)
+   * @example 300000
+   */
+  'poll_interval_ms'?: number;
+  /**
+   * Dim duration in milliseconds (light only, 0 = on/off only)
+   * @example 5000
+   */
+  'dim_duration_ms'?: number;
+  /**
    * Whether the cover supports tilt (cover only, default false)
    */
   'supports_tilt'?: boolean;

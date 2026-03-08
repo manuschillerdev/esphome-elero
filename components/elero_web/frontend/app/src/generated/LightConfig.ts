@@ -21,9 +21,18 @@ interface LightConfig {
    */
   'remote': string;
   /**
+   * Whether the device is published to Home Assistant
+   */
+  'enabled': boolean;
+  /**
    * Dim duration in milliseconds (0 = on/off only)
    * @example 5000
    */
   'dim_ms': number;
+  /**
+   * Timestamp (millis()) when last persisted to NVS (0 = YAML-defined)
+   * @example 1234567
+   */
+  'updated_at'?: number;
 }
 export { LightConfig };
