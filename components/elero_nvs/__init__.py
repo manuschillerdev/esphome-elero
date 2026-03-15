@@ -65,8 +65,11 @@ async def to_code(config):
     cg.add(var.set_light_slots(cg.RawExpression("elero_nvs_lights"), max_lights))
     cg.add(var.set_remote_slots(cg.RawExpression("elero_nvs_remotes"), max_remotes))
 
-    # Ensure USE_COVER and USE_LIGHT are defined even without YAML entities.
-    # NVS mode registers covers/lights at runtime from NVS, so ESPHome's codegen
-    # won't see any entities — but we need App.register_cover/register_light.
+    # Ensure USE_COVER/USE_LIGHT and entity counts are defined even without YAML
+    # entities. NVS mode registers covers/lights at runtime from NVS, so ESPHome's
+    # codegen won't see any entities — but we need App.register_cover/register_light.
+    # The entity count defines are required by application.h's sized containers.
     cg.add_define("USE_COVER")
     cg.add_define("USE_LIGHT")
+    cg.add_define("ESPHOME_ENTITY_COVER_COUNT", max_covers)
+    cg.add_define("ESPHOME_ENTITY_LIGHT_COUNT", max_lights)
