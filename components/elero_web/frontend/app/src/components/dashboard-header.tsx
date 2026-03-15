@@ -1,12 +1,12 @@
-import { useStore } from '@/store'
+import { connected, hub } from '@/store'
 import { Cpu, RotateCcw } from './icons'
 import { Button } from './ui/button'
 import { cn } from '@/lib/utils'
 import { sendCheckAll } from '@/ws'
 
 export function DashboardHeader() {
-  const connected = useStore((s) => s.connected)
-  const device = useStore((s) => s.config.device)
+  const isConnected = connected.value
+  const device = hub.value.device
 
   return (
     <header className="flex items-center justify-between">
@@ -28,7 +28,7 @@ export function DashboardHeader() {
           size="icon"
           className="size-8"
           onClick={sendCheckAll}
-          disabled={!connected}
+          disabled={!isConnected}
           title="Check all devices"
         >
           <RotateCcw className="size-3.5" />
@@ -36,10 +36,10 @@ export function DashboardHeader() {
         <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
           <div className={cn(
             'size-2.5 rounded-full',
-            connected ? 'bg-green-500' : 'bg-red-500'
+            isConnected ? 'bg-green-500' : 'bg-red-500'
           )} />
           <span className="text-xs text-muted-foreground">
-            {connected ? 'Connected' : 'Disconnected'}
+            {isConnected ? 'Connected' : 'Disconnected'}
           </span>
         </div>
       </div>

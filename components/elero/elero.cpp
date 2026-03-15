@@ -55,8 +55,8 @@ void Elero::loop() {
   bool was_received = this->received_.exchange(false);
   if (was_received) {
     ESP_LOGVV(TAG, "loop says \"received\"");
-    uint8_t len = this->read_status(CC1101_RXBYTES);
-    if (len & packet::cc1101_status::OVERFLOW_BIT) {  // overflow - FIFO data unreliable
+    uint8_t len = this->read_status_reliable_(CC1101_RXBYTES);
+    if (len & packet::cc1101_status::RXBYTES_OVERFLOW_BIT) {  // overflow - FIFO data unreliable
       ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
       this->flush_and_rx();
       return;
@@ -91,6 +91,7 @@ void IRAM_ATTR Elero::set_received() {
 
 void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero CC1101:");
+  ESP_LOGCONFIG(TAG, "  Version: %s", this->version_);
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
@@ -102,6 +103,20 @@ void Elero::setup() {
   this->gdo0_pin_->setup();
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
+
+  // Wait for crystal oscillator to stabilize after reset (CC1101 datasheet: ~1ms typical)
+  delay(5);
+
+  // Verify CC1101 is responding — known versions: 0x04, 0x14, 0x82 (per RadioLib)
+  uint8_t version = this->read_status(CC1101_VERSION);
+  if (version == packet::cc1101_status::VERSION_NOT_CONNECTED_LOW ||
+      version == packet::cc1101_status::VERSION_NOT_CONNECTED_HIGH) {
+    ESP_LOGE(TAG, "CC1101 not found (VERSION=0x%02x). Check SPI wiring and CS pin.", version);
+    this->mark_failed();
+    return;
+  }
+  ESP_LOGI(TAG, "CC1101 version: 0x%02x", version);
+
   this->init();
 }
 
@@ -125,9 +140,9 @@ void Elero::flush_and_rx() {
   ESP_LOGVV(TAG, "flush_and_rx");
 
   // Check if there's RX data before flushing - don't discard valid packets!
-  uint8_t rx_bytes = this->read_status(CC1101_RXBYTES);
+  uint8_t rx_bytes = this->read_status_reliable_(CC1101_RXBYTES);
   if ((rx_bytes & packet::cc1101_status::BYTE_COUNT_MASK) > 0 &&
-      !(rx_bytes & packet::cc1101_status::OVERFLOW_BIT)) {
+      !(rx_bytes & packet::cc1101_status::RXBYTES_OVERFLOW_BIT)) {
     // Valid data in RX FIFO (no overflow) - process it first
     uint8_t fifo_count = rx_bytes & packet::cc1101_status::BYTE_COUNT_MASK;
     if (fifo_count > CC1101_FIFO_LENGTH) {
@@ -246,9 +261,9 @@ bool Elero::write_reg(uint8_t addr, uint8_t data) {
   }  // CS released here
   delay_microseconds_safe(15);
 
-  // Check CC1101 status byte for FIFO errors (bits 6:4 indicate state, bit 7 is RXFIFO overflow)
-  if (status & packet::cc1101_status::OVERFLOW_BIT) {
-    ESP_LOGW(TAG, "SPI write_reg 0x%02x: CC1101 RXFIFO overflow detected", addr);
+  // Check SPI status byte state field (bits 6:4) for RXFIFO overflow
+  if ((status & packet::cc1101_status::SPI_STATE_MASK) == packet::cc1101_status::SPI_STATE_RXFIFO_OVERFLOW) {
+    ESP_LOGW(TAG, "SPI write_reg 0x%02x: RXFIFO overflow (status=0x%02x)", addr, status);
     return false;
   }
   return true;
@@ -265,9 +280,9 @@ bool Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
   }  // CS released here
   delay_microseconds_safe(15);
 
-  // Check CC1101 status byte for FIFO errors
-  if (status & packet::cc1101_status::OVERFLOW_BIT) {
-    ESP_LOGW(TAG, "SPI write_burst 0x%02x (%d bytes): CC1101 RXFIFO overflow detected", addr, len);
+  // Check SPI status byte state field (bits 6:4) for RXFIFO overflow
+  if ((status & packet::cc1101_status::SPI_STATE_MASK) == packet::cc1101_status::SPI_STATE_RXFIFO_OVERFLOW) {
+    ESP_LOGW(TAG, "SPI write_burst 0x%02x (%d bytes): RXFIFO overflow (status=0x%02x)", addr, len, status);
     return false;
   }
   return true;
@@ -281,9 +296,9 @@ bool Elero::write_cmd(uint8_t cmd) {
   }  // CS released here
   delay_microseconds_safe(15);
 
-  // Check CC1101 status byte for FIFO errors
-  if (status & packet::cc1101_status::OVERFLOW_BIT) {
-    ESP_LOGW(TAG, "SPI write_cmd 0x%02x: CC1101 RXFIFO overflow detected", cmd);
+  // Check SPI status byte state field (bits 6:4) for RXFIFO overflow
+  if ((status & packet::cc1101_status::SPI_STATE_MASK) == packet::cc1101_status::SPI_STATE_RXFIFO_OVERFLOW) {
+    ESP_LOGW(TAG, "SPI write_cmd 0x%02x: RXFIFO overflow (status=0x%02x)", cmd, status);
     return false;
   }
   return true;
@@ -390,7 +405,7 @@ bool Elero::transmit() {
     return false;
   }
 
-  uint8_t bytes = this->read_status(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
+  uint8_t bytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
   if (bytes != 0) {
     ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
     this->flush_and_rx();
@@ -770,7 +785,7 @@ void Elero::handle_tx_state_(uint32_t now) {
       // Poll TXBYTES - GDO0 may fire slightly before FIFO fully drains
       bool fifo_empty = false;
       for (int retry = 0; retry < 3; ++retry) {
-        uint8_t bytes = this->read_status(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
+        uint8_t bytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
         if (bytes == 0) {
           fifo_empty = true;
           break;
@@ -785,7 +800,7 @@ void Elero::handle_tx_state_(uint32_t now) {
       } else {
         // Capture state for diagnostics
         uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-        uint8_t bytes_final = this->read_status(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
+        uint8_t bytes_final = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
         ESP_LOGE(TAG, "TX error: FIFO stuck, txbytes=%u, MARCSTATE=0x%02x", bytes_final, marc);
         this->abort_tx_();
       }
@@ -807,6 +822,12 @@ void Elero::handle_tx_state_(uint32_t now) {
 }
 
 uint8_t Elero::read_reg(uint8_t addr, bool *ok) {
+  // read_reg() uses CC1101_READ_SINGLE which does NOT set the 0x40 bit needed
+  // for status registers (addr > 0x2E). Use read_status() for those.
+  if (addr > CC1101_TEST0) {
+    ESP_LOGW(TAG, "read_reg(0x%02x): addr > 0x2E is a status register, use read_status() instead", addr);
+  }
+
   uint8_t status;
   uint8_t data;
   {
@@ -816,9 +837,9 @@ uint8_t Elero::read_reg(uint8_t addr, bool *ok) {
   }  // CS released here
   delay_microseconds_safe(15);
 
-  // Check CC1101 status byte for FIFO errors
-  if (status & packet::cc1101_status::OVERFLOW_BIT) {
-    ESP_LOGW(TAG, "SPI read_reg 0x%02x: CC1101 RXFIFO overflow detected", addr);
+  // Check SPI status byte state field (bits 6:4) for RXFIFO overflow
+  if ((status & packet::cc1101_status::SPI_STATE_MASK) == packet::cc1101_status::SPI_STATE_RXFIFO_OVERFLOW) {
+    ESP_LOGW(TAG, "SPI read_reg 0x%02x: RXFIFO overflow (status=0x%02x)", addr, status);
     if (ok != nullptr) {
       *ok = false;
     }
@@ -829,6 +850,9 @@ uint8_t Elero::read_reg(uint8_t addr, bool *ok) {
 }
 
 uint8_t Elero::read_status(uint8_t addr) {
+  // CC1101 datasheet section 10.4: status registers (addr > 0x2E) require the
+  // burst access bit (0x40) to be set. CC1101_READ_BURST (0xC0) includes this
+  // bit, so this works correctly for both status registers and burst reads.
   uint8_t data;
   {
     SpiTransaction txn(this);
@@ -837,6 +861,17 @@ uint8_t Elero::read_status(uint8_t addr) {
   }  // CS released here
   delay_microseconds_safe(15);
   return data;
+}
+
+uint8_t Elero::read_status_reliable_(uint8_t addr) {
+  // CC1101 errata: RXBYTES and TXBYTES can return incorrect values on a single read.
+  // Workaround (per RadioLib): read twice until both values match.
+  uint8_t a, b;
+  do {
+    a = this->read_status(addr);
+    b = this->read_status(addr);
+  } while (a != b);
+  return a;
 }
 
 void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
@@ -933,7 +968,8 @@ void Elero::interpret_msg() {
   // Extract fields relevant to this packet type
   bool is_cmd = is_command_packet(typ);
   bool is_status = is_status_packet(typ);
-  uint8_t command = is_cmd ? payload[payload_offset::COMMAND] : 0;
+  bool is_button = packet::is_button_packet(typ);
+  uint8_t command = (is_cmd || is_button) ? payload[payload_offset::COMMAND] : 0;
   uint8_t state = is_status ? payload[payload_offset::STATE] : 0;
   bool echo = is_cmd && this->is_own_echo_(cnt);
 
@@ -951,9 +987,9 @@ void Elero::interpret_msg() {
   }
 
   // JSON log: include only fields relevant to the packet type
-  // - Command packets (0x6a/0x69): cmd_name/command, no state
+  // - Command packets (0x6a/0x69): cmd_name/command, echo, no state
+  // - Button packets (0x44): cmd_name/command, no echo/state
   // - Status packets (0xca/0xc9): state_name/state, no command
-  // - Button packets (0x44): neither command nor state
   // Use snprintf to build blind field (name string or hex address)
   char blind_buf[32];
   if (!blind_name.empty()) {
@@ -977,6 +1013,14 @@ void Elero::interpret_msg() {
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\","
              "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
              blind_buf, elero_command_to_string(command), echo ? "true" : "false",
+             length, cnt, typ, typ2, hop, chl, src, dst, command, rssi, lqi, crc);
+  } else if (is_button) {
+    ESP_LOGD(TAG_RF,
+             "{\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\","
+             "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
+             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\","
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
+             blind_buf, elero_command_to_string(command),
              length, cnt, typ, typ2, hop, chl, src, dst, command, rssi, lqi, crc);
   } else {
     ESP_LOGD(TAG_RF,
@@ -1009,6 +1053,11 @@ void Elero::interpret_msg() {
                       : CC1101_FIFO_LENGTH;
     memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
     this->on_rf_packet_(pkt);
+
+    // Notify device manager (MQTT mode: tracks remotes, routes to dynamic devices)
+    if (this->device_manager_ != nullptr) {
+      this->device_manager_->on_rf_packet(pkt);
+    }
   }
 
   // Update RSSI sensor for any message from a known blind
@@ -1075,7 +1124,7 @@ void Elero::interpret_msg() {
         }
         auto c_it = this->address_to_cover_mapping_.find(dest_addr);
         if (c_it != this->address_to_cover_mapping_.end()) {
-          c_it->second->schedule_immediate_poll();
+          c_it->second->on_remote_command(command);
         }
         auto l_it = this->address_to_light_mapping_.find(dest_addr);
         if (l_it != this->address_to_light_mapping_.end()) {
@@ -1096,6 +1145,10 @@ void Elero::register_cover(EleroBlindBase *cover) {
   cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * packet::timing::POLL_OFFSET_SPACING);
 }
 
+void Elero::unregister_cover(uint32_t address) {
+  this->address_to_cover_mapping_.erase(address);
+}
+
 void Elero::register_light(EleroLightBase *light) {
   uint32_t address = light->get_blind_address();
   if (this->address_to_light_mapping_.find(address) != this->address_to_light_mapping_.end()) {
@@ -1103,6 +1156,10 @@ void Elero::register_light(EleroLightBase *light) {
     return;
   }
   this->address_to_light_mapping_.insert({address, light});
+}
+
+void Elero::unregister_light(uint32_t address) {
+  this->address_to_light_mapping_.erase(address);
 }
 
 #ifdef USE_SENSOR

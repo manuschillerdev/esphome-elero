@@ -21,17 +21,20 @@ function TooltipTrigger({ children }: { children: ComponentChildren }) {
 function TooltipContent({
   className,
   children,
+  align = 'center',
 }: {
   className?: string
   children: ComponentChildren
   sideOffset?: number
   side?: string
+  align?: 'center' | 'end'
 }) {
   return (
     <span
       role="tooltip"
       className={cn(
-        'pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 rounded-md bg-foreground text-background px-3 py-1.5 text-xs whitespace-nowrap opacity-0 transition-opacity group-hover/tooltip:opacity-100 group-focus-visible/tooltip:opacity-100',
+        'pointer-events-none absolute bottom-full mb-2 z-50 rounded-md bg-foreground text-background px-3 py-1.5 text-xs whitespace-nowrap opacity-0 transition-opacity group-hover/tooltip:opacity-100 group-focus-visible/tooltip:opacity-100',
+        align === 'end' ? 'right-0' : 'left-1/2 -translate-x-1/2',
         className
       )}
     >

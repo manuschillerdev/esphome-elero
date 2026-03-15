@@ -84,10 +84,30 @@ esphome-elero/
     │   │   ├── __init__.py            # Cover schema & code-gen
     │   │   ├── EleroCover.h           # Cover class header
     │   │   └── EleroCover.cpp         # Cover logic, position tracking (~307 lines)
+    │   ├── cover_core.{h,cpp}          # Pure C++ cover logic (position tracking, state mapping, polling)
+    │   ├── light_core.{h,cpp}          # Pure C++ light logic (brightness, dimming, state mapping)
+    │   ├── device_manager.h            # IDeviceManager interface, HubMode, DeviceType enums
+    │   ├── nvs_config.h               # NvsDeviceConfig (60-byte POD struct for NVS persistence)
+    │   ├── nvs_device_manager_base.{h,cpp}  # Base class for NVS-backed device managers
+    │   ├── dynamic_entity_base.{h,cpp} # DynamicEntityBase (shared persistence/activation)
+    │   ├── EleroDynamicCover.{h,cpp}   # Dynamic cover slot (MQTT mode)
+    │   ├── EleroDynamicLight.{h,cpp}   # Dynamic light slot (MQTT mode)
+    │   ├── EleroRemoteControl.{h,cpp}  # Passive remote control tracker
+    │   ├── command_sender.h            # Non-blocking TX with retries
     │   ├── sensor/                    # RSSI sensor platform
     │   │   └── __init__.py
     │   └── text_sensor/               # Blind status text sensor platform
     │       └── __init__.py
+    ├── elero_mqtt/                     # MQTT mode component (NVS + MQTT HA discovery)
+    │   ├── __init__.py                # Schema & codegen (slot allocation, hub wiring)
+    │   ├── mqtt_device_manager.{h,cpp} # MqttDeviceManager (extends NvsDeviceManagerBase)
+    │   ├── mqtt_publisher.h           # Abstract MQTT interface (testable without ESPHome)
+    │   └── esphome_mqtt_adapter.h     # Adapts ESPHome MQTT client to MqttPublisher
+    ├── elero_nvs/                      # Native+NVS mode component (NVS + ESPHome native API)
+    │   ├── __init__.py                # Schema & codegen (slot allocation)
+    │   ├── native_nvs_device_manager.{h,cpp}  # NativeNvsDeviceManager
+    │   ├── NativeNvsCover.{h,cpp}     # cover::Cover + DynamicEntityBase + CoverCore
+    │   └── NativeNvsLight.{h,cpp}     # light::LightOutput + DynamicEntityBase + LightCore
     └── elero_web/                     # Optional web UI component
         ├── __init__.py
         ├── elero_web_server.h
@@ -182,13 +202,62 @@ The client can derive:
    - Implements the actual RF protocol, SPI communication, and entity logic
    - Runs inside the ESPHome `Component` lifecycle (`setup()`, `loop()`)
 
+### Three Operating Modes
+
+The system supports three mutually exclusive operating modes:
+
+| | Native Mode | MQTT Mode | Native+NVS Mode |
+|---|---|---|---|
+| **Devices defined in** | YAML (compile-time) | NVS (runtime via CRUD API) | NVS (runtime, reboot to apply) |
+| **Home Assistant API** | ESPHome native API | MQTT HA discovery | ESPHome native API |
+| **Device manager** | `NativeDeviceManager` (no-op) | `MqttDeviceManager` | `NativeNvsDeviceManager` |
+| **Component** | `elero:` only | `elero:` + `elero_mqtt:` | `elero:` + `elero_nvs:` |
+| **Entity classes** | `EleroCover`, `EleroLight` | `EleroDynamicCover`, `EleroDynamicLight` | `NativeNvsCover`, `NativeNvsLight` |
+
+**Core logic extraction:** All entity classes compose pure C++ core classes (`CoverCore`, `LightCore`) that contain all RF/device logic with zero ESPHome dependencies. This eliminates duplication and enables unit testing on the host.
+
+**MQTT mode** enables runtime device management without reflashing:
+- Devices stored as `NvsDeviceConfig` (60-byte POD struct) via ESPHome Preferences
+- Pre-allocated slot pool: static arrays of `EleroDynamicCover`/`EleroDynamicLight`/`EleroRemoteControl`
+- CRUD operations via WebSocket or programmatic API
+- HA discovery publishes/removes MQTT config topics dynamically
+- Remote controls auto-discovered from observed RF command packets
+
+**Native+NVS mode** enables runtime device management with ESPHome native API:
+- Same NVS persistence and CRUD as MQTT mode
+- Entities registered with ESPHome native API during `setup()` — discovered by HA automatically
+- Post-setup CRUD writes to NVS but changes only apply on reboot (ESPHome can't register new entities after initial connection)
+- No MQTT broker required — uses ESPHome's built-in native API
+
+**IDeviceManager** interface (`device_manager.h`) decouples the hub from mode-specific logic:
+- Hub holds `IDeviceManager*` — `nullptr` in native mode, `MqttDeviceManager*` or `NativeNvsDeviceManager*` in NVS modes
+- Hub calls `device_manager_->on_rf_packet()` for every decoded packet
+- Web server calls `dm->upsert_device()` / `dm->remove_device()` for CRUD
+- `NativeDeviceManager` is a no-op implementation for native mode
+
 ### Component Hierarchy
 
 ```
 Elero (hub, SPIDevice + Component)
+├── CoverCore (pure C++ — position tracking, state mapping, polling)
+│   └── Composed by: EleroCover, EleroDynamicCover, NativeNvsCover
+├── LightCore (pure C++ — brightness, dimming, state mapping)
+│   └── Composed by: EleroLight, EleroDynamicLight, NativeNvsLight
 ├── EleroBlindBase (abstract interface)
-│   ├── EleroCover (cover::Cover + Component + EleroBlindBase)
-│   └── EleroLight (light::LightOutput + Component + EleroBlindBase)
+│   ├── EleroCover (cover::Cover + Component + EleroBlindBase)          ← Native mode
+│   ├── EleroDynamicCover (DynamicEntityBase + EleroBlindBase)          ← MQTT mode
+│   └── NativeNvsCover (cover::Cover + Component + DynamicEntityBase)   ← Native+NVS mode
+├── EleroLightBase (abstract interface)
+│   ├── EleroLight (light::LightOutput + Component + EleroLightBase)    ← Native mode
+│   ├── EleroDynamicLight (DynamicEntityBase + EleroLightBase)          ← MQTT mode
+│   └── NativeNvsLight (light::LightOutput + Component + DynamicEntityBase) ← Native+NVS mode
+├── DynamicEntityBase (shared persistence + activation lifecycle)
+│   ├── EleroDynamicCover
+│   └── EleroDynamicLight
+├── EleroRemoteControl (passive RF observer, MQTT mode only)
+├── NvsDeviceManagerBase (abstract base for NVS-backed managers)
+│   └── MqttDeviceManager (NvsDeviceManagerBase — MQTT mode)
+├── NativeNvsDeviceManager (IDeviceManager + Component — Native+NVS mode)
 ├── sensor::Sensor (RSSI, registered per blind address)
 ├── text_sensor::TextSensor (status, registered per blind address)
 ├── EleroWebServer (Component, Mongoose HTTP/WS)
@@ -196,7 +265,7 @@ Elero (hub, SPIDevice + Component)
 └── Auto-registered sensors/text sensors per cover (optional)
 ```
 
-The `EleroBlindBase` abstract class decouples the hub (`Elero`) from the cover implementation so `elero.h` never needs to `#include` the cover header. All communication between hub and covers goes through virtual methods.
+The `EleroBlindBase` / `EleroLightBase` abstract classes decouple the hub from entity implementations. `DynamicEntityBase` extracts shared NVS persistence, activation lifecycle, and `CommandSender` configuration shared between `EleroDynamicCover` and `EleroDynamicLight`.
 
 ### Core Data Flow
 
@@ -205,20 +274,39 @@ The `EleroBlindBase` abstract class decouples the hub (`Elero`) from the cover i
 3. `Elero::loop()` detects `received_`, reads the FIFO, decodes and decrypts the packet, then:
    - Dispatches state to matching `EleroBlindBase` via `set_rx_state()`
    - Calls `on_rf_packet_` callback → server broadcasts to WebSocket clients
-4. `EleroCover::loop()` handles polling timers, position recomputation, and drains the command queue.
+   - Calls `device_manager_->on_rf_packet()` → MQTT mode tracks remotes
+4. `EleroCover::loop()` / `EleroDynamicCover::loop()` handles polling timers, position recomputation, and drains the command queue.
+
+### Dynamic Entity Lifecycle (MQTT mode)
+
+All dynamic entities follow the same lifecycle:
+```
+set_preference() → restore() → activate() → [loop/update_config] → deactivate()
+```
+
+Key patterns:
+- `active_` vs `registered_` flags: active = slot has config, registered = hub dispatches RF to it
+- `set_config_enabled()` for non-destructive enable/disable (no deactivate/reactivate)
+- `update_config()` for non-destructive config update (1 NVS write, no crash window)
+- `deactivate()` is destructive: clears NVS, unregisters from hub, resets all state
+- State callbacks must be set BEFORE `activate()` to avoid missing state changes
+- `upsert_device()` creates or updates a device — address+type identify the device, all other fields are updateable
 
 ### Dependency Injection
 
-The server receives events via callbacks, not direct coupling:
+The server and device manager receive events via callbacks, not direct coupling:
 
 ```cpp
 // Hub calls this on every decoded RF packet
 void Elero::set_rf_packet_callback(std::function<void(const RfPacketInfo&)> cb) {
   on_rf_packet_ = std::move(cb);
 }
+
+// Hub delegates to device manager (MQTT mode)
+void Elero::set_device_manager(IDeviceManager *mgr) { device_manager_ = mgr; }
 ```
 
-This keeps the hub independent of the web server implementation.
+This keeps the hub independent of the web server and MQTT implementations.
 
 ---
 
@@ -272,6 +360,33 @@ Key behaviors:
 - Shares the same RF protocol and command structure as covers
 - Supports optional status checking via `command_check`
 
+### `components/elero/dynamic_entity_base.h` / `dynamic_entity_base.cpp`
+
+**Class:** `DynamicEntityBase` (MQTT mode only)
+
+Shared base for `EleroDynamicCover` and `EleroDynamicLight`. Provides:
+- NVS persistence: `restore()`, `save_config()`, `clear_config()`
+- Activation lifecycle: `activate()`, `deactivate()`, `update_config()`
+- Hub registration: `register_with_hub()`, `unregister_from_hub()` (via virtual hooks)
+- `CommandSender` configuration from `NvsDeviceConfig`
+- Common RX metadata tracking (`last_seen_ms_`, `last_rssi_`, `last_state_raw_`)
+
+Derived classes implement: `entity_tag_()`, `entity_type_str_()`, `is_matching_type_()`, `do_register_()`, `do_unregister_()`, `reset_entity_state_()`.
+
+### `components/elero_mqtt/mqtt_device_manager.h` / `mqtt_device_manager.cpp`
+
+**Class:** `MqttDeviceManager : public IDeviceManager, public Component`
+
+Key behaviors:
+- Implements `IDeviceManager` for MQTT mode
+- Manages pre-allocated slot pools for covers, lights, and remotes
+- On `setup()`: restores slots from NVS, sets state callbacks, activates
+- On `loop()`: detects MQTT (re)connection, publishes discoveries, loops active entities
+- CRUD operations: `upsert_device()` creates or updates devices (address+type is the key)
+- Auto-discovers remotes from RF command packets (`track_remote_()`)
+- Publishes MQTT HA discovery configs and state topics
+- `notify_crud_()` broadcasts events to WS clients via `CrudEventCallback`
+
 ### `components/elero_web/elero_web_server.h` / `elero_web_server.cpp`
 
 **Class:** `EleroWebServer : public Component`
@@ -285,11 +400,13 @@ Key behaviors:
 
 Key behaviors:
 - Uses **Mongoose** HTTP/WebSocket library for cross-framework compatibility (Arduino + ESP-IDF)
-- On connect: sends `config` event with blinds array from YAML
+- On connect: sends `config` event with blinds array, mode (`native`/`mqtt`), and CRUD capability
 - On RF packet (via callback from hub): broadcasts `rf` event to all clients
 - On log (via ESPHome logger callback): broadcasts `log` event to clients
 - On `cmd` message: routes command to hub's `send_command()`
 - On `raw` message: routes to hub's `send_raw_command()`
+- In MQTT mode: handles `upsert_device`/`remove_device` via `IDeviceManager`
+- Receives CRUD event broadcasts from `MqttDeviceManager` via `CrudEventCallback`
 
 ### Why Mongoose?
 
@@ -307,16 +424,20 @@ The web UI communicates exclusively via WebSocket at `/elero/ws`. See `docs/ARCH
 
 | Event | Description |
 |-------|-------------|
-| `config` | Sent on connect: device info, configured blinds/lights, frequency |
+| `config` | Sent on connect: device info, configured blinds/lights, frequency, mode |
 | `rf` | Every decoded RF packet: addresses, state, RSSI, raw bytes |
 | `log` | ESPHome log entries with `elero.*` tags |
+| `device_upserted` | NVS modes: device was created or updated (address, type) |
+| `device_removed` | NVS modes: device was removed (address) |
 
 **Client → Server Messages:**
 
 | Type | Description |
 |------|-------------|
 | `cmd` | Send command to blind/light: `{"type":"cmd", "address":"0xADDRESS", "action":"up"}` |
-| `raw` | Send raw RF packet for testing: `{"type":"raw", "blind_address":"0x...", "channel":5, ...}` |
+| `raw` | Send raw RF packet for testing: `{"type":"raw", "dst_address":"0x...", "channel":5, ...}` |
+| `upsert_device` | NVS modes: create or update device from NvsDeviceConfig fields |
+| `remove_device` | NVS modes: remove device by `dst_address` + `device_type` |
 
 ### HTTP Endpoints
 
@@ -431,6 +552,35 @@ text_sensor:
     name: "Blind Status"      # Values: see state constants above
 ```
 
+### MQTT Mode (`elero_mqtt`)
+
+Enables runtime device management via NVS persistence and MQTT HA discovery. Requires `mqtt:` component.
+
+```yaml
+elero_mqtt:
+  topic_prefix: elero              # MQTT topic prefix (default: "elero")
+  discovery_prefix: homeassistant  # HA discovery prefix (default: "homeassistant")
+  max_covers: 16                   # Pre-allocated cover slots (1–32, default: 16)
+  max_lights: 8                    # Pre-allocated light slots (1–32, default: 8)
+  max_remotes: 16                  # Pre-allocated remote slots (1–32, default: 16)
+  device_name: "Elero Gateway"     # HA device name (default: "Elero Gateway")
+```
+
+When `elero_mqtt` is present, no covers/lights should be defined in YAML — devices are added at runtime via the web UI or MQTT API and persisted in NVS.
+
+### Native+NVS Mode (`elero_nvs`)
+
+Enables runtime device management via NVS persistence with ESPHome native API (no MQTT broker required). Requires `api:` component.
+
+```yaml
+elero_nvs:
+  max_covers: 16                   # Pre-allocated cover slots (1–32, default: 16)
+  max_lights: 8                    # Pre-allocated light slots (1–32, default: 8)
+  max_remotes: 16                  # Pre-allocated remote slots (1–32, default: 16)
+```
+
+Devices are added via the web UI CRUD API and persisted in NVS. On boot, active devices are registered with ESPHome's native API. Post-boot CRUD writes to NVS but new entities only appear after a reboot.
+
 ### Web UI (`elero_web`)
 
 ```yaml
@@ -514,7 +664,25 @@ The typical workflow for a new installation:
 
 ## Testing
 
-There are no automated tests in this repository. Validation is done manually on real hardware:
+### Unit tests (host)
+
+Pure C++ core logic is tested with GoogleTest on the host machine:
+
+```bash
+cd tests/unit && cmake -B build && cmake --build build && ctest --test-dir build
+```
+
+Tests cover `CoverCore` (position tracking, state mapping, polling) and `LightCore` (brightness, dimming, state mapping).
+
+### Compile tests
+
+```bash
+esphome compile tests/test.esp32-minimal.yaml   # Native mode
+esphome compile tests/test.esp32-mqtt.yaml       # MQTT mode
+esphome compile tests/test.esp32-nvs.yaml        # Native+NVS mode
+```
+
+### Hardware validation
 
 1. Flash the firmware and verify the CC1101 initialises (check `esphome logs` for `[I][elero:...]` messages)
 2. Open the web UI and verify RF packets appear when using the remote

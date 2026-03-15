@@ -7,6 +7,7 @@
 #include "tx_client.h"
 #include "elero_packet.h"
 #include "elero_strings.h"
+#include "device_manager.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -113,6 +114,8 @@ class EleroLightBase {
   virtual uint8_t get_channel() const = 0;
   virtual uint32_t get_remote_address() const = 0;
   virtual uint32_t get_dim_duration_ms() const = 0;
+  virtual bool is_enabled() const { return true; }  ///< true = published to HA (YAML-defined always true)
+  virtual uint32_t get_updated_at() const { return 0; }  ///< millis() when last persisted (0 = YAML-defined)
   // Web API helpers — state (parity with EleroBlindBase)
   virtual float get_brightness() const = 0;
   virtual bool get_is_on() const = 0;
@@ -148,6 +151,8 @@ class EleroBlindBase {
   virtual uint32_t get_open_duration_ms() const = 0;
   virtual uint32_t get_close_duration_ms() const = 0;
   virtual bool get_supports_tilt() const = 0;
+  virtual bool is_enabled() const { return true; }  ///< true = published to HA (YAML-defined always true)
+  virtual uint32_t get_updated_at() const { return 0; }  ///< millis() when last persisted (0 = YAML-defined)
   // Web API commands — use perform_action() for standard commands (same path as HA)
   virtual bool perform_action(const char *action) = 0;
   // Low-level command queue (bypasses entity logic, use only for protocol-specific commands like "check")
@@ -156,6 +161,10 @@ class EleroBlindBase {
   /// blind, so it can poll the blind immediately instead of waiting for the
   /// normal poll interval.  Default no-op; concrete classes override.
   virtual void schedule_immediate_poll() {}
+  /// Called by the hub when a detected remote command targets this blind.
+  /// Allows the cover to start movement tracking (IDLE→MOVING transition)
+  /// that RF status alone cannot trigger. Default: schedule_immediate_poll().
+  virtual void on_remote_command(uint8_t command_byte) { this->schedule_immediate_poll(); }
   virtual void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms, uint32_t poll_intvl_ms) = 0;
 };
 
@@ -219,7 +228,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   TxClient *get_tx_owner() const { return tx_owner_; }
 
   void register_cover(EleroBlindBase *cover);
+  void unregister_cover(uint32_t address);
   void register_light(EleroLightBase *light);
+  void unregister_light(uint32_t address);
 
   // Legacy blocking TX API (for backwards compatibility and simple use cases)
   [[nodiscard]] bool send_command(EleroCommand *cmd);
@@ -252,9 +263,16 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_freq1(uint8_t freq) { freq1_ = freq; }
   void set_freq2(uint8_t freq) { freq2_ = freq; }
 
+  void set_version(const char *version) { version_ = version; }
+  const char *get_version() const { return version_; }
+
   // RF packet notification callback (used by web server)
   using RfPacketCallback = std::function<void(const RfPacketInfo &)>;
   void set_rf_packet_callback(RfPacketCallback cb) { on_rf_packet_ = std::move(cb); }
+
+  // Device manager (MQTT mode)
+  void set_device_manager(IDeviceManager *mgr) { device_manager_ = mgr; }
+  IDeviceManager *get_device_manager() const { return device_manager_; }
 
   void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   uint8_t get_freq0() const { return freq0_; }
@@ -267,6 +285,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void abort_tx_();                     // Abort TX and return to RX
   void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
   void notify_tx_owner_(bool success);  // Notify owner and clear
+  /// Read a CC1101 status register twice until consistent (CC1101 errata workaround).
+  uint8_t read_status_reliable_(uint8_t addr);
   void check_radio_health_();           // Periodic watchdog for stuck radio states
   void record_tx_(uint8_t counter);           // Record TX counter for echo detection
   bool is_own_echo_(uint8_t counter) const;   // Check if RX counter matches a recent TX
@@ -299,6 +319,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   // RF packet notification callback (optional, set by web server)
   RfPacketCallback on_rf_packet_{};
+
+  // Device manager (nullptr in native mode, set by MqttDeviceManager in MQTT mode)
+  IDeviceManager *device_manager_{nullptr};
+
+  const char *version_{"unknown"};
 };
 
 }  // namespace elero

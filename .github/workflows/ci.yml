@@ -22,6 +22,9 @@ jobs:
           - test.esp32-s3-ard
           - test.esp32-s3-idf
           - test.esp32-ard
+          - test.esp32-minimal
+          - test.esp32-mqtt
+          - test.esp32-nvs
     steps:
       - uses: actions/checkout@v4
 

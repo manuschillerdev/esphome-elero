@@ -50,6 +50,8 @@ interface DataTableProps<T> {
   filterable?: boolean
   /** Extra content rendered in the toolbar (right side, before filter toggle) */
   toolbar?: ComponentChildren
+  /** Render an expanded section below a row. Return null to collapse. */
+  expandedRow?: (row: T) => ComponentChildren | null
 }
 
 // ─── Filter select style ────────────────────────────────────────────────────
@@ -73,6 +75,7 @@ export function DataTable<T>({
   rowClass,
   filterable,
   toolbar,
+  expandedRow,
 }: DataTableProps<T>) {
   const hasFilterableCols = columns.some((c) => c.filter && c.value)
   const showFilters = filterable !== undefined ? filterable : hasFilterableCols
@@ -170,9 +173,9 @@ export function DataTable<T>({
                 key={col.key}
                 className={cn(
                   'px-3 py-2 font-medium text-muted-foreground',
-                  col.align === 'right' ? 'text-right' : 'text-left',
                   col.headerClass,
                 )}
+                style={{ textAlign: col.align === 'right' ? 'right' : 'left' }}
               >
                 {col.sortable ? (
                   <button
@@ -226,25 +229,37 @@ export function DataTable<T>({
           )}
         </thead>
         <tbody className="divide-y divide-border">
-          {sorted.map((row, i) => (
-            <tr
-              key={rowKey(row, i)}
-              className={cn('transition-colors hover:bg-muted/30', rowClass?.(row))}
-            >
-              {columns.map((col) => (
-                <td
-                  key={col.key}
-                  className={cn(
-                    'px-3 py-2',
-                    col.align === 'right' && 'text-right',
-                    col.cellClass,
-                  )}
+          {sorted.map((row, i) => {
+            const expanded = expandedRow?.(row)
+            return (
+              <>
+                <tr
+                  key={rowKey(row, i)}
+                  className={cn('transition-colors hover:bg-muted/30', rowClass?.(row))}
                 >
-                  {col.render(row)}
-                </td>
-              ))}
-            </tr>
-          ))}
+                  {columns.map((col) => (
+                    <td
+                      key={col.key}
+                      className={cn(
+                        'px-3 py-2',
+                        col.cellClass,
+                      )}
+                      style={col.align === 'right' ? { textAlign: 'right' } : undefined}
+                    >
+                      {col.render(row)}
+                    </td>
+                  ))}
+                </tr>
+                {expanded && (
+                  <tr key={`${rowKey(row, i)}-expanded`}>
+                    <td colSpan={columns.length} className="p-0">
+                      {expanded}
+                    </td>
+                  </tr>
+                )}
+              </>
+            )
+          })}
         </tbody>
       </table>
       {sorted.length === 0 && (

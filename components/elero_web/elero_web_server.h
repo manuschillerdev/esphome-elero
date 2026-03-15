@@ -9,15 +9,17 @@
 #include "esphome/components/logger/logger.h"
 #include "mongoose.h"
 #include "../elero/elero.h"
+#include "../elero/device_manager.h"
+#include "esphome/components/json/json_util.h"
 #include <string>
 #include <vector>
 
 namespace esphome {
 namespace elero {
 
-/// WebSocket server - acts as RF bridge and log forwarder
-/// Server → Client: config (on connect), rf (packets), log (ESPHome logs)
-/// Client → Server: cmd (blind commands), raw (raw RF packets)
+/// WebSocket server - acts as RF bridge, log forwarder, and CRUD proxy
+/// Server → Client: config (on connect), rf (packets), log (ESPHome logs), crud events
+/// Client → Server: cmd (blind commands), raw (raw RF packets), upsert_device, remove_device
 class EleroWebServer : public Component, public logger::LogListener {
  public:
   void setup() override;
@@ -42,6 +44,7 @@ class EleroWebServer : public Component, public logger::LogListener {
   Elero *parent_{nullptr};
   uint16_t port_{80};
   bool enabled_{true};
+  bool crud_callback_set_{false};
 
   // Mongoose state
   struct mg_mgr mgr_;
@@ -66,6 +69,13 @@ class EleroWebServer : public Component, public logger::LogListener {
   // JSON builders
   std::string build_config_json();
   std::string build_rf_json(const RfPacketInfo &pkt);
+
+  // Device CRUD handlers (MQTT mode)
+  void handle_upsert_device_(struct mg_connection *c, JsonObject root);
+  void handle_remove_device_(struct mg_connection *c, JsonObject root);
+
+  // Parse NvsDeviceConfig from JSON object
+  bool parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error);
 };
 
 }  // namespace elero

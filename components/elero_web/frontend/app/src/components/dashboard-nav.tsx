@@ -1,15 +1,14 @@
 import { Badge } from './ui/badge'
 import { cn } from '@/lib/utils'
 import { LayoutGrid, Cpu } from './icons'
-import { useStore } from '@/store'
+import { ui, filterCounts, setActiveTab } from '@/store'
 
 export function DashboardNav() {
-  const activeTab = useStore((s) => s.activeTab)
-  const blinds = useStore((s) => s.config.blinds)
-  const lights = useStore((s) => s.config.lights)
+  const activeTab = ui.value.activeTab
+  const counts = filterCounts.value
 
   const tabs = [
-    { id: 'devices' as const, label: 'Devices', icon: LayoutGrid, count: blinds.length + lights.length },
+    { id: 'devices' as const, label: 'Devices', icon: LayoutGrid, count: counts.all },
     { id: 'hub' as const, label: 'Hub', icon: Cpu },
   ]
 
@@ -20,7 +19,7 @@ export function DashboardNav() {
           key={tab.id}
           role="tab"
           aria-selected={activeTab === tab.id}
-          onClick={() => useStore.getState().setActiveTab(tab.id)}
+          onClick={() => setActiveTab(tab.id)}
           className={cn(
             'relative flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors',
             activeTab === tab.id

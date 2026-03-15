@@ -25,6 +25,7 @@
 - [Home Assistant Integration](#home-assistant-integration)
 - [Fehlerbehebung](#fehlerbehebung)
 - [Getestete Konfigurationen](#getestete-konfigurationen)
+- [Entwicklung](#entwicklung)
 - [Weiterführende Dokumentation](#weiterführende-dokumentation)
 - [Credits](#credits)
 
@@ -647,6 +648,63 @@ entities:
 | D1 Mini ESP32 | Standard CC1101 | 433 MHz | Funktioniert, eingeschränkte Reichweite |
 | WT32-ETH01 | RWE Smart Home CC1101 | 868 MHz | Sehr gute Reichweite und Empfang |
 | ESP32-DevKit V1 | Standard CC1101 | 868 MHz | Gut |
+
+---
+
+## Entwicklung
+
+### Voraussetzungen
+
+- [uv](https://docs.astral.sh/uv/) (Python-Paketmanager)
+- USB-Kabel zum ESP32
+
+### Setup
+
+```bash
+uv sync
+```
+
+### Kompilieren
+
+```bash
+uv run esphome compile config.dev.yaml
+```
+
+### Flashen (USB)
+
+```bash
+uv run esphome run config.dev.yaml --device /dev/cu.usbmodem2101
+```
+
+### Flashen (OTA)
+
+```bash
+uv run esphome run config.dev.yaml --device 10.0.0.4
+```
+
+### NVS löschen (Flash komplett löschen)
+
+OTA und USB-Flash behalten die NVS-Partition (gespeicherte Geräte). Um NVS zu löschen:
+
+```bash
+uv run esptool --port /dev/cu.usbmodem2101 erase_flash
+```
+
+Danach neu flashen:
+
+```bash
+uv run esphome run config.dev.yaml --device /dev/cu.usbmodem2101
+```
+
+### Frontend (Web-UI)
+
+```bash
+cd components/elero_web/frontend/app
+pnpm install
+pnpm dev                           # Vite dev server (Mock)
+DEVICE_IP=10.0.0.4 pnpm dev       # Vite dev server (gegen echtes Gerät)
+pnpm build                         # Produktion (generiert elero_web_ui.h)
+```
 
 ---
 

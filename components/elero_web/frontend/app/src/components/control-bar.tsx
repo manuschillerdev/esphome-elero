@@ -1,31 +1,27 @@
 import { Lightbulb, Blinds } from './icons'
 import { FilterBar, type FilterOption } from './ui/filter-bar'
-import { useStore, buildFilterCounts, type FilterState, type DeviceTypeFilter } from '@/store'
+import { ui, filterCounts, setStatusFilter, setDeviceTypeFilter, type StatusFilter, type DeviceTypeFilter } from '@/store'
 
 export function ControlBar() {
-  const filter = useStore((s) => s.filter)
-  const deviceTypeFilter = useStore((s) => s.deviceTypeFilter)
-  const blinds = useStore((s) => s.config.blinds)
-  const lights = useStore((s) => s.config.lights)
-  const states = useStore((s) => s.states)
-  const counts = buildFilterCounts(blinds, lights, states)
+  const { status: statusFilter, deviceType: deviceTypeFilter } = ui.value.filters
+  const counts = filterCounts.value
 
-  const filters: FilterOption<FilterState>[] = [
+  const filters: FilterOption<StatusFilter>[] = [
     { value: 'all', label: 'All', count: counts.all },
-    { value: 'configured', label: 'Configured', count: counts.configured },
-    { value: 'discovered', label: 'Discovered', count: counts.discovered },
+    { value: 'saved', label: 'Saved', count: counts.saved },
+    { value: 'unsaved', label: 'Unsaved', count: counts.unsaved },
   ]
 
   const deviceTypes: FilterOption<DeviceTypeFilter>[] = [
     { value: 'all', label: 'All' },
-    { value: 'blinds', icon: Blinds, count: counts.blinds },
+    { value: 'covers', icon: Blinds, count: counts.covers },
     { value: 'lights', icon: Lightbulb, count: counts.lights },
   ]
 
   return (
     <div className="flex items-center gap-2">
-      <FilterBar options={filters} value={filter} onChange={(v) => useStore.getState().setFilter(v)} />
-      <FilterBar options={deviceTypes} value={deviceTypeFilter} onChange={(v) => useStore.getState().setDeviceTypeFilter(v)} />
+      <FilterBar options={filters} value={statusFilter} onChange={setStatusFilter} />
+      <FilterBar options={deviceTypes} value={deviceTypeFilter} onChange={setDeviceTypeFilter} />
     </div>
   )
 }

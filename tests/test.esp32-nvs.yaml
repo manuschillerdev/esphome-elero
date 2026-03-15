@@ -1,0 +1,50 @@
+# ESPHome compile test: ESP32 with Native+NVS mode
+substitutions:
+  spi_clk: GPIO18
+  spi_mosi: GPIO23
+  spi_miso: GPIO19
+  spi_cs: GPIO5
+  gdo0_pin: GPIO26
+
+esphome:
+  name: test-esp32-nvs
+  friendly_name: Test ESP32 NVS
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test-network"
+  password: ""
+
+api:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+spi:
+  clk_pin: ${spi_clk}
+  mosi_pin: ${spi_mosi}
+  miso_pin: ${spi_miso}
+
+# Elero hub (no YAML covers/lights — devices managed via NVS)
+elero:
+  cs_pin: ${spi_cs}
+  gdo0_pin: ${gdo0_pin}
+
+# Native+NVS device manager
+elero_nvs:
+  max_covers: 16
+  max_lights: 8
+  max_remotes: 16
+
+# Web UI for RF discovery and device management
+elero_web:
+  port: 80

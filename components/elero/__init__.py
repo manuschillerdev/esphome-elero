@@ -6,6 +6,9 @@ from esphome.const import CONF_ID
 
 DEPENDENCIES = ["spi"]
 
+# x-release-please-version
+ELERO_VERSION = "0.9.0"
+
 elero_ns = cg.esphome_ns.namespace("elero")
 elero = elero_ns.class_("Elero", spi.SPIDevice, cg.Component)
 
@@ -40,3 +43,5 @@ async def to_code(config):
     cg.add(var.set_freq0(config[CONF_FREQ0]))
     cg.add(var.set_freq1(config[CONF_FREQ1]))
     cg.add(var.set_freq2(config[CONF_FREQ2]))
+
+    cg.add(var.set_version(ELERO_VERSION))
