@@ -48,6 +48,18 @@ void EleroDynamicCover::schedule_immediate_poll() {
   core_.immediate_poll = true;
 }
 
+void EleroDynamicCover::on_remote_command(uint8_t command_byte) {
+  auto op = CoverCore::command_to_operation(command_byte);
+  uint32_t now = millis();
+  if (op == CoverCore::Operation::OPENING || op == CoverCore::Operation::CLOSING) {
+    core_.start_movement(op, now);
+  } else {
+    core_.operation = CoverCore::Operation::IDLE;
+  }
+  publish_state_();
+  core_.immediate_poll = true;
+}
+
 void EleroDynamicCover::apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms, uint32_t poll_intvl_ms) {
   core_.apply_runtime_settings(open_dur_ms, close_dur_ms, poll_intvl_ms);
   if (open_dur_ms != 0) config_.open_duration_ms = open_dur_ms;

@@ -226,6 +226,19 @@ void EleroCover::schedule_immediate_poll() {
   this->core_.immediate_poll = true;
 }
 
+void EleroCover::on_remote_command(uint8_t command_byte) {
+  auto op = CoverCore::command_to_operation(command_byte);
+  uint32_t now = millis();
+  if (op == CoverCore::Operation::OPENING || op == CoverCore::Operation::CLOSING) {
+    this->core_.start_movement(op, now);
+  } else {
+    this->core_.operation = CoverCore::Operation::IDLE;
+  }
+  this->sync_from_core_();
+  this->publish_state();
+  this->core_.immediate_poll = true;
+}
+
 void EleroCover::sync_from_core_() {
   this->position = this->core_.position;
   this->tilt = this->core_.tilt;

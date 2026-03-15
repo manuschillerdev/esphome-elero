@@ -172,6 +172,21 @@ void NativeNvsCover::apply_runtime_settings(uint32_t open_dur_ms, uint32_t close
   if (poll_intvl_ms != 0) config_.poll_interval_ms = poll_intvl_ms;
 }
 
+void NativeNvsCover::on_remote_command(uint8_t command_byte) {
+  auto op = CoverCore::command_to_operation(command_byte);
+  uint32_t now = millis();
+  if (op == CoverCore::Operation::OPENING || op == CoverCore::Operation::CLOSING) {
+    core_.start_movement(op, now);
+  } else {
+    core_.operation = CoverCore::Operation::IDLE;
+  }
+  this->position = core_.position;
+  this->tilt = core_.tilt;
+  this->current_operation = static_cast<CoverOperation>(core_.operation);
+  this->publish_state();
+  core_.immediate_poll = true;
+}
+
 void NativeNvsCover::start_movement_(CoverOperation dir) {
   uint32_t now = millis();
 

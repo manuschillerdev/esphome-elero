@@ -161,6 +161,10 @@ class EleroBlindBase {
   /// blind, so it can poll the blind immediately instead of waiting for the
   /// normal poll interval.  Default no-op; concrete classes override.
   virtual void schedule_immediate_poll() {}
+  /// Called by the hub when a detected remote command targets this blind.
+  /// Allows the cover to start movement tracking (IDLE→MOVING transition)
+  /// that RF status alone cannot trigger. Default: schedule_immediate_poll().
+  virtual void on_remote_command(uint8_t command_byte) { this->schedule_immediate_poll(); }
   virtual void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms, uint32_t poll_intvl_ms) = 0;
 };
 
@@ -281,6 +285,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void abort_tx_();                     // Abort TX and return to RX
   void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
   void notify_tx_owner_(bool success);  // Notify owner and clear
+  /// Read a CC1101 status register twice until consistent (CC1101 errata workaround).
+  uint8_t read_status_reliable_(uint8_t addr);
   void check_radio_health_();           // Periodic watchdog for stuck radio states
   void record_tx_(uint8_t counter);           // Record TX counter for echo detection
   bool is_own_echo_(uint8_t counter) const;   // Check if RX counter matches a recent TX

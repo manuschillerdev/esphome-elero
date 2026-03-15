@@ -27,20 +27,27 @@ CoverCore::RxStateResult CoverCore::on_rx_state(uint8_t state, uint32_t now) {
   float new_tilt = result.tilt;
   auto new_op = static_cast<Operation>(result.operation);
 
-  bool changed = (new_pos != position) || (new_op != operation) || (new_tilt != tilt);
+  // RF can confirm/continue movement or stop us, but cannot START movement.
+  // Only user commands or detected remote commands initiate IDLE→MOVING
+  // (via start_movement()). This prevents transient "still moving" RF
+  // responses after STOP from re-entering the fast-poll loop.
+  bool blocked = (operation == Operation::IDLE && new_op != Operation::IDLE);
+  Operation effective_op = blocked ? operation : new_op;
+
+  bool changed = (new_pos != position) || (effective_op != operation) || (new_tilt != tilt);
 
   // Track movement start when operation changes
-  if (new_op != operation) {
-    if (new_op != Operation::IDLE) {
+  if (effective_op != operation) {
+    if (effective_op != Operation::IDLE) {
       movement_start_ms = now;
       movement_start_pos = new_pos;
-      last_direction = new_op;
+      last_direction = effective_op;
     }
   }
 
   position = new_pos;
   tilt = new_tilt;
-  operation = new_op;
+  operation = effective_op;
 
   return {changed, result.is_warning, result.warning_msg};
 }

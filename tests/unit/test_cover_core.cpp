@@ -122,15 +122,19 @@ TEST_F(CoverCoreTest, OnRxState_BottomSetsClosed) {
   EXPECT_EQ(core.operation, Op::IDLE);
 }
 
-TEST_F(CoverCoreTest, OnRxState_MovingUpSetsOpening) {
+TEST_F(CoverCoreTest, OnRxState_MovingUpContinuesOpening) {
+  // RF MOVING_UP while already OPENING → stays OPENING
+  core.start_movement(Op::OPENING, 500);
   auto result = core.on_rx_state(packet::state::MOVING_UP, 1000);
-  EXPECT_TRUE(result.changed);
+  EXPECT_FALSE(result.changed);  // already OPENING
   EXPECT_EQ(core.operation, Op::OPENING);
 }
 
-TEST_F(CoverCoreTest, OnRxState_MovingDownSetsClosing) {
+TEST_F(CoverCoreTest, OnRxState_MovingDownContinuesClosing) {
+  // RF MOVING_DOWN while already CLOSING → stays CLOSING
+  core.start_movement(Op::CLOSING, 500);
   auto result = core.on_rx_state(packet::state::MOVING_DOWN, 1000);
-  EXPECT_TRUE(result.changed);
+  EXPECT_FALSE(result.changed);  // already CLOSING
   EXPECT_EQ(core.operation, Op::CLOSING);
 }
 
@@ -153,15 +157,19 @@ TEST_F(CoverCoreTest, OnRxState_SameStateNoChange) {
 
 TEST_F(CoverCoreTest, OnRxState_MovementStartTracking) {
   core.position = 0.5f;
-  core.on_rx_state(packet::state::MOVING_UP, 5000);
+  // Must start movement explicitly first (RF alone can't start from IDLE)
+  core.start_movement(Op::OPENING, 5000);
   EXPECT_EQ(core.movement_start_ms, 5000u);
-  EXPECT_FLOAT_EQ(core.movement_start_pos, 0.5f);  // pos unchanged by MOVING_UP
+  EXPECT_FLOAT_EQ(core.movement_start_pos, 0.5f);
   EXPECT_EQ(core.last_direction, Op::OPENING);
+  // RF confirms — no reset
+  core.on_rx_state(packet::state::MOVING_UP, 6000);
+  EXPECT_EQ(core.movement_start_ms, 5000u);
 }
 
 TEST_F(CoverCoreTest, OnRxState_MovementStartNotResetOnSameOp) {
-  core.on_rx_state(packet::state::MOVING_UP, 5000);
-  // Same operation again — movement start should NOT be reset
+  core.start_movement(Op::OPENING, 5000);
+  // Same operation via RF — movement start should NOT be reset
   core.on_rx_state(packet::state::MOVING_UP, 7000);
   EXPECT_EQ(core.movement_start_ms, 5000u);
 }
@@ -346,6 +354,93 @@ TEST_F(CoverCoreTest, HasPositionTracking_BothDurationsRequired) {
   core.config.open_duration_ms = 10000;
   core.config.close_duration_ms = 0;
   EXPECT_FALSE(core.has_position_tracking());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Reset
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// IDLE→MOVING Block (RF cannot start movement)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_F(CoverCoreTest, OnRxState_IdleToMovingUpBlocked) {
+  core.operation = Op::IDLE;
+  auto result = core.on_rx_state(packet::state::MOVING_UP, 1000);
+  EXPECT_FALSE(result.changed);  // blocked, no state change
+  EXPECT_EQ(core.operation, Op::IDLE);
+}
+
+TEST_F(CoverCoreTest, OnRxState_IdleToMovingDownBlocked) {
+  core.operation = Op::IDLE;
+  auto result = core.on_rx_state(packet::state::MOVING_DOWN, 1000);
+  EXPECT_FALSE(result.changed);
+  EXPECT_EQ(core.operation, Op::IDLE);
+}
+
+TEST_F(CoverCoreTest, OnRxState_MovingToIdleAllowed) {
+  core.start_movement(Op::OPENING, 500);
+  auto result = core.on_rx_state(packet::state::TOP, 1000);
+  EXPECT_TRUE(result.changed);
+  EXPECT_EQ(core.operation, Op::IDLE);
+}
+
+TEST_F(CoverCoreTest, OnRxState_MovingToMovingAllowed) {
+  // OPENING → RF says MOVING_DOWN → becomes CLOSING
+  core.start_movement(Op::OPENING, 500);
+  auto result = core.on_rx_state(packet::state::MOVING_DOWN, 1000);
+  EXPECT_TRUE(result.changed);
+  EXPECT_EQ(core.operation, Op::CLOSING);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// command_to_operation static helper
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_F(CoverCoreTest, CommandToOperation_Up) {
+  EXPECT_EQ(CoverCore::command_to_operation(packet::command::UP), Op::OPENING);
+}
+
+TEST_F(CoverCoreTest, CommandToOperation_Down) {
+  EXPECT_EQ(CoverCore::command_to_operation(packet::command::DOWN), Op::CLOSING);
+}
+
+TEST_F(CoverCoreTest, CommandToOperation_Stop) {
+  EXPECT_EQ(CoverCore::command_to_operation(packet::command::STOP), Op::IDLE);
+}
+
+TEST_F(CoverCoreTest, CommandToOperation_Check) {
+  EXPECT_EQ(CoverCore::command_to_operation(packet::command::CHECK), Op::IDLE);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// External Command → RF Confirmation Flow
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_F(CoverCoreTest, ExternalCommand_StartsMovement_ThenRxConfirms) {
+  // Remote sends UP → start_movement → RF confirms MOVING_UP → stays OPENING
+  core.start_movement(Op::OPENING, 1000);
+  EXPECT_EQ(core.operation, Op::OPENING);
+
+  auto result = core.on_rx_state(packet::state::MOVING_UP, 1500);
+  EXPECT_EQ(core.operation, Op::OPENING);
+  // No change since already OPENING
+  EXPECT_FALSE(result.changed);
+}
+
+TEST_F(CoverCoreTest, ExternalCommand_StopFromRemote_ThenRxTransientMovingBlocked) {
+  // User sends UP → moving
+  core.start_movement(Op::OPENING, 1000);
+  EXPECT_EQ(core.operation, Op::OPENING);
+
+  // User sends STOP → IDLE
+  core.operation = Op::IDLE;
+  EXPECT_EQ(core.operation, Op::IDLE);
+
+  // Transient RF "still moving" → must NOT re-enter OPENING
+  auto result = core.on_rx_state(packet::state::MOVING_UP, 2000);
+  EXPECT_EQ(core.operation, Op::IDLE);
+  EXPECT_FALSE(result.changed);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

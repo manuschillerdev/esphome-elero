@@ -83,6 +83,13 @@ class CoverCore {
   /// Start a movement. Sets operation, records start time/position.
   void start_movement(Operation op, uint32_t now);
 
+  /// Map a command byte to the corresponding operation.
+  static Operation command_to_operation(uint8_t cmd_byte) {
+    if (cmd_byte == packet::command::UP) return Operation::OPENING;
+    if (cmd_byte == packet::command::DOWN) return Operation::CLOSING;
+    return Operation::IDLE;
+  }
+
   /// Sync core config from an NvsDeviceConfig (covers timing + tilt).
   void sync_from_nvs_config(const NvsDeviceConfig &cfg);
 

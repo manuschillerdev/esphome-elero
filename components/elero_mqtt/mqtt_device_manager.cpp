@@ -56,6 +56,7 @@ mqtt_light::LightFinder MqttDeviceManager::light_finder_() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void MqttDeviceManager::on_cover_activated_(EleroDynamicCover *cover) {
+  if (ctx_.mqtt == nullptr) return;  // setup() runs before context is ready
   if (cover->config().is_enabled() && ctx_.mqtt->is_connected()) {
     mqtt_cover::activate(ctx_, cover, cover_finder_());
     publish_gateway_state_();
@@ -63,6 +64,7 @@ void MqttDeviceManager::on_cover_activated_(EleroDynamicCover *cover) {
 }
 
 void MqttDeviceManager::on_light_activated_(EleroDynamicLight *light) {
+  if (ctx_.mqtt == nullptr) return;
   if (light->config().is_enabled() && ctx_.mqtt->is_connected()) {
     mqtt_light::activate(ctx_, light, light_finder_());
     publish_gateway_state_();
@@ -70,6 +72,7 @@ void MqttDeviceManager::on_light_activated_(EleroDynamicLight *light) {
 }
 
 void MqttDeviceManager::on_remote_activated_(EleroRemoteControl *remote) {
+  if (ctx_.mqtt == nullptr) return;
   if (ctx_.mqtt->is_connected()) {
     mqtt_remote::publish_discovery(ctx_, remote);
     publish_gateway_state_();

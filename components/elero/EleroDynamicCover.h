@@ -38,6 +38,7 @@ class EleroDynamicCover : public EleroBlindBase, public DynamicEntityBase {
   bool perform_action(const char *action) override;
   void enqueue_command(uint8_t cmd_byte) override { (void)sender_.enqueue(cmd_byte); }
   void schedule_immediate_poll() override;
+  void on_remote_command(uint8_t command_byte) override;
   void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms, uint32_t poll_intvl_ms) override;
 
   // ─── State callback ───

@@ -47,11 +47,28 @@ constexpr uint8_t RSSI_DIVISOR = 2;           ///< Divisor for raw RSSI value
 // ═══════════════════════════════════════════════════════════════════════════════
 
 namespace cc1101_status {
-constexpr uint8_t OVERFLOW_BIT = 0x80;        ///< RXFIFO overflow flag (bit 7)
+// ── RXBYTES / TXBYTES register value masks ──
+constexpr uint8_t RXBYTES_OVERFLOW_BIT = 0x80; ///< Bit 7 of RXBYTES register: RXFIFO overflow
 constexpr uint8_t BYTE_COUNT_MASK = 0x7F;     ///< RXBYTES/TXBYTES count (bits 6:0)
+
+// ── SPI status byte layout (returned with every SPI transaction) ──
+//   Bit 7:    CHIP_RDY (0 = crystal stable, 1 = not ready)
+//   Bits 6:4: STATE (000=IDLE, 001=RX, 010=TX, 011=FSTXON,
+//             100=CAL, 101=SETTLING, 110=RXFIFO_OVF, 111=TXFIFO_UFL)
+//   Bits 3:0: FIFO_BYTES_AVAILABLE
+constexpr uint8_t SPI_CHIP_RDY = 0x80;           ///< Bit 7: chip not ready when set
+constexpr uint8_t SPI_STATE_MASK = 0x70;          ///< Bits 6:4: radio state
+constexpr uint8_t SPI_STATE_RXFIFO_OVERFLOW = 0x60;  ///< STATE=110: RXFIFO overflow
+constexpr uint8_t SPI_STATE_TXFIFO_UNDERFLOW = 0x70; ///< STATE=111: TXFIFO underflow
+
+// ── Other register value masks ──
 constexpr uint8_t MARCSTATE_MASK = 0x1F;      ///< MARCSTATE value mask (bits 4:0)
 constexpr uint8_t LQI_MASK = 0x7F;            ///< LQI value mask (bits 6:0)
 constexpr uint8_t CRC_OK_BIT = 0x80;          ///< CRC OK flag (bit 7, in LQI byte)
+
+// ── VERSION register expected values ──
+constexpr uint8_t VERSION_NOT_CONNECTED_LOW = 0x00;   ///< VERSION reads 0x00 when chip absent
+constexpr uint8_t VERSION_NOT_CONNECTED_HIGH = 0xFF;  ///< VERSION reads 0xFF when chip absent
 }  // namespace cc1101_status
 
 // ═══════════════════════════════════════════════════════════════════════════════

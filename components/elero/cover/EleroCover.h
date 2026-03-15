@@ -67,6 +67,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   }
 
   void schedule_immediate_poll() override;
+  void on_remote_command(uint8_t command_byte) override;
 
  protected:
   void control(const cover::CoverCall &call) override;
