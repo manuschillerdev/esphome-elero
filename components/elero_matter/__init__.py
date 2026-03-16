@@ -2,7 +2,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
 
-from ..elero import CONF_ELERO_ID, CONF_REGISTRY_ID, elero_ns, DeviceRegistry
+from ..elero import CONF_ELERO_ID, CONF_REGISTRY_ID, DeviceRegistry, elero_ns
 
 DEPENDENCIES = ["elero"]
 CODEOWNERS = ["@manuschillerdev"]
