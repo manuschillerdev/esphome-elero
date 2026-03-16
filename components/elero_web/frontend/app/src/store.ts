@@ -239,6 +239,9 @@ function blindToDevice(b: BlindConfig): Device {
     address: b.address, type: 'cover', updated_at: b.updated_at ?? null, enabled: b.enabled,
     name: b.name, channel: b.channel, remote: b.remote,
     open_ms: b.open_ms, close_ms: b.close_ms, poll_ms: b.poll_ms, supports_tilt: b.supports_tilt,
+    lastStatus: b.state && b.state !== '0x00'
+      ? { state: b.state, rssi: b.rssi } as RfPacketWithTimestamp
+      : null,
   })
 }
 
@@ -246,6 +249,9 @@ function lightToDevice(l: LightConfig): Device {
   return makeDevice({
     address: l.address, type: 'light', updated_at: l.updated_at ?? null, enabled: l.enabled,
     name: l.name, channel: l.channel, remote: l.remote, dim_ms: l.dim_ms,
+    lastStatus: l.state && l.state !== '0x00'
+      ? { state: l.state, rssi: l.rssi } as RfPacketWithTimestamp
+      : null,
   })
 }
 
@@ -264,12 +270,14 @@ export function setConnected(val: boolean) {
 export function setDevices(data: ConfigData) {
   const next = new Map(devices.value)
   for (const b of data.blinds) {
+    const device = blindToDevice(b)
     const existing = next.get(b.address)
-    next.set(b.address, { ...blindToDevice(b), lastStatus: existing?.lastStatus ?? null })
+    next.set(b.address, { ...device, lastStatus: existing?.lastStatus ?? device.lastStatus })
   }
   for (const l of data.lights) {
+    const device = lightToDevice(l)
     const existing = next.get(l.address)
-    next.set(l.address, { ...lightToDevice(l), lastStatus: existing?.lastStatus ?? null })
+    next.set(l.address, { ...device, lastStatus: existing?.lastStatus ?? device.lastStatus })
   }
   for (const r of data.remotes ?? []) {
     const existing = next.get(r.address)

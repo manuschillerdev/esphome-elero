@@ -123,8 +123,10 @@ class EleroLightBase {
   virtual uint32_t get_last_seen_ms() const = 0;
   virtual float get_last_rssi() const = 0;
   virtual uint8_t get_last_state_raw() const = 0;
-  // Web API commands (same path as HA, parity with EleroBlindBase::perform_action)
+  // Command entry points
   virtual bool perform_action(const char *action) = 0;
+  /// Primary command entry point — state updates + enqueue TX via CommandSender.
+  virtual bool perform_command(uint8_t cmd_byte) = 0;
 };
 
 /// Abstract base class for blinds registered with the Elero hub.
@@ -153,8 +155,10 @@ class EleroBlindBase {
   virtual bool get_supports_tilt() const = 0;
   virtual bool is_enabled() const { return true; }  ///< true = published to HA (YAML-defined always true)
   virtual uint32_t get_updated_at() const { return 0; }  ///< millis() when last persisted (0 = YAML-defined)
-  // Web API commands — use perform_action() for standard commands (same path as HA)
+  // Command entry points
   virtual bool perform_action(const char *action) = 0;
+  /// Primary command entry point — state updates + enqueue TX via CommandSender.
+  virtual bool perform_command(uint8_t cmd_byte) = 0;
   // Low-level command queue (bypasses entity logic, use only for protocol-specific commands like "check")
   virtual void enqueue_command(uint8_t cmd_byte) = 0;
   /// Called by the hub when a remote command packet (0x6a/0x69) targets this

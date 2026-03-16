@@ -100,6 +100,36 @@ void NativeNvsLight::set_rx_state(uint8_t state) {
   }
 }
 
+bool NativeNvsLight::perform_command(uint8_t cmd) {
+  bool changed = false;
+
+  if (cmd == core_.command_on) {
+    (void)sender_.enqueue(cmd);
+    core_.is_on = true;
+    core_.brightness = 1.0f;
+    changed = true;
+  } else if (cmd == core_.command_off) {
+    (void)sender_.enqueue(cmd);
+    core_.turn_off();
+    changed = true;
+  } else if (cmd == core_.command_stop) {
+    (void)sender_.enqueue(cmd);
+    core_.dim_direction = DimDirection::NONE;
+    changed = true;
+  } else {
+    (void)sender_.enqueue(cmd);
+  }
+
+  if (changed && light_state_ != nullptr) {
+    light_state_->current_values.set_state(core_.is_on);
+    if (core_.supports_brightness()) {
+      light_state_->current_values.set_brightness(core_.brightness);
+    }
+    light_state_->publish_state();
+  }
+  return true;
+}
+
 bool NativeNvsLight::perform_action(const char *action) {
   if (strcmp(action, action::ON) == 0 || strcmp(action, action::UP) == 0) {
     if (light_state_ != nullptr) {

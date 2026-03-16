@@ -79,7 +79,7 @@ void EleroCover::loop() {
 
     if (this->core_.is_at_target()) {
       if (this->sender_.enqueue(this->command_stop_)) {
-        this->core_.operation = CoverCore::Operation::IDLE;
+        this->core_.stop_movement(now);
         this->core_.target_position = cover_pos::FULLY_OPEN;
         this->sync_from_core_();
       }
@@ -167,6 +167,27 @@ void EleroCover::control(const cover::CoverCall &call) {
   }
 }
 
+bool EleroCover::perform_command(uint8_t cmd) {
+  auto op = CoverCore::command_to_operation(cmd);
+
+  if (op == CoverCore::Operation::OPENING) {
+    this->start_movement(COVER_OPERATION_OPENING);
+  } else if (op == CoverCore::Operation::CLOSING) {
+    this->start_movement(COVER_OPERATION_CLOSING);
+  } else if (cmd == this->command_stop_) {
+    this->start_movement(COVER_OPERATION_IDLE);
+  } else if (cmd == this->command_tilt_) {
+    if (this->sender_.enqueue(this->command_tilt_)) {
+      this->core_.tilt = 1.0f;
+      this->sync_from_core_();
+      this->publish_state();
+    }
+  } else {
+    this->sender_.enqueue(cmd);
+  }
+  return true;
+}
+
 bool EleroCover::perform_action(const char *action) {
   if (strcmp(action, action::UP) == 0 || strcmp(action, action::OPEN) == 0) {
     this->make_call().set_command_open().perform();
@@ -185,10 +206,7 @@ bool EleroCover::perform_action(const char *action) {
     return true;
   }
   if (strcmp(action, action::CHECK) == 0) {
-    if (!this->sender_.enqueue(this->command_check_)) {
-      ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().dst_addr);
-    }
-    return true;
+    return this->perform_command(this->command_check_);
   }
   return false;
 }
@@ -210,11 +228,14 @@ void EleroCover::start_movement(CoverOperation dir) {
       }
       break;
     case COVER_OPERATION_IDLE:
-      this->sender_.clear_queue();
+      if (this->sender_.state() != CommandSender::State::TX_PENDING ||
+          this->sender_.command().payload[4] != this->command_stop_) {
+        this->sender_.clear_queue();
+      }
       if (!this->sender_.enqueue(this->command_stop_)) {
         ESP_LOGW(TAG, "Command queue full for cover 0x%06x", this->sender_.command().dst_addr);
       }
-      this->core_.operation = CoverCore::Operation::IDLE;
+      this->core_.stop_movement(now);
       break;
   }
 
@@ -232,11 +253,10 @@ void EleroCover::on_remote_command(uint8_t command_byte) {
   if (op == CoverCore::Operation::OPENING || op == CoverCore::Operation::CLOSING) {
     this->core_.start_movement(op, now);
   } else {
-    this->core_.operation = CoverCore::Operation::IDLE;
+    this->core_.stop_movement(now);
   }
   this->sync_from_core_();
   this->publish_state();
-  this->core_.immediate_poll = true;
 }
 
 void EleroCover::sync_from_core_() {

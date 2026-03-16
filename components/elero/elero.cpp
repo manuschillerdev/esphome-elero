@@ -1229,6 +1229,9 @@ bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t chann
   cmd.payload[1] = payload_2;
   cmd.payload[4] = command;
 
+  // WARNING: Blocking TX — only for debugging unknown addresses.
+  // For known entities, callers should use perform_command() instead,
+  // which routes through the entity's non-blocking CommandSender.
   bool success = this->send_command(&cmd);
   if (success) {
     ++raw_msg_cnt;

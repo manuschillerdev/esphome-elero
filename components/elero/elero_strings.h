@@ -54,6 +54,10 @@ const char *elero_command_to_string(uint8_t command);
 /// Returns 0xFF if action is not recognized.
 uint8_t elero_action_to_command(const char *action);
 
+/// Convert command byte to action string ("up", "down", "stop", etc.).
+/// Returns nullptr for unrecognized command bytes.
+const char *elero_command_to_action(uint8_t cmd_byte);
+
 /// Format a uint32_t as "0xNNNNNN" hex string (for JSON values).
 inline std::string hex_str(uint32_t val) {
   char buf[12];

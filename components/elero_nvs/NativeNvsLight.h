@@ -48,6 +48,7 @@ class NativeNvsLight : public light::LightOutput, public Component, public Elero
   uint32_t get_last_seen_ms() const override { return DynamicEntityBase::get_last_seen_ms(); }
   float get_last_rssi() const override { return DynamicEntityBase::get_last_rssi(); }
   uint8_t get_last_state_raw() const override { return DynamicEntityBase::get_last_state_raw(); }
+  bool perform_command(uint8_t cmd_byte) override;
   bool perform_action(const char *action) override;
 
   // ─── Sync config to core ───

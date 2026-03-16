@@ -149,6 +149,8 @@ constexpr uint32_t RADIO_WATCHDOG_INTERVAL = 5000; ///< Radio health check every
 constexpr uint32_t PUBLISH_THROTTLE_MS = 1000;    ///< Throttle state publishes during movement/dimming
 constexpr uint32_t DEFAULT_POLL_INTERVAL_MS = 300000;  ///< Default poll interval (5 min)
 constexpr uint32_t MAX_BACKOFF_MS = 400;          ///< Maximum TX retry backoff delay
+constexpr uint32_t POST_STOP_COOLDOWN_MS = 3000;  ///< Ignore RF "still moving" after STOP for 3s
+constexpr uint32_t RESPONSE_WAIT_MS = 2000;        ///< Wait for blind response before polling
 }  // namespace timing
 
 // ═══════════════════════════════════════════════════════════════════════════════

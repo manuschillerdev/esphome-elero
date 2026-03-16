@@ -295,6 +295,27 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
         return false;
       }
 
+      // Route through entity's perform_command() for known devices.
+      // This uses the entity's CommandSender (non-blocking, coordinated TX)
+      // instead of send_raw_command() (blocking, bypasses entity state machine).
+      {
+        const auto &covers = this->parent_->get_configured_covers();
+        auto it = covers.find(dst_addr);
+        if (it != covers.end()) {
+          it->second->perform_command(command);
+          ESP_LOGI(TAG, "Entity TX to 0x%06x cmd=0x%02x", dst_addr, command);
+          return true;
+        }
+        const auto &lights = this->parent_->get_configured_lights();
+        auto lit = lights.find(dst_addr);
+        if (lit != lights.end()) {
+          lit->second->perform_command(command);
+          ESP_LOGI(TAG, "Entity TX to 0x%06x cmd=0x%02x", dst_addr, command);
+          return true;
+        }
+      }
+
+      // Unknown address → raw TX (blocking, debug only)
       uint8_t payload_1 = parse_hex_or(root, "payload_1", packet::defaults::PAYLOAD_1);
       uint8_t payload_2 = parse_hex_or(root, "payload_2", packet::defaults::PAYLOAD_2);
       uint8_t msg_type = parse_hex_or(root, "msg_type", packet::msg_type::COMMAND);
@@ -367,6 +388,10 @@ std::string EleroWebServer::build_config_json() {
       obj["supports_tilt"] = blind->get_supports_tilt();
       obj["enabled"] = blind->is_enabled();
       obj["updated_at"] = blind->get_updated_at();
+      obj["position"] = blind->get_cover_position();
+      obj["state"] = hex_str8(blind->get_last_state_raw());
+      obj["rssi"] = round_rssi(blind->get_last_rssi());
+      obj["last_seen"] = blind->get_last_seen_ms();
     }
 
     JsonArray lights_arr = root["lights"].to<JsonArray>();
@@ -380,6 +405,11 @@ std::string EleroWebServer::build_config_json() {
       obj["dim_ms"] = light->get_dim_duration_ms();
       obj["enabled"] = light->is_enabled();
       obj["updated_at"] = light->get_updated_at();
+      obj["brightness"] = light->get_brightness();
+      obj["is_on"] = light->get_is_on();
+      obj["state"] = hex_str8(light->get_last_state_raw());
+      obj["rssi"] = round_rssi(light->get_last_rssi());
+      obj["last_seen"] = light->get_last_seen_ms();
     }
 
     // Collect unique remote addresses from covers and lights

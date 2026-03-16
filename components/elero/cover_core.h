@@ -71,7 +71,8 @@ class CoverCore {
   uint32_t effective_poll_interval() const;
 
   /// Check if it's time to poll.
-  bool should_poll(uint32_t now) const;
+  /// Non-const: clears awaiting_response on timeout.
+  bool should_poll(uint32_t now);
 
   /// Record that a poll was sent.
   void mark_polled(uint32_t now);
@@ -96,6 +97,10 @@ class CoverCore {
   /// Apply runtime settings (non-zero values only). Updates core config.
   void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms, uint32_t poll_intvl_ms);
 
+  /// Stop movement and record that it was an explicit STOP.
+  /// Sets a cooldown so transient "still moving" RF responses are ignored.
+  void stop_movement(uint32_t now);
+
   /// Reset state to defaults (mid-position, idle).
   void reset() {
     position = cover_pos::UNKNOWN;
@@ -104,6 +109,11 @@ class CoverCore {
     target_position = cover_pos::FULLY_OPEN;
     movement_start_ms = 0;
     movement_start_pos = 0.0f;
+    immediate_poll = true;
+    idle_from_stop = false;
+    idle_since_ms = 0;
+    awaiting_response = false;
+    last_command_ms = 0;
   }
 
   /// Whether position tracking is enabled (both durations > 0).
@@ -139,7 +149,15 @@ class CoverCore {
 
   // Polling tracking
   uint32_t last_poll_ms{0};
-  bool immediate_poll{false};
+  bool immediate_poll{true};
+
+  // Post-stop cooldown tracking
+  uint32_t idle_since_ms{0};
+  bool idle_from_stop{false};
+
+  // Response-wait tracking (defer polling after command TX)
+  uint32_t last_command_ms{0};
+  bool awaiting_response{false};
 };
 
 }  // namespace elero

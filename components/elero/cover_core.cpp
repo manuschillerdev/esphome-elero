@@ -27,12 +27,22 @@ CoverCore::RxStateResult CoverCore::on_rx_state(uint8_t state, uint32_t now) {
   float new_tilt = result.tilt;
   auto new_op = static_cast<Operation>(result.operation);
 
-  // RF can confirm/continue movement or stop us, but cannot START movement.
-  // Only user commands or detected remote commands initiate IDLE→MOVING
-  // (via start_movement()). This prevents transient "still moving" RF
-  // responses after STOP from re-entering the fast-poll loop.
-  bool blocked = (operation == Operation::IDLE && new_op != Operation::IDLE);
+  // RF can start movement UNLESS we explicitly stopped recently.
+  // After a STOP command, ignore transient "still moving" RF responses
+  // for a short cooldown period. Otherwise, allow RF to start movement
+  // (e.g. when a physical remote sends a command we didn't see).
+  bool blocked = false;
+  if (operation == Operation::IDLE && new_op != Operation::IDLE) {
+    if (idle_from_stop && (now - idle_since_ms) < packet::timing::POST_STOP_COOLDOWN_MS) {
+      blocked = true;
+    }
+  }
   Operation effective_op = blocked ? operation : new_op;
+
+  // When RF brings us to IDLE (e.g. TOP/BOTTOM status), clear the stop flag
+  if (new_op == Operation::IDLE && idle_from_stop) {
+    idle_from_stop = false;
+  }
 
   bool changed = (new_pos != position) || (effective_op != operation) || (new_tilt != tilt);
 
@@ -48,6 +58,16 @@ CoverCore::RxStateResult CoverCore::on_rx_state(uint8_t state, uint32_t now) {
   position = new_pos;
   tilt = new_tilt;
   operation = effective_op;
+
+  // Any status from the blind is fresh state — defer next poll.
+  // This suppresses unnecessary CHECKs while the blind is actively broadcasting.
+  last_poll_ms = now;
+
+  // Clear response wait (but not if blocked by post-stop cooldown —
+  // the blind's transient "still moving" response doesn't count).
+  if (awaiting_response && !blocked) {
+    awaiting_response = false;
+  }
 
   return {changed, result.is_warning, result.warning_msg};
 }
@@ -96,7 +116,15 @@ uint32_t CoverCore::effective_poll_interval() const {
   return config.poll_interval_ms;
 }
 
-bool CoverCore::should_poll(uint32_t now) const {
+bool CoverCore::should_poll(uint32_t now) {
+  // Response-wait: defer polling after command TX to keep radio in RX
+  if (awaiting_response) {
+    if ((now - last_command_ms) < packet::timing::RESPONSE_WAIT_MS) {
+      return false;  // stay in RX, don't poll yet
+    }
+    awaiting_response = false;  // timeout, blind didn't respond
+    return true;                // NOW send CHECK
+  }
   if (immediate_poll)
     return true;
   uint32_t interval = effective_poll_interval();
@@ -107,7 +135,11 @@ bool CoverCore::should_poll(uint32_t now) const {
 
 void CoverCore::mark_polled(uint32_t now) {
   last_poll_ms = now;
-  // Note: immediate_poll must be cleared by caller (allows const should_poll)
+  // Every CHECK gets a response-wait window — stay in RX until blind responds
+  // or RESPONSE_WAIT_MS expires. Prevents CHECK flooding while moving.
+  awaiting_response = true;
+  last_command_ms = now;
+  // Note: immediate_poll must be cleared by caller
 }
 
 bool CoverCore::is_at_target() const {
@@ -133,11 +165,22 @@ void CoverCore::start_movement(Operation op, uint32_t now) {
   operation = op;
   movement_start_pos = position;
   movement_start_ms = now;
+  idle_from_stop = false;
+  awaiting_response = true;
+  last_command_ms = now;
 
   if (op == Operation::OPENING || op == Operation::CLOSING) {
     last_direction = op;
     tilt = 0.0f;
   }
+}
+
+void CoverCore::stop_movement(uint32_t now) {
+  operation = Operation::IDLE;
+  idle_from_stop = true;
+  idle_since_ms = now;
+  awaiting_response = true;
+  last_command_ms = now;
 }
 
 }  // namespace elero

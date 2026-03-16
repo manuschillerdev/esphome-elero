@@ -56,7 +56,7 @@ void NativeNvsCover::loop() {
 
     if (core_.is_at_target()) {
       if (sender_.enqueue(packet::command::STOP)) {
-        core_.operation = CoverCore::Operation::IDLE;
+        core_.stop_movement(now);
         core_.target_position = cover_pos::FULLY_OPEN;
         this->current_operation = COVER_OPERATION_IDLE;
       }
@@ -141,6 +141,26 @@ void NativeNvsCover::control(const CoverCall &call) {
   }
 }
 
+bool NativeNvsCover::perform_command(uint8_t cmd) {
+  auto op = CoverCore::command_to_operation(cmd);
+
+  if (op == CoverCore::Operation::OPENING) {
+    this->start_movement_(COVER_OPERATION_OPENING);
+  } else if (op == CoverCore::Operation::CLOSING) {
+    this->start_movement_(COVER_OPERATION_CLOSING);
+  } else if (cmd == packet::command::STOP) {
+    this->start_movement_(COVER_OPERATION_IDLE);
+  } else {
+    sender_.enqueue(cmd);
+  }
+
+  this->position = core_.position;
+  this->tilt = core_.tilt;
+  this->current_operation = static_cast<CoverOperation>(core_.operation);
+  this->publish_state();
+  return true;
+}
+
 bool NativeNvsCover::perform_action(const char *action) {
   if (strcmp(action, action::UP) == 0 || strcmp(action, action::OPEN) == 0) {
     this->make_call().set_command_open().perform();
@@ -159,8 +179,7 @@ bool NativeNvsCover::perform_action(const char *action) {
     return true;
   }
   if (strcmp(action, action::CHECK) == 0) {
-    sender_.enqueue(packet::command::CHECK);
-    return true;
+    return perform_command(packet::command::CHECK);
   }
   return false;
 }
@@ -178,13 +197,12 @@ void NativeNvsCover::on_remote_command(uint8_t command_byte) {
   if (op == CoverCore::Operation::OPENING || op == CoverCore::Operation::CLOSING) {
     core_.start_movement(op, now);
   } else {
-    core_.operation = CoverCore::Operation::IDLE;
+    core_.stop_movement(now);
   }
   this->position = core_.position;
   this->tilt = core_.tilt;
   this->current_operation = static_cast<CoverOperation>(core_.operation);
   this->publish_state();
-  core_.immediate_poll = true;
 }
 
 void NativeNvsCover::start_movement_(CoverOperation dir) {
@@ -202,9 +220,12 @@ void NativeNvsCover::start_movement_(CoverOperation dir) {
       }
       break;
     case COVER_OPERATION_IDLE:
-      sender_.clear_queue();
+      if (sender_.state() != CommandSender::State::TX_PENDING ||
+          sender_.command().payload[4] != packet::command::STOP) {
+        sender_.clear_queue();
+      }
       sender_.enqueue(packet::command::STOP);
-      core_.operation = CoverCore::Operation::IDLE;
+      core_.stop_movement(now);
       break;
   }
 
