@@ -1,5 +1,5 @@
 /// @file overloaded.h
-/// @brief std::visit overloaded pattern helper (C++17).
+/// @brief std::visit overloaded pattern helper (C++17/20).
 
 #pragma once
 

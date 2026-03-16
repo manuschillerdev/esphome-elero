@@ -95,11 +95,11 @@ State on_set_brightness(const State &state, float target, uint32_t now,
 
 // ─── Turn On / Off ──────────────────────────────────────────────────────────
 
-State on_turn_on(const State &state, uint32_t now, const Context &ctx) {
+State on_turn_on(const State & /*state*/, uint32_t /*now*/, const Context & /*ctx*/) {
     return On{1.0f};
 }
 
-State on_turn_off(const State &state) {
+State on_turn_off(const State & /*state*/) {
     return Off{};
 }
 

@@ -1072,6 +1072,11 @@ void Elero::interpret_msg() {
     this->registry_->on_rf_packet(pkt, pkt.timestamp_ms);
   }
 
+  // Notify direct RF callback (web server → WebSocket broadcast)
+  if (this->on_rf_packet_) {
+    this->on_rf_packet_(pkt);
+  }
+
   // Update RSSI sensor for any message from a known blind
 #ifdef USE_SENSOR
   {

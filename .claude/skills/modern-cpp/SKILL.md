@@ -1,15 +1,17 @@
 ---
 name: modern-cpp
-description: C++17 best practices for ESP32/embedded, aligned with Google C++ Style Guide. Use when writing or reviewing C++ code.
+description: C++20 best practices for ESP32/embedded, aligned with Google C++ Style Guide. Use when writing or reviewing C++ code.
 ---
 
-# Modern C++ for ESP32 (C++17)
+# Modern C++ for ESP32 (C++20)
 
 Guidelines for safe, efficient embedded C++ code based on the Google C++ Style Guide, adapted for ESP32/embedded conventions.
 
 **Source:** [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html)
 
-**C++ Version:** C++17 is fully supported on ESP-IDF 4.x+ and Arduino-ESP32 2.x+. See [Tooling](#tooling) section for build configuration.
+**C++ Version:** C++20 is supported on ESP-IDF 5.x (GCC 12.2+) and Arduino-ESP32 2.x+ (with build flag override). See [Tooling](#tooling) section for build configuration.
+
+**Toolchain:** ESP-IDF 5.x ships GCC 12.2. C++20 core language features are fully supported. Most `<concepts>`, `<span>`, `<ranges>` headers work. `std::format` is NOT available (libstdc++ 12 doesn't ship it). Use `snprintf` instead.
 
 ---
 
@@ -83,6 +85,9 @@ constexpr int MAX_RETRIES = 3;
 constexpr uint32_t TIMEOUT_MS = 5000;
 inline constexpr uint8_t ENCODE_TABLE[] = {0x08, 0x02, 0x0d};  // Header-only
 
+// C++20: Use consteval for guaranteed compile-time evaluation
+consteval uint32_t hash(const char *s) { /* ... */ }
+
 // Avoid
 #define MAX_SIZE 100                // Use constexpr
 const int MAX = ComputeMax();       // Runtime init - use constexpr if possible
@@ -106,6 +111,97 @@ class SpiTransaction {
   SpiTransaction& operator=(const SpiTransaction&) = delete;
  private:
   SpiDevice* dev_;
+};
+```
+
+---
+
+## Concepts (C++20)
+
+Use concepts to constrain templates. Provides clear error messages at the call site instead of deep template instantiation failures.
+
+```cpp
+#include <concepts>
+
+// Constrain callable parameters
+template<std::invocable<Device &> F>
+void for_each_active(F &&fn);
+
+// Define project-specific concepts
+template<typename T>
+concept OutputAdapterLike = requires(T a, const Device &d) {
+  a.on_device_added(d);
+  a.on_state_changed(d);
+  a.setup(std::declval<DeviceRegistry &>());
+};
+
+// Constrain with requires clause
+template<typename T>
+  requires std::is_trivially_copyable_v<T>
+void persist(const T &data);
+```
+
+**When to use concepts:**
+- Template functions accepting callables (`std::invocable`)
+- Iterator/range parameters (`std::input_range`, `std::contiguous_range`)
+- Type constraints that would otherwise be SFINAE (`requires`)
+- Interface-like constraints on template parameters
+
+**Avoid:** Over-constraining simple templates. If a template only has 1-2 call sites, a concept adds ceremony without value.
+
+---
+
+## std::span (C++20)
+
+Use `std::span` for non-owning views of contiguous data. Replaces `(T* ptr, size_t len)` pairs.
+
+```cpp
+#include <span>
+
+// Before (C++17): raw pointer + length
+void process_buffer(const uint8_t *data, size_t len);
+
+// After (C++20): self-documenting, bounds-aware
+void process_buffer(std::span<const uint8_t> data);
+
+// Fixed-size span (compile-time size check)
+void process_packet(std::span<const uint8_t, 64> packet);
+
+// Works with arrays, vectors, std::array — zero cost
+uint8_t buf[64];
+process_buffer(buf);                    // Implicit conversion
+process_buffer({buf, 32});              // Subspan
+process_buffer(std::span{buf}.first(n)); // Dynamic subspan
+```
+
+**When to use `std::span`:**
+- Function parameters accepting buffer + length
+- Iterating over contiguous data without ownership
+- Replacing `const uint8_t *data, uint8_t len` pairs
+
+**When NOT to use `std::span`:**
+- Hardware register APIs that need raw pointers (SPI `write_byte()`)
+- C interop boundaries
+- Single-element parameters (just use `const T&`)
+
+---
+
+## Designated Initializers (C++20, standardized)
+
+Designated initializers are now standard C++20 (previously a GCC extension).
+
+```cpp
+struct Context {
+    uint32_t open_duration_ms{0};
+    uint32_t close_duration_ms{0};
+    uint32_t timeout_ms{120000};
+};
+
+// Clear, self-documenting initialization
+auto ctx = Context{
+    .open_duration_ms = 10000,
+    .close_duration_ms = 8000,
+    .timeout_ms = 60000,
 };
 ```
 
@@ -208,7 +304,7 @@ class Derived : public Base {
 | `const T&` | Large types, read-only |
 | `T*` | Nullable output parameter |
 | `std::string_view` | Read-only strings |
-| `std::span<T>` | Read-only contiguous data |
+| `std::span<const T>` | Read-only contiguous data (C++20) |
 
 ### Guidelines
 
@@ -253,14 +349,29 @@ void Process(const std::string& input);  // const parameters
 int value() const { return value_; }      // const methods
 ```
 
-### Switch
+### Switch — exhaustive, no default
+```cpp
+// Prefer: handle all enum values, no default
+// This way the compiler warns if a new enumerator is added
+switch (state) {
+  case State::IDLE:
+    break;
+  case State::RUNNING:
+    break;
+  case State::ERROR:
+    break;
+}
+// Unreachable return after switch satisfies -Wreturn-type
+```
+
+### Switch — with fallthrough
 ```cpp
 switch (state) {
   case State::IDLE:
     break;
   case State::RUNNING:
     [[fallthrough]];  // Explicit fallthrough
-  default:
+  case State::ERROR:
     break;
 }
 ```
@@ -275,6 +386,12 @@ enum class State : uint8_t { IDLE, RUNNING };  // Not: enum State { ... }
 static_cast<int>(x);  // Not: (int)x
 ```
 
+### Three-way Comparison (C++20)
+```cpp
+// Spaceship operator — generates all comparisons
+auto operator<=>(const Point&) const = default;
+```
+
 ---
 
 ## Headers
@@ -284,7 +401,7 @@ static_cast<int>(x);  // Not: (int)x
 #pragma once  // Or traditional #ifndef guards
 ```
 
-### Inline Variables (C++17)
+### Inline Variables (C++17+)
 ```cpp
 // Good: Single copy in flash
 inline constexpr uint8_t ENCODE_TABLE[] = {0x08, 0x02};
@@ -333,26 +450,26 @@ The compiler is your primary type checker. Use strict flags:
 
 ### ESP32/ESPHome Configuration
 
-Arduino framework defaults to C++11. Override for C++17:
+ESP-IDF 5.x defaults to C++23 (`-std=gnu++23`). Arduino framework defaults to C++11. Override Arduino for C++20:
 
 ```yaml
-# ESPHome YAML
+# ESPHome YAML (Arduino framework only — ESP-IDF already uses C++23)
 esphome:
   platformio_options:
     build_unflags: -std=gnu++11
     build_flags:
-      - -std=gnu++17
-      - -Wall
-      - -Wextra
+      - -std=gnu++2a
 ```
 
 ```ini
-# platformio.ini
+# platformio.ini (Arduino)
 build_unflags = -std=gnu++11
 build_flags =
-  -std=gnu++17
+  -std=gnu++2a
   -Wall -Wextra -Wshadow -Wconversion
 ```
+
+**Note:** Use `-std=gnu++2a` (not `-std=c++20`) for Arduino to keep GNU extensions that ESP32 Arduino core depends on. ESP-IDF configs don't need any override.
 
 ### Static Analysis
 
@@ -376,7 +493,7 @@ WarningsAsErrors: ''
 HeaderFilterRegex: '.*'
 ```
 
-Run: `clang-tidy src/*.cpp -- -std=c++17 -I include/`
+Run: `clang-tidy src/*.cpp -- -std=c++20 -I include/`
 
 ### Formatting
 
@@ -407,9 +524,9 @@ Run: `clang-format -i src/*.cpp include/*.h`
 
 | Platform | `std::atomic` | Notes |
 |----------|---------------|-------|
-| **ESP32** | ✅ Supported | Lock-free for 8/16/32-bit types, use freely |
-| **ESP8266** | ❌ Linker errors | `undefined reference to '__atomic_exchange_1'` |
-| **RP2040** | ❌ Linker errors | No hardware atomic support |
+| **ESP32** | Supported | Lock-free for 8/16/32-bit types, use freely |
+| **ESP8266** | Linker errors | `undefined reference to '__atomic_exchange_1'` |
+| **RP2040** | Linker errors | No hardware atomic support |
 
 **For ESP32-only projects:** Use `std::atomic` — it's the correct solution for ISR-to-loop communication and avoids race conditions in read-modify-write patterns.
 
@@ -464,6 +581,24 @@ Prefer stack allocation for small objects, static allocation for fixed buffers.
 
 ---
 
+## C++20 Features Available on ESP32 (GCC 12.2)
+
+| Feature | Header | Status | Notes |
+|---------|--------|--------|-------|
+| Concepts | `<concepts>` | Available | Use for template constraints |
+| `std::span` | `<span>` | Available | Non-owning buffer views |
+| Designated initializers | (language) | Available | Standardized from GCC extension |
+| `consteval` | (language) | Available | Guaranteed compile-time |
+| `constinit` | (language) | Available | Guaranteed static init |
+| `[[no_unique_address]]` | (language) | Available | EBO for members |
+| Three-way comparison | `<compare>` | Available | `operator<=>` |
+| `std::ranges` | `<ranges>` | Partial | Views work, some algorithms missing |
+| `std::format` | `<format>` | NOT available | Use `snprintf` instead |
+| Modules | (language) | NOT available | GCC 12 has no module support |
+| Coroutines | `<coroutine>` | Available but avoid | Too heavy for embedded |
+
+---
+
 ## Anti-Patterns
 
 | Avoid | Prefer |
@@ -479,3 +614,6 @@ Prefer stack allocation for small objects, static allocation for fixed buffers.
 | `static const` in header | `inline constexpr` |
 | Implicit conversions | `explicit` constructors |
 | `volatile` for ISR read-clear (ESP32) | `std::atomic<bool>` with `.exchange()` |
+| `(T* buf, size_t len)` pairs | `std::span<T>` (C++20) |
+| Unconstrained templates | `std::invocable`, concepts (C++20) |
+| `default:` in exhaustive switch | Handle all cases, return after switch |

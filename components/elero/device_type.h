@@ -4,7 +4,6 @@
 #pragma once
 
 #include <cstdint>
-#include <cstdio>
 
 namespace esphome::elero {
 
@@ -26,17 +25,18 @@ inline const char *device_type_str(DeviceType t) {
         case DeviceType::COVER: return "cover";
         case DeviceType::LIGHT: return "light";
         case DeviceType::REMOTE: return "remote";
-        default: return "unknown";
     }
+    return "unknown";  // Unreachable — satisfies -Wreturn-type without default
 }
 
 /// String representation of HubMode (for JSON, web API).
 inline const char *hub_mode_str(HubMode m) {
     switch (m) {
+        case HubMode::NATIVE: return "native";
         case HubMode::MQTT: return "mqtt";
         case HubMode::NATIVE_NVS: return "native_nvs";
-        default: return "native";
     }
+    return "native";  // Unreachable — satisfies -Wreturn-type without default
 }
 
 /// Default name format for auto-discovered remotes.

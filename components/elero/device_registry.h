@@ -14,6 +14,7 @@
 #include "overloaded.h"
 #include "esphome/core/preferences.h"
 #include <array>
+#include <concepts>
 #include <vector>
 
 namespace esphome::elero {
@@ -83,21 +84,21 @@ class DeviceRegistry {
     // ITERATION
     // ═════════════════════════════════════════════════════════════════════════
 
-    template<typename F>
+    template<std::invocable<Device &> F>
     void for_each_active(F &&fn) {
         for (auto &dev : slots_) {
             if (dev.active) fn(dev);
         }
     }
 
-    template<typename F>
+    template<std::invocable<const Device &> F>
     void for_each_active(F &&fn) const {
         for (const auto &dev : slots_) {
             if (dev.active) fn(dev);
         }
     }
 
-    template<typename F>
+    template<std::invocable<const Device &> F>
     void for_each_active(DeviceType type, F &&fn) const {
         for (const auto &dev : slots_) {
             if (dev.active && dev.config.type == type) fn(dev);
