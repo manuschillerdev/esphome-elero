@@ -3,6 +3,8 @@
 #include "../elero/elero_packet.h"
 #include "../elero/elero_strings.h"
 #include "../elero/nvs_config.h"
+#include "../elero/cover_sm.h"
+#include "../elero/light_sm.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include "esphome/components/logger/logger.h"
@@ -90,18 +92,6 @@ void EleroWebServer::setup() {
 }
 
 void EleroWebServer::loop() {
-  // Lazy CRUD callback registration — device manager setup() runs after web server setup()
-  if (!this->crud_callback_set_) {
-    auto *dm = this->parent_->get_device_manager();
-    if (dm != nullptr && dm->supports_crud()) {
-      dm->set_crud_callback([this](const char *event, const char *json_data) {
-        this->ws_broadcast(event, std::string(json_data));
-      });
-      this->crud_callback_set_ = true;
-      ESP_LOGI(TAG, "CRUD callback registered with device manager");
-    }
-  }
-
   // Poll mongoose (non-blocking)
   mg_mgr_poll(&this->mgr_, 0);
 
@@ -258,26 +248,47 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 
     if (type == "cmd") {
       const char *address = root["address"];
-      const char *action = root["action"];
-      if (address == nullptr || action == nullptr) return false;
+      const char *action_str = root["action"];
+      if (address == nullptr || action_str == nullptr) return false;
 
       uint32_t addr = (uint32_t) strtoul(address, nullptr, 0);
+      auto *registry = this->parent_->get_registry();
+      if (registry == nullptr) return false;
 
-      const auto &covers = this->parent_->get_configured_covers();
-      auto it = covers.find(addr);
-      if (it != covers.end()) {
-        it->second->perform_action(action);
+      Device *dev = registry->find(addr);
+      if (dev == nullptr) {
+        ESP_LOGW(TAG, "Command for unknown address 0x%06x", addr);
         return true;
       }
 
-      const auto &lights = this->parent_->get_configured_lights();
-      auto lit = lights.find(addr);
-      if (lit != lights.end()) {
-        lit->second->perform_action(action);
+      uint8_t cmd_byte = elero_action_to_command(action_str);
+      if (cmd_byte == packet::command::INVALID) {
+        ESP_LOGW(TAG, "Unknown action: %s", action_str);
         return true;
       }
 
-      ESP_LOGW(TAG, "Command for unknown address 0x%06x", addr);
+      // Transition state machine and enqueue command
+      if (dev->is_cover()) {
+        auto &cover = std::get<CoverDevice>(dev->logic);
+        auto ctx = cover_context(dev->config);
+        uint32_t now_ms = millis();
+        if (cmd_byte == packet::command::STOP) {
+          dev->sender.clear_queue();
+        }
+        cover.state = cover_sm::on_command(cover.state, cmd_byte, now_ms, ctx);
+        dev->sender.enqueue(cmd_byte);
+        cover.poll.on_command_sent(now_ms);
+      } else if (dev->is_light()) {
+        auto &light_dev = std::get<LightDevice>(dev->logic);
+        auto ctx = light_context(dev->config);
+        uint32_t now_ms = millis();
+        if (strcmp(action_str, action::OFF) == 0) {
+          light_dev.state = light_sm::on_turn_off(light_dev.state);
+        } else if (strcmp(action_str, action::ON) == 0) {
+          light_dev.state = light_sm::on_turn_on(light_dev.state, now_ms, ctx);
+        }
+        dev->sender.enqueue(cmd_byte);
+      }
       return true;
     }
 
@@ -288,29 +299,20 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       uint32_t dst_addr = parse_hex32(root, "dst_address");
       uint32_t src_addr = parse_hex32(root, "src_address");
       uint8_t channel = parse_hex_or(root, "channel", 0);
-      uint8_t command = parse_hex_or(root, "command", 0);
+      uint8_t raw_command = parse_hex_or(root, "command", 0);
 
       if (dst_addr == 0 || src_addr == 0) {
         ESP_LOGW(TAG, "Raw TX missing required fields");
         return false;
       }
 
-      // Route through entity's perform_command() for known devices.
-      // This uses the entity's CommandSender (non-blocking, coordinated TX)
-      // instead of send_raw_command() (blocking, bypasses entity state machine).
-      {
-        const auto &covers = this->parent_->get_configured_covers();
-        auto it = covers.find(dst_addr);
-        if (it != covers.end()) {
-          it->second->perform_command(command);
-          ESP_LOGI(TAG, "Entity TX to 0x%06x cmd=0x%02x", dst_addr, command);
-          return true;
-        }
-        const auto &lights = this->parent_->get_configured_lights();
-        auto lit = lights.find(dst_addr);
-        if (lit != lights.end()) {
-          lit->second->perform_command(command);
-          ESP_LOGI(TAG, "Entity TX to 0x%06x cmd=0x%02x", dst_addr, command);
+      // Route through registry for known devices (non-blocking, coordinated TX)
+      auto *registry = this->parent_->get_registry();
+      if (registry != nullptr) {
+        Device *dev = registry->find(dst_addr);
+        if (dev != nullptr) {
+          dev->sender.enqueue(raw_command);
+          ESP_LOGI(TAG, "Entity TX to 0x%06x cmd=0x%02x", dst_addr, raw_command);
           return true;
         }
       }
@@ -323,9 +325,9 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       uint8_t hop = parse_hex_or(root, "hop", packet::defaults::HOP);
 
       bool success = this->parent_->send_raw_command(
-          dst_addr, src_addr, channel, command,
+          dst_addr, src_addr, channel, raw_command,
           payload_1, payload_2, msg_type, type2_val, hop);
-      ESP_LOGI(TAG, "Raw TX to 0x%06x cmd=0x%02x: %s", dst_addr, command, success ? "OK" : "FAIL");
+      ESP_LOGI(TAG, "Raw TX to 0x%06x cmd=0x%02x: %s", dst_addr, raw_command, success ? "OK" : "FAIL");
       return true;
     }
 
@@ -374,75 +376,76 @@ std::string EleroWebServer::build_config_json() {
     freq["freq1"] = hex_str8(this->parent_->get_freq1());
     freq["freq0"] = hex_str8(this->parent_->get_freq0());
 
+    auto *registry = this->parent_->get_registry();
+    bool has_nvs = registry != nullptr && registry->is_nvs_enabled();
+
     JsonArray blinds = root["blinds"].to<JsonArray>();
-    for (const auto &pair : this->parent_->get_configured_covers()) {
-      auto *blind = pair.second;
-      JsonObject obj = blinds.add<JsonObject>();
-      obj["address"] = hex_str(pair.first);
-      obj["name"] = blind->get_blind_name();
-      obj["channel"] = blind->get_channel();
-      obj["remote"] = hex_str(blind->get_remote_address());
-      obj["open_ms"] = blind->get_open_duration_ms();
-      obj["close_ms"] = blind->get_close_duration_ms();
-      obj["poll_ms"] = blind->get_poll_interval_ms();
-      obj["supports_tilt"] = blind->get_supports_tilt();
-      obj["enabled"] = blind->is_enabled();
-      obj["updated_at"] = blind->get_updated_at();
-      obj["position"] = blind->get_cover_position();
-      obj["state"] = hex_str8(blind->get_last_state_raw());
-      obj["rssi"] = round_rssi(blind->get_last_rssi());
-      obj["last_seen"] = blind->get_last_seen_ms();
-    }
-
     JsonArray lights_arr = root["lights"].to<JsonArray>();
-    for (const auto &pair : this->parent_->get_configured_lights()) {
-      auto *light = pair.second;
-      JsonObject obj = lights_arr.add<JsonObject>();
-      obj["address"] = hex_str(pair.first);
-      obj["name"] = light->get_light_name();
-      obj["channel"] = light->get_channel();
-      obj["remote"] = hex_str(light->get_remote_address());
-      obj["dim_ms"] = light->get_dim_duration_ms();
-      obj["enabled"] = light->is_enabled();
-      obj["updated_at"] = light->get_updated_at();
-      obj["brightness"] = light->get_brightness();
-      obj["is_on"] = light->get_is_on();
-      obj["state"] = hex_str8(light->get_last_state_raw());
-      obj["rssi"] = round_rssi(light->get_last_rssi());
-      obj["last_seen"] = light->get_last_seen_ms();
-    }
-
-    // Collect unique remote addresses from covers and lights
-    std::set<uint32_t> remote_addrs;
-    for (const auto &pair : this->parent_->get_configured_covers()) {
-      remote_addrs.insert(pair.second->get_remote_address());
-    }
-    for (const auto &pair : this->parent_->get_configured_lights()) {
-      remote_addrs.insert(pair.second->get_remote_address());
-    }
-
     JsonArray remotes_arr = root["remotes"].to<JsonArray>();
-    auto *dm = this->parent_->get_device_manager();
+    std::set<uint32_t> remote_addrs;
 
-    if (dm != nullptr) {
-      dm->for_each_active_remote([&](uint32_t addr, const char *name, uint32_t updated_at) {
-        JsonObject obj = remotes_arr.add<JsonObject>();
-        obj["address"] = hex_str(addr);
-        obj["name"] = name;
-        obj["updated_at"] = updated_at;
+    if (registry != nullptr) {
+      uint32_t now = millis();
+
+      registry->for_each_active(DeviceType::COVER, [&](const Device &dev) {
+        auto &cover = std::get<CoverDevice>(dev.logic);
+        auto ctx = cover_context(dev.config);
+        JsonObject obj = blinds.add<JsonObject>();
+        obj["address"] = hex_str(dev.config.dst_address);
+        obj["name"] = dev.config.name;
+        obj["channel"] = dev.config.channel;
+        obj["remote"] = hex_str(dev.config.src_address);
+        obj["open_ms"] = dev.config.open_duration_ms;
+        obj["close_ms"] = dev.config.close_duration_ms;
+        obj["poll_ms"] = dev.config.poll_interval_ms;
+        obj["supports_tilt"] = dev.config.supports_tilt != 0;
+        obj["enabled"] = dev.config.is_enabled();
+        obj["updated_at"] = dev.config.updated_at;
+        obj["position"] = cover_sm::position(cover.state, now, ctx);
+        obj["state"] = hex_str8(dev.rf.last_state_raw);
+        obj["rssi"] = round_rssi(dev.rf.last_rssi);
+        obj["last_seen"] = dev.rf.last_seen_ms;
+        remote_addrs.insert(dev.config.src_address);
       });
-      root["mode"] = hub_mode_str(dm->mode());
-      root["crud"] = dm->supports_crud();
-    } else {
-      // Native mode: derive remotes from covers/lights src_addresses
-      for (uint32_t addr : remote_addrs) {
+
+      registry->for_each_active(DeviceType::LIGHT, [&](const Device &dev) {
+        auto &light = std::get<LightDevice>(dev.logic);
+        auto ctx = light_context(dev.config);
+        JsonObject obj = lights_arr.add<JsonObject>();
+        obj["address"] = hex_str(dev.config.dst_address);
+        obj["name"] = dev.config.name;
+        obj["channel"] = dev.config.channel;
+        obj["remote"] = hex_str(dev.config.src_address);
+        obj["dim_ms"] = dev.config.dim_duration_ms;
+        obj["enabled"] = dev.config.is_enabled();
+        obj["updated_at"] = dev.config.updated_at;
+        obj["brightness"] = light_sm::brightness(light.state, now, ctx);
+        obj["is_on"] = light_sm::is_on(light.state);
+        obj["state"] = hex_str8(dev.rf.last_state_raw);
+        obj["rssi"] = round_rssi(dev.rf.last_rssi);
+        obj["last_seen"] = dev.rf.last_seen_ms;
+        remote_addrs.insert(dev.config.src_address);
+      });
+
+      registry->for_each_active(DeviceType::REMOTE, [&](const Device &dev) {
         JsonObject obj = remotes_arr.add<JsonObject>();
-        obj["address"] = hex_str(addr);
-        obj["name"] = hex_str(addr);
+        obj["address"] = hex_str(dev.config.dst_address);
+        obj["name"] = dev.config.name;
+        obj["updated_at"] = dev.config.updated_at;
+      });
+
+      // Add any remotes from cover/light src_addresses not already tracked
+      for (uint32_t addr : remote_addrs) {
+        if (registry->find(addr, DeviceType::REMOTE) == nullptr) {
+          JsonObject obj = remotes_arr.add<JsonObject>();
+          obj["address"] = hex_str(addr);
+          obj["name"] = hex_str(addr);
+        }
       }
-      root["mode"] = hub_mode_str(HubMode::NATIVE);
-      root["crud"] = false;
     }
+
+    root["mode"] = has_nvs ? "mqtt" : "native";
+    root["crud"] = has_nvs;
   });
 }
 
@@ -529,8 +532,8 @@ bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &conf
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void EleroWebServer::handle_upsert_device_(struct mg_connection *c, JsonObject root) {
-  auto *dm = this->parent_->get_device_manager();
-  if (dm == nullptr || !dm->supports_crud()) {
+  auto *registry = this->parent_->get_registry();
+  if (registry == nullptr || !registry->is_nvs_enabled()) {
     this->ws_send(c, "error", "{\"msg\":\"CRUD not supported in native mode\"}");
     return;
   }
@@ -542,14 +545,14 @@ void EleroWebServer::handle_upsert_device_(struct mg_connection *c, JsonObject r
     return;
   }
 
-  if (!dm->upsert_device(config)) {
+  if (registry->upsert(config) == nullptr) {
     this->ws_send(c, "error", "{\"msg\":\"Failed to upsert device\"}");
   }
 }
 
 void EleroWebServer::handle_remove_device_(struct mg_connection *c, JsonObject root) {
-  auto *dm = this->parent_->get_device_manager();
-  if (dm == nullptr || !dm->supports_crud()) {
+  auto *registry = this->parent_->get_registry();
+  if (registry == nullptr || !registry->is_nvs_enabled()) {
     this->ws_send(c, "error", "{\"msg\":\"CRUD not supported in native mode\"}");
     return;
   }
@@ -566,7 +569,7 @@ void EleroWebServer::handle_remove_device_(struct mg_connection *c, JsonObject r
     return;
   }
 
-  if (!dm->remove_device(type, addr)) {
+  if (!registry->remove(addr, type)) {
     this->ws_send(c, "error", "{\"msg\":\"Failed to remove device\"}");
   }
 }

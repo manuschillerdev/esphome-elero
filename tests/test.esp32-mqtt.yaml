@@ -41,13 +41,10 @@ elero:
   cs_pin: ${spi_cs}
   gdo0_pin: ${gdo0_pin}
 
-# MQTT device manager with NVS persistence
+# MQTT adapter with NVS persistence
 elero_mqtt:
   topic_prefix: elero
   discovery_prefix: homeassistant
-  max_covers: 16
-  max_lights: 8
-  max_remotes: 16
   device_name: "Elero Gateway"
 
 # Web UI for RF discovery and device management

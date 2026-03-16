@@ -9,7 +9,8 @@
 #include "esphome/components/logger/logger.h"
 #include "mongoose.h"
 #include "../elero/elero.h"
-#include "../elero/device_manager.h"
+#include "../elero/device.h"
+#include "../elero/device_registry.h"
 #include "esphome/components/json/json_util.h"
 #include <string>
 #include <vector>
@@ -44,7 +45,6 @@ class EleroWebServer : public Component, public logger::LogListener {
   Elero *parent_{nullptr};
   uint16_t port_{80};
   bool enabled_{true};
-  bool crud_callback_set_{false};
 
   // Mongoose state
   struct mg_mgr mgr_;

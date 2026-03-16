@@ -1,4 +1,4 @@
-# ESPHome compile test: ESP32 with Native+NVS mode
+# ESPHome compile test: ESP32 with Matter adapter stub
 substitutions:
   spi_clk: GPIO18
   spi_mosi: GPIO23
@@ -7,8 +7,8 @@ substitutions:
   gdo0_pin: GPIO26
 
 esphome:
-  name: test-esp32-nvs
-  friendly_name: Test ESP32 NVS
+  name: test-esp32-matter
+  friendly_name: Test ESP32 Matter
 
 esp32:
   board: esp32dev
@@ -22,8 +22,6 @@ wifi:
   ssid: "test-network"
   password: ""
 
-api:
-
 external_components:
   - source:
       type: local
@@ -34,14 +32,14 @@ spi:
   mosi_pin: ${spi_mosi}
   miso_pin: ${spi_miso}
 
-# Elero hub (no YAML covers/lights — devices managed via NVS)
+# Elero hub
 elero:
   cs_pin: ${spi_cs}
   gdo0_pin: ${gdo0_pin}
 
-# Native+NVS mode (NVS persistence on the device registry)
-elero_nvs:
+# Matter adapter stub
+elero_matter:
 
-# Web UI for RF discovery and device management
+# Web UI
 elero_web:
   port: 80
