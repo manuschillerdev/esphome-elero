@@ -81,4 +81,16 @@ uint8_t elero_action_to_command(const char *action) {
   return packet::command::INVALID;
 }
 
+const char *elero_command_to_action(uint8_t cmd_byte) {
+  switch (cmd_byte) {
+    case packet::command::UP: return action::UP;
+    case packet::command::DOWN: return action::DOWN;
+    case packet::command::STOP: return action::STOP;
+    case packet::command::CHECK: return action::CHECK;
+    case packet::command::TILT: return action::TILT;
+    case packet::command::INTERMEDIATE: return action::INT;
+    default: return nullptr;
+  }
+}
+
 }  // namespace esphome::elero

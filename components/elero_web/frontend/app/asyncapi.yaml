@@ -391,6 +391,23 @@ components:
           type: integer
           description: Timestamp (millis()) when last persisted to NVS (0 = YAML-defined)
           examples: [1234567]
+        position:
+          type: number
+          format: float
+          description: Last known cover position (0.0 = closed, 1.0 = open)
+        state:
+          type: string
+          description: Last known state byte (hex string, e.g. "0x01" = top)
+          examples: ["0x0d"]
+        rssi:
+          type: number
+          format: float
+          description: Last known RSSI in dBm
+          examples: [-65.5]
+        last_seen:
+          type: integer
+          description: Timestamp (millis()) of last RF packet from this blind
+          examples: [408]
 
     LightConfig:
       type: object
@@ -424,6 +441,26 @@ components:
           type: integer
           description: Timestamp (millis()) when last persisted to NVS (0 = YAML-defined)
           examples: [1234567]
+        brightness:
+          type: number
+          format: float
+          description: Last known brightness (0.0–1.0)
+        is_on:
+          type: boolean
+          description: Whether the light is currently on
+        state:
+          type: string
+          description: Last known state byte (hex string)
+          examples: ["0x10"]
+        rssi:
+          type: number
+          format: float
+          description: Last known RSSI in dBm
+          examples: [-65.5]
+        last_seen:
+          type: integer
+          description: Timestamp (millis()) of last RF packet from this light
+          examples: [408]
 
     RemoteConfig:
       type: object

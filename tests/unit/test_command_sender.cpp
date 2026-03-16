@@ -197,8 +197,8 @@ class TestableCommandSender : public TxClient {
       return;
     }
 
-    this->last_tx_time_ = get_time_provider().millis();
-
+    // Check cancellation FIRST — don't update last_tx_time_ so the
+    // next command (typically STOP) can transmit immediately.
     if (this->cancelled_) {
       this->cancelled_ = false;
       this->send_packets_ = 0;
@@ -206,6 +206,8 @@ class TestableCommandSender : public TxClient {
       this->state_ = State::IDLE;
       return;
     }
+
+    this->last_tx_time_ = get_time_provider().millis();
 
     if (success) {
       this->send_retries_ = 0;
@@ -250,6 +252,7 @@ class TestableCommandSender : public TxClient {
     this->command_queue_ = std::queue<uint8_t>{};
     this->send_packets_ = 0;
     this->send_retries_ = 0;
+    this->last_tx_time_ = 0;  // Allow immediate TX for next command (STOP priority)
 
     if (this->state_ == State::TX_PENDING) {
       this->cancelled_ = true;
@@ -1008,6 +1011,24 @@ TEST_F(CommandSenderTest, SuccessResetsBackoff) {
 
   // Next packet should only need standard delay (not backoff)
   mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  EXPECT_EQ(sender_.state(), TestableCommandSender::State::TX_PENDING);
+}
+
+// ============================================================================
+// STOP Priority Tests
+// ============================================================================
+
+TEST_F(CommandSenderTest, ClearQueue_ResetsDelayForImmediateStop) {
+  sender_.enqueue(packet::command::UP);
+  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  mock_hub_.complete_tx(true);
+  // UP packet 1 sent, last_tx_time_ is now recent
+
+  // Clear and enqueue STOP — should transmit without 50ms wait
+  sender_.clear_queue();
+  sender_.enqueue(packet::command::STOP);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(sender_.state(), TestableCommandSender::State::TX_PENDING);
 }

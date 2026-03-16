@@ -34,5 +34,28 @@ interface LightConfig {
    * @example 1234567
    */
   'updated_at'?: number;
+  /**
+   * Last known brightness (0.0–1.0)
+   */
+  'brightness'?: number;
+  /**
+   * Whether the light is currently on
+   */
+  'is_on'?: boolean;
+  /**
+   * Last known state byte (hex string)
+   * @example 0x10
+   */
+  'state'?: string;
+  /**
+   * Last known RSSI in dBm
+   * @example -65.5
+   */
+  'rssi'?: number;
+  /**
+   * Timestamp (millis()) of last RF packet from this light
+   * @example 408
+   */
+  'last_seen'?: number;
 }
 export { LightConfig };

@@ -48,5 +48,24 @@ interface BlindConfig {
    * @example 1234567
    */
   'updated_at'?: number;
+  /**
+   * Last known cover position (0.0 = closed, 1.0 = open)
+   */
+  'position'?: number;
+  /**
+   * Last known state byte (hex string, e.g. "0x01" = top)
+   * @example 0x0d
+   */
+  'state'?: string;
+  /**
+   * Last known RSSI in dBm
+   * @example -65.5
+   */
+  'rssi'?: number;
+  /**
+   * Timestamp (millis()) of last RF packet from this blind
+   * @example 408
+   */
+  'last_seen'?: number;
 }
 export { BlindConfig };

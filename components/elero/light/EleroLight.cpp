@@ -107,6 +107,38 @@ void EleroLight::loop() {
   }
 }
 
+bool EleroLight::perform_command(uint8_t cmd) {
+  bool changed = false;
+
+  if (cmd == this->core_.command_on) {
+    (void)this->sender_.enqueue(cmd);
+    this->core_.is_on = true;
+    this->core_.brightness = 1.0f;
+    changed = true;
+  } else if (cmd == this->core_.command_off) {
+    (void)this->sender_.enqueue(cmd);
+    this->core_.turn_off();
+    changed = true;
+  } else if (cmd == this->core_.command_stop) {
+    (void)this->sender_.enqueue(cmd);
+    this->core_.dim_direction = DimDirection::NONE;
+    changed = true;
+  } else if (cmd == this->core_.command_dim_up || cmd == this->core_.command_dim_down) {
+    (void)this->sender_.enqueue(cmd);
+  } else {
+    (void)this->sender_.enqueue(cmd);
+  }
+
+  if (changed && this->state_ != nullptr) {
+    this->state_->current_values.set_state(this->core_.is_on);
+    if (this->core_.supports_brightness()) {
+      this->state_->current_values.set_brightness(this->core_.brightness);
+    }
+    this->state_->publish_state();
+  }
+  return true;
+}
+
 void EleroLight::schedule_immediate_poll() {
   if (!this->sender_.enqueue(this->command_check_)) {
     ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->sender_.command().dst_addr);

@@ -139,9 +139,8 @@ class CommandSender : public TxClient {
       return;
     }
 
-    this->last_tx_time_ = get_time_provider().millis();
-
-    // Check cancellation FIRST
+    // Check cancellation FIRST — don't update last_tx_time_ so the
+    // next command (typically STOP) can transmit immediately.
     if (this->cancelled_) {
       ESP_LOGD(this->log_tag_, "TX for 0x%06x completed but was cancelled, ignoring",
                this->command_.dst_addr);
@@ -151,6 +150,8 @@ class CommandSender : public TxClient {
       this->state_ = State::IDLE;
       return;  // Don't process result, don't advance queue (already empty)
     }
+
+    this->last_tx_time_ = get_time_provider().millis();
 
     if (success) {
       this->send_retries_ = 0;
@@ -214,6 +215,7 @@ class CommandSender : public TxClient {
     this->command_queue_ = std::queue<uint8_t>{};
     this->send_packets_ = 0;
     this->send_retries_ = 0;
+    this->last_tx_time_ = 0;  // Allow immediate TX for next command (STOP priority)
 
     if (this->state_ == State::TX_PENDING) {
       // TX in flight — can't abort mid-transmission, mark as cancelled

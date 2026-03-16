@@ -23,32 +23,44 @@ void EleroDynamicLight::schedule_immediate_poll() {
   (void)sender_.enqueue(packet::command::CHECK);
 }
 
+bool EleroDynamicLight::perform_command(uint8_t cmd) {
+  bool changed = false;
+
+  if (cmd == core_.command_on) {
+    (void)sender_.enqueue(cmd);
+    core_.is_on = true;
+    core_.brightness = 1.0f;
+    changed = true;
+  } else if (cmd == core_.command_off) {
+    (void)sender_.enqueue(cmd);
+    core_.turn_off();
+    changed = true;
+  } else if (cmd == core_.command_stop) {
+    (void)sender_.enqueue(cmd);
+    core_.dim_direction = DimDirection::NONE;
+    changed = true;
+  } else if (cmd == core_.command_dim_up) {
+    (void)sender_.enqueue(cmd);
+  } else if (cmd == core_.command_dim_down) {
+    (void)sender_.enqueue(cmd);
+  } else if (cmd == packet::command::CHECK) {
+    (void)sender_.enqueue(cmd);
+  } else {
+    return false;
+  }
+
+  if (changed) publish_state_();
+  return true;
+}
+
 bool EleroDynamicLight::perform_action(const char *action) {
   if (action == nullptr) return false;
-  if (strcmp(action, action::ON) == 0 || strcmp(action, action::UP) == 0) {
-    (void)sender_.enqueue(core_.command_on);
-    return true;
-  }
-  if (strcmp(action, action::OFF) == 0 || strcmp(action, action::DOWN) == 0) {
-    (void)sender_.enqueue(core_.command_off);
-    return true;
-  }
-  if (strcmp(action, action::STOP) == 0) {
-    (void)sender_.enqueue(core_.command_stop);
-    return true;
-  }
-  if (strcmp(action, action::DIM_UP) == 0) {
-    (void)sender_.enqueue(core_.command_dim_up);
-    return true;
-  }
-  if (strcmp(action, action::DIM_DOWN) == 0) {
-    (void)sender_.enqueue(core_.command_dim_down);
-    return true;
-  }
-  if (strcmp(action, action::CHECK) == 0) {
-    (void)sender_.enqueue(packet::command::CHECK);
-    return true;
-  }
+  if (strcmp(action, action::ON) == 0 || strcmp(action, action::UP) == 0) return perform_command(core_.command_on);
+  if (strcmp(action, action::OFF) == 0 || strcmp(action, action::DOWN) == 0) return perform_command(core_.command_off);
+  if (strcmp(action, action::STOP) == 0) return perform_command(core_.command_stop);
+  if (strcmp(action, action::DIM_UP) == 0) return perform_command(core_.command_dim_up);
+  if (strcmp(action, action::DIM_DOWN) == 0) return perform_command(core_.command_dim_down);
+  if (strcmp(action, action::CHECK) == 0) return perform_command(packet::command::CHECK);
   return false;
 }
 

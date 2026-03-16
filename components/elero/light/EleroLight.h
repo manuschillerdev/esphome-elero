@@ -42,6 +42,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   uint8_t get_last_state_raw() const override {
     return this->core_.is_on ? packet::state::LIGHT_ON : packet::state::LIGHT_OFF;
   }
+  bool perform_command(uint8_t cmd_byte) override;
   bool perform_action(const char *action) override;
 
   // RF parameter setters

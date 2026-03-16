@@ -19,6 +19,7 @@ void EleroDynamicCover::sync_config_to_core() {
 // ─── State handling ───
 
 void EleroDynamicCover::set_rx_state(uint8_t state) {
+  bool raw_changed = (state != last_state_raw_);
   last_state_raw_ = state;
 
   uint32_t now = millis();
@@ -28,7 +29,7 @@ void EleroDynamicCover::set_rx_state(uint8_t state) {
     ESP_LOGW(entity_tag_(), "Cover 0x%06x: %s", config_.dst_address, result.warning_msg);
   }
 
-  if (result.changed) {
+  if (result.changed || raw_changed) {
     publish_state_();
   }
 }
@@ -37,11 +38,33 @@ const char *EleroDynamicCover::get_operation_str() const {
   return core_.operation_str();
 }
 
-bool EleroDynamicCover::perform_action(const char *action) {
-  uint8_t cmd = elero_action_to_command(action);
+bool EleroDynamicCover::perform_command(uint8_t cmd) {
   if (cmd == packet::command::INVALID) return false;
+
+  uint32_t now = millis();
+  auto op = CoverCore::command_to_operation(cmd);
+  if (cmd == packet::command::STOP) {
+    // Don't cancel an in-flight STOP — re-pressing STOP while STOP is being
+    // transmitted would cancel packet 2, forcing the user to press again.
+    if (sender_.state() != CommandSender::State::TX_PENDING ||
+        sender_.command().payload[4] != packet::command::STOP) {
+      sender_.clear_queue();
+    }
+    core_.stop_movement(now);
+  } else if (op != CoverCore::Operation::IDLE) {
+    core_.start_movement(op, now);
+  }
+
   (void)sender_.enqueue(cmd);
+  // Wait for blind's response before polling (replaces immediate_poll + CHECK-after-STOP)
+  core_.awaiting_response = true;
+  core_.last_command_ms = now;
+  publish_state_();
   return true;
+}
+
+bool EleroDynamicCover::perform_action(const char *action) {
+  return perform_command(elero_action_to_command(action));
 }
 
 void EleroDynamicCover::schedule_immediate_poll() {
@@ -54,10 +77,9 @@ void EleroDynamicCover::on_remote_command(uint8_t command_byte) {
   if (op == CoverCore::Operation::OPENING || op == CoverCore::Operation::CLOSING) {
     core_.start_movement(op, now);
   } else {
-    core_.operation = CoverCore::Operation::IDLE;
+    core_.stop_movement(now);
   }
   publish_state_();
-  core_.immediate_poll = true;
 }
 
 void EleroDynamicCover::apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms, uint32_t poll_intvl_ms) {
@@ -94,7 +116,7 @@ void EleroDynamicCover::loop(uint32_t now) {
     // Stop at intermediate target position
     if (core_.is_at_target()) {
       if (sender_.enqueue(packet::command::STOP)) {
-        core_.operation = CoverCore::Operation::IDLE;
+        core_.stop_movement(now);
         core_.target_position = cover_pos::FULLY_OPEN;
         publish_state_();
       }
