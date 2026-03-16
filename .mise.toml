@@ -1,0 +1,98 @@
+[tools]
+python = "3.11"
+node = "lts"
+pnpm = "latest"
+uv = "latest"
+cmake = "latest"
+
+[vars]
+usb_port = "/dev/cu.usbmodem2101"
+device_ip = "10.0.0.4"
+
+[tasks.setup]
+description = "Install all project dependencies"
+run = """
+uv sync
+cd components/elero_web/frontend/app && pnpm install
+"""
+
+[tasks.compile]
+description = "Compile ESPHome firmware (dev config)"
+run = "uv run esphome compile config.dev.yaml"
+
+[tasks."compile:all"]
+description = "Compile all ESPHome test configs"
+run = """
+for cfg in tests/test.esp32-s3-ard.yaml \
+           tests/test.esp32-s3-idf.yaml \
+           tests/test.esp32-ard.yaml \
+           tests/test.esp32-minimal.yaml \
+           tests/test.esp32-mqtt.yaml \
+           tests/test.esp32-nvs.yaml; do
+  echo "==> Compiling $cfg"
+  uv run esphome compile "$cfg"
+done
+"""
+
+[tasks.test]
+description = "Run C++ unit tests"
+run = "cd tests/unit && cmake -B build && cmake --build build && ctest --test-dir build"
+
+[tasks."test:xml"]
+description = "Run C++ unit tests with JUnit XML output"
+run = "cd tests/unit && cmake -B build && cmake --build build && cmake --build build --target test_xml"
+
+[tasks.lint]
+description = "Lint Python files with ruff"
+run = "uv run ruff check components/"
+
+[tasks."lint:fix"]
+description = "Lint and auto-fix Python files"
+run = "uv run ruff check --fix components/"
+
+[tasks.erase]
+description = "Erase full flash (wipes NVS)"
+run = "uvx esptool --port {{vars.usb_port}} erase_flash"
+
+[tasks.flash]
+description = "Compile and flash via USB"
+run = "uv run esphome run config.dev.yaml --device {{vars.usb_port}}"
+
+[tasks."flash:ota"]
+description = "Compile and flash via OTA"
+run = "uv run esphome run config.dev.yaml --device {{vars.device_ip}}"
+
+[tasks."frontend:dev"]
+description = "Start frontend dev server"
+dir = "components/elero_web/frontend/app"
+run = "pnpm dev"
+
+[tasks."frontend:build"]
+description = "Build frontend for embedding"
+dir = "components/elero_web/frontend/app"
+run = "pnpm build"
+
+# --- Composite tasks ---
+
+[tasks.build]
+description = "Full build: install deps, build frontend, compile firmware"
+depends = ["setup", "frontend:build", "compile"]
+
+[tasks.all]
+description = "Full build + lint + unit tests"
+depends = ["setup", "frontend:build", "lint", "test", "compile"]
+
+[tasks.deploy]
+description = "Full build from scratch, then flash via USB"
+depends = ["build"]
+run = "uv run esphome run config.dev.yaml --device {{vars.usb_port}}"
+
+[tasks."deploy:ota"]
+description = "Full build from scratch, then flash via OTA"
+depends = ["build"]
+run = "uv run esphome run config.dev.yaml --device {{vars.device_ip}}"
+
+[tasks."deploy:erase"]
+description = "Erase flash, then full build and flash via USB"
+depends = ["erase", "build"]
+run = "uv run esphome run config.dev.yaml --device {{vars.usb_port}}"
