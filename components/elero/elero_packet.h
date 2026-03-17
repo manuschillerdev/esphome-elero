@@ -409,3 +409,21 @@ struct CoverStateResult {
 CoverStateResult map_cover_state(uint8_t elero_state);
 
 }  // namespace esphome::elero::packet
+
+namespace esphome::elero {
+
+/// TX command structure used by CommandSender and the hub's request_tx() API.
+/// Lives outside the packet namespace since it's used directly by CommandSender,
+/// DeviceRegistry, and the hub.
+struct EleroCommand {
+  uint8_t counter;
+  uint32_t dst_addr;   ///< Destination address (blind/light we control)
+  uint32_t src_addr;   ///< Source address (our emulated remote)
+  uint8_t channel;
+  uint8_t type;        ///< Message type (0x6a=command, 0xca=status, etc.)
+  uint8_t type2;       ///< Secondary type byte
+  uint8_t hop;
+  uint8_t payload[10];
+};
+
+}  // namespace esphome::elero

@@ -2,6 +2,8 @@
 #include "elero_protocol.h"
 #include "elero_packet.h"
 #include "elero_strings.h"
+#include "device.h"
+#include "device_registry.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -79,6 +81,11 @@ void Elero::loop() {
       }
     }
   }
+
+  // New architecture: process device registry loop (polling, timeouts, command queues)
+  if (this->registry_ != nullptr) {
+    this->registry_->loop(millis());
+  }
 }
 
 void IRAM_ATTR Elero::interrupt(Elero *arg) {
@@ -94,7 +101,9 @@ void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "  Version: %s", this->version_);
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
-  ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
+  if (this->registry_) {
+    ESP_LOGCONFIG(TAG, "  Registered devices: %d", this->registry_->count_active());
+  }
 }
 
 void Elero::setup() {
@@ -118,6 +127,18 @@ void Elero::setup() {
   ESP_LOGI(TAG, "CC1101 version: 0x%02x", version);
 
   this->init();
+
+  // New architecture: device registry lifecycle
+  if (this->registry_ != nullptr) {
+    // Setup all output adapters (MQTT, etc.) before restoring devices
+    this->registry_->setup_adapters();
+
+    // Restore NVS-persisted devices (MQTT/NVS modes)
+    if (this->registry_->is_nvs_enabled()) {
+      this->registry_->init_preferences();
+      this->registry_->restore_all();
+    }
+  }
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
@@ -581,15 +602,12 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
   this->build_tx_packet_(cmd);
   this->record_tx_(cmd.counter);
 
-  // Look up blind name by dst address (store string to avoid dangling pointer)
+  // Look up device name by dst address (store string to avoid dangling pointer)
   std::string blind_name;
-  auto cover_it = this->address_to_cover_mapping_.find(cmd.dst_addr);
-  if (cover_it != this->address_to_cover_mapping_.end()) {
-    blind_name = cover_it->second->get_blind_name();
-  } else {
-    auto light_it = this->address_to_light_mapping_.find(cmd.dst_addr);
-    if (light_it != this->address_to_light_mapping_.end()) {
-      blind_name = light_it->second->get_light_name();
+  if (this->registry_) {
+    Device *dev = this->registry_->find(cmd.dst_addr);
+    if (dev) {
+      blind_name = dev->config.name;
     }
   }
 
@@ -973,16 +991,13 @@ void Elero::interpret_msg() {
   uint8_t state = is_status ? payload[payload_offset::STATE] : 0;
   bool echo = is_cmd && this->is_own_echo_(cnt);
 
-  // Look up blind name: for status packets src is the blind, for commands dst is the blind
+  // Look up device name: for status packets src is the blind, for commands dst is the blind
   std::string blind_name;
   uint32_t blind_addr = is_status ? src : dst;
-  auto cover_it = this->address_to_cover_mapping_.find(blind_addr);
-  if (cover_it != this->address_to_cover_mapping_.end()) {
-    blind_name = cover_it->second->get_blind_name();
-  } else {
-    auto light_it = this->address_to_light_mapping_.find(blind_addr);
-    if (light_it != this->address_to_light_mapping_.end()) {
-      blind_name = light_it->second->get_light_name();
+  if (this->registry_) {
+    Device *dev = this->registry_->find(blind_addr);
+    if (dev) {
+      blind_name = dev->config.name;
     }
   }
 
@@ -1032,32 +1047,34 @@ void Elero::interpret_msg() {
              length, cnt, typ, typ2, hop, chl, src, dst, rssi, lqi, crc);
   }
 
-  // Notify RF packet callback (if registered)
-  if (this->on_rf_packet_) {
-    RfPacketInfo pkt{};
-    pkt.timestamp_ms = millis();
-    pkt.src = src;
-    pkt.dst = dst;
-    pkt.channel = chl;
-    pkt.type = typ;
-    pkt.type2 = typ2;
-    pkt.command = command;
-    pkt.state = state;
-    pkt.echo = echo;
-    pkt.cnt = cnt;
-    pkt.rssi = rssi;
-    pkt.hop = hop;
-    memcpy(pkt.payload, payload, 10);
-    pkt.raw_len = (length + PACKET_TOTAL_OVERHEAD <= CC1101_FIFO_LENGTH)
-                      ? length + PACKET_TOTAL_OVERHEAD
-                      : CC1101_FIFO_LENGTH;
-    memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
-    this->on_rf_packet_(pkt);
+  // Build RfPacketInfo for dispatch
+  RfPacketInfo pkt{};
+  pkt.timestamp_ms = millis();
+  pkt.src = src;
+  pkt.dst = dst;
+  pkt.channel = chl;
+  pkt.type = typ;
+  pkt.type2 = typ2;
+  pkt.command = command;
+  pkt.state = state;
+  pkt.echo = echo;
+  pkt.cnt = cnt;
+  pkt.rssi = rssi;
+  pkt.hop = hop;
+  memcpy(pkt.payload, payload, 10);
+  pkt.raw_len = (length + PACKET_TOTAL_OVERHEAD <= CC1101_FIFO_LENGTH)
+                    ? length + PACKET_TOTAL_OVERHEAD
+                    : CC1101_FIFO_LENGTH;
+  memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
 
-    // Notify device manager (MQTT mode: tracks remotes, routes to dynamic devices)
-    if (this->device_manager_ != nullptr) {
-      this->device_manager_->on_rf_packet(pkt);
-    }
+  // Dispatch through unified device registry (state machines, adapters, observers)
+  if (this->registry_ != nullptr) {
+    this->registry_->on_rf_packet(pkt, pkt.timestamp_ms);
+  }
+
+  // Notify direct RF callback (web server → WebSocket broadcast)
+  if (this->on_rf_packet_) {
+    this->on_rf_packet_(pkt);
   }
 
   // Update RSSI sensor for any message from a known blind
@@ -1070,96 +1087,15 @@ void Elero::interpret_msg() {
   }
 #endif
 
-  if (is_status_packet(typ)) {
-    // Status message from a blind - update text sensor
+  // Update text sensor for status packets
 #ifdef USE_TEXT_SENSOR
-    {
-      auto text_it = this->address_to_text_sensor_.find(src);
-      if (text_it != this->address_to_text_sensor_.end()) {
-        text_it->second->publish_state(elero_state_to_string(payload[payload_offset::STATE]));
-      }
+  if (is_status_packet(typ)) {
+    auto text_it = this->address_to_text_sensor_.find(src);
+    if (text_it != this->address_to_text_sensor_.end()) {
+      text_it->second->publish_state(elero_state_to_string(payload[payload_offset::STATE]));
     }
+  }
 #endif
-
-    // Check if we know the blind (configured ESPHome cover)
-    auto search = this->address_to_cover_mapping_.find(src);
-    if (search != this->address_to_cover_mapping_.end()) {
-      search->second->notify_rx_meta(millis(), rssi);
-      search->second->set_rx_state(payload[payload_offset::STATE]);
-    }
-
-    // Check if we know the address as a configured ESPHome light
-    auto light_search = this->address_to_light_mapping_.find(src);
-    if (light_search != this->address_to_light_mapping_.end()) {
-      light_search->second->notify_rx_meta(millis(), rssi);
-      light_search->second->set_rx_state(payload[payload_offset::STATE]);
-    }
-
-  } else {
-    // Non-status packets: still update RSSI/last_seen for any known blind
-    auto search = this->address_to_cover_mapping_.find(src);
-    if (search != this->address_to_cover_mapping_.end()) {
-      search->second->notify_rx_meta(millis(), rssi);
-    }
-    auto light_search = this->address_to_light_mapping_.find(src);
-    if (light_search != this->address_to_light_mapping_.end()) {
-      light_search->second->notify_rx_meta(millis(), rssi);
-    }
-
-    // Remote command packets: src = remote addr, dst = blind addr(s).
-    // Trigger an immediate status poll on each configured blind/light that is
-    // targeted, so HA state updates within ~50 ms instead of waiting for the
-    // normal poll interval.
-    // Skip mesh retransmissions of our own TX (matched by cnt in tx_history_)
-    // to avoid feedback loop: TX -> mesh echo -> poll -> TX -> ...
-    // Physical remote commands share our src_address but have different cnt
-    // values, so they correctly trigger the immediate poll.
-    if (is_command_packet(typ) && !echo) {
-      for (uint8_t i = 0; i < num_dests; i++) {
-        uint32_t dest_addr;
-        if (typ > msg_type::ADDR_3BYTE_THRESHOLD) {  // 3-byte addressing
-          dest_addr = extract_addr(&this->msg_rx_[pkt_offset::FIRST_DEST + i * ADDR_SIZE]);
-        } else {  // 1-byte addressing
-          dest_addr = this->msg_rx_[pkt_offset::FIRST_DEST + i];
-        }
-        auto c_it = this->address_to_cover_mapping_.find(dest_addr);
-        if (c_it != this->address_to_cover_mapping_.end()) {
-          c_it->second->on_remote_command(command);
-        }
-        auto l_it = this->address_to_light_mapping_.find(dest_addr);
-        if (l_it != this->address_to_light_mapping_.end()) {
-          l_it->second->schedule_immediate_poll();
-        }
-      }
-    }
-  }
-}
-
-void Elero::register_cover(EleroBlindBase *cover) {
-  uint32_t address = cover->get_blind_address();
-  if (this->address_to_cover_mapping_.find(address) != this->address_to_cover_mapping_.end()) {
-    ESP_LOGE(TAG, "A blind with this address is already registered - this is currently not supported");
-    return;
-  }
-  this->address_to_cover_mapping_.insert({address, cover});
-  cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * packet::timing::POLL_OFFSET_SPACING);
-}
-
-void Elero::unregister_cover(uint32_t address) {
-  this->address_to_cover_mapping_.erase(address);
-}
-
-void Elero::register_light(EleroLightBase *light) {
-  uint32_t address = light->get_blind_address();
-  if (this->address_to_light_mapping_.find(address) != this->address_to_light_mapping_.end()) {
-    ESP_LOGE(TAG, "A light with this address is already registered - this is currently not supported");
-    return;
-  }
-  this->address_to_light_mapping_.insert({address, light});
-}
-
-void Elero::unregister_light(uint32_t address) {
-  this->address_to_light_mapping_.erase(address);
 }
 
 #ifdef USE_SENSOR
@@ -1179,15 +1115,12 @@ bool Elero::send_command(EleroCommand *cmd) {
   this->build_tx_packet_(*cmd);
   this->record_tx_(cmd->counter);
 
-  // Look up blind name by dst address (store string to avoid dangling pointer)
+  // Look up device name by dst address
   std::string blind_name;
-  auto cover_it = this->address_to_cover_mapping_.find(cmd->dst_addr);
-  if (cover_it != this->address_to_cover_mapping_.end()) {
-    blind_name = cover_it->second->get_blind_name();
-  } else {
-    auto light_it = this->address_to_light_mapping_.find(cmd->dst_addr);
-    if (light_it != this->address_to_light_mapping_.end()) {
-      blind_name = light_it->second->get_light_name();
+  if (this->registry_) {
+    Device *dev = this->registry_->find(cmd->dst_addr);
+    if (dev) {
+      blind_name = dev->config.name;
     }
   }
 

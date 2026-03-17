@@ -325,11 +325,16 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
     if (!devs.has(pkt.dst)) mut().set(pkt.dst, makeDevice({ address: pkt.dst, type: 'cover', remote: pkt.src, channel: pkt.channel }))
     if (!(next ?? devs).has(pkt.src)) mut().set(pkt.src, makeDevice({ address: pkt.src, type: 'remote' }))
   } else if (t === msg_type.STATUS || t === msg_type.STATUS_ALT) {
-    const stateType: DeviceType = pkt.state?.toLowerCase() === state.LIGHT_ON ? 'light' : 'cover'
-    if (!devs.has(pkt.src)) mut().set(pkt.src, makeDevice({ address: pkt.src, type: stateType, remote: pkt.dst, channel: pkt.channel }))
-    if (!(next ?? devs).has(pkt.dst)) mut().set(pkt.dst, makeDevice({ address: pkt.dst, type: 'remote' }))
     const existing = (next ?? devs).get(pkt.src)
-    if (existing) mut().set(pkt.src, { ...existing, lastStatus: pkt })
+    if (existing) {
+      // Type correction: if we see a light state, correct cover→light
+      const s = pkt.state?.toLowerCase()
+      const correctedType: DeviceType =
+        (s === state.LIGHT_ON || s === state.LIGHT_OFF) ? 'light' : existing.type
+      mut().set(pkt.src, { ...existing, type: correctedType, lastStatus: pkt })
+    }
+    // Do NOT create devices from status packets — byte offset 6 is not the RF channel.
+    // Discovery happens from COMMAND packets only (which carry correct channel).
   } else if (t === msg_type.BUTTON) {
     if (!devs.has(pkt.src)) mut().set(pkt.src, makeDevice({ address: pkt.src, type: 'remote' }))
   }

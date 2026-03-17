@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
-#include "device_manager.h"
+#include "device_type.h"
 #include "elero_packet.h"
 
 namespace esphome {

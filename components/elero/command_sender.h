@@ -1,6 +1,6 @@
 #pragma once
 
-#include "elero.h"
+#include "elero_packet.h"
 #include "time_provider.h"
 #include "tx_client.h"
 #include "esphome/core/log.h"
@@ -55,9 +55,10 @@ class CommandSender : public TxClient {
   /// - TX_PENDING: Nothing to do (waiting for on_tx_complete callback)
   ///
   /// @param now Current millis() timestamp
-  /// @param parent Elero hub for TX requests
+  /// @param parent Elero hub (or mock) for TX requests — must have request_tx()
   /// @param tag Logging tag for debug messages
-  void process_queue(uint32_t now, Elero *parent, const char *tag) {
+  template<typename Hub>
+  void process_queue(uint32_t now, Hub *parent, const char *tag) {
     this->log_tag_ = tag;
 
     switch (this->state_) {
@@ -85,7 +86,7 @@ class CommandSender : public TxClient {
         }
 
         // Ready to transmit - try to acquire the radio
-        this->command_.payload[4] = this->command_queue_.front();
+        this->command_.payload[4] = this->command_queue_.front().cmd;
 
         if (parent->request_tx(this, this->command_)) {
           // Successfully started TX
@@ -157,7 +158,10 @@ class CommandSender : public TxClient {
       this->send_retries_ = 0;
       ++this->send_packets_;
 
-      if (this->send_packets_ >= packet::limits::SEND_PACKETS) {
+      uint8_t target_packets = this->command_queue_.empty()
+          ? packet::limits::SEND_PACKETS
+          : this->command_queue_.front().packets;
+      if (this->send_packets_ >= target_packets) {
         // Command fully sent, move to next
         ESP_LOGV(this->log_tag_, "Command 0x%02x to 0x%06x complete (%d packets)",
                  this->command_.payload[4], this->command_.dst_addr, this->send_packets_);
@@ -187,18 +191,21 @@ class CommandSender : public TxClient {
     }
   }
 
-  /// Enqueue a command byte for transmission.
+  /// Enqueue a command byte for transmission with specified packet count.
   /// @param cmd_byte The command byte to send
+  /// @param packets Number of RF packets to send (default: SEND_PACKETS=2)
   /// @return true if queued successfully, false if queue is full
-  [[nodiscard]] bool enqueue(uint8_t cmd_byte) {
+  [[nodiscard]] bool enqueue(uint8_t cmd_byte,
+                             uint8_t packets = packet::limits::SEND_PACKETS) {
     // Collapse duplicate consecutive commands (prevents queue saturation from button mashing)
-    if (!this->command_queue_.empty() && this->command_queue_.back() == cmd_byte) {
+    if (!this->command_queue_.empty() && this->command_queue_.back().cmd == cmd_byte) {
       return true;  // Already queued, skip duplicate
     }
     if (this->command_queue_.size() >= packet::limits::MAX_COMMAND_QUEUE) {
+      ESP_LOGW("elero.tx", "Command queue full, dropping cmd 0x%02x", cmd_byte);
       return false;
     }
-    this->command_queue_.push(cmd_byte);
+    this->command_queue_.push({cmd_byte, packets});
 
     // Kick state machine if idle
     if (this->state_ == State::IDLE) {
@@ -212,7 +219,7 @@ class CommandSender : public TxClient {
   /// If TX is in progress, it will complete but the result will be ignored.
   /// This is used for STOP commands to ensure immediate response.
   void clear_queue() {
-    this->command_queue_ = std::queue<uint8_t>{};
+    this->command_queue_ = std::queue<QueueEntry>{};
     this->send_packets_ = 0;
     this->send_retries_ = 0;
     this->last_tx_time_ = 0;  // Allow immediate TX for next command (STOP priority)
@@ -284,8 +291,10 @@ class CommandSender : public TxClient {
     }
   }
 
+  struct QueueEntry { uint8_t cmd; uint8_t packets; };
+
   EleroCommand command_{1, 0, 0, 0, 0, 0, 0, {0}};
-  std::queue<uint8_t> command_queue_;
+  std::queue<QueueEntry> command_queue_;
 
   State state_{State::IDLE};
   uint32_t last_tx_time_{0};

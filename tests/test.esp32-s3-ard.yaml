@@ -10,6 +10,10 @@ substitutions:
 esphome:
   name: test-esp32-s3-ard
   friendly_name: Test ESP32-S3 Arduino
+  platformio_options:
+    build_unflags: -std=gnu++11
+    build_flags:
+      - -std=gnu++2a
 
 esp32:
   board: esp32-s3-devkitc-1

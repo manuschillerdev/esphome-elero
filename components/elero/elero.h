@@ -7,13 +7,14 @@
 #include "tx_client.h"
 #include "elero_packet.h"
 #include "elero_strings.h"
-#include "device_manager.h"
+#include "device_type.h"
 #include <string>
-#include <vector>
 #include <map>
-#include <queue>
 #include <atomic>
 #include <functional>
+
+// Forward declaration for new architecture registry
+namespace esphome { namespace elero { class DeviceRegistry; } }
 
 // Elero RF protocol implementation based on reverse-engineered specifications.
 // Protocol documentation: https://github.com/QuadCorei8085/elero_protocol
@@ -63,17 +64,6 @@ struct TxContext {
   }
 };
 
-struct EleroCommand {
-  uint8_t counter;
-  uint32_t dst_addr;   ///< Destination address (blind/light we control)
-  uint32_t src_addr;   ///< Source address (our emulated remote)
-  uint8_t channel;
-  uint8_t type;        ///< Message type (0x6a=command, 0xca=status, etc.)
-  uint8_t type2;       ///< Secondary type byte
-  uint8_t hop;
-  uint8_t payload[10];
-};
-
 /// Decoded RF packet info for WebSocket broadcast
 struct RfPacketInfo {
   uint32_t timestamp_ms;
@@ -94,83 +84,6 @@ struct RfPacketInfo {
 };
 
 // String conversion declarations (elero_state_to_string, etc.) are in elero_strings.h
-
-/// Abstract base class for light actuators registered with the Elero hub.
-/// EleroLight inherits from this so the hub never needs the light header.
-class EleroLightBase {
- public:
-  virtual ~EleroLightBase() = default;
-  virtual uint32_t get_blind_address() = 0;
-  virtual void set_rx_state(uint8_t state) = 0;
-  virtual void notify_rx_meta(uint32_t ms, float rssi) {}
-  virtual void enqueue_command(uint8_t cmd_byte) = 0;
-  /// Called by the hub when a remote command packet (0x6a/0x69) targets this
-  /// device, so it can poll the blind immediately instead of waiting for the
-  /// normal poll interval.  Default no-op; concrete classes override.
-  virtual void schedule_immediate_poll() {}
-
-  // Web API helpers — identity & configuration
-  virtual std::string get_light_name() const = 0;
-  virtual uint8_t get_channel() const = 0;
-  virtual uint32_t get_remote_address() const = 0;
-  virtual uint32_t get_dim_duration_ms() const = 0;
-  virtual bool is_enabled() const { return true; }  ///< true = published to HA (YAML-defined always true)
-  virtual uint32_t get_updated_at() const { return 0; }  ///< millis() when last persisted (0 = YAML-defined)
-  // Web API helpers — state (parity with EleroBlindBase)
-  virtual float get_brightness() const = 0;
-  virtual bool get_is_on() const = 0;
-  virtual const char *get_operation_str() const = 0;
-  virtual uint32_t get_last_seen_ms() const = 0;
-  virtual float get_last_rssi() const = 0;
-  virtual uint8_t get_last_state_raw() const = 0;
-  // Command entry points
-  virtual bool perform_action(const char *action) = 0;
-  /// Primary command entry point — state updates + enqueue TX via CommandSender.
-  virtual bool perform_command(uint8_t cmd_byte) = 0;
-};
-
-/// Abstract base class for blinds registered with the Elero hub.
-/// EleroCover inherits from this so the hub never needs the cover header.
-class EleroBlindBase {
- public:
-  virtual ~EleroBlindBase() = default;
-  virtual void set_rx_state(uint8_t state) = 0;
-  virtual uint32_t get_blind_address() = 0;
-  virtual void set_poll_offset(uint32_t offset) = 0;
-  // Called by the hub whenever a packet arrives from this blind
-  virtual void notify_rx_meta(uint32_t ms, float rssi) {}  // default no-op
-  // Web API helpers — identity & state
-  virtual std::string get_blind_name() const = 0;
-  virtual float get_cover_position() const = 0;
-  virtual const char *get_operation_str() const = 0;
-  virtual uint32_t get_last_seen_ms() const = 0;
-  virtual float get_last_rssi() const = 0;
-  virtual uint8_t get_last_state_raw() const = 0;
-  // Web API helpers — configuration
-  virtual uint8_t get_channel() const = 0;
-  virtual uint32_t get_remote_address() const = 0;
-  virtual uint32_t get_poll_interval_ms() const = 0;
-  virtual uint32_t get_open_duration_ms() const = 0;
-  virtual uint32_t get_close_duration_ms() const = 0;
-  virtual bool get_supports_tilt() const = 0;
-  virtual bool is_enabled() const { return true; }  ///< true = published to HA (YAML-defined always true)
-  virtual uint32_t get_updated_at() const { return 0; }  ///< millis() when last persisted (0 = YAML-defined)
-  // Command entry points
-  virtual bool perform_action(const char *action) = 0;
-  /// Primary command entry point — state updates + enqueue TX via CommandSender.
-  virtual bool perform_command(uint8_t cmd_byte) = 0;
-  // Low-level command queue (bypasses entity logic, use only for protocol-specific commands like "check")
-  virtual void enqueue_command(uint8_t cmd_byte) = 0;
-  /// Called by the hub when a remote command packet (0x6a/0x69) targets this
-  /// blind, so it can poll the blind immediately instead of waiting for the
-  /// normal poll interval.  Default no-op; concrete classes override.
-  virtual void schedule_immediate_poll() {}
-  /// Called by the hub when a detected remote command targets this blind.
-  /// Allows the cover to start movement tracking (IDLE→MOVING transition)
-  /// that RF status alone cannot trigger. Default: schedule_immediate_poll().
-  virtual void on_remote_command(uint8_t command_byte) { this->schedule_immediate_poll(); }
-  virtual void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms, uint32_t poll_intvl_ms) = 0;
-};
 
 class Elero;  // Forward declaration for SpiTransaction
 
@@ -231,11 +144,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   /// Get the current TX owner (for debugging/testing).
   TxClient *get_tx_owner() const { return tx_owner_; }
 
-  void register_cover(EleroBlindBase *cover);
-  void unregister_cover(uint32_t address);
-  void register_light(EleroLightBase *light);
-  void unregister_light(uint32_t address);
-
   // Legacy blocking TX API (for backwards compatibility and simple use cases)
   [[nodiscard]] bool send_command(EleroCommand *cmd);
 
@@ -255,13 +163,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor);
 #endif
 
-  // Cover access for web server
-  bool is_cover_configured(uint32_t address) const {
-    return address_to_cover_mapping_.find(address) != address_to_cover_mapping_.end();
-  }
-  const std::map<uint32_t, EleroBlindBase *> &get_configured_covers() const { return address_to_cover_mapping_; }
-  const std::map<uint32_t, EleroLightBase *> &get_configured_lights() const { return address_to_light_mapping_; }
-
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }
@@ -274,9 +175,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   using RfPacketCallback = std::function<void(const RfPacketInfo &)>;
   void set_rf_packet_callback(RfPacketCallback cb) { on_rf_packet_ = std::move(cb); }
 
-  // Device manager (MQTT mode)
-  void set_device_manager(IDeviceManager *mgr) { device_manager_ = mgr; }
-  IDeviceManager *get_device_manager() const { return device_manager_; }
+  // Unified device registry
+  void set_registry(DeviceRegistry *reg) { registry_ = reg; }
+  DeviceRegistry *get_registry() const { return registry_; }
 
   void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   uint8_t get_freq0() const { return freq0_; }
@@ -307,8 +208,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t freq1_{defaults::FREQ1};
   uint8_t freq2_{defaults::FREQ2};
   InternalGPIOPin *gdo0_pin_{nullptr};
-  std::map<uint32_t, EleroBlindBase *> address_to_cover_mapping_;
-  std::map<uint32_t, EleroLightBase *> address_to_light_mapping_;
 #ifdef USE_SENSOR
   std::map<uint32_t, sensor::Sensor *> address_to_rssi_sensor_;
 #endif
@@ -324,8 +223,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   // RF packet notification callback (optional, set by web server)
   RfPacketCallback on_rf_packet_{};
 
-  // Device manager (nullptr in native mode, set by MqttDeviceManager in MQTT mode)
-  IDeviceManager *device_manager_{nullptr};
+  // Unified device registry
+  DeviceRegistry *registry_{nullptr};
 
   const char *version_{"unknown"};
 };

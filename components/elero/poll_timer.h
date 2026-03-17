@@ -1,0 +1,94 @@
+/// @file poll_timer.h
+/// @brief Simple poll timing logic for cover status queries.
+///
+/// Matches the old CoverCore::should_poll / mark_polled behavior exactly:
+/// - Boolean `awaiting_response` cleared on RF response, not by timeout
+/// - Timeout expiry forces a re-poll (blind didn't respond)
+/// - Staggered offset for first poll per cover
+/// - Fast polling while moving (2s)
+
+#pragma once
+
+#include <cstdint>
+#include "elero_packet.h"
+
+namespace esphome::elero {
+
+struct PollTimer {
+    uint32_t interval_ms{packet::timing::DEFAULT_POLL_INTERVAL_MS};
+    uint32_t offset_ms{0};              ///< Stagger offset for first poll
+    uint32_t last_poll_ms{0};
+    uint32_t last_command_ms{0};        ///< When we last sent a command/CHECK
+    bool     awaiting_response{false};  ///< Waiting for blind to respond
+    bool     immediate_poll{false};     ///< Poll ASAP on next check
+
+    /// Check if it's time to poll.
+    /// Mirrors old CoverCore::should_poll() exactly.
+    bool should_poll(uint32_t now, bool is_moving) {
+        // Response-wait: defer polling after command TX to keep radio in RX
+        if (awaiting_response) {
+            if ((now - last_command_ms) < packet::timing::RESPONSE_WAIT_MS) {
+                return false;  // stay in RX, don't poll yet
+            }
+            // Timeout expired — blind didn't respond. Force a re-poll.
+            awaiting_response = false;
+            return true;
+        }
+
+        // Immediate poll overrides interval
+        if (immediate_poll) {
+            return true;
+        }
+
+        // Choose interval based on movement state
+        uint32_t effective_interval = is_moving
+            ? packet::timing::POLL_INTERVAL_MOVING
+            : interval_ms;
+
+        // Never poll if interval is 0 or max uint32 ("never")
+        if (effective_interval == 0 || effective_interval == UINT32_MAX) {
+            return false;
+        }
+
+        // First poll uses offset for staggering
+        if (last_poll_ms == 0) {
+            return now >= offset_ms;
+        }
+
+        return (now - last_poll_ms) >= effective_interval;
+    }
+
+    /// Mark that a poll (CHECK) was just sent.
+    /// Sets awaiting_response so we stay in RX until blind responds or timeout.
+    void on_poll_sent(uint32_t now) {
+        last_poll_ms = now;
+        last_command_ms = now;
+        awaiting_response = true;
+        immediate_poll = false;
+    }
+
+    /// Mark that a user command was just sent (suppresses polls briefly).
+    void on_command_sent(uint32_t now) {
+        last_command_ms = now;
+        awaiting_response = true;
+    }
+
+    /// Mark that an RF response was received.
+    /// Clears awaiting_response so we fall back to interval-based polling.
+    void on_rf_received(uint32_t now) {
+        last_poll_ms = now;
+        awaiting_response = false;
+        immediate_poll = false;
+    }
+
+    /// Request an immediate poll on next check.
+    /// Debounced: ignored if already awaiting a response.
+    void request_immediate_poll() {
+        if (awaiting_response) {
+            return;  // Already waiting for a response, skip
+        }
+        immediate_poll = true;
+    }
+};
+
+}  // namespace esphome::elero

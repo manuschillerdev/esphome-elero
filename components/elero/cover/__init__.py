@@ -35,7 +35,8 @@ CONF_AUTO_SENSORS = "auto_sensors"
 CONF_RSSI_SENSOR = "rssi_sensor"
 CONF_STATUS_SENSOR = "status_sensor"
 
-EleroCover = elero_ns.class_("EleroCover", cover.Cover, cg.Component)
+# New architecture: EspCoverShell replaces EleroCover
+EspCoverShell = elero_ns.class_("EspCoverShell", cover.Cover, cg.Component)
 
 _RSSI_SENSOR_SCHEMA = sensor.sensor_schema(
     unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
@@ -53,26 +54,18 @@ def poll_interval(value):
 
 
 def _validate_duration_consistency(config):
-    """Validate that if position tracking is enabled, both open and close durations are set.
-
-    Position tracking requires BOTH open_duration AND close_duration to be non-zero.
-    If only one is set, the position estimate will be incorrect.
-    """
+    """Validate that if position tracking is enabled, both open and close durations are set."""
     open_dur = config.get(CONF_OPEN_DURATION)
     close_dur = config.get(CONF_CLOSE_DURATION)
 
     open_ms = open_dur.total_milliseconds if open_dur is not None else 0
     close_ms = close_dur.total_milliseconds if close_dur is not None else 0
 
-    # Both zero = position tracking disabled (OK)
     if open_ms == 0 and close_ms == 0:
         return config
-
-    # Both non-zero = position tracking enabled (OK)
     if open_ms > 0 and close_ms > 0:
         return config
 
-    # One zero, one non-zero = inconsistent configuration (ERROR)
     raise cv.Invalid(
         f"Position tracking requires both open_duration and close_duration to be set. "
         f"Current values: open_duration={open_ms}ms, close_duration={close_ms}ms. "
@@ -81,12 +74,7 @@ def _validate_duration_consistency(config):
 
 
 def _auto_sensor_validator(config):
-    """At validation time, inject auto-sensor sub-configs when auto_sensors=True.
-
-    Running this at validation time (not inside to_code) ensures that
-    cv.declare_id() / CORE.register_id() are called in the correct phase and
-    auto-generated IDs never collide with IDs from the validation phase.
-    """
+    """At validation time, inject auto-sensor sub-configs when auto_sensors=True."""
     if not config.get(CONF_AUTO_SENSORS, True):
         return config
     cover_name = config.get(CONF_NAME, "Elero Cover")
@@ -99,7 +87,7 @@ def _auto_sensor_validator(config):
 
 
 CONFIG_SCHEMA = cv.All(
-    cover.cover_schema(EleroCover)
+    cover.cover_schema(EspCoverShell)
     .extend(
         {
             cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
@@ -114,6 +102,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_TYPE, default=0x6A): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_TYPE2, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_HOP, default=0x0A): cv.hex_int_range(min=0x0, max=0xFF),
+            # Legacy: command overrides (accepted for backward compat, not used by new arch)
             cv.Optional(CONF_COMMAND_UP, default=0x20): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_COMMAND_DOWN, default=0x40): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_COMMAND_STOP, default=0x10): cv.hex_int_range(min=0x0, max=0xFF),
@@ -136,7 +125,11 @@ async def to_code(config):
     await cg.register_component(var, config)
 
     parent = await cg.get_variable(config[CONF_ELERO_ID])
-    cg.add(var.set_elero_parent(parent))
+
+    # Wire to device registry (created by hub)
+    cg.add(var.set_registry(parent.get_registry()))
+
+    # Set device config (shell registers with registry during setup)
     cg.add(var.set_dst_address(config[CONF_DST_ADDRESS]))
     cg.add(var.set_channel(config[CONF_CHANNEL]))
     cg.add(var.set_src_address(config[CONF_SRC_ADDRESS]))
@@ -147,22 +140,17 @@ async def to_code(config):
     cg.add(var.set_type(config[CONF_TYPE]))
     cg.add(var.set_type2(config[CONF_TYPE2]))
     cg.add(var.set_hop(config[CONF_HOP]))
-    cg.add(var.set_command_up(config[CONF_COMMAND_UP]))
-    cg.add(var.set_command_down(config[CONF_COMMAND_DOWN]))
-    cg.add(var.set_command_check(config[CONF_COMMAND_CHECK]))
-    cg.add(var.set_command_stop(config[CONF_COMMAND_STOP]))
-    cg.add(var.set_command_tilt(config[CONF_COMMAND_TILT]))
     cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
     cg.add(var.set_supports_tilt(config[CONF_SUPPORTS_TILT]))
 
     addr = config[CONF_DST_ADDRESS]
 
-    # RSSI sensor — present when explicitly configured or auto_sensors=True
+    # RSSI sensor — still registered with hub (legacy dispatch handles it)
     if CONF_RSSI_SENSOR in config:
         rssi_var = await sensor.new_sensor(config[CONF_RSSI_SENSOR])
         cg.add(parent.register_rssi_sensor(addr, rssi_var))
 
-    # Status text sensor — present when explicitly configured or auto_sensors=True
+    # Status text sensor — still registered with hub
     if CONF_STATUS_SENSOR in config:
         status_var = await text_sensor.new_text_sensor(config[CONF_STATUS_SENSOR])
         cg.add(parent.register_text_sensor(addr, status_var))

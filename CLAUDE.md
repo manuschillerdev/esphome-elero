@@ -77,37 +77,45 @@ esphome-elero/
 └── components/
     ├── elero/                         # Main hub component
     │   ├── __init__.py                # ESPHome component schema & code-gen (hub)
-    │   ├── elero.h                    # C++ hub class header
-    │   ├── elero.cpp                  # C++ RF protocol implementation (~625 lines)
+    │   ├── elero.h                    # C++ hub class header (TX state machine, SPI)
+    │   ├── elero.cpp                  # C++ RF protocol implementation
+    │   ├── elero_packet.{h,cpp}       # Packet encoding/decoding, encryption
+    │   ├── elero_protocol.h           # Protocol constants (commands, states, timing)
+    │   ├── elero_strings.{h,cpp}      # State/command byte string conversions
     │   ├── cc1101.h                   # CC1101 register map & command strobes
+    │   ├── device.h                   # Unified Device struct (variant<CoverDevice, LightDevice, RemoteDevice>)
+    │   ├── device_type.h              # DeviceType/HubMode enums + string helpers
+    │   ├── device_registry.{h,cpp}    # Single source of truth: CRUD, NVS, RF dispatch, adapters
+    │   ├── output_adapter.h           # Abstract OutputAdapter interface
+    │   ├── cover_sm.{h,cpp}           # Cover FSM (Idle/Opening/Closing/Stopping)
+    │   ├── light_sm.{h,cpp}           # Light FSM (Off/On/DimmingUp/DimmingDown)
+    │   ├── nvs_config.h               # NvsDeviceConfig (64-byte POD struct for NVS persistence)
+    │   ├── command_sender.h           # Non-blocking TX with retries (TxClient interface)
+    │   ├── tx_client.h                # TxClient abstract interface for TX callbacks
+    │   ├── poll_timer.h               # Poll interval timer helper
+    │   ├── time_provider.{h,cpp}      # Time provider abstraction
+    │   ├── overloaded.h               # std::visit overload helper
     │   ├── cover/                     # Cover (blind) platform
     │   │   ├── __init__.py            # Cover schema & code-gen
-    │   │   ├── EleroCover.h           # Cover class header
-    │   │   └── EleroCover.cpp         # Cover logic, position tracking (~307 lines)
-    │   ├── cover_core.{h,cpp}          # Pure C++ cover logic (position tracking, state mapping, polling)
-    │   ├── light_core.{h,cpp}          # Pure C++ light logic (brightness, dimming, state mapping)
-    │   ├── device_manager.h            # IDeviceManager interface, HubMode, DeviceType enums
-    │   ├── nvs_config.h               # NvsDeviceConfig (60-byte POD struct for NVS persistence)
-    │   ├── nvs_device_manager_base.{h,cpp}  # Base class for NVS-backed device managers
-    │   ├── dynamic_entity_base.{h,cpp} # DynamicEntityBase (shared persistence/activation)
-    │   ├── EleroDynamicCover.{h,cpp}   # Dynamic cover slot (MQTT mode)
-    │   ├── EleroDynamicLight.{h,cpp}   # Dynamic light slot (MQTT mode)
-    │   ├── EleroRemoteControl.{h,cpp}  # Passive remote control tracker
-    │   ├── command_sender.h            # Non-blocking TX with retries
+    │   │   └── esp_cover_shell.h      # Thin cover::Cover adapter to Device model
+    │   ├── light/                     # Light platform
+    │   │   ├── __init__.py            # Light schema & code-gen
+    │   │   └── esp_light_shell.h      # Thin light::LightOutput adapter to Device model
     │   ├── sensor/                    # RSSI sensor platform
     │   │   └── __init__.py
     │   └── text_sensor/               # Blind status text sensor platform
     │       └── __init__.py
     ├── elero_mqtt/                     # MQTT mode component (NVS + MQTT HA discovery)
-    │   ├── __init__.py                # Schema & codegen (slot allocation, hub wiring)
-    │   ├── mqtt_device_manager.{h,cpp} # MqttDeviceManager (extends NvsDeviceManagerBase)
+    │   ├── __init__.py                # Schema & codegen (registers MqttAdapter on registry)
+    │   ├── mqtt_adapter.{h,cpp}       # MqttAdapter : OutputAdapter (HA discovery + state)
+    │   ├── mqtt_context.h             # Shared MQTT context (topics, device block, availability)
     │   ├── mqtt_publisher.h           # Abstract MQTT interface (testable without ESPHome)
     │   └── esphome_mqtt_adapter.h     # Adapts ESPHome MQTT client to MqttPublisher
     ├── elero_nvs/                      # Native+NVS mode component (NVS + ESPHome native API)
-    │   ├── __init__.py                # Schema & codegen (slot allocation)
-    │   ├── native_nvs_device_manager.{h,cpp}  # NativeNvsDeviceManager
-    │   ├── NativeNvsCover.{h,cpp}     # cover::Cover + DynamicEntityBase + CoverCore
-    │   └── NativeNvsLight.{h,cpp}     # light::LightOutput + DynamicEntityBase + LightCore
+    │   └── __init__.py                # Enables NVS on DeviceRegistry (no C++ files)
+    ├── elero_matter/                   # Matter output adapter (stub)
+    │   ├── __init__.py                # Matter component codegen
+    │   └── matter_adapter.h           # MatterAdapter : OutputAdapter (structural stub)
     └── elero_web/                     # Optional web UI component
         ├── __init__.py
         ├── elero_web_server.h
@@ -118,6 +126,18 @@ esphome-elero/
 ---
 
 ## Architecture
+
+### Core Design Principles
+
+1. **Minimal base state, maximal derivation.** The system stores the smallest possible state (RF config, FSM state, timestamps) and derives everything else — position, brightness, entity status, discovery lists — on demand from `(state, now, config)`. This eliminates an entire class of consistency bugs.
+
+2. **One path, no redundant implementations.** There is exactly one `Device` struct, one `DeviceRegistry`, one set of state machines (`cover_sm`, `light_sm`). Output adapters (MQTT, native API, WebSocket, Matter) are thin translators — they never duplicate logic. If you find yourself writing the same behavior twice, the abstraction is wrong.
+
+3. **Route and fail early.** Data is classified and routed at the earliest possible point — RF packets are decoded and dispatched in the hub's `loop()`, device type is resolved on upsert, invalid configs are rejected before NVS write. This prevents complexity from compounding downstream.
+
+4. **Solve the state-space explosion.** Three operating modes x three device types x multiple output formats would explode into dozens of classes without discipline. The variant-based `Device` + `OutputAdapter` observer pattern keeps the combinatorial surface flat: adding a new mode or device type is additive (one new adapter or variant arm), not multiplicative.
+
+5. **Clear, unidirectional data flow.** Hardware → Hub → Registry → Adapters. Commands flow the reverse path. No lateral coupling between adapters. No circular dependencies.
 
 ### Layered Architecture (CRITICAL)
 
@@ -204,109 +224,98 @@ The client can derive:
 
 ### Three Operating Modes
 
-The system supports three mutually exclusive operating modes:
+The system supports three mutually exclusive operating modes. All modes use the same unified `Device` struct and `DeviceRegistry` — only the **output adapters** differ.
 
 | | Native Mode | MQTT Mode | Native+NVS Mode |
 |---|---|---|---|
 | **Devices defined in** | YAML (compile-time) | NVS (runtime via CRUD API) | NVS (runtime, reboot to apply) |
 | **Home Assistant API** | ESPHome native API | MQTT HA discovery | ESPHome native API |
-| **Device manager** | `NativeDeviceManager` (no-op) | `MqttDeviceManager` | `NativeNvsDeviceManager` |
+| **Registry** | `DeviceRegistry` (NVS disabled) | `DeviceRegistry` (NVS enabled) | `DeviceRegistry` (NVS enabled) |
 | **Component** | `elero:` only | `elero:` + `elero_mqtt:` | `elero:` + `elero_nvs:` |
-| **Entity classes** | `EleroCover`, `EleroLight` | `EleroDynamicCover`, `EleroDynamicLight` | `NativeNvsCover`, `NativeNvsLight` |
+| **Output adapters** | `EspCoverShell`, `EspLightShell` | `MqttAdapter` | `EspCoverShell`, `EspLightShell` |
 
-**Core logic extraction:** All entity classes compose pure C++ core classes (`CoverCore`, `LightCore`) that contain all RF/device logic with zero ESPHome dependencies. This eliminates duplication and enables unit testing on the host.
+**Unified device model:** All devices are represented by a single `Device` struct containing `NvsDeviceConfig` + `RfMeta` + `variant<CoverDevice, LightDevice, RemoteDevice>` + `CommandSender`. Variant-based state machines (`cover_sm`, `light_sm`) handle all logic. Position and brightness are always **derived** from `(state, now, config)` — never stored. This eliminates duplication and enables host unit testing.
 
 **MQTT mode** enables runtime device management without reflashing:
-- Devices stored as `NvsDeviceConfig` (60-byte POD struct) via ESPHome Preferences
-- Pre-allocated slot pool: static arrays of `EleroDynamicCover`/`EleroDynamicLight`/`EleroRemoteControl`
-- CRUD operations via WebSocket or programmatic API
-- HA discovery publishes/removes MQTT config topics dynamically
+- Devices stored as `NvsDeviceConfig` (64-byte POD struct) in a unified 48-slot pool
+- CRUD operations via WebSocket or programmatic API on `DeviceRegistry`
+- `MqttAdapter` (OutputAdapter) publishes/removes MQTT HA discovery topics dynamically
 - Remote controls auto-discovered from observed RF command packets
 
 **Native+NVS mode** enables runtime device management with ESPHome native API:
-- Same NVS persistence and CRUD as MQTT mode
-- Entities registered with ESPHome native API during `setup()` — discovered by HA automatically
+- Same NVS persistence and CRUD as MQTT mode via `DeviceRegistry`
+- `EspCoverShell`/`EspLightShell` registered with ESPHome native API during `setup()`
 - Post-setup CRUD writes to NVS but changes only apply on reboot (ESPHome can't register new entities after initial connection)
 - No MQTT broker required — uses ESPHome's built-in native API
 
-**IDeviceManager** interface (`device_manager.h`) decouples the hub from mode-specific logic:
-- Hub holds `IDeviceManager*` — `nullptr` in native mode, `MqttDeviceManager*` or `NativeNvsDeviceManager*` in NVS modes
-- Hub calls `device_manager_->on_rf_packet()` for every decoded packet
-- Web server calls `dm->upsert_device()` / `dm->remove_device()` for CRUD
-- `NativeDeviceManager` is a no-op implementation for native mode
+**DeviceRegistry** (`device_registry.h`) is the single source of truth:
+- Hub holds `DeviceRegistry*` and calls `registry_->on_rf_packet()` for every decoded packet
+- Web server calls `registry->upsert()` / `registry->remove()` for CRUD
+- Output adapters observe the registry via `OutputAdapter` interface (`on_device_added()`, `on_state_changed()`, etc.)
+- In native mode, NVS is disabled — devices are registered at compile-time from YAML
 
 ### Component Hierarchy
 
 ```
-Elero (hub, SPIDevice + Component)
-├── CoverCore (pure C++ — position tracking, state mapping, polling)
-│   └── Composed by: EleroCover, EleroDynamicCover, NativeNvsCover
-├── LightCore (pure C++ — brightness, dimming, state mapping)
-│   └── Composed by: EleroLight, EleroDynamicLight, NativeNvsLight
-├── EleroBlindBase (abstract interface)
-│   ├── EleroCover (cover::Cover + Component + EleroBlindBase)          ← Native mode
-│   ├── EleroDynamicCover (DynamicEntityBase + EleroBlindBase)          ← MQTT mode
-│   └── NativeNvsCover (cover::Cover + Component + DynamicEntityBase)   ← Native+NVS mode
-├── EleroLightBase (abstract interface)
-│   ├── EleroLight (light::LightOutput + Component + EleroLightBase)    ← Native mode
-│   ├── EleroDynamicLight (DynamicEntityBase + EleroLightBase)          ← MQTT mode
-│   └── NativeNvsLight (light::LightOutput + Component + DynamicEntityBase) ← Native+NVS mode
-├── DynamicEntityBase (shared persistence + activation lifecycle)
-│   ├── EleroDynamicCover
-│   └── EleroDynamicLight
-├── EleroRemoteControl (passive RF observer, MQTT mode only)
-├── NvsDeviceManagerBase (abstract base for NVS-backed managers)
-│   └── MqttDeviceManager (NvsDeviceManagerBase — MQTT mode)
-├── NativeNvsDeviceManager (IDeviceManager + Component — Native+NVS mode)
+Elero (hub, SPIDevice + Component — CC1101 SPI, TX scheduler, interrupt)
+├── DeviceRegistry (single source of truth — CRUD, NVS, RF dispatch, adapter notification)
+│   ├── Device[] (unified 48-slot pool)
+│   │   ├── NvsDeviceConfig (64-byte POD struct — RF params, timing, metadata)
+│   │   ├── RfMeta (last_seen, last_rssi, last_state_raw)
+│   │   ├── variant<CoverDevice, LightDevice, RemoteDevice>
+│   │   │   ├── CoverDevice (cover_sm::State — Idle/Opening/Closing/Stopping)
+│   │   │   ├── LightDevice (light_sm::State — Off/On/DimmingUp/DimmingDown)
+│   │   │   └── RemoteDevice (passive tracker, last_seen only)
+│   │   └── CommandSender (non-blocking TX queue via TxClient)
+│   └── OutputAdapter[] (registered observers)
+│       ├── EspCoverShell (cover::Cover + Component)     ← Native / NVS modes
+│       ├── EspLightShell (light::LightOutput + Component) ← Native / NVS modes
+│       ├── MqttAdapter (MQTT HA discovery + state)       ← MQTT mode
+│       ├── EleroWebServer (WebSocket broadcast)           ← All modes (optional)
+│       └── MatterAdapter (structural stub)                ← Future
 ├── sensor::Sensor (RSSI, registered per blind address)
 ├── text_sensor::TextSensor (status, registered per blind address)
-├── EleroWebServer (Component, Mongoose HTTP/WS)
-│   └── EleroWebSwitch (switch::Switch + Component)
-└── Auto-registered sensors/text sensors per cover (optional)
+└── EleroWebSwitch (switch::Switch + Component)
 ```
 
-The `EleroBlindBase` / `EleroLightBase` abstract classes decouple the hub from entity implementations. `DynamicEntityBase` extracts shared NVS persistence, activation lifecycle, and `CommandSender` configuration shared between `EleroDynamicCover` and `EleroDynamicLight`.
+The `Device` struct is the single entity representation across all modes. Output adapters are stateless translators that observe the registry and map device events to their respective APIs.
 
 ### Core Data Flow
 
 1. `Elero::setup()` configures CC1101 registers over SPI and attaches a GPIO interrupt on `gdo0_pin`.
 2. When the CC1101 signals a received packet (GDO0 interrupt), `Elero::interrupt()` sets `received_ = true`.
 3. `Elero::loop()` detects `received_`, reads the FIFO, decodes and decrypts the packet, then:
-   - Dispatches state to matching `EleroBlindBase` via `set_rx_state()`
-   - Calls `on_rf_packet_` callback → server broadcasts to WebSocket clients
-   - Calls `device_manager_->on_rf_packet()` → MQTT mode tracks remotes
-4. `EleroCover::loop()` / `EleroDynamicCover::loop()` handles polling timers, position recomputation, and drains the command queue.
+   - Calls `registry_->on_rf_packet()` → registry updates matching `Device` state machines, notifies adapters
+   - Calls `on_rf_packet_` callback → web server broadcasts to WebSocket clients
+4. `DeviceRegistry::loop()` processes all active devices: state machine transitions, polling timers, command queue draining, adapter loops.
 
-### Dynamic Entity Lifecycle (MQTT mode)
+### Device Lifecycle (NVS modes)
 
-All dynamic entities follow the same lifecycle:
-```
-set_preference() → restore() → activate() → [loop/update_config] → deactivate()
-```
+Devices are managed via `DeviceRegistry::upsert()` / `DeviceRegistry::remove()`:
+- `upsert()`: finds existing device by address+type or allocates a free slot, writes `NvsDeviceConfig` to NVS, notifies adapters via `on_device_added()` or `on_config_changed()`
+- `remove()`: clears NVS slot, notifies adapters via `on_device_removed()`, resets slot
+- `restore_all()`: on boot, iterates all 48 NVS slots, restores active devices, notifies adapters
+- Remote controls are auto-discovered from RF command packets and tracked as `RemoteDevice` variant
 
-Key patterns:
-- `active_` vs `registered_` flags: active = slot has config, registered = hub dispatches RF to it
-- `set_config_enabled()` for non-destructive enable/disable (no deactivate/reactivate)
-- `update_config()` for non-destructive config update (1 NVS write, no crash window)
-- `deactivate()` is destructive: clears NVS, unregisters from hub, resets all state
-- State callbacks must be set BEFORE `activate()` to avoid missing state changes
-- `upsert_device()` creates or updates a device — address+type identify the device, all other fields are updateable
+### Observer Pattern
 
-### Dependency Injection
-
-The server and device manager receive events via callbacks, not direct coupling:
+Output adapters observe the registry via the `OutputAdapter` interface:
 
 ```cpp
-// Hub calls this on every decoded RF packet
-void Elero::set_rf_packet_callback(std::function<void(const RfPacketInfo&)> cb) {
-  on_rf_packet_ = std::move(cb);
-}
-
-// Hub delegates to device manager (MQTT mode)
-void Elero::set_device_manager(IDeviceManager *mgr) { device_manager_ = mgr; }
+// Registry notifies adapters on device events
+class OutputAdapter {
+ public:
+  virtual void setup() {}
+  virtual void loop() {}
+  virtual void on_device_added(const Device &dev) {}
+  virtual void on_device_removed(uint32_t address, DeviceType type) {}
+  virtual void on_state_changed(const Device &dev) {}
+  virtual void on_config_changed(const Device &dev) {}
+  virtual void on_rf_packet(const RfPacketInfo &pkt) {}
+};
 ```
 
-This keeps the hub independent of the web server and MQTT implementations.
+The hub sets the registry via `Elero::set_registry(DeviceRegistry*)`. This keeps the hub independent of output adapters and mode-specific logic.
 
 ---
 
@@ -318,74 +327,66 @@ This keeps the hub independent of the web server and MQTT implementations.
 **Namespace:** `esphome::elero`
 
 Critical public API:
-- `register_cover(EleroBlindBase*)` — called by each `EleroCover` at setup
-- `send_command(t_elero_command*)` — encodes, encrypts, and transmits a command
+- `set_registry(DeviceRegistry*)` — connect the unified device registry
+- `send_command(EleroCommand*)` — encodes, encrypts, and transmits a command via TX state machine
 - `register_rssi_sensor(uint32_t addr, sensor::Sensor*)` — link RSSI sensor to a blind address
 - `register_text_sensor(uint32_t addr, text_sensor::TextSensor*)` — link text sensor to a blind address
 - `interrupt(Elero *arg)` — static ISR, sets `received_` flag
 
-Key constants (defined in `elero.h`):
+TX state machine (`TxState`): `IDLE → GOTO_IDLE → FLUSH_TX → LOAD_FIFO → TRIGGER_TX → WAIT_TX_DONE → VERIFY_DONE → RETURN_RX`
 
-| Constant | Value | Purpose |
-|---|---|---|
-| `ELERO_MAX_PACKET_SIZE` | 57 | Maximum RF packet length (FCC spec) |
-| `ELERO_POLL_INTERVAL_MOVING` | 2000 ms | Status poll while blind is moving |
-| `ELERO_TIMEOUT_MOVEMENT` | 120 000 ms | Give up movement tracking after 2 min |
-| `ELERO_SEND_RETRIES` | 3 | Command retry count |
-| `ELERO_SEND_PACKETS` | 2 | Packets sent per command |
-| `ELERO_DELAY_SEND_PACKETS` | 50 ms | Delay between packet repeats |
-| `ELERO_MAX_COMMAND_QUEUE` | 10 | Max commands per blind to prevent OOM |
+Key protocol constants are now in `elero_protocol.h`.
 
-State constants (`ELERO_STATE_*`): `UNKNOWN`, `TOP`, `BOTTOM`, `INTERMEDIATE`, `TILT`, `BLOCKING`, `OVERHEATED`, `TIMEOUT`, `START_MOVING_UP`, `START_MOVING_DOWN`, `MOVING_UP`, `MOVING_DOWN`, `STOPPED`, `TOP_TILT`, `BOTTOM_TILT`
+### `components/elero/device.h`
 
-### `components/elero/cover/EleroCover.h` / `EleroCover.cpp`
+**Struct:** `Device` — unified representation for all device types
 
-**Class:** `EleroCover : public cover::Cover, public Component, public EleroBlindBase`
+Contains:
+- `NvsDeviceConfig cfg` — 64-byte POD struct with RF parameters, timing, metadata
+- `RfMeta rf_meta` — last_seen_ms, last_rssi, last_state_raw
+- `DeviceLogic logic` — `variant<CoverDevice, LightDevice, RemoteDevice>`
+- `CommandSender sender` — non-blocking TX queue (lives on Device directly because TxClient is non-movable)
 
-Key behaviors:
-- Maintains an internal `std::queue<uint8_t> commands_to_send_` for reliable delivery
-- Polls blind status at a configurable interval (`poll_intvl_`, default 5 min); while moving, polls every `ELERO_POLL_INTERVAL_MOVING` (2 s)
-- Tracks cover `position` (0.0–1.0) by dead-reckoning against `open_duration_` / `close_duration_` timestamps
-- Supports tilt as a separate operation via `command_tilt_`
-- Staggered poll offsets (`poll_offset_`) prevent all covers from polling simultaneously
-- Auto-generates RSSI and status text sensors unless `auto_sensors: false` is set
+`CoverDevice` holds `cover_sm::State` (variant FSM). `LightDevice` holds `light_sm::State`. `RemoteDevice` is a passive tracker.
 
-### `components/elero/light/EleroLight.h` / `EleroLight.cpp`
+### `components/elero/device_registry.h` / `device_registry.cpp`
 
-**Class:** `EleroLight : public light::LightOutput, public Component, public EleroBlindBase`
+**Class:** `DeviceRegistry`
 
-Key behaviors:
-- Implements on/off and brightness control for Elero wireless lights (dimmers)
-- `dim_duration` parameter controls brightness range: `0s` = on/off only, `>0` = brightness control
-- Shares the same RF protocol and command structure as covers
-- Supports optional status checking via `command_check`
+Single source of truth replacing the old `IDeviceManager` hierarchy:
+- Unified 48-slot pool (`MAX_DEVICES = 48`) for all device types
+- `upsert()` / `remove()` — CRUD with NVS persistence
+- `on_rf_packet()` — dispatches RF packets to matching devices, updates state machines, notifies adapters
+- `restore_all()` — restores devices from NVS on boot
+- `add_adapter()` — registers `OutputAdapter` observers
+- `loop()` — processes command queues, timers, adapter loops
+- NVS preference hash: `fnv1_hash("elero_device") + slot_index`
 
-### `components/elero/dynamic_entity_base.h` / `dynamic_entity_base.cpp`
+### `components/elero/cover_sm.h` / `light_sm.h`
 
-**Class:** `DynamicEntityBase` (MQTT mode only)
+**Cover FSM states:** `cover_sm::Idle`, `cover_sm::Opening`, `cover_sm::Closing`, `cover_sm::Stopping`
+**Light FSM states:** `light_sm::Off`, `light_sm::On`, `light_sm::DimmingUp`, `light_sm::DimmingDown`
 
-Shared base for `EleroDynamicCover` and `EleroDynamicLight`. Provides:
-- NVS persistence: `restore()`, `save_config()`, `clear_config()`
-- Activation lifecycle: `activate()`, `deactivate()`, `update_config()`
-- Hub registration: `register_with_hub()`, `unregister_from_hub()` (via virtual hooks)
-- `CommandSender` configuration from `NvsDeviceConfig`
-- Common RX metadata tracking (`last_seen_ms_`, `last_rssi_`, `last_state_raw_`)
+Pure C++ state machines with no ESPHome dependencies. Position/brightness always derived from `(state, now, config)`.
 
-Derived classes implement: `entity_tag_()`, `entity_type_str_()`, `is_matching_type_()`, `do_register_()`, `do_unregister_()`, `reset_entity_state_()`.
+### `components/elero/cover/esp_cover_shell.h` / `light/esp_light_shell.h`
 
-### `components/elero_mqtt/mqtt_device_manager.h` / `mqtt_device_manager.cpp`
+**Class:** `EspCoverShell : public cover::Cover, public Component`
+**Class:** `EspLightShell : public light::LightOutput, public Component`
 
-**Class:** `MqttDeviceManager : public IDeviceManager, public Component`
+Thin ESPHome adapters that bridge a `Device*` to ESPHome's entity APIs. Used in Native and Native+NVS modes. No business logic — delegates everything to the `Device` and its state machine.
 
-Key behaviors:
-- Implements `IDeviceManager` for MQTT mode
-- Manages pre-allocated slot pools for covers, lights, and remotes
-- On `setup()`: restores slots from NVS, sets state callbacks, activates
-- On `loop()`: detects MQTT (re)connection, publishes discoveries, loops active entities
-- CRUD operations: `upsert_device()` creates or updates devices (address+type is the key)
-- Auto-discovers remotes from RF command packets (`track_remote_()`)
-- Publishes MQTT HA discovery configs and state topics
-- `notify_crud_()` broadcasts events to WS clients via `CrudEventCallback`
+### `components/elero_mqtt/mqtt_adapter.h` / `mqtt_adapter.cpp`
+
+**Class:** `MqttAdapter : public OutputAdapter`
+
+Replaces the old `MqttDeviceManager`. Key behaviors:
+- Implements `OutputAdapter` interface — observes `DeviceRegistry` for device events
+- On `on_device_added()`: publishes MQTT HA discovery config topics
+- On `on_state_changed()`: publishes state updates to MQTT
+- On `on_device_removed()`: removes MQTT discovery topics
+- On MQTT (re)connection: republishes all active device discoveries
+- Receives commands from MQTT subscriptions and routes to `DeviceRegistry`
 
 ### `components/elero_web/elero_web_server.h` / `elero_web_server.cpp`
 
@@ -405,8 +406,8 @@ Key behaviors:
 - On log (via ESPHome logger callback): broadcasts `log` event to clients
 - On `cmd` message: routes command to hub's `send_command()`
 - On `raw` message: routes to hub's `send_raw_command()`
-- In MQTT mode: handles `upsert_device`/`remove_device` via `IDeviceManager`
-- Receives CRUD event broadcasts from `MqttDeviceManager` via `CrudEventCallback`
+- In NVS modes: handles `upsert_device`/`remove_device` via `DeviceRegistry`
+- Receives CRUD event broadcasts from `DeviceRegistry` via adapter callbacks
 
 ### Why Mongoose?
 
@@ -453,7 +454,7 @@ The web UI communicates exclusively via WebSocket at `/elero/ws`. See `docs/ARCH
 
 | Item | Convention | Example |
 |---|---|---|
-| C++ classes | PascalCase | `EleroCover`, `EleroWebServer` |
+| C++ classes | PascalCase | `DeviceRegistry`, `EspCoverShell`, `MqttAdapter` |
 | C++ namespaces | lowercase | `esphome::elero` |
 | C++ constants | `UPPER_SNAKE_CASE` with `ELERO_` prefix | `ELERO_COMMAND_COVER_UP` |
 | C++ private members | trailing underscore | `gdo0_pin_`, `scan_mode_` |
@@ -554,32 +555,26 @@ text_sensor:
 
 ### MQTT Mode (`elero_mqtt`)
 
-Enables runtime device management via NVS persistence and MQTT HA discovery. Requires `mqtt:` component.
+Enables runtime device management via NVS persistence and MQTT HA discovery. Requires `mqtt:` component. Registers a `MqttAdapter` on the unified `DeviceRegistry`.
 
 ```yaml
 elero_mqtt:
   topic_prefix: elero              # MQTT topic prefix (default: "elero")
   discovery_prefix: homeassistant  # HA discovery prefix (default: "homeassistant")
-  max_covers: 16                   # Pre-allocated cover slots (1–32, default: 16)
-  max_lights: 8                    # Pre-allocated light slots (1–32, default: 8)
-  max_remotes: 16                  # Pre-allocated remote slots (1–32, default: 16)
   device_name: "Elero Gateway"     # HA device name (default: "Elero Gateway")
 ```
 
-When `elero_mqtt` is present, no covers/lights should be defined in YAML — devices are added at runtime via the web UI or MQTT API and persisted in NVS.
+When `elero_mqtt` is present, no covers/lights should be defined in YAML — devices are added at runtime via the web UI or MQTT API and persisted in NVS (unified 48-slot pool in `DeviceRegistry`).
 
 ### Native+NVS Mode (`elero_nvs`)
 
-Enables runtime device management via NVS persistence with ESPHome native API (no MQTT broker required). Requires `api:` component.
+Enables runtime device management via NVS persistence with ESPHome native API (no MQTT broker required). Simply enables NVS on the `DeviceRegistry`.
 
 ```yaml
 elero_nvs:
-  max_covers: 16                   # Pre-allocated cover slots (1–32, default: 16)
-  max_lights: 8                    # Pre-allocated light slots (1–32, default: 8)
-  max_remotes: 16                  # Pre-allocated remote slots (1–32, default: 16)
 ```
 
-Devices are added via the web UI CRUD API and persisted in NVS. On boot, active devices are registered with ESPHome's native API. Post-boot CRUD writes to NVS but new entities only appear after a reboot.
+No configuration keys — just including the component enables NVS persistence. Devices are added via the web UI CRUD API and persisted in NVS. On boot, active devices are registered with ESPHome's native API via `EspCoverShell`/`EspLightShell`. Post-boot CRUD writes to NVS but new entities only appear after a reboot.
 
 ### Web UI (`elero_web`)
 
@@ -672,7 +667,7 @@ Pure C++ core logic is tested with GoogleTest on the host machine:
 cd tests/unit && cmake -B build && cmake --build build && ctest --test-dir build
 ```
 
-Tests cover `CoverCore` (position tracking, state mapping, polling) and `LightCore` (brightness, dimming, state mapping).
+Tests cover `cover_sm` (position tracking, state transitions, polling) and `light_sm` (brightness, dimming, state transitions).
 
 ### Compile tests
 
@@ -704,7 +699,7 @@ esphome compile tests/test.esp32-nvs.yaml        # Native+NVS mode
 ## Contributing
 
 - Follow the existing naming conventions for C++ and Python code.
-- Keep the `EleroBlindBase` interface minimal — the hub should not depend on cover internals.
+- Keep output adapters thin — business logic belongs in state machines and `DeviceRegistry`, not in adapters.
 - Test changes on real hardware before opening a pull request.
 - Document new configuration parameters in both `README.md` and `docs/CONFIGURATION.md`.
 - The primary development branch convention used by automation is `claude/<session-id>`.
