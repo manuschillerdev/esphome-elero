@@ -69,6 +69,7 @@ class EspCoverShell : public cover::Cover, public Component {
     traits.set_supports_position(cover_sm::has_position_tracking(ctx));
     traits.set_supports_tilt(cfg.supports_tilt != 0);
     traits.set_supports_stop(true);
+    traits.set_supports_toggle(true);
     traits.set_is_assumed_state(false);
     return traits;
   }
@@ -83,8 +84,9 @@ class EspCoverShell : public cover::Cover, public Component {
 
     if (call.get_stop()) {
       device_->sender.clear_queue();
-      device_->sender.enqueue(packet::command::STOP);
+      (void) device_->sender.enqueue(packet::command::STOP);
       cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
+      cover.target_position = -1.0f;
       sync_and_publish_();
       return;
     }
@@ -94,22 +96,45 @@ class EspCoverShell : public cover::Cover, public Component {
       uint8_t cmd;
       if (target >= 1.0f) {
         cmd = packet::command::UP;
+        cover.target_position = -1.0f;  // Blind handles endpoint
       } else if (target <= 0.0f) {
         cmd = packet::command::DOWN;
+        cover.target_position = -1.0f;  // Blind handles endpoint
       } else {
         float current = cover_sm::position(cover.state, now, ctx);
         cmd = (target > current) ? packet::command::UP : packet::command::DOWN;
+        cover.target_position = target;
       }
-      device_->sender.enqueue(cmd);
+      (void) device_->sender.enqueue(cmd);
       cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
+      if (cmd == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
+      if (cmd == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
       cover.poll.on_command_sent(now);
       sync_and_publish_();
       return;
     }
 
     if (call.get_tilt().has_value()) {
-      device_->sender.enqueue(packet::command::TILT);
+      (void) device_->sender.enqueue(packet::command::TILT);
       cover.state = cover_sm::on_command(cover.state, packet::command::TILT, now, ctx);
+      cover.poll.on_command_sent(now);
+      sync_and_publish_();
+      return;
+    }
+
+    if (call.get_toggle().has_value()) {
+      // Toggle: if moving → stop; if closed or was closing → open; else close
+      uint8_t cmd;
+      if (cover_sm::is_moving(cover.state)) {
+        device_->sender.clear_queue();
+        cmd = packet::command::STOP;
+      } else {
+        float pos = cover_sm::position(cover.state, now, ctx);
+        bool was_closing = (cover.last_direction == cover_sm::Operation::CLOSING);
+        cmd = (pos <= 0.0f || was_closing) ? packet::command::UP : packet::command::DOWN;
+      }
+      (void) device_->sender.enqueue(cmd);
+      cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
       cover.poll.on_command_sent(now);
       sync_and_publish_();
     }

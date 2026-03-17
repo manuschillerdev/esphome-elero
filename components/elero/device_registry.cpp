@@ -48,6 +48,8 @@ void DeviceRegistry::restore_all() {
         }
     }
 
+    assign_poll_stagger_();
+
     ESP_LOGI(TAG, "Restored %zu devices from NVS (%zu covers, %zu lights, %zu remotes)",
              restored,
              count_active(DeviceType::COVER),
@@ -86,6 +88,7 @@ Device *DeviceRegistry::register_device(const NvsDeviceConfig &config) {
     }
 
     init_device(*slot, config);
+    if (config.type == DeviceType::COVER) assign_poll_stagger_();
     notify_added_(*slot);
     ESP_LOGI(TAG, "Registered %s '%s' at 0x%06x (slot %zu)",
              device_type_str(config.type), config.name,
@@ -114,6 +117,7 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
     }
 
     init_device(*slot, config);
+    if (config.type == DeviceType::COVER) assign_poll_stagger_();
     persist(*slot);
     notify_added_(*slot);
     ESP_LOGI(TAG, "Added %s '%s' at 0x%06x (slot %zu)",
@@ -222,6 +226,8 @@ void DeviceRegistry::dispatch_remote_command_(Device &dev, uint8_t cmd_byte,
             auto old_idx = cover.state.index();
             cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
             cover.poll.request_immediate_poll();
+            if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
+            if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
             changed = (cover.state.index() != old_idx);
         },
         [&](LightDevice &) {
@@ -310,16 +316,39 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
     // 2. Poll if due
     bool moving = cover_sm::is_moving(cover.state);
     if (cover.poll.should_poll(now, moving)) {
-        dev.sender.enqueue(packet::command::CHECK);
+        // Single packet for movement polls (blind responds to each packet,
+        // if missed we retry in 2s). Full 2 packets for idle polls (less frequent).
+        uint8_t packets = moving ? 1 : packet::limits::SEND_PACKETS;
+        (void) dev.sender.enqueue(packet::command::CHECK, packets);
         cover.poll.on_poll_sent(now);
     }
 
-    // 3. Process command queue
+    // 3. Intermediate position stop — if cover has position tracking and
+    //    has reached its target position, stop it.
+    if (moving && cover_sm::has_position_tracking(ctx) && cover.target_position >= 0.0f) {
+        float pos = cover_sm::position(cover.state, now, ctx);
+        bool at_target = false;
+        if (std::holds_alternative<cover_sm::Opening>(cover.state)) {
+            at_target = pos >= cover.target_position;
+        } else if (std::holds_alternative<cover_sm::Closing>(cover.state)) {
+            at_target = pos <= cover.target_position;
+        }
+        // Don't send stop for fully open/closed — the blind handles those endpoints
+        if (at_target && cover.target_position > 0.0f && cover.target_position < 1.0f) {
+            dev.sender.clear_queue();
+            (void) dev.sender.enqueue(packet::command::STOP);
+            cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
+            state_type_changed = true;
+            cover.target_position = -1.0f;  // Clear target
+        }
+    }
+
+    // 4. Process command queue
     if (hub_) {
         dev.sender.process_queue(now, hub_, "elero.cover");
     }
 
-    // 4. Notify state changes
+    // 5. Notify state changes
     if (state_type_changed) {
         notify_state_changed_(dev);
         dev.last_notify_ms = now;
@@ -342,7 +371,7 @@ void DeviceRegistry::loop_light_(Device &dev, LightDevice &light, uint32_t now) 
     // 2. Send STOP when dimming completes (freeze brightness on the receiver)
     if (state_type_changed && !light_sm::is_dimming(light.state) &&
         light_sm::is_on(light.state)) {
-        dev.sender.enqueue(packet::command::STOP);
+        (void) dev.sender.enqueue(packet::command::STOP);
     }
 
     // 3. Process command queue
@@ -428,6 +457,16 @@ void DeviceRegistry::notify_config_changed_(const Device &dev) {
 
 void DeviceRegistry::notify_rf_packet_(const RfPacketInfo &pkt) {
     for (auto *a : adapters_) a->on_rf_packet(pkt);
+}
+
+void DeviceRegistry::assign_poll_stagger_() {
+    uint32_t cover_idx = 0;
+    for (auto &dev : slots_) {
+        if (!dev.active || !dev.is_cover()) continue;
+        auto &cover = std::get<CoverDevice>(dev.logic);
+        cover.poll.offset_ms = cover_idx * packet::timing::POLL_OFFSET_SPACING;
+        ++cover_idx;
+    }
 }
 
 }  // namespace esphome::elero

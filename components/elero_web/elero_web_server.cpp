@@ -276,7 +276,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
           dev->sender.clear_queue();
         }
         cover.state = cover_sm::on_command(cover.state, cmd_byte, now_ms, ctx);
-        dev->sender.enqueue(cmd_byte);
+        (void) dev->sender.enqueue(cmd_byte);
         cover.poll.on_command_sent(now_ms);
       } else if (dev->is_light()) {
         auto &light_dev = std::get<LightDevice>(dev->logic);
@@ -287,7 +287,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
         } else if (strcmp(action_str, action::ON) == 0) {
           light_dev.state = light_sm::on_turn_on(light_dev.state, now_ms, ctx);
         }
-        dev->sender.enqueue(cmd_byte);
+        (void) dev->sender.enqueue(cmd_byte);
       }
       return true;
     }
@@ -311,7 +311,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       if (registry != nullptr) {
         Device *dev = registry->find(dst_addr);
         if (dev != nullptr) {
-          dev->sender.enqueue(raw_command);
+          (void) dev->sender.enqueue(raw_command);
           ESP_LOGI(TAG, "Entity TX to 0x%06x cmd=0x%02x", dst_addr, raw_command);
           return true;
         }

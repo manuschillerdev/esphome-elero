@@ -242,15 +242,16 @@ stateDiagram-v2
 Duplicate consecutive commands are collapsed to prevent queue saturation from button mashing:
 
 ```cpp
-bool enqueue(uint8_t cmd_byte) {
+// packets defaults to SEND_PACKETS (2). Movement polls use 1 for less TX load.
+bool enqueue(uint8_t cmd_byte, uint8_t packets = SEND_PACKETS) {
   // Collapse duplicate consecutive commands
-  if (!command_queue_.empty() && command_queue_.back() == cmd_byte) {
+  if (!command_queue_.empty() && command_queue_.back().cmd == cmd_byte) {
     return true;  // Already queued, skip duplicate
   }
   if (command_queue_.size() >= MAX_COMMAND_QUEUE) {
     return false;
   }
-  command_queue_.push(cmd_byte);
+  command_queue_.push({cmd_byte, packets});
   // ...
 }
 ```

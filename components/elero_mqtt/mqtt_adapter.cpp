@@ -303,7 +303,7 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
             if (cmd_byte == packet::command::STOP) {
                 d->sender.clear_queue();
             }
-            d->sender.enqueue(cmd_byte);
+            (void) d->sender.enqueue(cmd_byte);
             cover.poll.on_command_sent(now);
         });
 
@@ -321,7 +321,7 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
             uint32_t now = millis();
             cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
 
-            d->sender.enqueue(cmd_byte);
+            (void) d->sender.enqueue(cmd_byte);
             cover.poll.on_command_sent(now);
         });
 
@@ -420,7 +420,7 @@ void MqttAdapter::subscribe_light_commands_(const Device &dev) {
                     const char *state = root["state"];
                     if (strcmp(state, ha_state::OFF) == 0) {
                         light.state = light_sm::on_turn_off(light.state);
-                        d->sender.enqueue(packet::command::DOWN);
+                        (void) d->sender.enqueue(packet::command::DOWN);
                         return true;
                     }
                 }
@@ -430,16 +430,16 @@ void MqttAdapter::subscribe_light_commands_(const Device &dev) {
                     light.state = light_sm::on_set_brightness(light.state, brightness, now, ctx);
                     // Determine direction from resulting state variant
                     if (std::holds_alternative<light_sm::DimmingUp>(light.state)) {
-                        d->sender.enqueue(packet::command::UP);
+                        (void) d->sender.enqueue(packet::command::UP);
                     } else if (std::holds_alternative<light_sm::DimmingDown>(light.state)) {
-                        d->sender.enqueue(packet::command::DOWN);
+                        (void) d->sender.enqueue(packet::command::DOWN);
                     } else if (light_sm::is_on(light.state)) {
-                        d->sender.enqueue(packet::command::UP);
+                        (void) d->sender.enqueue(packet::command::UP);
                     }
                 } else if (root["state"].is<const char *>()) {
                     // ON without brightness = full on
                     light.state = light_sm::on_turn_on(light.state, now, ctx);
-                    d->sender.enqueue(packet::command::UP);
+                    (void) d->sender.enqueue(packet::command::UP);
                 }
                 return true;
             });
@@ -453,7 +453,7 @@ void MqttAdapter::subscribe_light_commands_(const Device &dev) {
                     } else if (strcmp(payload, action::ON) == 0) {
                         light.state = light_sm::on_turn_on(light.state, now, ctx);
                     }
-                    d->sender.enqueue(cmd_byte);
+                    (void) d->sender.enqueue(cmd_byte);
                 } else {
                     ESP_LOGW(TAG, "Unknown light action: %s", payload);
                 }

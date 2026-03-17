@@ -158,6 +158,9 @@ class DeviceRegistry {
 
     /// Track a remote control from an observed RF command packet.
     void track_remote_(const RfPacketInfo &pkt, uint32_t now);
+
+    /// Assign staggered poll offsets to all active covers.
+    void assign_poll_stagger_();
 };
 
 }  // namespace esphome::elero

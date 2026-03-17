@@ -40,6 +40,8 @@ struct RfMeta {
 struct CoverDevice {
     cover_sm::State state{cover_sm::Idle{0.0f}};
     PollTimer       poll;
+    float           target_position{-1.0f};       ///< -1 = no target, 0..1 = intermediate target
+    cover_sm::Operation last_direction{cover_sm::Operation::OPENING};  ///< For toggle logic
 };
 
 struct LightDevice {

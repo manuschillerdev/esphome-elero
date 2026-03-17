@@ -64,17 +64,6 @@ struct TxContext {
   }
 };
 
-struct EleroCommand {
-  uint8_t counter;
-  uint32_t dst_addr;   ///< Destination address (blind/light we control)
-  uint32_t src_addr;   ///< Source address (our emulated remote)
-  uint8_t channel;
-  uint8_t type;        ///< Message type (0x6a=command, 0xca=status, etc.)
-  uint8_t type2;       ///< Secondary type byte
-  uint8_t hop;
-  uint8_t payload[10];
-};
-
 /// Decoded RF packet info for WebSocket broadcast
 struct RfPacketInfo {
   uint32_t timestamp_ms;
