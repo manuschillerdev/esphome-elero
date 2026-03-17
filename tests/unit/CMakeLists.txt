@@ -100,6 +100,13 @@ add_executable(test_poll_timer
 )
 target_link_libraries(test_poll_timer GTest::gtest_main)
 
+# Matter constants (conversion functions, no esp-matter deps)
+add_executable(test_matter_constants
+  test_matter_constants.cpp
+  ${ELERO_PACKET_SRC}
+)
+target_link_libraries(test_matter_constants GTest::gtest_main)
+
 # Discover all tests
 include(GoogleTest)
 gtest_discover_tests(test_protocol)
@@ -112,12 +119,13 @@ gtest_discover_tests(test_string_functions)
 gtest_discover_tests(test_cover_sm)
 gtest_discover_tests(test_light_sm)
 gtest_discover_tests(test_poll_timer)
+gtest_discover_tests(test_matter_constants)
 
 # All test targets
 set(ALL_TEST_TARGETS
   test_protocol test_packet_vectors test_command_sender test_golden_vectors
   test_encryption_vectors test_parse_roundtrip test_string_functions
-  test_cover_sm test_light_sm test_poll_timer
+  test_cover_sm test_light_sm test_poll_timer test_matter_constants
 )
 
 # Combined target for running all tests

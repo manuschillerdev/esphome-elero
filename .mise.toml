@@ -9,9 +9,15 @@ cmake = "latest"
 usb_port = "/dev/cu.usbmodem2101"
 device_ip = "10.0.0.4"
 
+[env]
+# Matter builds run inside Docker (espressif/esp-matter image) via:
+#   mise run compile:matter
+# No local SDK installation needed.
+
 [tasks.setup]
 description = "Install all project dependencies"
 run = """
+uv venv --python python3 --allow-existing
 uv sync
 cd components/elero_web/frontend/app && pnpm install
 """
@@ -32,6 +38,16 @@ for cfg in tests/test.esp32-s3-ard.yaml \
   echo "==> Compiling $cfg"
   uv run esphome compile "$cfg"
 done
+"""
+
+[tasks."compile:matter"]
+description = "Compile Matter test config via Docker (espressif/esp-matter image)"
+run = """
+docker build -t elero-matter-builder -f matter/Dockerfile .
+docker run --rm \
+  -v "$(pwd)":/project \
+  -e ESP_MATTER_PATH=/opt/espressif/esp-matter \
+  elero-matter-builder
 """
 
 [tasks.test]
@@ -67,6 +83,21 @@ description = "Start frontend dev server"
 dir = "components/elero_web/frontend/app"
 run = "pnpm dev"
 
+[tasks."frontend:lint"]
+description = "Lint frontend with oxlint"
+dir = "components/elero_web/frontend/app"
+run = "pnpm lint"
+
+[tasks."frontend:lint:fix"]
+description = "Lint and auto-fix frontend with oxlint"
+dir = "components/elero_web/frontend/app"
+run = "pnpm lint:fix"
+
+[tasks."frontend:typecheck"]
+description = "Type-check frontend with tsgo"
+dir = "components/elero_web/frontend/app"
+run = "pnpm typecheck"
+
 [tasks."frontend:build"]
 description = "Build frontend for embedding"
 dir = "components/elero_web/frontend/app"
@@ -80,7 +111,7 @@ depends = ["setup", "frontend:build", "compile"]
 
 [tasks.all]
 description = "Full build + lint + unit tests"
-depends = ["setup", "frontend:build", "lint", "test", "compile"]
+depends = ["setup", "frontend:lint", "frontend:typecheck", "frontend:build", "lint", "test", "compile"]
 
 [tasks.deploy]
 description = "Full build from scratch, then flash via USB"

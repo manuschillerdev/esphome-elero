@@ -444,8 +444,14 @@ std::string EleroWebServer::build_config_json() {
       }
     }
 
-    root["mode"] = has_nvs ? "mqtt" : "native";
+    root["mode"] = hub_mode_str(registry->hub_mode());
     root["crud"] = has_nvs;
+
+    // Matter commissioning info (only present in Matter mode)
+    if (!registry->commissioning_qr().empty()) {
+      root["qr_code"] = registry->commissioning_qr();
+      root["manual_code"] = registry->commissioning_manual();
+    }
   });
 }
 

@@ -328,6 +328,14 @@ components:
         crud:
           type: boolean
           description: Whether CRUD operations (upsert_device, remove_device) are supported
+        qr_code:
+          type: string
+          description: Matter commissioning QR code payload (MT:... string). Only present in Matter mode.
+          examples: ["MT:Y3.13OTB00KA0648G00"]
+        manual_code:
+          type: string
+          description: Matter 11-digit manual pairing code. Only present in Matter mode.
+          examples: ["34970112332"]
 
     FreqConfig:
       type: object
@@ -805,7 +813,7 @@ components:
 
     HubMode:
       type: string
-      enum: [native, mqtt, native_nvs]
+      enum: [native, mqtt, native_nvs, matter]
       description: Operating mode of the hub
 
     DeviceAction:

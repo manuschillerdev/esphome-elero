@@ -40,5 +40,6 @@ async def to_code(config):
     registry = await cg.get_variable(config[CONF_REGISTRY_ID])
     cg.add(registry.add_adapter(var))
 
-    # Enable NVS persistence on the registry (MQTT mode manages devices at runtime)
+    # Enable NVS persistence and set hub mode
     cg.add(registry.set_nvs_enabled(True))
+    cg.add(registry.set_hub_mode(elero_ns.class_("HubMode").enum("MQTT")))

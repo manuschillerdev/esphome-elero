@@ -139,6 +139,8 @@ export const hub = signal<{
   freq: FreqConfig
   mode: HubMode
   crud: boolean
+  qr_code?: string
+  manual_code?: string
 }>({
   device: '',
   version: '',
@@ -299,6 +301,8 @@ export function setDevices(data: ConfigData) {
       freq: data.freq,
       mode: data.mode ?? 'native',
       crud: data.crud ?? false,
+      qr_code: data.qr_code,
+      manual_code: data.manual_code,
     }
   })
 }

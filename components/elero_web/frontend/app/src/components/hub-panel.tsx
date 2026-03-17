@@ -1,4 +1,6 @@
 import { useSignal, useComputed } from '@preact/signals'
+import { useRef, useEffect } from 'preact/hooks'
+import { generate } from 'lean-qr/nano'
 import { Card } from './ui/card'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
@@ -552,12 +554,66 @@ function RawTxCard() {
   )
 }
 
+// ─── Matter Commissioning Card ──────────────────────────────────────────────
+
+function MatterCommissioningCard() {
+  const { qr_code, manual_code } = hub.value
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    if (canvasRef.current && qr_code) {
+      const code = generate(qr_code)
+      code.toCanvas(canvasRef.current, { on: [0, 0, 0, 255], off: [255, 255, 255, 255], padX: 2, padY: 2 })
+    }
+  }, [qr_code])
+
+  if (!qr_code) return null
+
+  return (
+    <Card className="gap-0 overflow-hidden p-0">
+      <div className="flex items-center justify-between border-b border-border px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold text-card-foreground">Matter Commissioning</h2>
+          <p className="text-xs text-muted-foreground">Scan to add this device to Apple Home, Google Home, or other Matter controllers</p>
+        </div>
+      </div>
+      <div className="flex flex-col items-center gap-4 p-5 sm:flex-row sm:items-start">
+        <div className="rounded-lg border border-border bg-white p-2">
+          <canvas ref={canvasRef} />
+        </div>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Manual Pairing Code
+            </span>
+            <code className="select-all rounded bg-muted px-2 py-1 font-mono text-base tracking-widest">
+              {manual_code}
+            </code>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              QR Payload
+            </span>
+            <code className="select-all break-all rounded bg-muted px-2 py-1 font-mono text-xs">
+              {qr_code}
+            </code>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Open your Home app → Add Accessory → scan the QR code or enter the manual code.
+          </p>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 // ─── Hub Panel (main export) ────────────────────────────────────────────────
 
 export function HubPanel() {
   return (
     <div className="flex flex-col gap-6">
       <HubInfoCard />
+      <MatterCommissioningCard />
       <FrequencyCard />
       <RawTxCard />
       <RfPackets />

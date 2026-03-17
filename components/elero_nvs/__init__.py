@@ -16,8 +16,9 @@ CONFIG_SCHEMA = cv.Schema(
 
 
 async def to_code(config):
-    # Enable NVS persistence on the unified device registry.
+    # Enable NVS persistence and set hub mode.
     # Devices are managed at runtime via the web UI CRUD API and persisted in NVS.
     # On boot, active devices are restored from NVS into the registry.
     registry = await cg.get_variable(config[CONF_REGISTRY_ID])
     cg.add(registry.set_nvs_enabled(True))
+    cg.add(registry.set_hub_mode(elero_ns.class_("HubMode").enum("NATIVE_NVS")))

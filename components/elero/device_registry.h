@@ -29,9 +29,21 @@ class DeviceRegistry {
     // LIFECYCLE
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// Enable NVS persistence (MQTT/NVS modes). Must be called before setup.
+    /// Enable NVS persistence (MQTT/NVS/Matter modes). Must be called before setup.
     void set_nvs_enabled(bool en) { nvs_enabled_ = en; }
     [[nodiscard]] bool is_nvs_enabled() const { return nvs_enabled_; }
+
+    /// Set the operating mode (called by component codegen).
+    void set_hub_mode(HubMode mode) { hub_mode_ = mode; }
+    [[nodiscard]] HubMode hub_mode() const { return hub_mode_; }
+
+    /// Matter commissioning info (set by MatterAdapter, read by web server).
+    void set_commissioning_info(const std::string &qr, const std::string &manual) {
+        commissioning_qr_ = qr;
+        commissioning_manual_ = manual;
+    }
+    [[nodiscard]] const std::string &commissioning_qr() const { return commissioning_qr_; }
+    [[nodiscard]] const std::string &commissioning_manual() const { return commissioning_manual_; }
 
     /// Initialize NVS preference handles.
     void init_preferences();
@@ -72,6 +84,23 @@ class DeviceRegistry {
 
     /// Find any device by address (first match, any type).
     [[nodiscard]] Device *find(uint32_t address);
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // USER COMMAND DISPATCH
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /// Send a cover command: transitions cover_sm, clears queue on STOP,
+    /// enqueues TX, marks poll sent. Called by adapters (MQTT, Matter, web).
+    void send_cover_command(Device &dev, uint8_t cmd_byte);
+
+    /// Turn on a light (full brightness or last brightness).
+    void send_light_on(Device &dev);
+
+    /// Turn off a light.
+    void send_light_off(Device &dev);
+
+    /// Set light brightness (0.0–1.0). Determines dim direction and enqueues TX.
+    void send_light_brightness(Device &dev, float target);
 
     // ═════════════════════════════════════════════════════════════════════════
     // RF DISPATCH
@@ -130,6 +159,9 @@ class DeviceRegistry {
     std::vector<OutputAdapter *> adapters_;
     Elero *hub_{nullptr};
     bool nvs_enabled_{false};
+    HubMode hub_mode_{HubMode::NATIVE};
+    std::string commissioning_qr_;
+    std::string commissioning_manual_;
 
     // NVS preference handles (one per slot)
     ESPPreferenceObject prefs_[MAX_DEVICES]{};

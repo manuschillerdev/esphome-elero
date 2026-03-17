@@ -164,6 +164,52 @@ Device *DeviceRegistry::find(uint32_t address) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// USER COMMAND DISPATCH
+// ═════════════════════════════════════════════════════════════════════════════
+
+void DeviceRegistry::send_cover_command(Device &dev, uint8_t cmd_byte) {
+    auto &cover = std::get<CoverDevice>(dev.logic);
+    auto ctx = cover_context(dev.config);
+    uint32_t now = millis();
+    cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
+
+    if (cmd_byte == packet::command::STOP) {
+        dev.sender.clear_queue();
+    }
+    (void) dev.sender.enqueue(cmd_byte);
+    cover.poll.on_command_sent(now);
+}
+
+void DeviceRegistry::send_light_on(Device &dev) {
+    auto &light = std::get<LightDevice>(dev.logic);
+    auto ctx = light_context(dev.config);
+    uint32_t now = millis();
+    light.state = light_sm::on_turn_on(light.state, now, ctx);
+    (void) dev.sender.enqueue(packet::command::UP);
+}
+
+void DeviceRegistry::send_light_off(Device &dev) {
+    auto &light = std::get<LightDevice>(dev.logic);
+    light.state = light_sm::on_turn_off(light.state);
+    (void) dev.sender.enqueue(packet::command::DOWN);
+}
+
+void DeviceRegistry::send_light_brightness(Device &dev, float target) {
+    auto &light = std::get<LightDevice>(dev.logic);
+    auto ctx = light_context(dev.config);
+    uint32_t now = millis();
+    light.state = light_sm::on_set_brightness(light.state, target, now, ctx);
+
+    if (std::holds_alternative<light_sm::DimmingUp>(light.state)) {
+        (void) dev.sender.enqueue(packet::command::UP);
+    } else if (std::holds_alternative<light_sm::DimmingDown>(light.state)) {
+        (void) dev.sender.enqueue(packet::command::DOWN);
+    } else if (light_sm::is_on(light.state)) {
+        (void) dev.sender.enqueue(packet::command::UP);
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // RF DISPATCH
 // ═════════════════════════════════════════════════════════════════════════════
 

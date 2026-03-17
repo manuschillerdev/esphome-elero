@@ -17,6 +17,7 @@ enum class HubMode : uint8_t {
     NATIVE = 0,
     MQTT = 1,
     NATIVE_NVS = 2,
+    MATTER = 3,
 };
 
 /// String representation of DeviceType (for JSON, logs, web API).
@@ -35,6 +36,7 @@ inline const char *hub_mode_str(HubMode m) {
         case HubMode::NATIVE: return "native";
         case HubMode::MQTT: return "mqtt";
         case HubMode::NATIVE_NVS: return "native_nvs";
+        case HubMode::MATTER: return "matter";
     }
     return "native";  // Unreachable — satisfies -Wreturn-type without default
 }

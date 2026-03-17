@@ -293,18 +293,7 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
                 return;
             }
 
-            // Transition state machine
-            auto &cover = std::get<CoverDevice>(d->logic);
-            auto ctx = cover_context(d->config);
-            uint32_t now = millis();
-            cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
-
-            // Enqueue TX command
-            if (cmd_byte == packet::command::STOP) {
-                d->sender.clear_queue();
-            }
-            (void) d->sender.enqueue(cmd_byte);
-            cover.poll.on_command_sent(now);
+            registry_->send_cover_command(*d, cmd_byte);
         });
 
     // Tilt topic
@@ -316,13 +305,7 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
             uint8_t cmd_byte = elero_action_to_command(action::TILT);
             if (cmd_byte == packet::command::INVALID) return;
 
-            auto &cover = std::get<CoverDevice>(d->logic);
-            auto ctx = cover_context(d->config);
-            uint32_t now = millis();
-            cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
-
-            (void) d->sender.enqueue(cmd_byte);
-            cover.poll.on_command_sent(now);
+            registry_->send_cover_command(*d, cmd_byte);
         });
 
     ESP_LOGD(TAG, "Subscribed to cover commands for 0x%06x", addr);
@@ -410,52 +393,42 @@ void MqttAdapter::subscribe_light_commands_(const Device &dev) {
             Device *d = registry_->find(addr, DeviceType::LIGHT);
             if (d == nullptr) return;
 
-            auto &light = std::get<LightDevice>(d->logic);
-            auto ctx = light_context(d->config);
-            uint32_t now = millis();
-
             // Try JSON schema first (from HA with brightness support)
             bool handled = json::parse_json(payload, [&](JsonObject root) -> bool {
                 if (root["state"].is<const char *>()) {
                     const char *state = root["state"];
                     if (strcmp(state, ha_state::OFF) == 0) {
-                        light.state = light_sm::on_turn_off(light.state);
-                        (void) d->sender.enqueue(packet::command::DOWN);
+                        registry_->send_light_off(*d);
                         return true;
                     }
                 }
                 if (root["brightness"].is<int>()) {
                     // HA sends brightness on scale 0-100 (brightness_scale in discovery)
                     float brightness = static_cast<float>(root["brightness"].as<int>()) / PERCENT_SCALE;
-                    light.state = light_sm::on_set_brightness(light.state, brightness, now, ctx);
-                    // Determine direction from resulting state variant
-                    if (std::holds_alternative<light_sm::DimmingUp>(light.state)) {
-                        (void) d->sender.enqueue(packet::command::UP);
-                    } else if (std::holds_alternative<light_sm::DimmingDown>(light.state)) {
-                        (void) d->sender.enqueue(packet::command::DOWN);
-                    } else if (light_sm::is_on(light.state)) {
-                        (void) d->sender.enqueue(packet::command::UP);
-                    }
+                    registry_->send_light_brightness(*d, brightness);
                 } else if (root["state"].is<const char *>()) {
                     // ON without brightness = full on
-                    light.state = light_sm::on_turn_on(light.state, now, ctx);
-                    (void) d->sender.enqueue(packet::command::UP);
+                    registry_->send_light_on(*d);
                 }
                 return true;
             });
 
             // Fall back to simple string action
             if (!handled) {
-                uint8_t cmd_byte = elero_action_to_command(payload);
-                if (cmd_byte != packet::command::INVALID) {
-                    if (strcmp(payload, action::OFF) == 0) {
-                        light.state = light_sm::on_turn_off(light.state);
-                    } else if (strcmp(payload, action::ON) == 0) {
-                        light.state = light_sm::on_turn_on(light.state, now, ctx);
-                    }
-                    (void) d->sender.enqueue(cmd_byte);
+                if (strcmp(payload, action::OFF) == 0) {
+                    registry_->send_light_off(*d);
+                } else if (strcmp(payload, action::ON) == 0) {
+                    registry_->send_light_on(*d);
                 } else {
-                    ESP_LOGW(TAG, "Unknown light action: %s", payload);
+                    // Raw command byte for non-standard actions (dim_up, dim_down, etc.)
+                    // that don't map to on/off/brightness semantics. Bypass send_light_*()
+                    // because these are pass-through RF commands, not state transitions.
+                    uint8_t cmd_byte = elero_action_to_command(payload);
+                    if (cmd_byte != packet::command::INVALID) {
+                        (void) d->sender.enqueue(cmd_byte);
+                    } else {
+                        ESP_LOGW(TAG, "Unknown light action: %s", payload);
+                    }
                 }
             }
         });

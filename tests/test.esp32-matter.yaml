@@ -1,4 +1,4 @@
-# ESPHome compile test: ESP32 with Matter adapter stub
+# ESPHome compile test: ESP32 with Matter adapter
 substitutions:
   spi_clk: GPIO18
   spi_mosi: GPIO23
@@ -14,6 +14,7 @@ esp32:
   board: esp32dev
   framework:
     type: esp-idf
+    version: 5.4.1  # Must match espressif/esp-matter Docker image
 
 logger:
   level: DEBUG
@@ -37,8 +38,13 @@ elero:
   cs_pin: ${spi_cs}
   gdo0_pin: ${gdo0_pin}
 
-# Matter adapter stub
+# Matter adapter
 elero_matter:
+  vendor_id: 0xFFF1
+  product_id: 0x8000
+  device_name: "Elero Gateway"
+  discriminator: 3840
+  passcode: 20202021
 
 # Web UI
 elero_web:

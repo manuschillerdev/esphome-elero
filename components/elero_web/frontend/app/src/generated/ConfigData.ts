@@ -38,5 +38,15 @@ interface ConfigData {
    * Whether CRUD operations (upsert_device, remove_device) are supported
    */
   'crud': boolean;
+  /**
+   * Matter commissioning QR code payload (MT:... string). Only present in Matter mode.
+   * @example MT:Y3.13OTB00KA0648G00
+   */
+  'qr_code'?: string;
+  /**
+   * Matter 11-digit manual pairing code. Only present in Matter mode.
+   * @example 34970112332
+   */
+  'manual_code'?: string;
 }
 export { ConfigData };
