@@ -73,7 +73,7 @@ class EspLightShell : public light::LightOutput, public Component {
 
     auto &light = std::get<LightDevice>(device_->logic);
     auto ctx = light_context(device_->config);
-    uint32_t now = millis();
+    uint32_t now = esphome::millis();
 
     float brightness;
     state->current_values_as_brightness(&brightness);
@@ -108,7 +108,7 @@ class EspLightShell : public light::LightOutput, public Component {
 
     auto &light = std::get<LightDevice>(device_->logic);
     auto ctx = light_context(device_->config);
-    uint32_t now = millis();
+    uint32_t now = esphome::millis();
 
     bool on = light_sm::is_on(light.state);
     float bri = light_sm::brightness(light.state, now, ctx);

@@ -80,7 +80,7 @@ class EspCoverShell : public cover::Cover, public Component {
 
     auto &cover = std::get<CoverDevice>(device_->logic);
     auto ctx = cover_context(device_->config);
-    uint32_t now = millis();
+    uint32_t now = esphome::millis();
 
     if (call.get_stop()) {
       device_->sender.clear_queue();
@@ -145,7 +145,7 @@ class EspCoverShell : public cover::Cover, public Component {
     if (!device_ || !device_->is_cover()) return;
     auto &cover = std::get<CoverDevice>(device_->logic);
     auto ctx = cover_context(device_->config);
-    uint32_t now = millis();
+    uint32_t now = esphome::millis();
 
     this->position = cover_sm::position(cover.state, now, ctx);
     auto op = cover_sm::operation(cover.state);
