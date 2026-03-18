@@ -33,19 +33,41 @@ struct RfMeta {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// COMMAND SOURCE — tracks who issued the last command
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum class CommandSource : uint8_t {
+    UNKNOWN = 0,
+    HUB = 1,
+    REMOTE = 2,
+};
+
+inline constexpr const char *command_source_str(CommandSource src) {
+    switch (src) {
+        case CommandSource::UNKNOWN: return "unknown";
+        case CommandSource::HUB: return "hub";
+        case CommandSource::REMOTE: return "remote";
+    }
+    return "unknown";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // TYPE-SPECIFIC DEVICE LOGIC (variant arms — must be movable!)
 // CommandSender is NOT here because TxClient is non-movable.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 struct CoverDevice {
-    cover_sm::State state{cover_sm::Idle{0.0f}};
+    cover_sm::State state{cover_sm::Idle{cover_sm::POSITION_CLOSED}};
     PollTimer       poll;
-    float           target_position{-1.0f};       ///< -1 = no target, 0..1 = intermediate target
+    float           target_position{cover_sm::NO_TARGET};  ///< NO_TARGET = no target, 0..1 = intermediate target
     cover_sm::Operation last_direction{cover_sm::Operation::OPENING};  ///< For toggle logic
+    bool            tilted{false};
+    CommandSource   last_command_source{CommandSource::UNKNOWN};
 };
 
 struct LightDevice {
     light_sm::State state{light_sm::Off{}};
+    CommandSource   last_command_source{CommandSource::UNKNOWN};
 };
 
 struct RemoteDevice {

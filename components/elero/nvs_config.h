@@ -34,7 +34,7 @@ struct NvsDeviceConfig {
   DeviceType type{DeviceType::COVER};
   static constexpr uint8_t FLAG_ENABLED = 0x01;
   uint8_t flags{FLAG_ENABLED};  ///< bit 0 = enabled
-  uint8_t reserved{0};
+  uint8_t ha_device_class{0};  ///< HaCoverClass enum value (0 = shutter, backward compatible)
 
   // RF addressing (16 bytes)
   uint32_t dst_address{0};

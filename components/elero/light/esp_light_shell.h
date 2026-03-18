@@ -75,6 +75,7 @@ class EspLightShell : public light::LightOutput, public Component {
     auto &light = std::get<LightDevice>(device_->logic);
     auto ctx = light_context(device_->config);
     uint32_t now = millis();
+    light.last_command_source = CommandSource::HUB;
 
     float brightness;
     state->current_values_as_brightness(&brightness);

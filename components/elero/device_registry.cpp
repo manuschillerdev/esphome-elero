@@ -200,7 +200,23 @@ void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t 
             auto old_idx = cover.state.index();
             cover.state = cover_sm::on_rf_status(cover.state, state_byte, now, ctx);
             cover.poll.on_rf_received(now);
-            changed = (cover.state.index() != old_idx);
+
+            // Track tilt state from RF
+            bool was_tilted = cover.tilted;
+            if (state_byte == packet::state::TILT ||
+                state_byte == packet::state::TOP_TILT ||
+                state_byte == packet::state::BOTTOM_TILT) {
+                cover.tilted = true;
+            } else if (state_byte == packet::state::TOP ||
+                       state_byte == packet::state::BOTTOM ||
+                       state_byte == packet::state::MOVING_UP ||
+                       state_byte == packet::state::MOVING_DOWN ||
+                       state_byte == packet::state::START_MOVING_UP ||
+                       state_byte == packet::state::START_MOVING_DOWN) {
+                cover.tilted = false;
+            }
+
+            changed = (cover.state.index() != old_idx) || (cover.tilted != was_tilted);
         },
         [&](LightDevice &light) {
             auto ctx = light_context(dev.config);
@@ -226,6 +242,7 @@ void DeviceRegistry::dispatch_remote_command_(Device &dev, uint8_t cmd_byte,
             auto old_idx = cover.state.index();
             cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
             cover.poll.request_immediate_poll();
+            cover.last_command_source = CommandSource::REMOTE;
             if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
             if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
             changed = (cover.state.index() != old_idx);
@@ -325,7 +342,7 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
 
     // 3. Intermediate position stop — if cover has position tracking and
     //    has reached its target position, stop it.
-    if (moving && cover_sm::has_position_tracking(ctx) && cover.target_position >= 0.0f) {
+    if (moving && cover_sm::has_position_tracking(ctx) && cover.target_position >= cover_sm::POSITION_CLOSED) {
         float pos = cover_sm::position(cover.state, now, ctx);
         bool at_target = false;
         if (std::holds_alternative<cover_sm::Opening>(cover.state)) {
@@ -334,12 +351,12 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
             at_target = pos <= cover.target_position;
         }
         // Don't send stop for fully open/closed — the blind handles those endpoints
-        if (at_target && cover.target_position > 0.0f && cover.target_position < 1.0f) {
+        if (at_target && cover.target_position > cover_sm::POSITION_CLOSED && cover.target_position < cover_sm::POSITION_OPEN) {
             dev.sender.clear_queue();
             (void) dev.sender.enqueue(packet::command::STOP);
             cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
             state_type_changed = true;
-            cover.target_position = -1.0f;  // Clear target
+            cover.target_position = cover_sm::NO_TARGET;  // Clear target
         }
     }
 

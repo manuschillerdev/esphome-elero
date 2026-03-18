@@ -32,6 +32,11 @@ namespace text_sensor {
 class TextSensor;
 }
 #endif
+#ifdef USE_BINARY_SENSOR
+namespace binary_sensor {
+class BinarySensor;
+}
+#endif
 
 namespace elero {
 
@@ -162,6 +167,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #ifdef USE_TEXT_SENSOR
   void register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor);
 #endif
+#ifdef USE_BINARY_SENSOR
+  void register_problem_sensor(uint32_t address, binary_sensor::BinarySensor *sensor);
+#endif
 
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
@@ -213,6 +221,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #endif
 #ifdef USE_TEXT_SENSOR
   std::map<uint32_t, text_sensor::TextSensor *> address_to_text_sensor_;
+#endif
+#ifdef USE_BINARY_SENSOR
+  std::map<uint32_t, binary_sensor::BinarySensor *> address_to_problem_sensor_;
 #endif
 
   // TX echo detection: ring buffer of recently sent counter values

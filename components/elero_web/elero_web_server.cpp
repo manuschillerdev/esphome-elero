@@ -5,6 +5,7 @@
 #include "../elero/nvs_config.h"
 #include "../elero/cover_sm.h"
 #include "../elero/light_sm.h"
+#include "../elero/state_snapshot.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include "esphome/components/logger/logger.h"
@@ -272,6 +273,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
         auto &cover = std::get<CoverDevice>(dev->logic);
         auto ctx = cover_context(dev->config);
         uint32_t now_ms = millis();
+        cover.last_command_source = CommandSource::HUB;
         if (cmd_byte == packet::command::STOP) {
           dev->sender.clear_queue();
         }
@@ -282,6 +284,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
         auto &light_dev = std::get<LightDevice>(dev->logic);
         auto ctx = light_context(dev->config);
         uint32_t now_ms = millis();
+        light_dev.last_command_source = CommandSource::HUB;
         if (strcmp(action_str, action::OFF) == 0) {
           light_dev.state = light_sm::on_turn_off(light_dev.state);
         } else if (strcmp(action_str, action::ON) == 0) {
@@ -388,8 +391,7 @@ std::string EleroWebServer::build_config_json() {
       uint32_t now = millis();
 
       registry->for_each_active(DeviceType::COVER, [&](const Device &dev) {
-        auto &cover = std::get<CoverDevice>(dev.logic);
-        auto ctx = cover_context(dev.config);
+        auto snap = compute_cover_snapshot(dev, now);
         JsonObject obj = blinds.add<JsonObject>();
         obj["address"] = hex_str(dev.config.dst_address);
         obj["name"] = dev.config.name;
@@ -401,16 +403,20 @@ std::string EleroWebServer::build_config_json() {
         obj["supports_tilt"] = dev.config.supports_tilt != 0;
         obj["enabled"] = dev.config.is_enabled();
         obj["updated_at"] = dev.config.updated_at;
-        obj["position"] = cover_sm::position(cover.state, now, ctx);
-        obj["state"] = hex_str8(dev.rf.last_state_raw);
-        obj["rssi"] = round_rssi(dev.rf.last_rssi);
-        obj["last_seen"] = dev.rf.last_seen_ms;
+        obj["position"] = snap.position;
+        obj["state"] = snap.state_string;
+        obj["ha_state"] = snap.ha_state;
+        obj["rssi"] = round_rssi(snap.rssi);
+        obj["last_seen"] = snap.last_seen_ms;
+        obj["tilted"] = snap.tilted;
+        obj["problem"] = snap.is_problem;
+        obj["command_source"] = snap.command_source;
+        obj["device_class"] = snap.device_class;
         remote_addrs.insert(dev.config.src_address);
       });
 
       registry->for_each_active(DeviceType::LIGHT, [&](const Device &dev) {
-        auto &light = std::get<LightDevice>(dev.logic);
-        auto ctx = light_context(dev.config);
+        auto snap = compute_light_snapshot(dev, now);
         JsonObject obj = lights_arr.add<JsonObject>();
         obj["address"] = hex_str(dev.config.dst_address);
         obj["name"] = dev.config.name;
@@ -419,11 +425,12 @@ std::string EleroWebServer::build_config_json() {
         obj["dim_ms"] = dev.config.dim_duration_ms;
         obj["enabled"] = dev.config.is_enabled();
         obj["updated_at"] = dev.config.updated_at;
-        obj["brightness"] = light_sm::brightness(light.state, now, ctx);
-        obj["is_on"] = light_sm::is_on(light.state);
-        obj["state"] = hex_str8(dev.rf.last_state_raw);
-        obj["rssi"] = round_rssi(dev.rf.last_rssi);
-        obj["last_seen"] = dev.rf.last_seen_ms;
+        obj["brightness"] = snap.brightness;
+        obj["is_on"] = snap.is_on;
+        obj["state"] = snap.state_string;
+        obj["rssi"] = round_rssi(snap.rssi);
+        obj["last_seen"] = snap.last_seen_ms;
+        obj["problem"] = snap.is_problem;
         remote_addrs.insert(dev.config.src_address);
       });
 

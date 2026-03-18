@@ -15,6 +15,10 @@
 #ifdef USE_TEXT_SENSOR
 #include "esphome/components/text_sensor/text_sensor.h"
 #endif
+#ifdef USE_BINARY_SENSOR
+#include "esphome/components/binary_sensor/binary_sensor.h"
+#include "state_snapshot.h"
+#endif
 
 namespace esphome {
 namespace elero {
@@ -1096,6 +1100,16 @@ void Elero::interpret_msg() {
     }
   }
 #endif
+
+  // Update problem binary sensor for status packets
+#ifdef USE_BINARY_SENSOR
+  if (is_status_packet(typ)) {
+    auto problem_it = this->address_to_problem_sensor_.find(src);
+    if (problem_it != this->address_to_problem_sensor_.end()) {
+      problem_it->second->publish_state(is_problem_state(payload[payload_offset::STATE]));
+    }
+  }
+#endif
 }
 
 #ifdef USE_SENSOR
@@ -1107,6 +1121,12 @@ void Elero::register_rssi_sensor(uint32_t address, sensor::Sensor *sensor) {
 #ifdef USE_TEXT_SENSOR
 void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor) {
   this->address_to_text_sensor_[address] = sensor;
+}
+#endif
+
+#ifdef USE_BINARY_SENSOR
+void Elero::register_problem_sensor(uint32_t address, binary_sensor::BinarySensor *sensor) {
+  this->address_to_problem_sensor_[address] = sensor;
 }
 #endif
 

@@ -14,14 +14,14 @@ static float position_during_opening(float start, uint32_t start_ms,
                                      uint32_t now, uint32_t dur) {
     if (dur == 0) return start;
     float elapsed = static_cast<float>(now - start_ms) / static_cast<float>(dur);
-    return std::min(1.0f, start + elapsed);
+    return std::min(POSITION_OPEN, start + elapsed);
 }
 
 static float position_during_closing(float start, uint32_t start_ms,
                                      uint32_t now, uint32_t dur) {
     if (dur == 0) return start;
     float elapsed = static_cast<float>(now - start_ms) / static_cast<float>(dur);
-    return std::max(0.0f, start - elapsed);
+    return std::max(POSITION_CLOSED, start - elapsed);
 }
 
 // ─── Derived values ─────────────────────────────────────────────────────────
@@ -94,8 +94,10 @@ State on_rf_status(const State &state, uint8_t state_byte, uint32_t now,
     return std::visit(overloaded{
         // ── From Idle ──────────────────────────────────────────────
         [&](const Idle &idle) -> State {
-            if (s == packet::state::TOP) return Idle{1.0f};
-            if (s == packet::state::BOTTOM) return Idle{0.0f};
+            if (s == packet::state::TOP) return Idle{POSITION_OPEN};
+            if (s == packet::state::BOTTOM) return Idle{POSITION_CLOSED};
+            if (s == packet::state::TOP_TILT) return Idle{POSITION_OPEN};
+            if (s == packet::state::BOTTOM_TILT) return Idle{POSITION_CLOSED};
             if (is_rf_moving_up(s)) return Opening{idle.position, now};
             if (is_rf_moving_down(s)) return Closing{idle.position, now};
             // TILT, INTERMEDIATE, warnings — stay idle
@@ -104,8 +106,16 @@ State on_rf_status(const State &state, uint8_t state_byte, uint32_t now,
 
         // ── From Opening ───────────────────────────────────────────
         [&](const Opening &opening) -> State {
-            if (s == packet::state::TOP) return Idle{1.0f};
-            if (s == packet::state::BOTTOM) return Idle{0.0f};
+            if (s == packet::state::TOP) return Idle{POSITION_OPEN};
+            if (s == packet::state::BOTTOM) return Idle{POSITION_CLOSED};
+            if (s == packet::state::TOP_TILT) return Idle{POSITION_OPEN};
+            if (s == packet::state::BOTTOM_TILT) return Idle{POSITION_CLOSED};
+            if (s == packet::state::TILT) {
+                float pos = position_during_opening(
+                    opening.start_position, opening.start_ms,
+                    now, ctx.open_duration_ms);
+                return Stopping{pos, now};
+            }
             if (is_rf_stopped(s)) {
                 float pos = position_during_opening(
                     opening.start_position, opening.start_ms,
@@ -125,8 +135,16 @@ State on_rf_status(const State &state, uint8_t state_byte, uint32_t now,
 
         // ── From Closing ───────────────────────────────────────────
         [&](const Closing &closing) -> State {
-            if (s == packet::state::BOTTOM) return Idle{0.0f};
-            if (s == packet::state::TOP) return Idle{1.0f};
+            if (s == packet::state::BOTTOM) return Idle{POSITION_CLOSED};
+            if (s == packet::state::TOP) return Idle{POSITION_OPEN};
+            if (s == packet::state::TOP_TILT) return Idle{POSITION_OPEN};
+            if (s == packet::state::BOTTOM_TILT) return Idle{POSITION_CLOSED};
+            if (s == packet::state::TILT) {
+                float pos = position_during_closing(
+                    closing.start_position, closing.start_ms,
+                    now, ctx.close_duration_ms);
+                return Stopping{pos, now};
+            }
             if (is_rf_stopped(s)) {
                 float pos = position_during_closing(
                     closing.start_position, closing.start_ms,
@@ -148,8 +166,8 @@ State on_rf_status(const State &state, uint8_t state_byte, uint32_t now,
         [&](const Stopping &) -> State {
             // During cooldown, only definitive endpoint states are respected.
             // Transient MOVING_UP/DOWN are ignored (they're echoes from before STOP).
-            if (s == packet::state::TOP) return Idle{1.0f};
-            if (s == packet::state::BOTTOM) return Idle{0.0f};
+            if (s == packet::state::TOP) return Idle{POSITION_OPEN};
+            if (s == packet::state::BOTTOM) return Idle{POSITION_CLOSED};
             return state;
         },
     }, state);

@@ -10,9 +10,13 @@
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/components/cover/cover.h"
+#ifdef USE_TEXT_SENSOR
+#include "esphome/components/text_sensor/text_sensor.h"
+#endif
 #include "../device.h"
 #include "../device_registry.h"
 #include "../cover_sm.h"
+#include "../state_snapshot.h"
 #include "../elero_packet.h"
 
 namespace esphome {
@@ -34,6 +38,14 @@ class EspCoverShell : public cover::Cover, public Component {
   void set_type(uint8_t v) { cfg_.type_byte = v; }
   void set_type2(uint8_t v) { cfg_.type2 = v; }
   void set_supports_tilt(bool v) { cfg_.supports_tilt = v ? 1 : 0; }
+  void set_ha_device_class(uint8_t v) { cfg_.ha_device_class = v; }
+
+  // ── Snapshot-based sensor setters (published from sync_and_publish_) ──
+#ifdef USE_TEXT_SENSOR
+  void set_command_source_sensor(text_sensor::TextSensor *s) { command_source_sensor_ = s; }
+  void set_problem_type_sensor(text_sensor::TextSensor *s) { problem_type_sensor_ = s; }
+#endif
+
   void set_open_duration(uint32_t v) { cfg_.open_duration_ms = v; }
   void set_close_duration(uint32_t v) { cfg_.close_duration_ms = v; }
   void set_poll_interval(uint32_t v) { cfg_.poll_interval_ms = v; }
@@ -82,12 +94,13 @@ class EspCoverShell : public cover::Cover, public Component {
     auto &cover = std::get<CoverDevice>(device_->logic);
     auto ctx = cover_context(device_->config);
     uint32_t now = millis();
+    cover.last_command_source = CommandSource::HUB;
 
     if (call.get_stop()) {
       device_->sender.clear_queue();
       (void) device_->sender.enqueue(packet::command::STOP);
       cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
-      cover.target_position = -1.0f;
+      cover.target_position = cover_sm::NO_TARGET;
       sync_and_publish_();
       return;
     }
@@ -95,12 +108,12 @@ class EspCoverShell : public cover::Cover, public Component {
     if (call.get_position().has_value()) {
       float target = *call.get_position();
       uint8_t cmd;
-      if (target >= 1.0f) {
+      if (target >= cover_sm::POSITION_OPEN) {
         cmd = packet::command::UP;
-        cover.target_position = -1.0f;  // Blind handles endpoint
-      } else if (target <= 0.0f) {
+        cover.target_position = cover_sm::NO_TARGET;  // Blind handles endpoint
+      } else if (target <= cover_sm::POSITION_CLOSED) {
         cmd = packet::command::DOWN;
-        cover.target_position = -1.0f;  // Blind handles endpoint
+        cover.target_position = cover_sm::NO_TARGET;  // Blind handles endpoint
       } else {
         float current = cover_sm::position(cover.state, now, ctx);
         cmd = (target > current) ? packet::command::UP : packet::command::DOWN;
@@ -132,7 +145,7 @@ class EspCoverShell : public cover::Cover, public Component {
       } else {
         float pos = cover_sm::position(cover.state, now, ctx);
         bool was_closing = (cover.last_direction == cover_sm::Operation::CLOSING);
-        cmd = (pos <= 0.0f || was_closing) ? packet::command::UP : packet::command::DOWN;
+        cmd = (pos <= cover_sm::POSITION_CLOSED || was_closing) ? packet::command::UP : packet::command::DOWN;
       }
       (void) device_->sender.enqueue(cmd);
       cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
@@ -144,13 +157,13 @@ class EspCoverShell : public cover::Cover, public Component {
  private:
   void sync_and_publish_() {
     if (!device_ || !device_->is_cover()) return;
-    auto &cover = std::get<CoverDevice>(device_->logic);
-    auto ctx = cover_context(device_->config);
-    uint32_t now = millis();
+    auto snap = compute_cover_snapshot(*device_, millis());
 
-    this->position = cover_sm::position(cover.state, now, ctx);
-    auto op = cover_sm::operation(cover.state);
-    switch (op) {
+    this->position = snap.position;
+    if (device_->config.supports_tilt != 0) {
+      this->tilt = snap.tilted ? cover_sm::POSITION_OPEN : cover_sm::POSITION_CLOSED;
+    }
+    switch (snap.operation) {
       case cover_sm::Operation::IDLE:
         this->current_operation = cover::COVER_OPERATION_IDLE; break;
       case cover_sm::Operation::OPENING:
@@ -159,6 +172,16 @@ class EspCoverShell : public cover::Cover, public Component {
         this->current_operation = cover::COVER_OPERATION_CLOSING; break;
     }
     this->publish_state();
+
+    // Snapshot-based sensors (command_source, problem_type, last_seen)
+#ifdef USE_TEXT_SENSOR
+    if (command_source_sensor_ != nullptr) {
+      command_source_sensor_->publish_state(snap.command_source);
+    }
+    if (problem_type_sensor_ != nullptr) {
+      problem_type_sensor_->publish_state(snap.problem_type);
+    }
+#endif
   }
 
   NvsDeviceConfig cfg_{};
@@ -166,6 +189,12 @@ class EspCoverShell : public cover::Cover, public Component {
   Device *device_{nullptr};
   uint32_t last_published_ms_{0};
   int slot_index_{-1};  ///< -1 = native mode (use cfg_), >=0 = NVS mode (bind to registry slot)
+
+  // Snapshot-based sensors (published from sync_and_publish_)
+#ifdef USE_TEXT_SENSOR
+  text_sensor::TextSensor *command_source_sensor_{nullptr};
+  text_sensor::TextSensor *problem_type_sensor_{nullptr};
+#endif
 };
 
 }  // namespace elero
