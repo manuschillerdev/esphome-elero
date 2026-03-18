@@ -82,6 +82,8 @@ struct RfPacketInfo {
   bool echo;              ///< true if this command packet matches a recent TX (mesh echo)
   uint8_t cnt;            ///< Rolling counter value from packet
   float rssi;
+  uint8_t lqi;            ///< Link Quality Indicator (0–127)
+  bool crc_ok;            ///< CRC status from CC1101 appended byte
   uint8_t hop;
   uint8_t payload[10];
   uint8_t raw_len;
@@ -89,6 +91,19 @@ struct RfPacketInfo {
 };
 
 // String conversion declarations (elero_state_to_string, etc.) are in elero_strings.h
+
+}  // namespace elero
+}  // namespace esphome
+
+// Lock payload size invariant: decode_packet memcpy's ParseResult::payload → RfPacketInfo::payload
+static_assert(sizeof(esphome::elero::RfPacketInfo::payload) == sizeof(esphome::elero::packet::ParseResult::payload),
+              "RfPacketInfo::payload and ParseResult::payload must have the same size");
+
+// Include after RfPacketInfo is defined (rx_ring_buffer.h is a template that needs the full type)
+#include "rx_ring_buffer.h"
+
+namespace esphome {
+namespace elero {
 
 class Elero;  // Forward declaration for SpiTransaction
 
@@ -132,7 +147,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   [[nodiscard]] uint8_t read_status(uint8_t addr);
   void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
   void flush_and_rx();
-  void interpret_msg();
+
+  /// Decode a single packet from a raw buffer (fast path — no side effects).
+  /// @param buf Pointer to start of packet in FIFO data
+  /// @param buf_len Remaining bytes available from this offset
+  /// @return Populated RfPacketInfo, or nullopt on invalid/short packet
+  [[nodiscard]] optional<RfPacketInfo> decode_packet(const uint8_t *buf, size_t buf_len);
+
+  /// Dispatch a decoded packet (slow path — logging, registry, sensors).
+  void dispatch_packet(const RfPacketInfo &pkt);
 
   // Non-blocking TX state machine (internal)
   [[nodiscard]] bool start_transmit();  // Begin async TX, returns true if started
@@ -203,6 +226,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void check_radio_health_();           // Periodic watchdog for stuck radio states
   void record_tx_(uint8_t counter);           // Record TX counter for echo detection
   bool is_own_echo_(uint8_t counter) const;   // Check if RX counter matches a recent TX
+  void drain_fifo_();                         // Read FIFO, decode packets, push to ring buffer
+  void dispatch_queued_packets_();            // Pop ring buffer, dispatch each packet
 
   std::atomic<bool> received_{false};
   TxContext tx_ctx_;
@@ -230,6 +255,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   static constexpr size_t TX_HISTORY_SIZE = 16;
   uint8_t tx_history_[TX_HISTORY_SIZE]{};
   uint8_t tx_history_idx_{0};
+
+  // RX ring buffer: decouples fast-path FIFO decode from slow-path dispatch
+  RxRingBuffer<RfPacketInfo, 8> rx_queue_;
 
   // RF packet notification callback (optional, set by web server)
   RfPacketCallback on_rf_packet_{};

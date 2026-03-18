@@ -51,44 +51,101 @@ void Elero::loop() {
       ESP_LOGV(TAG, "TX complete, notifying owner, success=%d", success);
       this->notify_tx_owner_(success);
     }
-    return;  // Don't process RX while TX is in progress
+    // Dispatch queued RX packets even during TX (don't let them stale)
+    this->dispatch_queued_packets_();
+    return;
   }
 
   // Periodic radio health check (detect stuck CC1101 when idle)
   this->check_radio_health_();
 
-  // Atomically check and clear the received flag (ISR-safe)
+  // Phase 1 — FAST: drain FIFO, decode, push to ring buffer
   bool was_received = this->received_.exchange(false);
   if (was_received) {
-    ESP_LOGVV(TAG, "loop says \"received\"");
-    uint8_t len = this->read_status_reliable_(CC1101_RXBYTES);
-    if (len & packet::cc1101_status::RXBYTES_OVERFLOW_BIT) {  // overflow - FIFO data unreliable
-      ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
-      this->flush_and_rx();
-      return;
-    }
-    if (len & packet::cc1101_status::BYTE_COUNT_MASK) {  // bytes available
-      uint8_t fifo_count;
-      if ((len & packet::cc1101_status::BYTE_COUNT_MASK) > CC1101_FIFO_LENGTH) {
-        ESP_LOGV(TAG, "Received more bytes than FIFO length - wtf?");
-        this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
-        fifo_count = CC1101_FIFO_LENGTH;
-      } else {
-        fifo_count = (len & packet::cc1101_status::BYTE_COUNT_MASK);
-        this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
-      }
-      // Log raw bytes at VERBOSE level for analysis
-      ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count, format_hex_pretty(this->msg_rx_, fifo_count).c_str());
-      // Sanity check: need length byte value + overhead (length byte + RSSI + LQI)
-      if (this->msg_rx_[packet::pkt_offset::LENGTH] + packet::PACKET_TOTAL_OVERHEAD <= fifo_count) {
-        this->interpret_msg();
-      }
-    }
+    this->drain_fifo_();
   }
+
+  // Phase 2 — SLOW: dispatch buffered packets (logging, registry, sensors)
+  this->dispatch_queued_packets_();
 
   // New architecture: process device registry loop (polling, timeouts, command queues)
   if (this->registry_ != nullptr) {
     this->registry_->loop(millis());
+  }
+}
+
+// ─── FIFO Drain: read all bytes, decode multiple packets ─────────────────────
+void Elero::drain_fifo_() {
+  ESP_LOGVV(TAG, "drain_fifo_");
+  uint8_t len = this->read_status_reliable_(CC1101_RXBYTES);
+
+  // Overflow — FIFO data unreliable, flush and bail
+  if (len & packet::cc1101_status::RXBYTES_OVERFLOW_BIT) {
+    ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
+    this->flush_and_rx();
+    return;
+  }
+
+  uint8_t fifo_count = len & packet::cc1101_status::BYTE_COUNT_MASK;
+  if (fifo_count == 0) {
+    return;
+  }
+
+  // Read entire FIFO in one SPI burst
+  if (fifo_count > CC1101_FIFO_LENGTH) {
+    ESP_LOGV(TAG, "RXBYTES > FIFO length (%d), clamping", fifo_count);
+    fifo_count = CC1101_FIFO_LENGTH;
+  }
+  this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
+
+  // Log raw bytes at VERBOSE level for analysis
+  ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
+           format_hex_pretty(this->msg_rx_, fifo_count).c_str());
+
+  // Parse multiple packets from the buffer
+  size_t offset = 0;
+  int pkt_count = 0;
+  while (offset < fifo_count) {
+    // Need at least PACKET_TOTAL_OVERHEAD bytes for the smallest valid packet
+    if (offset + packet::PACKET_TOTAL_OVERHEAD > fifo_count) {
+      break;
+    }
+
+    uint8_t pkt_len = this->msg_rx_[offset + packet::pkt_offset::LENGTH];
+    size_t total = static_cast<size_t>(pkt_len) + packet::PACKET_TOTAL_OVERHEAD;
+
+    // Incomplete packet at end of buffer
+    if (offset + total > fifo_count) {
+      ESP_LOGV(TAG, "Incomplete packet at offset %d: need %d bytes, have %d",
+               static_cast<int>(offset), static_cast<int>(total),
+               static_cast<int>(fifo_count - offset));
+      break;
+    }
+
+    auto pkt = this->decode_packet(this->msg_rx_ + offset, fifo_count - offset);
+    if (pkt) {
+      if (!this->rx_queue_.push(*pkt)) {
+        ESP_LOGW(TAG, "RX ring buffer full, dropping packet cnt=%d", pkt->cnt);
+      }
+      ++pkt_count;
+    }
+
+    offset += total;
+  }
+
+  if (pkt_count > 1) {
+    ESP_LOGD(TAG, "Decoded %d packets from single FIFO read (%d bytes)", pkt_count, fifo_count);
+  }
+}
+
+// ─── Dispatch queued packets (slow path) ─────────────────────────────────────
+// NOTE: This is safe to call during TX (from loop() line 55). Registry callbacks
+// that call send_command()/request_tx() will be rejected because tx_owner_ != nullptr
+// or tx_ctx_.state != IDLE. The CommandSender retries on the next loop iteration.
+void Elero::dispatch_queued_packets_() {
+  RfPacketInfo pkt{};
+  while (this->rx_queue_.pop(pkt)) {
+    this->dispatch_packet(pkt);
   }
 }
 
@@ -168,19 +225,10 @@ void Elero::flush_and_rx() {
   uint8_t rx_bytes = this->read_status_reliable_(CC1101_RXBYTES);
   if ((rx_bytes & packet::cc1101_status::BYTE_COUNT_MASK) > 0 &&
       !(rx_bytes & packet::cc1101_status::RXBYTES_OVERFLOW_BIT)) {
-    // Valid data in RX FIFO (no overflow) - process it first
-    uint8_t fifo_count = rx_bytes & packet::cc1101_status::BYTE_COUNT_MASK;
-    if (fifo_count > CC1101_FIFO_LENGTH) {
-      fifo_count = CC1101_FIFO_LENGTH;
-    }
-    this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
-    ESP_LOGV(TAG, "flush_and_rx: rescued %d bytes from RX FIFO", fifo_count);
-    ESP_LOGV(TAG, "RAW RX (rescued) %d bytes: %s", fifo_count,
-             format_hex_pretty(this->msg_rx_, fifo_count).c_str());
-    // Sanity check: need length byte value + overhead (length byte + RSSI + LQI)
-    if (this->msg_rx_[packet::pkt_offset::LENGTH] + packet::PACKET_TOTAL_OVERHEAD <= fifo_count) {
-      this->interpret_msg();
-    }
+    // Valid data in RX FIFO (no overflow) - rescue via drain_fifo_
+    ESP_LOGV(TAG, "flush_and_rx: rescuing %d bytes from RX FIFO",
+             rx_bytes & packet::cc1101_status::BYTE_COUNT_MASK);
+    this->drain_fifo_();
   }
 
   // 1. Force IDLE to stop any current radio activity
@@ -618,18 +666,18 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
   // JSON log for TX packet (machine-readable, tagged for WS forwarding)
   if (!blind_name.empty()) {
     ESP_LOGD(TAG_RF,
-             "{\"dir\":\"tx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "{\"ts_ms\":%lu,\"dir\":\"tx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
              "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
-             blind_name.c_str(), elero_command_to_string(cmd.payload[4]),
+             (unsigned long) millis(), blind_name.c_str(), elero_command_to_string(cmd.payload[4]),
              this->msg_tx_[0], cmd.counter, cmd.type, cmd.type2, cmd.hop,
              cmd.channel, cmd.src_addr, cmd.dst_addr, cmd.payload[4]);
   } else {
     ESP_LOGD(TAG_RF,
-             "{\"dir\":\"tx\",\"blind\":\"0x%06x\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "{\"ts_ms\":%lu,\"dir\":\"tx\",\"blind\":\"0x%06x\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
              "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
-             cmd.dst_addr, elero_command_to_string(cmd.payload[4]),
+             (unsigned long) millis(), cmd.dst_addr, elero_command_to_string(cmd.payload[4]),
              this->msg_tx_[0], cmd.counter, cmd.type, cmd.type2, cmd.hop,
              cmd.channel, cmd.src_addr, cmd.dst_addr, cmd.payload[4]);
   }
@@ -907,97 +955,65 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
   delay_microseconds_safe(15);
 }
 
-void Elero::interpret_msg() {
+// ─── decode_packet: fast path — pure decoding, no side effects ───────────────
+optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) {
   using namespace packet;
 
-  uint8_t length = this->msg_rx_[pkt_offset::LENGTH];
-  // Sanity check
-  if (length > MAX_PACKET_SIZE) {
-    uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - PACKET_TOTAL_OVERHEAD))
-                           ? (length + PACKET_TOTAL_OVERHEAD)
-                           : CC1101_FIFO_LENGTH;
-    ESP_LOGE(TAG, "Received invalid packet: too long (%d)", length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", dump_len, format_hex_pretty(this->msg_rx_, dump_len).c_str());
-    return;
+  // Use the existing pure parse_packet() function
+  ParseResult r = parse_packet(buf, buf_len);
+  if (!r.valid) {
+    if (r.reject_reason) {
+      ESP_LOGV(TAG, "Packet rejected: %s", r.reject_reason);
+    }
+    return {};
   }
-
-  uint8_t cnt = this->msg_rx_[pkt_offset::COUNTER];
-  uint8_t typ = this->msg_rx_[pkt_offset::TYPE];
-  uint8_t typ2 = this->msg_rx_[pkt_offset::TYPE2];
-  uint8_t hop = this->msg_rx_[pkt_offset::HOP];
-  uint8_t syst = this->msg_rx_[pkt_offset::SYS];
-  uint8_t chl = this->msg_rx_[pkt_offset::CHANNEL];
-  uint32_t src = extract_addr(&this->msg_rx_[pkt_offset::SRC_ADDR]);
-  uint32_t bwd = extract_addr(&this->msg_rx_[pkt_offset::BWD_ADDR]);
-  uint32_t fwd = extract_addr(&this->msg_rx_[pkt_offset::FWD_ADDR]);
-  uint8_t num_dests = this->msg_rx_[pkt_offset::NUM_DESTS];
-  uint32_t dst;
-  uint8_t dests_len;
-
-  // Validate destination count before multiplication to prevent overflow
-  if (num_dests > MAX_DESTINATIONS) {
-    ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + PACKET_TOTAL_OVERHEAD,
-             format_hex_pretty(this->msg_rx_, length + PACKET_TOTAL_OVERHEAD).c_str());
-    return;
-  }
-
-  if (typ > msg_type::ADDR_3BYTE_THRESHOLD) {
-    dests_len = num_dests * ADDR_SIZE;
-    dst = extract_addr(&this->msg_rx_[pkt_offset::FIRST_DEST]);
-  } else {
-    dests_len = num_dests;
-    dst = this->msg_rx_[pkt_offset::FIRST_DEST];
-  }
-
-  // Sanity check: msg_decode accesses 8 bytes at msg_rx_[FIRST_DEST + 2 + dests_len],
-  // so the highest index touched is FIRST_DEST + 2 + dests_len + 7 = 26 + dests_len.
-  // This must be within both the packet (length) and the FIFO buffer.
-  constexpr size_t PAYLOAD_OFFSET_FROM_DESTS = 2;  // payload_1 and payload_2 before encrypted section
-  constexpr size_t ENCRYPTED_SECTION_SIZE = 8;     // 8 bytes processed by msg_decode
-  size_t payload_end = pkt_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + dests_len + ENCRYPTED_SECTION_SIZE - 1;
-  if (payload_end > length || payload_end >= CC1101_FIFO_LENGTH) {
-    ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + PACKET_TOTAL_OVERHEAD,
-             format_hex_pretty(this->msg_rx_, length + PACKET_TOTAL_OVERHEAD).c_str());
-    return;
-  }
-
-  // RSSI and LQI are appended by CC1101 after packet data at indices length+1 and length+2
-  if (length + CC1101_APPEND_SIZE >= CC1101_FIFO_LENGTH) {
-    ESP_LOGE(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
-             format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
-    return;
-  }
-
-  // Payload bytes are at FIRST_DEST + dests_len (payload_1) and +1 (payload_2)
-  size_t payload_base = pkt_offset::FIRST_DEST + dests_len;
-  uint8_t payload1 = this->msg_rx_[payload_base];
-  uint8_t payload2 = this->msg_rx_[payload_base + 1];
-  uint8_t crc = (this->msg_rx_[length + CC1101_APPEND_SIZE] & cc1101_status::CRC_OK_BIT) ? 1 : 0;
-  uint8_t lqi = this->msg_rx_[length + CC1101_APPEND_SIZE] & cc1101_status::LQI_MASK;
-
-  // Calculate RSSI in dBm (CC1101 transmits as two's complement encoded value)
-  // RSSI is at length+1, LQI is at length+2 (both appended by CC1101)
-  uint8_t rssi_raw = this->msg_rx_[length + 1];  // +1 because length byte is at [0]
-  float rssi = calc_rssi(rssi_raw);
-
-  // Encrypted payload starts 2 bytes after destinations (payload_1, payload_2 are unencrypted)
-  uint8_t *payload = &this->msg_rx_[payload_base + PAYLOAD_OFFSET_FROM_DESTS];
-  protocol::msg_decode(payload);
 
   // Extract fields relevant to this packet type
-  bool is_cmd = is_command_packet(typ);
-  bool is_status = is_status_packet(typ);
-  bool is_button = packet::is_button_packet(typ);
-  uint8_t command = (is_cmd || is_button) ? payload[payload_offset::COMMAND] : 0;
-  uint8_t state = is_status ? payload[payload_offset::STATE] : 0;
-  bool echo = is_cmd && this->is_own_echo_(cnt);
+  bool is_cmd = is_command_packet(r.type);
+  bool is_status_pkt = is_status_packet(r.type);
+  bool is_btn = is_button_packet(r.type);
+  uint8_t command = (is_cmd || is_btn) ? r.payload[payload_offset::COMMAND] : 0;
+  uint8_t state = is_status_pkt ? r.payload[payload_offset::STATE] : 0;
+  bool echo = is_cmd && this->is_own_echo_(r.counter);
+
+  // Build RfPacketInfo
+  RfPacketInfo pkt{};
+  pkt.timestamp_ms = millis();
+  pkt.src = r.src_addr;
+  pkt.dst = r.dst_addr;
+  pkt.channel = r.channel;
+  pkt.type = r.type;
+  pkt.type2 = r.type2;
+  pkt.command = command;
+  pkt.state = state;
+  pkt.echo = echo;
+  pkt.cnt = r.counter;
+  pkt.rssi = r.rssi;
+  pkt.lqi = r.lqi;
+  pkt.crc_ok = (r.crc_ok != 0);
+  pkt.hop = r.hop;
+  memcpy(pkt.payload, r.payload, sizeof(pkt.payload));
+
+  // Copy raw bytes for WebSocket broadcast
+  size_t raw_total = static_cast<size_t>(r.length) + PACKET_TOTAL_OVERHEAD;
+  pkt.raw_len = (raw_total <= CC1101_FIFO_LENGTH) ? static_cast<uint8_t>(raw_total) : CC1101_FIFO_LENGTH;
+  memcpy(pkt.raw, buf, pkt.raw_len);
+
+  return pkt;
+}
+
+// ─── dispatch_packet: slow path — logging, registry, sensors ─────────────────
+void Elero::dispatch_packet(const RfPacketInfo &pkt) {
+  using namespace packet;
+  const uint32_t dispatch_start = millis();
+
+  bool is_cmd = is_command_packet(pkt.type);
+  bool is_status_pkt = is_status_packet(pkt.type);
+  bool is_btn = is_button_packet(pkt.type);
 
   // Look up device name: for status packets src is the blind, for commands dst is the blind
   std::string blind_name;
-  uint32_t blind_addr = is_status ? src : dst;
+  uint32_t blind_addr = is_status_pkt ? pkt.src : pkt.dst;
   if (this->registry_) {
     Device *dev = this->registry_->find(blind_addr);
     if (dev) {
@@ -1006,10 +1022,6 @@ void Elero::interpret_msg() {
   }
 
   // JSON log: include only fields relevant to the packet type
-  // - Command packets (0x6a/0x69): cmd_name/command, echo, no state
-  // - Button packets (0x44): cmd_name/command, no echo/state
-  // - Status packets (0xca/0xc9): state_name/state, no command
-  // Use snprintf to build blind field (name string or hex address)
   char blind_buf[32];
   if (!blind_name.empty()) {
     snprintf(blind_buf, sizeof(blind_buf), "%s", blind_name.c_str());
@@ -1017,59 +1029,48 @@ void Elero::interpret_msg() {
     snprintf(blind_buf, sizeof(blind_buf), "0x%06x", blind_addr);
   }
 
-  if (is_status) {
+  if (is_status_pkt) {
     ESP_LOGD(TAG_RF,
-             "{\"dir\":\"rx\",\"blind\":\"%s\",\"state_name\":\"%s\","
+             "{\"ts_ms\":%lu,\"dir\":\"rx\",\"blind\":\"%s\",\"state_name\":\"%s\","
              "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"state\":\"0x%02x\","
-             "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
-             blind_buf, elero_state_to_string(state),
-             length, cnt, typ, typ2, hop, chl, src, dst, state, rssi, lqi, crc);
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc_ok\":%s}",
+             (unsigned long) pkt.timestamp_ms, blind_buf, elero_state_to_string(pkt.state),
+             pkt.raw_len - PACKET_TOTAL_OVERHEAD, pkt.cnt, pkt.type, pkt.type2, pkt.hop,
+             pkt.channel, pkt.src, pkt.dst, pkt.state,
+             pkt.rssi, pkt.lqi, pkt.crc_ok ? "true" : "false");
   } else if (is_cmd) {
     ESP_LOGD(TAG_RF,
-             "{\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"echo\":%s,"
+             "{\"ts_ms\":%lu,\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"echo\":%s,"
              "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\","
-             "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
-             blind_buf, elero_command_to_string(command), echo ? "true" : "false",
-             length, cnt, typ, typ2, hop, chl, src, dst, command, rssi, lqi, crc);
-  } else if (is_button) {
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc_ok\":%s}",
+             (unsigned long) pkt.timestamp_ms, blind_buf, elero_command_to_string(pkt.command),
+             pkt.echo ? "true" : "false",
+             pkt.raw_len - PACKET_TOTAL_OVERHEAD, pkt.cnt, pkt.type, pkt.type2, pkt.hop,
+             pkt.channel, pkt.src, pkt.dst, pkt.command,
+             pkt.rssi, pkt.lqi, pkt.crc_ok ? "true" : "false");
+  } else if (is_btn) {
     ESP_LOGD(TAG_RF,
-             "{\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\","
+             "{\"ts_ms\":%lu,\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\","
              "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\","
-             "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
-             blind_buf, elero_command_to_string(command),
-             length, cnt, typ, typ2, hop, chl, src, dst, command, rssi, lqi, crc);
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc_ok\":%s}",
+             (unsigned long) pkt.timestamp_ms, blind_buf, elero_command_to_string(pkt.command),
+             pkt.raw_len - PACKET_TOTAL_OVERHEAD, pkt.cnt, pkt.type, pkt.type2, pkt.hop,
+             pkt.channel, pkt.src, pkt.dst, pkt.command,
+             pkt.rssi, pkt.lqi, pkt.crc_ok ? "true" : "false");
   } else {
     ESP_LOGD(TAG_RF,
-             "{\"dir\":\"rx\",\"blind\":\"%s\","
+             "{\"ts_ms\":%lu,\"dir\":\"rx\",\"blind\":\"%s\","
              "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\","
-             "\"rssi\":%.1f,\"lqi\":%d,\"crc\":%d}",
-             blind_buf,
-             length, cnt, typ, typ2, hop, chl, src, dst, rssi, lqi, crc);
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc_ok\":%s}",
+             (unsigned long) pkt.timestamp_ms, blind_buf,
+             pkt.raw_len - PACKET_TOTAL_OVERHEAD, pkt.cnt, pkt.type, pkt.type2, pkt.hop,
+             pkt.channel, pkt.src, pkt.dst,
+             pkt.rssi, pkt.lqi, pkt.crc_ok ? "true" : "false");
   }
-
-  // Build RfPacketInfo for dispatch
-  RfPacketInfo pkt{};
-  pkt.timestamp_ms = millis();
-  pkt.src = src;
-  pkt.dst = dst;
-  pkt.channel = chl;
-  pkt.type = typ;
-  pkt.type2 = typ2;
-  pkt.command = command;
-  pkt.state = state;
-  pkt.echo = echo;
-  pkt.cnt = cnt;
-  pkt.rssi = rssi;
-  pkt.hop = hop;
-  memcpy(pkt.payload, payload, 10);
-  pkt.raw_len = (length + PACKET_TOTAL_OVERHEAD <= CC1101_FIFO_LENGTH)
-                    ? length + PACKET_TOTAL_OVERHEAD
-                    : CC1101_FIFO_LENGTH;
-  memcpy(pkt.raw, this->msg_rx_, pkt.raw_len);
 
   // Dispatch through unified device registry (state machines, adapters, observers)
   if (this->registry_ != nullptr) {
@@ -1084,32 +1085,37 @@ void Elero::interpret_msg() {
   // Update RSSI sensor for any message from a known blind
 #ifdef USE_SENSOR
   {
-    auto rssi_it = this->address_to_rssi_sensor_.find(src);
+    auto rssi_it = this->address_to_rssi_sensor_.find(pkt.src);
     if (rssi_it != this->address_to_rssi_sensor_.end()) {
-      rssi_it->second->publish_state(rssi);
+      rssi_it->second->publish_state(pkt.rssi);
     }
   }
 #endif
 
   // Update text sensor for status packets
 #ifdef USE_TEXT_SENSOR
-  if (is_status_packet(typ)) {
-    auto text_it = this->address_to_text_sensor_.find(src);
+  if (is_status_pkt) {
+    auto text_it = this->address_to_text_sensor_.find(pkt.src);
     if (text_it != this->address_to_text_sensor_.end()) {
-      text_it->second->publish_state(elero_state_to_string(payload[payload_offset::STATE]));
+      text_it->second->publish_state(elero_state_to_string(pkt.state));
     }
   }
 #endif
 
   // Update problem binary sensor for status packets
 #ifdef USE_BINARY_SENSOR
-  if (is_status_packet(typ)) {
-    auto problem_it = this->address_to_problem_sensor_.find(src);
+  if (is_status_pkt) {
+    auto problem_it = this->address_to_problem_sensor_.find(pkt.src);
     if (problem_it != this->address_to_problem_sensor_.end()) {
-      problem_it->second->publish_state(is_problem_state(payload[payload_offset::STATE]));
+      problem_it->second->publish_state(is_problem_state(pkt.state));
     }
   }
 #endif
+
+  uint32_t dispatch_duration = millis() - dispatch_start;
+  if (dispatch_duration > 1) {
+    ESP_LOGD(TAG, "dispatch_packet took %lums (cnt=%d)", (unsigned long) dispatch_duration, pkt.cnt);
+  }
 }
 
 #ifdef USE_SENSOR
@@ -1147,18 +1153,18 @@ bool Elero::send_command(EleroCommand *cmd) {
   // JSON log for TX packet (machine-readable, tagged for WS forwarding)
   if (!blind_name.empty()) {
     ESP_LOGD(TAG_RF,
-             "{\"dir\":\"tx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "{\"ts_ms\":%lu,\"dir\":\"tx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
              "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
-             blind_name.c_str(), elero_command_to_string(cmd->payload[4]),
+             (unsigned long) millis(), blind_name.c_str(), elero_command_to_string(cmd->payload[4]),
              this->msg_tx_[0], cmd->counter, cmd->type, cmd->type2, cmd->hop,
              cmd->channel, cmd->src_addr, cmd->dst_addr, cmd->payload[4]);
   } else {
     ESP_LOGD(TAG_RF,
-             "{\"dir\":\"tx\",\"blind\":\"0x%06x\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "{\"ts_ms\":%lu,\"dir\":\"tx\",\"blind\":\"0x%06x\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
              "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
-             cmd->dst_addr, elero_command_to_string(cmd->payload[4]),
+             (unsigned long) millis(), cmd->dst_addr, elero_command_to_string(cmd->payload[4]),
              this->msg_tx_[0], cmd->counter, cmd->type, cmd->type2, cmd->hop,
              cmd->channel, cmd->src_addr, cmd->dst_addr, cmd->payload[4]);
   }
