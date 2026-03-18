@@ -3,7 +3,7 @@ from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components.elero import CONF_ELERO_ID, elero, elero_ns
+from esphome.components.elero import CONF_ELERO_ID, CONF_REGISTRY_ID, DeviceRegistry, elero, elero_ns
 from esphome.components.logger import request_log_listener
 from esphome.const import CONF_ID, CONF_PORT
 
@@ -29,6 +29,7 @@ CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(EleroWebServer),
         cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
+        cv.GenerateID(CONF_REGISTRY_ID): cv.use_id(DeviceRegistry),
         cv.Optional(CONF_PORT, default=80): cv.port,
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -85,6 +86,10 @@ async def to_code(config):
     parent = await cg.get_variable(config[CONF_ELERO_ID])
     cg.add(var.set_elero_parent(parent))
     cg.add(var.set_port(config[CONF_PORT]))
+
+    # Register as output adapter for state_changed events (optimistic updates)
+    registry = await cg.get_variable(config[CONF_REGISTRY_ID])
+    cg.add(registry.add_adapter(var))
 
     # Request log listener support for forwarding logs to WebSocket
     request_log_listener()

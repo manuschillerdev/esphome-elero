@@ -247,9 +247,8 @@ void DeviceRegistry::dispatch_remote_command_(Device &dev, uint8_t cmd_byte,
             if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
             changed = (cover.state.index() != old_idx);
         },
-        [&](LightDevice &) {
-            // Remote command heard — schedule immediate check
-            // (we don't transition light state from remote commands)
+        [&](LightDevice &light) {
+            light.last_command_source = CommandSource::REMOTE;
         },
         [](RemoteDevice &) {},
     }, dev.logic);

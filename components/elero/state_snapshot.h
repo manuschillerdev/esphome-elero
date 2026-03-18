@@ -12,6 +12,7 @@
 #include "light_sm.h"
 #include "elero_strings.h"
 #include "device_type.h"
+#include "esphome/components/json/json_util.h"
 
 namespace esphome {
 namespace elero {
@@ -26,12 +27,15 @@ struct CoverStateSnapshot {
     cover_sm::Operation operation;  ///< IDLE/OPENING/CLOSING
     bool tilted;
     bool is_problem;
-    const char *problem_type;    ///< "blocking"/"overheated"/"timeout"/nullptr
+    const char *problem_type;    ///< "blocking"/"overheated"/"timeout"/PROBLEM_TYPE_NONE
     float rssi;
     const char *state_string;    ///< Raw elero state name ("top", "moving_up", etc.)
     const char *command_source;  ///< "hub"/"remote"/"unknown"
     uint32_t last_seen_ms;
     const char *device_class;    ///< "shutter"/"blind"/"awning"/etc.
+
+    /// Write snapshot fields to a JSON object. Caller adds identity/config fields.
+    void to_json(JsonObject obj) const;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -47,6 +51,9 @@ struct LightStateSnapshot {
     const char *state_string;
     const char *command_source;
     uint32_t last_seen_ms;
+
+    /// Write snapshot fields to a JSON object. Caller adds identity/config fields.
+    void to_json(JsonObject obj) const;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

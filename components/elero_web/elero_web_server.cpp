@@ -111,6 +111,42 @@ void EleroWebServer::dump_config() {
 // RF Packet Handler
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// State Changed (OutputAdapter — optimistic updates)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void EleroWebServer::on_state_changed(const Device &dev) {
+  if (this->ws_clients_.empty() || !this->enabled_)
+    return;
+
+  uint32_t now = millis();
+  std::string payload;
+
+  if (dev.is_cover()) {
+    auto snap = compute_cover_snapshot(dev, now);
+    payload = json::build_json([&](JsonObject root) {
+      root["address"] = hex_str(dev.config.dst_address);
+      root["device_type"] = device_type_str(dev.config.type);
+      snap.to_json(root);
+    });
+  } else if (dev.is_light()) {
+    auto snap = compute_light_snapshot(dev, now);
+    payload = json::build_json([&](JsonObject root) {
+      root["address"] = hex_str(dev.config.dst_address);
+      root["device_type"] = device_type_str(dev.config.type);
+      snap.to_json(root);
+    });
+  } else {
+    return;
+  }
+
+  this->ws_broadcast("state_changed", payload);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RF Packet Handler
+// ═══════════════════════════════════════════════════════════════════════════════
+
 void EleroWebServer::on_rf_packet(const RfPacketInfo &pkt) {
   if (this->ws_clients_.empty() || !this->enabled_)
     return;
@@ -403,15 +439,7 @@ std::string EleroWebServer::build_config_json() {
         obj["supports_tilt"] = dev.config.supports_tilt != 0;
         obj["enabled"] = dev.config.is_enabled();
         obj["updated_at"] = dev.config.updated_at;
-        obj["position"] = snap.position;
-        obj["state"] = snap.state_string;
-        obj["ha_state"] = snap.ha_state;
-        obj["rssi"] = round_rssi(snap.rssi);
-        obj["last_seen"] = snap.last_seen_ms;
-        obj["tilted"] = snap.tilted;
-        obj["problem"] = snap.is_problem;
-        obj["command_source"] = snap.command_source;
-        obj["device_class"] = snap.device_class;
+        snap.to_json(obj);
         remote_addrs.insert(dev.config.src_address);
       });
 
@@ -425,12 +453,7 @@ std::string EleroWebServer::build_config_json() {
         obj["dim_ms"] = dev.config.dim_duration_ms;
         obj["enabled"] = dev.config.is_enabled();
         obj["updated_at"] = dev.config.updated_at;
-        obj["brightness"] = snap.brightness;
-        obj["is_on"] = snap.is_on;
-        obj["state"] = snap.state_string;
-        obj["rssi"] = round_rssi(snap.rssi);
-        obj["last_seen"] = snap.last_seen_ms;
-        obj["problem"] = snap.is_problem;
+        snap.to_json(obj);
         remote_addrs.insert(dev.config.src_address);
       });
 

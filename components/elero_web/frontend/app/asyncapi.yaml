@@ -62,6 +62,8 @@ channels:
         $ref: "#/components/messages/deviceUpsertedEvent"
       deviceRemovedEvent:
         $ref: "#/components/messages/deviceRemovedEvent"
+      stateChangedEvent:
+        $ref: "#/components/messages/stateChangedEvent"
       errorEvent:
         $ref: "#/components/messages/errorEvent"
       cmdMessage:
@@ -109,6 +111,19 @@ operations:
     description: Broadcast when a device is removed from NVS (CRUD modes only).
     messages:
       - $ref: "#/channels/eleroWs/messages/deviceRemovedEvent"
+
+  receiveStateChanged:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive device state change (optimistic update)
+    description: |
+      Broadcast when a device's state changes — from user commands (optimistic),
+      RF status responses (confirmed), or timeouts (recovery). Contains a snapshot
+      of the device's derived state computed from the FSM at the moment of change.
+      Enables immediate UI feedback on command, auto-healed by subsequent RF responses.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/stateChangedEvent"
 
   receiveError:
     action: receive
@@ -190,6 +205,14 @@ components:
       contentType: application/json
       payload:
         $ref: "#/components/schemas/CrudEventEnvelope"
+
+    stateChangedEvent:
+      name: state_changed
+      title: State Changed Event
+      summary: Device state snapshot (optimistic update or RF-confirmed)
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/StateChangedEnvelope"
 
     errorEvent:
       name: error
@@ -279,6 +302,17 @@ components:
           const: device_removed
         data:
           $ref: "#/components/schemas/CrudEventData"
+
+    StateChangedEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: state_changed
+        data:
+          $ref: "#/components/schemas/StateChangedData"
 
     ErrorEventEnvelope:
       type: object
@@ -635,6 +669,73 @@ components:
           examples: ["0xa831e5"]
         device_type:
           $ref: "#/components/schemas/DeviceType"
+
+    StateChangedData:
+      type: object
+      additionalProperties: false
+      required: [address, device_type]
+      description: |
+        Snapshot of a device's derived state at the moment of change.
+        Sent on user commands (optimistic), RF status responses (confirmed),
+        FSM timeouts (recovery), and throttled position updates during movement.
+        Fields vary by device_type — covers include position/ha_state/tilted/device_class,
+        lights include is_on/brightness.
+      properties:
+        address:
+          type: string
+          description: 3-byte device address (hex string)
+          examples: ["0xa831e5"]
+        device_type:
+          $ref: "#/components/schemas/DeviceType"
+        # Cover fields (device_type = "cover")
+        position:
+          type: number
+          format: float
+          description: Cover position (0.0 = closed, 1.0 = open). Cover only.
+        ha_state:
+          type: string
+          enum: [open, closed, opening, closing, stopped]
+          description: HA-compatible cover state. Cover only.
+        tilted:
+          type: boolean
+          description: Whether the cover is tilted. Cover only.
+        device_class:
+          type: string
+          description: HA device class (shutter, blind, awning, etc.). Cover only.
+          examples: ["shutter"]
+        # Light fields (device_type = "light")
+        is_on:
+          type: boolean
+          description: Whether the light is on. Light only.
+        brightness:
+          type: number
+          format: float
+          description: Light brightness (0.0–1.0). Light only.
+        # Shared fields (all device types)
+        is_problem:
+          type: boolean
+          description: Whether the device is in a problem state (blocking, overheated, timeout)
+        problem_type:
+          type: string
+          enum: [none, blocking, overheated, timeout]
+          description: Problem classification or "none"
+        rssi:
+          type: number
+          format: float
+          description: Last RSSI in dBm
+          examples: [-65.5]
+        state:
+          type: string
+          description: Raw RF state name (top, moving_up, bottom_tilt, etc.)
+          examples: ["moving_up"]
+        command_source:
+          type: string
+          enum: [unknown, hub, remote]
+          description: Who issued the last command
+        last_seen:
+          type: integer
+          description: Timestamp (millis()) of last RF packet from this device
+          examples: [1234567]
 
     ErrorData:
       type: object

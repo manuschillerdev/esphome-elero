@@ -175,7 +175,7 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
     std::string state_payload = json::build_json([&](JsonObject root) {
         root["name"] = std::string(dev.config.name) + " State";
         root["unique_id"] = state_oid;
-        root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::BLIND_STATE);
+        root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::DEVICE_STATE);
         root["entity_category"] = "diagnostic";
         root["icon"] = "mdi:state-machine";
         ctx_.add_availability(root);
@@ -217,7 +217,7 @@ void MqttAdapter::publish_cover_state_(const Device &dev) {
     snprintf(rssi_buf, sizeof(rssi_buf), "%.0f", round_rssi(snap.rssi));
     ctx_.publish(DeviceType::COVER, addr, mqtt_topic::RSSI, rssi_buf, false);
 
-    ctx_.publish(DeviceType::COVER, addr, mqtt_topic::BLIND_STATE, snap.state_string, false);
+    ctx_.publish(DeviceType::COVER, addr, mqtt_topic::DEVICE_STATE, snap.state_string, false);
     ctx_.publish(DeviceType::COVER, addr, mqtt_topic::PROBLEM, snap.is_problem ? ha_state::ON : ha_state::OFF, false);
 
     std::string attrs = json::build_json([&](JsonObject root) {
@@ -329,7 +329,7 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
     std::string state_payload = json::build_json([&](JsonObject root) {
         root["name"] = std::string(dev.config.name) + " State";
         root["unique_id"] = state_oid;
-        root["state_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::LIGHT_STATE);
+        root["state_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::DEVICE_STATE);
         root["entity_category"] = "diagnostic";
         root["icon"] = "mdi:state-machine";
         ctx_.add_availability(root);
@@ -373,7 +373,7 @@ void MqttAdapter::publish_light_state_(const Device &dev) {
     snprintf(rssi_buf, sizeof(rssi_buf), "%.0f", round_rssi(snap.rssi));
     ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::RSSI, rssi_buf, false);
 
-    ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::LIGHT_STATE, snap.state_string, false);
+    ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::DEVICE_STATE, snap.state_string, false);
 
     // Problem state
     ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::PROBLEM, snap.is_problem ? ha_state::ON : ha_state::OFF, false);

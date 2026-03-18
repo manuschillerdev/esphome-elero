@@ -49,5 +49,33 @@ LightStateSnapshot compute_light_snapshot(const Device &dev, uint32_t now) {
     };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// JSON SERIALIZATION — single mapping from snapshot fields to JSON keys
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void CoverStateSnapshot::to_json(JsonObject obj) const {
+    obj["position"] = position;
+    obj["ha_state"] = ha_state;
+    obj["tilted"] = tilted;
+    obj["is_problem"] = is_problem;
+    obj["problem_type"] = problem_type;
+    obj["rssi"] = round_rssi(rssi);
+    obj["state"] = state_string;
+    obj["command_source"] = command_source;
+    obj["device_class"] = device_class;
+    obj["last_seen"] = last_seen_ms;
+}
+
+void LightStateSnapshot::to_json(JsonObject obj) const {
+    obj["is_on"] = is_on;
+    obj["brightness"] = brightness;
+    obj["is_problem"] = is_problem;
+    obj["problem_type"] = problem_type;
+    obj["rssi"] = round_rssi(rssi);
+    obj["state"] = state_string;
+    obj["command_source"] = command_source;
+    obj["last_seen"] = last_seen_ms;
+}
+
 }  // namespace elero
 }  // namespace esphome

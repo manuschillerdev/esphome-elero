@@ -1,11 +1,11 @@
 import { signal, computed, batch } from '@preact/signals'
 import type {
   ConfigData, RfData, DeviceType, CrudEventData, DeviceUpsertedData,
-  FreqConfig, HubMode, BlindConfig, LightConfig, RemoteConfig,
+  StateChangedData, FreqConfig, HubMode, BlindConfig, LightConfig, RemoteConfig,
 } from '@/generated'
 
 // Re-export generated types used by components
-export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, CrudEventData, DeviceUpsertedData }
+export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, CrudEventData, DeviceUpsertedData, StateChangedData }
 
 // ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
 
@@ -381,6 +381,25 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
     next.set(data.remote, makeDevice({ address: data.remote, type: 'remote' }))
   }
 
+  devices.value = next
+}
+
+export function onStateChanged(data: StateChangedData) {
+  const existing = devices.value.get(data.address)
+  if (!existing) return
+
+  const next = new Map(devices.value)
+
+  // Build a synthetic lastStatus from the snapshot so the UI updates immediately.
+  // This is the optimistic update — overridden by the next real RF packet.
+  const lastStatus: RfPacketWithTimestamp = {
+    ...(existing.lastStatus ?? {} as RfPacketWithTimestamp),
+    state: data.state,
+    rssi: data.rssi,
+    received_at: Date.now(),
+  } as RfPacketWithTimestamp
+
+  next.set(data.address, { ...existing, lastStatus })
   devices.value = next
 }
 
