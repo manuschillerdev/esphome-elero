@@ -10,6 +10,9 @@ __pycache__/
 .claude/*
 !.claude/skills/
 build/
+node_modules/
+.pnpm-store/
+.idea/
 
 # Dev config (contains credentials)
 config.dev.yaml

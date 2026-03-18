@@ -10,15 +10,23 @@
       "userGid": "1000"
     },
     "ghcr.io/devcontainers/features/git:1": {},
-    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {},
-    "ghcr.io/jdx/devcontainer-features/mise:1": {}
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
   },
   "customizations": {
     "vscode": {
       "extensions": [
         "anthropic.claude-code",
         "ms-python.python",
-        "esphome.esphome-vscode"
+        "charliermarsh.ruff",
+        "astral-sh.uv",
+        "esphome.esphome-vscode",
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-vscode.cmake-tools",
+        "oxc.oxc-vscode",
+        "bradlc.vscode-tailwindcss",
+        "github.vscode-github-actions",
+        "k--kato.intellij-idea-keybindings",
+        "ms-python.pytest-adapter"
       ],
       "settings": {
         "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
@@ -29,9 +37,10 @@
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind"
   ],
   "containerEnv": {
-    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+    "UV_CACHE_DIR": "/home/vscode/.cache/uv"
   },
   "containerUser": "vscode",
-  "postCreateCommand": "mise trust && mise install && mise run setup",
+  "postCreateCommand": "curl https://mise.run | sh && echo 'eval \"$(~/.local/bin/mise activate bash)\"' >> ~/.bashrc && export PATH=\"$HOME/.local/bin:$PATH\" && mise trust && mise install && mise run setup",
   "remoteUser": "vscode"
 }
