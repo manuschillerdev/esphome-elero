@@ -293,7 +293,7 @@ sequenceDiagram
     end
     participant RXQ as rx_queue<br/>(depth 16)
     box rgb(40,60,40) Core 1 — ESPHome Loop
-        participant Loop as Elero::loop()
+        participant MainLoop as Elero::loop()
         participant Disp as dispatch_packet()
         participant Reg as DeviceRegistry
         participant FSM as cover_sm / light_sm
@@ -311,49 +311,45 @@ sequenceDiagram
         RF->>HW: flush_and_rx() — reset radio
     else valid data
         RF->>HW: read_buf() — SPI burst read entire FIFO
-        loop for each packet in FIFO buffer
-            RF->>RF: decode_packet()<br/>parse_packet() + AES-128 decrypt<br/>+ CRC check + echo detection<br/>+ stamp decoded_at_us
-            RF->>RXQ: xQueueSend(RfPacketInfo)
-        end
+        RF->>RF: for each packet in FIFO buffer:<br/>decode_packet() → parse_packet()<br/>+ AES-128 decrypt + CRC check<br/>+ echo detection + stamp decoded_at_us
+        RF->>RXQ: xQueueSend(RfPacketInfo) per packet
     end
 
-    Note over Loop: Elero::loop() — next iteration
-    loop while rx_queue not empty
-        Loop->>RXQ: xQueueReceive (non-blocking)
-        RXQ->>Disp: RfPacketInfo (copy)
+    Note over MainLoop: Elero::loop() — next iteration
+    MainLoop->>RXQ: xQueueReceive (non-blocking)
+    RXQ->>Disp: RfPacketInfo (copy)
 
-        Note over Disp: 1. JSON log (snprintf, ~1ms)
-        Disp->>Disp: ESP_LOGD(TAG_RF, JSON)
+    Note over Disp: 1. JSON log (snprintf, ~1ms)
+    Disp->>Disp: ESP_LOGD(TAG_RF, JSON)
 
-        Note over Disp: 2. Registry dispatch
-        Disp->>Reg: on_rf_packet(pkt, timestamp)
-        Reg->>Adapt: notify_rf_packet_() — all adapters see raw pkt
+    Note over Disp: 2. Registry dispatch
+    Disp->>Reg: on_rf_packet(pkt, timestamp)
+    Reg->>Adapt: notify_rf_packet_() — all adapters see raw pkt
 
-        alt status packet (0xCA/0xC9)
-            Reg->>Reg: find(pkt.src) — lookup Device by address
-            Reg->>Reg: update rf_meta (last_seen, rssi, state_raw)
-            Reg->>FSM: dispatch_status_() → on_rf_status()
-            FSM->>FSM: state transition (variant swap)
-            Reg->>Reg: poll.on_rf_received(now)
-            Reg->>Reg: tilt state tracking
-            alt state changed
-                Reg->>Adapt: notify_state_changed_(dev)
-                Adapt->>Adapt: MqttAdapter: publish 5-6 MQTT topics
-                Adapt->>Adapt: EleroWebServer: JSON + WS broadcast
-                Adapt->>Adapt: EspCoverShell: publish_state()
-            end
-        else command packet (0x6A) + not echo
-            Reg->>Reg: track_remote_() — auto-discover RemoteDevice
+    alt status packet (0xCA/0xC9)
+        Reg->>Reg: find(pkt.src) — lookup Device by address
+        Reg->>Reg: update rf_meta (last_seen, rssi, state_raw)
+        Reg->>FSM: dispatch_status_() → on_rf_status()
+        FSM->>FSM: state transition (variant swap)
+        Reg->>Reg: poll.on_rf_received(now)
+        Reg->>Reg: tilt state tracking
+        alt state changed
+            Reg->>Adapt: notify_state_changed_(dev)
+            Adapt->>Adapt: MqttAdapter: publish 5-6 MQTT topics
+            Adapt->>Adapt: EleroWebServer: JSON + WS broadcast
+            Adapt->>Adapt: EspCoverShell: publish_state()
         end
-
-        Note over Disp: 3. Direct callbacks
-        Disp->>Adapt: on_rf_packet_ callback (WebSocket raw pkt)
-
-        Note over Disp: 4. Direct sensor updates
-        Disp->>Sensor: RSSI sensor publish_state()
-        Disp->>Sensor: status text_sensor publish_state()
-        Disp->>Sensor: problem binary_sensor publish_state()
+    else command packet (0x6A) + not echo
+        Reg->>Reg: track_remote_() — auto-discover RemoteDevice
     end
+
+    Note over Disp: 3. Direct callbacks
+    Disp->>Adapt: on_rf_packet_ callback (WebSocket raw pkt)
+
+    Note over Disp: 4. Direct sensor updates
+    Disp->>Sensor: RSSI sensor publish_state()
+    Disp->>Sensor: status text_sensor publish_state()
+    Disp->>Sensor: problem binary_sensor publish_state()
 ```
 
 **TX path** — command transmission (user action → Core 1 → queue → Core 0 → SPI → completion):
