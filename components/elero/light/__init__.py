@@ -6,7 +6,6 @@ from esphome.const import (
     CONF_NAME,
     CONF_OUTPUT_ID,
     DEVICE_CLASS_SIGNAL_STRENGTH,
-    DEVICE_CLASS_TIMESTAMP,
     STATE_CLASS_MEASUREMENT,
     UNIT_DECIBEL_MILLIWATT,
 )
@@ -27,7 +26,6 @@ CONF_DIM_DURATION = "dim_duration"
 CONF_AUTO_SENSORS = "auto_sensors"
 CONF_RSSI_SENSOR = "rssi_sensor"
 CONF_STATUS_SENSOR = "status_sensor"
-CONF_LAST_SEEN_SENSOR = "last_seen_sensor"
 
 # New architecture: EspLightShell replaces EleroLight
 EspLightShell = elero_ns.class_("EspLightShell", light.LightOutput, cg.Component)
@@ -39,10 +37,6 @@ _RSSI_SENSOR_SCHEMA = sensor.sensor_schema(
     state_class=STATE_CLASS_MEASUREMENT,
 )
 _STATUS_SENSOR_SCHEMA = text_sensor.text_sensor_schema()
-_LAST_SEEN_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
-    device_class=DEVICE_CLASS_TIMESTAMP,
-    entity_category="diagnostic",
-)
 
 
 def _auto_sensor_validator(config):
@@ -55,8 +49,6 @@ def _auto_sensor_validator(config):
         result[CONF_RSSI_SENSOR] = _RSSI_SENSOR_SCHEMA({CONF_NAME: f"{light_name} RSSI"})
     if CONF_STATUS_SENSOR not in result:
         result[CONF_STATUS_SENSOR] = _STATUS_SENSOR_SCHEMA({CONF_NAME: f"{light_name} Status"})
-    if CONF_LAST_SEEN_SENSOR not in result:
-        result[CONF_LAST_SEEN_SENSOR] = _LAST_SEEN_SENSOR_SCHEMA({CONF_NAME: f"{light_name} Last Seen"})
     return result
 
 
@@ -77,7 +69,6 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
             cv.Optional(CONF_RSSI_SENSOR): _RSSI_SENSOR_SCHEMA,
             cv.Optional(CONF_STATUS_SENSOR): _STATUS_SENSOR_SCHEMA,
-            cv.Optional(CONF_LAST_SEEN_SENSOR): _LAST_SEEN_SENSOR_SCHEMA,
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _auto_sensor_validator,
@@ -121,7 +112,3 @@ async def to_code(config):
         status_var = await text_sensor.new_text_sensor(config[CONF_STATUS_SENSOR])
         cg.add(parent.register_text_sensor(addr, status_var))
 
-    # Last seen timestamp sensor — registered with hub
-    if CONF_LAST_SEEN_SENSOR in config:
-        ls_var = await text_sensor.new_text_sensor(config[CONF_LAST_SEEN_SENSOR])
-        cg.add(parent.register_last_seen_sensor(addr, ls_var))

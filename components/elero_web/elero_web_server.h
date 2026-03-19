@@ -41,10 +41,10 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
   // Component::setup()/loop() satisfy OutputAdapter::loop() (same signature).
   // OutputAdapter::setup(DeviceRegistry&) is a separate overload.
   void setup(DeviceRegistry &registry) override { registry_ = &registry; }
-  void on_device_added(const Device &dev) override {}
-  void on_device_removed(const Device &dev) override {}
+  void on_device_added(const Device &dev) override;
+  void on_device_removed(const Device &dev) override;
   void on_state_changed(const Device &dev) override;
-  void on_config_changed(const Device &dev) override {}
+  void on_config_changed(const Device &dev) override;
   void on_rf_packet(const RfPacketInfo &pkt) override;
 
   // LogListener interface - forward logs to WebSocket clients
@@ -79,6 +79,7 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
   // JSON builders
   std::string build_config_json();
   std::string build_rf_json(const RfPacketInfo &pkt);
+  std::string build_device_upserted_json_(const Device &dev);
 
   // Device CRUD handlers (MQTT mode)
   void handle_upsert_device_(struct mg_connection *c, JsonObject root);

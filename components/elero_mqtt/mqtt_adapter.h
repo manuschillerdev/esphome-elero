@@ -62,7 +62,6 @@ class MqttAdapter : public OutputAdapter {
     void publish_remote_state_(const Device &dev);
 
     // ── Shared helpers ──
-    void publish_last_seen_(DeviceType type, uint32_t addr);
     void remove_all_discovery_(const Device &dev);
 
     // ── Gateway sensor ──

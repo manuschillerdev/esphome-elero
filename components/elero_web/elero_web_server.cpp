@@ -3,8 +3,6 @@
 #include "../elero/elero_packet.h"
 #include "../elero/elero_strings.h"
 #include "../elero/nvs_config.h"
-#include "../elero/cover_sm.h"
-#include "../elero/light_sm.h"
 #include "../elero/state_snapshot.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
@@ -108,8 +106,30 @@ void EleroWebServer::dump_config() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// RF Packet Handler
+// OutputAdapter — Device CRUD Events
 // ═══════════════════════════════════════════════════════════════════════════════
+
+void EleroWebServer::on_device_added(const Device &dev) {
+  if (this->ws_clients_.empty() || !this->enabled_)
+    return;
+  this->ws_broadcast("device_upserted", this->build_device_upserted_json_(dev));
+}
+
+void EleroWebServer::on_config_changed(const Device &dev) {
+  if (this->ws_clients_.empty() || !this->enabled_)
+    return;
+  this->ws_broadcast("device_upserted", this->build_device_upserted_json_(dev));
+}
+
+void EleroWebServer::on_device_removed(const Device &dev) {
+  if (this->ws_clients_.empty() || !this->enabled_)
+    return;
+  std::string payload = json::build_json([&](JsonObject root) {
+    root["address"] = hex_str(dev.config.dst_address);
+    root["device_type"] = device_type_str(dev.config.type);
+  });
+  this->ws_broadcast("device_removed", payload);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // State Changed (OutputAdapter — optimistic updates)
@@ -482,37 +502,45 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
   });
 }
 
+std::string EleroWebServer::build_device_upserted_json_(const Device &dev) {
+  return json::build_json([&](JsonObject root) {
+    root["address"] = hex_str(dev.config.dst_address);
+    root["device_type"] = device_type_str(dev.config.type);
+    root["name"] = dev.config.name;
+    root["enabled"] = dev.config.is_enabled();
+    root["updated_at"] = dev.config.updated_at;
+
+    if (!dev.config.is_remote()) {
+      root["channel"] = dev.config.channel;
+      root["remote"] = hex_str(dev.config.src_address);
+    }
+    if (dev.config.is_cover()) {
+      root["open_ms"] = dev.config.open_duration_ms;
+      root["close_ms"] = dev.config.close_duration_ms;
+      root["poll_ms"] = dev.config.poll_interval_ms;
+      root["supports_tilt"] = dev.config.supports_tilt != 0;
+    }
+    if (dev.config.is_light()) {
+      root["dim_ms"] = dev.config.dim_duration_ms;
+    }
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Device Config Parser (shared by save/update)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void EleroWebServer::dispatch_device_command_(Device &dev, uint8_t cmd_byte) {
+  auto *registry = this->parent_->get_registry();
+  if (registry == nullptr) {
+    ESP_LOGW(TAG, "No registry for command dispatch");
+    return;
+  }
+
   if (dev.is_cover()) {
-    auto &cover = std::get<CoverDevice>(dev.logic);
-    auto ctx = cover_context(dev.config);
-    uint32_t now_ms = millis();
-    cover.last_command_source = CommandSource::HUB;
-    if (cmd_byte == packet::command::STOP) {
-      dev.sender.clear_queue();
-      (void) dev.sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::COMMAND);
-    } else {
-      (void) dev.sender.enqueue(cmd_byte);
-    }
-    (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
-    cover.state = cover_sm::on_command(cover.state, cmd_byte, now_ms, ctx);
-    cover.poll.on_command_sent(now_ms);
+    registry->command_cover(dev, cmd_byte);
   } else if (dev.is_light()) {
-    auto &light_dev = std::get<LightDevice>(dev.logic);
-    auto ctx = light_context(dev.config);
-    uint32_t now_ms = millis();
-    light_dev.last_command_source = CommandSource::HUB;
-    if (cmd_byte == packet::command::DOWN) {
-      light_dev.state = light_sm::on_turn_off(light_dev.state);
-    } else if (cmd_byte == packet::command::UP) {
-      light_dev.state = light_sm::on_turn_on(light_dev.state, now_ms, ctx);
-    }
-    (void) dev.sender.enqueue(cmd_byte);
-    (void) dev.sender.enqueue(packet::button::RELEASE, packet::button::PACKETS, packet::msg_type::BUTTON);
+    registry->command_light(dev, cmd_byte);
   } else {
     (void) dev.sender.enqueue(cmd_byte);
   }

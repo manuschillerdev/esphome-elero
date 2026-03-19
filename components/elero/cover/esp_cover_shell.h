@@ -89,71 +89,46 @@ class EspCoverShell : public cover::Cover, public Component {
 
  protected:
   void control(const cover::CoverCall &call) override {
-    if (!device_ || !device_->is_cover()) return;
-
-    auto &cover = std::get<CoverDevice>(device_->logic);
-    auto ctx = cover_context(device_->config);
-    uint32_t now = millis();
-    cover.last_command_source = CommandSource::HUB;
+    if (!device_ || !device_->is_cover() || !registry_) return;
 
     if (call.get_stop()) {
-      device_->sender.clear_queue();
-      (void) device_->sender.enqueue(packet::command::STOP, packet::button::PACKETS, packet::msg_type::COMMAND);
-      (void) device_->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
-      cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
-      cover.target_position = cover_sm::NO_TARGET;
+      registry_->command_cover(*device_, packet::command::STOP);
       sync_and_publish_();
       return;
     }
 
     if (call.get_position().has_value()) {
       float target = *call.get_position();
-      uint8_t cmd;
-      if (target >= cover_sm::POSITION_OPEN) {
-        cmd = packet::command::UP;
-        cover.target_position = cover_sm::NO_TARGET;  // Blind handles endpoint
-      } else if (target <= cover_sm::POSITION_CLOSED) {
-        cmd = packet::command::DOWN;
-        cover.target_position = cover_sm::NO_TARGET;  // Blind handles endpoint
+      auto ctx = cover_context(device_->config);
+      if (cover_sm::has_position_tracking(ctx) &&
+          target > cover_sm::POSITION_CLOSED && target < cover_sm::POSITION_OPEN) {
+        registry_->set_cover_position(*device_, target);
       } else {
-        float current = cover_sm::position(cover.state, now, ctx);
-        cmd = (target > current) ? packet::command::UP : packet::command::DOWN;
-        cover.target_position = target;
+        uint8_t cmd = (target >= cover_sm::POSITION_OPEN) ? packet::command::UP : packet::command::DOWN;
+        registry_->command_cover(*device_, cmd);
       }
-      (void) device_->sender.enqueue(cmd);
-      (void) device_->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
-      cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
-      if (cmd == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
-      if (cmd == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
-      cover.poll.on_command_sent(now);
       sync_and_publish_();
       return;
     }
 
     if (call.get_tilt().has_value()) {
-      (void) device_->sender.enqueue(packet::command::TILT);
-      (void) device_->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
-      cover.state = cover_sm::on_command(cover.state, packet::command::TILT, now, ctx);
-      cover.poll.on_command_sent(now);
+      registry_->command_cover_tilt(*device_);
       sync_and_publish_();
       return;
     }
 
     if (call.get_toggle().has_value()) {
-      // Toggle: if moving → stop; if closed or was closing → open; else close
+      auto &cover = std::get<CoverDevice>(device_->logic);
       uint8_t cmd;
       if (cover_sm::is_moving(cover.state)) {
-        device_->sender.clear_queue();
         cmd = packet::command::STOP;
       } else {
-        float pos = cover_sm::position(cover.state, now, ctx);
+        auto ctx = cover_context(device_->config);
+        float pos = cover_sm::position(cover.state, millis(), ctx);
         bool was_closing = (cover.last_direction == cover_sm::Operation::CLOSING);
         cmd = (pos <= cover_sm::POSITION_CLOSED || was_closing) ? packet::command::UP : packet::command::DOWN;
       }
-      (void) device_->sender.enqueue(cmd);
-      (void) device_->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
-      cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
-      cover.poll.on_command_sent(now);
+      registry_->command_cover(*device_, cmd);
       sync_and_publish_();
     }
   }

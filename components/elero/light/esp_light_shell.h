@@ -70,37 +70,16 @@ class EspLightShell : public light::LightOutput, public Component {
   }
 
   void write_state(light::LightState *state) override {
-    if (!device_ || !device_->is_light() || ignore_write_state_) return;
-
-    auto &light = std::get<LightDevice>(device_->logic);
-    auto ctx = light_context(device_->config);
-    uint32_t now = millis();
-    light.last_command_source = CommandSource::HUB;
+    if (!device_ || !device_->is_light() || !registry_ || ignore_write_state_) return;
 
     float brightness;
     state->current_values_as_brightness(&brightness);
     bool is_on = state->current_values.is_on();
 
     if (!is_on) {
-      light.state = light_sm::on_turn_off(light.state);
-      device_->sender.clear_queue();
-      device_->sender.enqueue(packet::command::DOWN);
-      return;
-    }
-
-    if (!light_sm::supports_brightness(ctx)) {
-      light.state = light_sm::on_turn_on(light.state, now, ctx);
-      device_->sender.enqueue(packet::command::UP);
-      return;
-    }
-
-    light.state = light_sm::on_set_brightness(light.state, brightness, now, ctx);
-    if (std::holds_alternative<light_sm::DimmingUp>(light.state)) {
-      device_->sender.enqueue(packet::command::UP);
-    } else if (std::holds_alternative<light_sm::DimmingDown>(light.state)) {
-      device_->sender.enqueue(packet::command::DOWN);
-    } else if (light_sm::is_on(light.state)) {
-      device_->sender.enqueue(packet::command::UP);
+      registry_->command_light(*device_, packet::command::DOWN);
+    } else {
+      registry_->set_light_brightness(*device_, brightness);
     }
   }
 

@@ -22,7 +22,26 @@ function getSignalColor(strength: SignalStrength): string {
   }
 }
 
-export function SignalIndicator({ rssi }: { rssi: number }) {
+export function SignalIndicator({ rssi }: { rssi: number | null | undefined }) {
+  if (rssi == null || rssi === 0) {
+    // No RSSI data — render empty (gray) bars
+    return (
+      <div
+        className="flex items-end gap-0.5"
+        role="img"
+        aria-label="Signal strength: unknown"
+      >
+        {[1, 2, 3, 4].map((bar) => (
+          <div
+            key={bar}
+            className="w-[3px] rounded-full bg-border"
+            style={{ height: `${bar * 3 + 4}px` }}
+          />
+        ))}
+      </div>
+    )
+  }
+
   const strength = getSignalStrength(rssi)
   const color = getSignalColor(strength)
   const bars = strength === 'excellent' ? 4 : strength === 'good' ? 3 : strength === 'fair' ? 2 : 1

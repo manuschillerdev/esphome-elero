@@ -32,9 +32,9 @@ inline constexpr const char *ATTRIBUTES = "/attributes";
 inline constexpr const char *TILT_STATE = "/tilt_state";
 inline constexpr const char *STATUS = "/status";
 inline constexpr const char *SET = "/set";
+inline constexpr const char *SET_POSITION = "/set_position";
 inline constexpr const char *TILT = "/tilt";
 inline constexpr const char *CONFIG = "/config";
-inline constexpr const char *LAST_SEEN = "/last_seen";
 }  // namespace mqtt_topic
 
 // ═══════════════════════════════════════════════════════════════════════════════

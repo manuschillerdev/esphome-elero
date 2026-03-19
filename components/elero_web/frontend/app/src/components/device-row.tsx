@@ -94,8 +94,8 @@ export function SignalCell({ device }: { device: Device }) {
   if (!device.lastStatus) return null
   return (
     <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-      <SignalIndicator rssi={device.lastStatus.rssi ?? -100} />
-      <span>{device.lastStatus.rssi?.toFixed(0)} dBm</span>
+      <SignalIndicator rssi={device.lastStatus.rssi} />
+      {device.lastStatus.rssi ? <span>{device.lastStatus.rssi.toFixed(0)} dBm</span> : null}
     </div>
   )
 }

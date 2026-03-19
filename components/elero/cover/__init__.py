@@ -7,7 +7,6 @@ from esphome.const import (
     CONF_NAME,
     CONF_OPEN_DURATION,
     DEVICE_CLASS_SIGNAL_STRENGTH,
-    DEVICE_CLASS_TIMESTAMP,
     STATE_CLASS_MEASUREMENT,
     UNIT_DECIBEL_MILLIWATT,
 )
@@ -38,7 +37,6 @@ CONF_STATUS_SENSOR = "status_sensor"
 CONF_PROBLEM_SENSOR = "problem_sensor"
 CONF_COMMAND_SOURCE_SENSOR = "command_source_sensor"
 CONF_PROBLEM_TYPE_SENSOR = "problem_type_sensor"
-CONF_LAST_SEEN_SENSOR = "last_seen_sensor"
 CONF_DEVICE_CLASS = "device_class"
 
 # New architecture: EspCoverShell replaces EleroCover
@@ -61,10 +59,6 @@ _COMMAND_SOURCE_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
 _PROBLEM_TYPE_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
     entity_category="diagnostic",
     icon="mdi:alert-circle-outline",
-)
-_LAST_SEEN_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
-    device_class=DEVICE_CLASS_TIMESTAMP,
-    entity_category="diagnostic",
 )
 
 
@@ -111,8 +105,6 @@ def _auto_sensor_validator(config):
         result[CONF_COMMAND_SOURCE_SENSOR] = _COMMAND_SOURCE_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Command Source"})
     if CONF_PROBLEM_TYPE_SENSOR not in result:
         result[CONF_PROBLEM_TYPE_SENSOR] = _PROBLEM_TYPE_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Problem Type"})
-    if CONF_LAST_SEEN_SENSOR not in result:
-        result[CONF_LAST_SEEN_SENSOR] = _LAST_SEEN_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Last Seen"})
     return result
 
 
@@ -148,7 +140,6 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_PROBLEM_SENSOR): _PROBLEM_SENSOR_SCHEMA,
             cv.Optional(CONF_COMMAND_SOURCE_SENSOR): _COMMAND_SOURCE_SENSOR_SCHEMA,
             cv.Optional(CONF_PROBLEM_TYPE_SENSOR): _PROBLEM_TYPE_SENSOR_SCHEMA,
-            cv.Optional(CONF_LAST_SEEN_SENSOR): _LAST_SEEN_SENSOR_SCHEMA,
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -213,7 +204,5 @@ async def to_code(config):
         pt_var = await text_sensor.new_text_sensor(config[CONF_PROBLEM_TYPE_SENSOR])
         cg.add(var.set_problem_type_sensor(pt_var))
 
-    if CONF_LAST_SEEN_SENSOR in config:
-        ls_var = await text_sensor.new_text_sensor(config[CONF_LAST_SEEN_SENSOR])
-        cg.add(parent.register_last_seen_sensor(addr, ls_var))
+
 

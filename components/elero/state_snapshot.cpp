@@ -26,7 +26,6 @@ CoverStateSnapshot compute_cover_snapshot(const Device &dev, uint32_t now) {
         .rssi = dev.rf.last_rssi,
         .state_string = elero_state_to_string(dev.rf.last_state_raw),
         .command_source = command_source_str(cover.last_command_source),
-        .last_seen_ms = dev.rf.last_seen_ms,
         .device_class = ha_cover_class_str(static_cast<HaCoverClass>(dev.config.ha_device_class)),
     };
 }
@@ -45,7 +44,6 @@ LightStateSnapshot compute_light_snapshot(const Device &dev, uint32_t now) {
         .rssi = dev.rf.last_rssi,
         .state_string = elero_state_to_string(dev.rf.last_state_raw),
         .command_source = command_source_str(light.last_command_source),
-        .last_seen_ms = dev.rf.last_seen_ms,
     };
 }
 
@@ -63,7 +61,6 @@ void CoverStateSnapshot::to_json(JsonObject obj) const {
     obj["state"] = state_string;
     obj["command_source"] = command_source;
     obj["device_class"] = device_class;
-    obj["last_seen"] = last_seen_ms;
 }
 
 void LightStateSnapshot::to_json(JsonObject obj) const {
@@ -74,7 +71,6 @@ void LightStateSnapshot::to_json(JsonObject obj) const {
     obj["rssi"] = round_rssi(rssi);
     obj["state"] = state_string;
     obj["command_source"] = command_source;
-    obj["last_seen"] = last_seen_ms;
 }
 
 }  // namespace elero

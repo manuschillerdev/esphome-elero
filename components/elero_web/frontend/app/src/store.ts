@@ -243,7 +243,7 @@ function makeDevice(partial: Partial<Device> & { address: string; type: DeviceTy
 
 function blindToDevice(b: BlindConfig): Device {
   return makeDevice({
-    address: b.address, type: 'cover', updated_at: b.updated_at ?? null, enabled: b.enabled,
+    address: b.address, type: 'cover', updated_at: b.updated_at || null, enabled: b.enabled,
     name: b.name, channel: b.channel, remote: b.remote,
     open_ms: b.open_ms, close_ms: b.close_ms, poll_ms: b.poll_ms, supports_tilt: b.supports_tilt,
     lastStatus: b.state && b.state !== '0x00'
@@ -254,7 +254,7 @@ function blindToDevice(b: BlindConfig): Device {
 
 function lightToDevice(l: LightConfig): Device {
   return makeDevice({
-    address: l.address, type: 'light', updated_at: l.updated_at ?? null, enabled: l.enabled,
+    address: l.address, type: 'light', updated_at: l.updated_at || null, enabled: l.enabled,
     name: l.name, channel: l.channel, remote: l.remote, dim_ms: l.dim_ms,
     lastStatus: l.state && l.state !== '0x00'
       ? { state: l.state, rssi: l.rssi } as RfPacketWithTimestamp
@@ -264,7 +264,7 @@ function lightToDevice(l: LightConfig): Device {
 
 function remoteToDevice(r: RemoteConfig): Device {
   return makeDevice({
-    address: r.address, type: 'remote', updated_at: r.updated_at ?? null, name: r.name,
+    address: r.address, type: 'remote', updated_at: r.updated_at || null, name: r.name,
   })
 }
 
@@ -370,7 +370,7 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
   next.set(data.address, makeDevice({
     address: data.address,
     type: data.device_type,
-    updated_at: data.updated_at ?? null,
+    updated_at: data.updated_at || null,
     enabled: data.enabled ?? true,
     name: data.name ?? '',
     channel: data.channel ?? 0,

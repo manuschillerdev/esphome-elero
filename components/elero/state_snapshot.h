@@ -31,7 +31,6 @@ struct CoverStateSnapshot {
     float rssi;
     const char *state_string;    ///< Raw elero state name ("top", "moving_up", etc.)
     const char *command_source;  ///< "hub"/"remote"/"unknown"
-    uint32_t last_seen_ms;
     const char *device_class;    ///< "shutter"/"blind"/"awning"/etc.
 
     /// Write snapshot fields to a JSON object. Caller adds identity/config fields.
@@ -50,7 +49,6 @@ struct LightStateSnapshot {
     float rssi;
     const char *state_string;
     const char *command_source;
-    uint32_t last_seen_ms;
 
     /// Write snapshot fields to a JSON object. Caller adds identity/config fields.
     void to_json(JsonObject obj) const;

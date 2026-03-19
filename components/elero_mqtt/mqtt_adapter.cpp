@@ -7,10 +7,7 @@
 #include "mqtt_adapter.h"
 #include "../elero/device.h"
 #include "../elero/device_registry.h"
-#include "../elero/cover_sm.h"
-#include "../elero/light_sm.h"
 #include "../elero/state_snapshot.h"
-#include "../elero/overloaded.h"
 #include "../elero/elero_strings.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
@@ -82,6 +79,8 @@ void MqttAdapter::loop() {
 void MqttAdapter::on_device_added(const Device &dev) {
     if (!ctx_.mqtt->is_connected()) return;
     if (!dev.config.is_enabled()) return;
+    // Only publish persisted devices (updated_at set by persist())
+    if (dev.config.updated_at == 0) return;
 
     if (dev.is_cover()) {
         publish_cover_discovery_(dev);
@@ -109,12 +108,12 @@ void MqttAdapter::remove_all_discovery_(const Device &dev) {
 
     if (dev.is_cover()) {
         ctx_.unsubscribe(DeviceType::COVER, addr, mqtt_topic::SET);
+        ctx_.unsubscribe(DeviceType::COVER, addr, mqtt_topic::SET_POSITION);
         ctx_.unsubscribe(DeviceType::COVER, addr, mqtt_topic::TILT);
 
         ctx_.remove_discovery(ha_discovery::COVER, ctx_.object_id(DeviceType::COVER, addr));
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "rssi"));
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "state"));
-        ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "last_seen"));
         ctx_.remove_discovery(ha_discovery::BINARY_SENSOR, ctx_.object_id(DeviceType::COVER, addr, "problem"));
     } else if (dev.is_light()) {
         ctx_.unsubscribe(DeviceType::LIGHT, addr, mqtt_topic::SET);
@@ -122,11 +121,9 @@ void MqttAdapter::remove_all_discovery_(const Device &dev) {
         ctx_.remove_discovery(ha_discovery::LIGHT, ctx_.object_id(DeviceType::LIGHT, addr));
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "rssi"));
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "state"));
-        ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "last_seen"));
         ctx_.remove_discovery(ha_discovery::BINARY_SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "problem"));
     } else if (dev.is_remote()) {
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr));
-        ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr, "last_seen"));
     }
 
     ESP_LOGD(TAG, "Removed discovery for 0x%06x", addr);
@@ -135,6 +132,7 @@ void MqttAdapter::remove_all_discovery_(const Device &dev) {
 void MqttAdapter::on_state_changed(const Device &dev) {
     if (!ctx_.mqtt->is_connected()) return;
     if (!dev.config.is_enabled()) return;
+    if (dev.config.updated_at == 0) return;
 
     if (dev.is_cover()) {
         publish_cover_state_(dev);
@@ -184,6 +182,9 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
         root["payload_stop"] = action::STOP;
         root["position_open"] = 100;
         root["position_closed"] = 0;
+        if (dev.config.open_duration_ms > 0 && dev.config.close_duration_ms > 0) {
+            root["set_position_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::SET_POSITION);
+        }
         root["device_class"] = ha_cover_class_str(static_cast<HaCoverClass>(dev.config.ha_device_class));
         root["json_attributes_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::ATTRIBUTES);
         if (tilt) {
@@ -243,20 +244,6 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::BINARY_SENSOR, problem_oid, problem_payload);
 
-    // Last seen timestamp sensor
-    auto ls_oid = ctx_.object_id(DeviceType::COVER, addr, "last_seen");
-    std::string ls_payload = json::build_json([&](JsonObject root) {
-        root["name"] = std::string(dev.config.name) + " Last Seen";
-        root["unique_id"] = ls_oid;
-        root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::LAST_SEEN);
-        root["device_class"] = "timestamp";
-        root["entity_category"] = "diagnostic";
-        ctx_.add_availability(root);
-        JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
-    });
-    ctx_.publish_discovery(ha_discovery::SENSOR, ls_oid, ls_payload);
-
     ESP_LOGD(TAG, "Published cover discovery for 0x%06x", addr);
 }
 
@@ -291,7 +278,6 @@ void MqttAdapter::publish_cover_state_(const Device &dev) {
         ctx_.publish(DeviceType::COVER, addr, mqtt_topic::TILT_STATE, snap.tilted ? "100" : "0", false);
     }
 
-    publish_last_seen_(DeviceType::COVER, addr);
 }
 
 void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
@@ -308,20 +294,17 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
                 return;
             }
 
-            auto &cover = std::get<CoverDevice>(d->logic);
-            auto ctx = cover_context(d->config);
-            uint32_t now = millis();
-            cover.last_command_source = CommandSource::HUB;
-            cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
+            registry_->command_cover(*d, cmd_byte);
+        });
 
-            if (cmd_byte == packet::command::STOP) {
-                d->sender.clear_queue();
-                (void) d->sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::COMMAND);
-            } else {
-                (void) d->sender.enqueue(cmd_byte);
-            }
-            (void) d->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
-            cover.poll.on_command_sent(now);
+    // Position commands (only meaningful when durations are set)
+    ctx_.subscribe(DeviceType::COVER, addr, mqtt_topic::SET_POSITION,
+        [this, addr](const char *, const char *payload) {
+            Device *d = registry_->find(addr, DeviceType::COVER);
+            if (d == nullptr) return;
+
+            float target = static_cast<float>(atoi(payload)) / PERCENT_SCALE;
+            registry_->set_cover_position(*d, target);
         });
 
     ctx_.subscribe(DeviceType::COVER, addr, mqtt_topic::TILT,
@@ -329,18 +312,7 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
             Device *d = registry_->find(addr, DeviceType::COVER);
             if (d == nullptr) return;
 
-            uint8_t cmd_byte = elero_action_to_command(action::TILT);
-            if (cmd_byte == packet::command::INVALID) return;
-
-            auto &cover = std::get<CoverDevice>(d->logic);
-            auto ctx = cover_context(d->config);
-            uint32_t now = millis();
-            cover.last_command_source = CommandSource::HUB;
-            cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
-
-            (void) d->sender.enqueue(cmd_byte);
-            (void) d->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
-            cover.poll.on_command_sent(now);
+            registry_->command_cover_tilt(*d);
         });
 
     ESP_LOGD(TAG, "Subscribed to cover commands for 0x%06x", addr);
@@ -420,20 +392,6 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::BINARY_SENSOR, problem_oid, problem_payload);
 
-    // Last seen timestamp sensor
-    auto ls_oid = ctx_.object_id(DeviceType::LIGHT, addr, "last_seen");
-    std::string ls_payload = json::build_json([&](JsonObject root) {
-        root["name"] = std::string(dev.config.name) + " Last Seen";
-        root["unique_id"] = ls_oid;
-        root["state_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::LAST_SEEN);
-        root["device_class"] = "timestamp";
-        root["entity_category"] = "diagnostic";
-        ctx_.add_availability(root);
-        JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
-    });
-    ctx_.publish_discovery(ha_discovery::SENSOR, ls_oid, ls_payload);
-
     ESP_LOGD(TAG, "Published light discovery for 0x%06x", addr);
 }
 
@@ -467,7 +425,6 @@ void MqttAdapter::publish_light_state_(const Device &dev) {
     });
     ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::ATTRIBUTES, attrs, false);
 
-    publish_last_seen_(DeviceType::LIGHT, addr);
 }
 
 void MqttAdapter::subscribe_light_commands_(const Device &dev) {
@@ -478,46 +435,29 @@ void MqttAdapter::subscribe_light_commands_(const Device &dev) {
             Device *d = registry_->find(addr, DeviceType::LIGHT);
             if (d == nullptr) return;
 
-            auto &light = std::get<LightDevice>(d->logic);
-            auto ctx = light_context(d->config);
-            uint32_t now = millis();
-            light.last_command_source = CommandSource::HUB;
-
+            // Try JSON payload first (HA light schema: {"state":"ON/OFF","brightness":N})
             bool handled = json::parse_json(payload, [&](JsonObject root) -> bool {
                 if (root["state"].is<const char *>()) {
                     const char *state = root["state"];
                     if (strcmp(state, ha_state::OFF) == 0) {
-                        light.state = light_sm::on_turn_off(light.state);
-                        (void) d->sender.enqueue(packet::command::DOWN);
+                        registry_->command_light(*d, packet::command::DOWN);
                         return true;
                     }
                 }
                 if (root["brightness"].is<int>()) {
                     float brightness = static_cast<float>(root["brightness"].as<int>()) / PERCENT_SCALE;
-                    light.state = light_sm::on_set_brightness(light.state, brightness, now, ctx);
-                    if (std::holds_alternative<light_sm::DimmingUp>(light.state)) {
-                        (void) d->sender.enqueue(packet::command::UP);
-                    } else if (std::holds_alternative<light_sm::DimmingDown>(light.state)) {
-                        (void) d->sender.enqueue(packet::command::DOWN);
-                    } else if (light_sm::is_on(light.state)) {
-                        (void) d->sender.enqueue(packet::command::UP);
-                    }
+                    registry_->set_light_brightness(*d, brightness);
                 } else if (root["state"].is<const char *>()) {
-                    light.state = light_sm::on_turn_on(light.state, now, ctx);
-                    (void) d->sender.enqueue(packet::command::UP);
+                    registry_->command_light(*d, packet::command::UP);
                 }
                 return true;
             });
 
+            // Fallback: plain string actions ("on", "off", "up", "down", etc.)
             if (!handled) {
                 uint8_t cmd_byte = elero_action_to_command(payload);
                 if (cmd_byte != packet::command::INVALID) {
-                    if (strcmp(payload, action::OFF) == 0) {
-                        light.state = light_sm::on_turn_off(light.state);
-                    } else if (strcmp(payload, action::ON) == 0) {
-                        light.state = light_sm::on_turn_on(light.state, now, ctx);
-                    }
-                    (void) d->sender.enqueue(cmd_byte);
+                    registry_->command_light(*d, cmd_byte);
                 } else {
                     ESP_LOGW(TAG, "Unknown light action: %s", payload);
                 }
@@ -551,20 +491,6 @@ void MqttAdapter::publish_remote_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::SENSOR, oid, payload);
 
-    // Last seen timestamp sensor
-    auto ls_oid = ctx_.object_id(DeviceType::REMOTE, addr, "last_seen");
-    std::string ls_payload = json::build_json([&](JsonObject root) {
-        root["name"] = std::string(dev.config.name) + " Last Seen";
-        root["unique_id"] = ls_oid;
-        root["state_topic"] = ctx_.topic(DeviceType::REMOTE, addr, mqtt_topic::LAST_SEEN);
-        root["device_class"] = "timestamp";
-        root["entity_category"] = "diagnostic";
-        ctx_.add_availability(root);
-        JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
-    });
-    ctx_.publish_discovery(ha_discovery::SENSOR, ls_oid, ls_payload);
-
     ESP_LOGD(TAG, "Published remote discovery for 0x%06x", addr);
 }
 
@@ -584,19 +510,11 @@ void MqttAdapter::publish_remote_state_(const Device &dev) {
     });
 
     ctx_.publish(DeviceType::REMOTE, addr, mqtt_topic::STATE, payload, false);
-    publish_last_seen_(DeviceType::REMOTE, addr);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SHARED HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
-
-void MqttAdapter::publish_last_seen_(DeviceType type, uint32_t addr) {
-    auto ts = format_iso8601_now();
-    if (!ts.empty()) {
-        ctx_.publish(type, addr, mqtt_topic::LAST_SEEN, ts, false);
-    }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // GATEWAY SENSOR — always published, keeps HA device alive with 0 child entities
@@ -734,17 +652,14 @@ void MqttAdapter::collect_expected_topics_(std::vector<std::string> &out) const 
             out.push_back(ctx_.discovery_topic(ha_discovery::COVER, ctx_.object_id(DeviceType::COVER, addr)));
             out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "rssi")));
             out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "state")));
-            out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "last_seen")));
             out.push_back(ctx_.discovery_topic(ha_discovery::BINARY_SENSOR, ctx_.object_id(DeviceType::COVER, addr, "problem")));
         } else if (dev.is_light()) {
             out.push_back(ctx_.discovery_topic(ha_discovery::LIGHT, ctx_.object_id(DeviceType::LIGHT, addr)));
             out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "rssi")));
             out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "state")));
-            out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "last_seen")));
             out.push_back(ctx_.discovery_topic(ha_discovery::BINARY_SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "problem")));
         } else if (dev.is_remote()) {
             out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr)));
-            out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr, "last_seen")));
         }
     });
 }
