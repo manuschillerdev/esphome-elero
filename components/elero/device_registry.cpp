@@ -234,7 +234,7 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
     // Native mode doesn't auto-discover remotes — devices are YAML-defined
     if (!nvs_enabled_) return;
 
-    // Check if we already track this remote
+    // Check if we already track this remote (active, any enabled state)
     Device *existing = find(pkt.src, DeviceType::REMOTE);
     if (existing) {
         existing->rf.last_seen_ms = now;
@@ -243,7 +243,10 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
         remote.last_command = pkt.command;
         remote.last_target = pkt.dst;
         remote.last_channel = pkt.channel;
-        notify_state_changed_(*existing);
+        // Only broadcast state for enabled remotes (disabled = unpublished)
+        if (existing->config.is_enabled()) {
+            notify_state_changed_(*existing);
+        }
         return;
     }
 

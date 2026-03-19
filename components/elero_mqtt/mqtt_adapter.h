@@ -4,6 +4,12 @@
 /// Implements OutputAdapter for MQTT mode. Reads device state from the registry
 /// on demand, publishes in HA's MQTT discovery format, and routes incoming MQTT
 /// commands back through the registry's command senders.
+///
+/// On MQTT (re)connect, runs stale discovery cleanup:
+/// 1. Subscribes to wildcard discovery topics to collect retained messages
+/// 2. After a delay, diffs collected vs expected active topics
+/// 3. Publishes empty retained to remove stale discoveries
+/// 4. Then publishes all active discoveries
 
 #pragma once
 
@@ -11,6 +17,8 @@
 #include "mqtt_context.h"
 #include "mqtt_publisher.h"
 #include "esphome_mqtt_adapter.h"
+#include <vector>
+#include <string>
 
 namespace esphome {
 namespace elero {
@@ -53,6 +61,19 @@ class MqttAdapter : public OutputAdapter {
     void publish_remote_discovery_(const Device &dev);
     void publish_remote_state_(const Device &dev);
 
+    // ── Shared helpers ──
+    void publish_last_seen_(DeviceType type, uint32_t addr);
+    void remove_all_discovery_(const Device &dev);
+
+    // ── Gateway sensor ──
+    void publish_gateway_discovery_();
+    void publish_gateway_state_();
+
+    // ── Stale discovery cleanup ──
+    void start_stale_collection_();
+    void finish_stale_cleanup_();
+    void collect_expected_topics_(std::vector<std::string> &out) const;
+
     // ── Reconnect ──
     void republish_all_();
 
@@ -60,6 +81,17 @@ class MqttAdapter : public OutputAdapter {
     EspHomeMqttAdapter mqtt_adapter_;
     bool mqtt_was_connected_{false};
     DeviceRegistry *registry_{nullptr};
+
+    // ── Stale cleanup state ──
+    enum class CleanupState : uint8_t { IDLE, COLLECTING, DONE };
+    static constexpr uint32_t STALE_COLLECT_DELAY_MS = 500;
+    static constexpr const char *DISCOVERY_DOMAINS[] = {
+        "cover", "light", "sensor", "binary_sensor"
+    };
+    static constexpr size_t DISCOVERY_DOMAIN_COUNT = 4;
+    CleanupState cleanup_state_{CleanupState::IDLE};
+    uint32_t collect_start_ms_{0};
+    std::vector<std::string> collected_topics_;
 };
 
 }  // namespace elero

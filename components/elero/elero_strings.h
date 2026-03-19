@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <ctime>
 #include <string>
 #include <cstdio>
 
@@ -69,6 +70,18 @@ inline std::string hex_str(uint32_t val) {
 inline std::string hex_str8(uint8_t val) {
   char buf[8];
   snprintf(buf, sizeof(buf), "0x%02x", val);
+  return buf;
+}
+
+/// Format current wall clock as ISO 8601 UTC string (e.g., "2026-03-19T14:30:00+00:00").
+/// Returns empty string if system time is not yet synced (year < 2024).
+inline std::string format_iso8601_now() {
+  time_t epoch = time(nullptr);
+  struct tm utc{};
+  gmtime_r(&epoch, &utc);
+  if (utc.tm_year + 1900 < 2024) return {};
+  char buf[32];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S+00:00", &utc);
   return buf;
 }
 

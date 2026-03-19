@@ -21,6 +21,18 @@ namespace elero {
 
 static const char *const TAG = "elero.mqtt.adapter";
 
+// Enum options for HA device_class: enum sensors
+static const char *const COVER_STATE_OPTIONS[] = {
+    "top", "bottom", "intermediate", "tilt", "top_tilt", "bottom_tilt",
+    "moving_up", "moving_down", "start_moving_up", "start_moving_down",
+    "stopped", "blocking", "overheated", "timeout", "unknown",
+};
+static const char *const LIGHT_STATE_OPTIONS[] = {
+    "on", "top", "bottom", "intermediate",
+    "moving_up", "moving_down", "start_moving_up", "start_moving_down",
+    "stopped", "blocking", "overheated", "timeout", "unknown",
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // LIFECYCLE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -35,19 +47,32 @@ void MqttAdapter::setup(DeviceRegistry &registry) {
              ctx_.device_name.c_str());
 
     if (ctx_.mqtt->is_connected()) {
-        ctx_.publish_birth();
+        start_stale_collection_();
         mqtt_was_connected_ = true;
     }
 }
 
 void MqttAdapter::loop() {
     bool connected = ctx_.mqtt->is_connected();
+
     if (connected && !mqtt_was_connected_) {
-        ESP_LOGI(TAG, "MQTT reconnected, republishing all discoveries");
-        ctx_.publish_birth();
-        republish_all_();
+        ESP_LOGI(TAG, "MQTT connected, starting stale discovery cleanup");
+        start_stale_collection_();
     }
-    mqtt_was_connected_ = connected;
+
+    if (!connected) {
+        mqtt_was_connected_ = false;
+        cleanup_state_ = CleanupState::IDLE;
+        collected_topics_.clear();
+        return;
+    }
+
+    mqtt_was_connected_ = true;
+
+    if (cleanup_state_ == CleanupState::COLLECTING &&
+        millis() - collect_start_ms_ > STALE_COLLECT_DELAY_MS) {
+        finish_stale_cleanup_();
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -56,6 +81,7 @@ void MqttAdapter::loop() {
 
 void MqttAdapter::on_device_added(const Device &dev) {
     if (!ctx_.mqtt->is_connected()) return;
+    if (!dev.config.is_enabled()) return;
 
     if (dev.is_cover()) {
         publish_cover_discovery_(dev);
@@ -69,11 +95,16 @@ void MqttAdapter::on_device_added(const Device &dev) {
         publish_remote_discovery_(dev);
         publish_remote_state_(dev);
     }
+    publish_gateway_state_();
 }
 
 void MqttAdapter::on_device_removed(const Device &dev) {
     if (!ctx_.mqtt->is_connected()) return;
+    remove_all_discovery_(dev);
+    publish_gateway_state_();
+}
 
+void MqttAdapter::remove_all_discovery_(const Device &dev) {
     uint32_t addr = dev.config.dst_address;
 
     if (dev.is_cover()) {
@@ -83,6 +114,7 @@ void MqttAdapter::on_device_removed(const Device &dev) {
         ctx_.remove_discovery(ha_discovery::COVER, ctx_.object_id(DeviceType::COVER, addr));
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "rssi"));
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "state"));
+        ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "last_seen"));
         ctx_.remove_discovery(ha_discovery::BINARY_SENSOR, ctx_.object_id(DeviceType::COVER, addr, "problem"));
     } else if (dev.is_light()) {
         ctx_.unsubscribe(DeviceType::LIGHT, addr, mqtt_topic::SET);
@@ -90,9 +122,11 @@ void MqttAdapter::on_device_removed(const Device &dev) {
         ctx_.remove_discovery(ha_discovery::LIGHT, ctx_.object_id(DeviceType::LIGHT, addr));
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "rssi"));
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "state"));
+        ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "last_seen"));
         ctx_.remove_discovery(ha_discovery::BINARY_SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "problem"));
     } else if (dev.is_remote()) {
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr));
+        ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr, "last_seen"));
     }
 
     ESP_LOGD(TAG, "Removed discovery for 0x%06x", addr);
@@ -100,6 +134,7 @@ void MqttAdapter::on_device_removed(const Device &dev) {
 
 void MqttAdapter::on_state_changed(const Device &dev) {
     if (!ctx_.mqtt->is_connected()) return;
+    if (!dev.config.is_enabled()) return;
 
     if (dev.is_cover()) {
         publish_cover_state_(dev);
@@ -112,6 +147,12 @@ void MqttAdapter::on_state_changed(const Device &dev) {
 
 void MqttAdapter::on_config_changed(const Device &dev) {
     if (!ctx_.mqtt->is_connected()) return;
+
+    if (!dev.config.is_enabled()) {
+        // Device was disabled — unpublish its discovery
+        remove_all_discovery_(dev);
+        return;
+    }
 
     if (dev.is_cover()) {
         publish_cover_discovery_(dev);
@@ -163,6 +204,7 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
         root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::RSSI);
         root["unit_of_measurement"] = "dBm";
         root["device_class"] = "signal_strength";
+        root["state_class"] = "measurement";
         root["entity_category"] = "diagnostic";
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
@@ -170,14 +212,17 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::SENSOR, rssi_oid, rssi_payload);
 
-    // Blind state sensor
+    // Blind state sensor (enum)
     auto state_oid = ctx_.object_id(DeviceType::COVER, addr, "state");
     std::string state_payload = json::build_json([&](JsonObject root) {
         root["name"] = std::string(dev.config.name) + " State";
         root["unique_id"] = state_oid;
         root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::DEVICE_STATE);
+        root["device_class"] = "enum";
         root["entity_category"] = "diagnostic";
         root["icon"] = "mdi:state-machine";
+        auto opts = root["options"].to<JsonArray>();
+        for (auto *s : COVER_STATE_OPTIONS) opts.add(s);
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
         ctx_.add_device_block(device);
@@ -197,6 +242,20 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
         ctx_.add_device_block(device);
     });
     ctx_.publish_discovery(ha_discovery::BINARY_SENSOR, problem_oid, problem_payload);
+
+    // Last seen timestamp sensor
+    auto ls_oid = ctx_.object_id(DeviceType::COVER, addr, "last_seen");
+    std::string ls_payload = json::build_json([&](JsonObject root) {
+        root["name"] = std::string(dev.config.name) + " Last Seen";
+        root["unique_id"] = ls_oid;
+        root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::LAST_SEEN);
+        root["device_class"] = "timestamp";
+        root["entity_category"] = "diagnostic";
+        ctx_.add_availability(root);
+        JsonObject device = root["device"].to<JsonObject>();
+        ctx_.add_device_block(device);
+    });
+    ctx_.publish_discovery(ha_discovery::SENSOR, ls_oid, ls_payload);
 
     ESP_LOGD(TAG, "Published cover discovery for 0x%06x", addr);
 }
@@ -221,7 +280,6 @@ void MqttAdapter::publish_cover_state_(const Device &dev) {
     ctx_.publish(DeviceType::COVER, addr, mqtt_topic::PROBLEM, snap.is_problem ? ha_state::ON : ha_state::OFF, false);
 
     std::string attrs = json::build_json([&](JsonObject root) {
-        root["last_seen"] = snap.last_seen_ms;
         root["command_source"] = snap.command_source;
         root["tilted"] = snap.tilted;
         root["device_class"] = snap.device_class;
@@ -232,6 +290,8 @@ void MqttAdapter::publish_cover_state_(const Device &dev) {
     if (dev.config.supports_tilt != 0) {
         ctx_.publish(DeviceType::COVER, addr, mqtt_topic::TILT_STATE, snap.tilted ? "100" : "0", false);
     }
+
+    publish_last_seen_(DeviceType::COVER, addr);
 }
 
 void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
@@ -321,6 +381,7 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
         root["state_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::RSSI);
         root["unit_of_measurement"] = "dBm";
         root["device_class"] = "signal_strength";
+        root["state_class"] = "measurement";
         root["entity_category"] = "diagnostic";
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
@@ -328,14 +389,17 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::SENSOR, rssi_oid, rssi_payload);
 
-    // Light state sensor (diagnostic)
+    // Light state sensor (enum)
     auto state_oid = ctx_.object_id(DeviceType::LIGHT, addr, "state");
     std::string state_payload = json::build_json([&](JsonObject root) {
         root["name"] = std::string(dev.config.name) + " State";
         root["unique_id"] = state_oid;
         root["state_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::DEVICE_STATE);
+        root["device_class"] = "enum";
         root["entity_category"] = "diagnostic";
         root["icon"] = "mdi:state-machine";
+        auto opts = root["options"].to<JsonArray>();
+        for (auto *s : LIGHT_STATE_OPTIONS) opts.add(s);
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
         ctx_.add_device_block(device);
@@ -355,6 +419,20 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
         ctx_.add_device_block(device);
     });
     ctx_.publish_discovery(ha_discovery::BINARY_SENSOR, problem_oid, problem_payload);
+
+    // Last seen timestamp sensor
+    auto ls_oid = ctx_.object_id(DeviceType::LIGHT, addr, "last_seen");
+    std::string ls_payload = json::build_json([&](JsonObject root) {
+        root["name"] = std::string(dev.config.name) + " Last Seen";
+        root["unique_id"] = ls_oid;
+        root["state_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::LAST_SEEN);
+        root["device_class"] = "timestamp";
+        root["entity_category"] = "diagnostic";
+        ctx_.add_availability(root);
+        JsonObject device = root["device"].to<JsonObject>();
+        ctx_.add_device_block(device);
+    });
+    ctx_.publish_discovery(ha_discovery::SENSOR, ls_oid, ls_payload);
 
     ESP_LOGD(TAG, "Published light discovery for 0x%06x", addr);
 }
@@ -384,11 +462,12 @@ void MqttAdapter::publish_light_state_(const Device &dev) {
 
     // JSON attributes
     std::string attrs = json::build_json([&](JsonObject root) {
-        root["last_seen"] = snap.last_seen_ms;
         root["command_source"] = snap.command_source;
         root["problem_type"] = snap.problem_type;
     });
     ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::ATTRIBUTES, attrs, false);
+
+    publish_last_seen_(DeviceType::LIGHT, addr);
 }
 
 void MqttAdapter::subscribe_light_commands_(const Device &dev) {
@@ -472,6 +551,20 @@ void MqttAdapter::publish_remote_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::SENSOR, oid, payload);
 
+    // Last seen timestamp sensor
+    auto ls_oid = ctx_.object_id(DeviceType::REMOTE, addr, "last_seen");
+    std::string ls_payload = json::build_json([&](JsonObject root) {
+        root["name"] = std::string(dev.config.name) + " Last Seen";
+        root["unique_id"] = ls_oid;
+        root["state_topic"] = ctx_.topic(DeviceType::REMOTE, addr, mqtt_topic::LAST_SEEN);
+        root["device_class"] = "timestamp";
+        root["entity_category"] = "diagnostic";
+        ctx_.add_availability(root);
+        JsonObject device = root["device"].to<JsonObject>();
+        ctx_.add_device_block(device);
+    });
+    ctx_.publish_discovery(ha_discovery::SENSOR, ls_oid, ls_payload);
+
     ESP_LOGD(TAG, "Published remote discovery for 0x%06x", addr);
 }
 
@@ -485,13 +578,175 @@ void MqttAdapter::publish_remote_state_(const Device &dev) {
         root["rssi"] = dev.rf.last_rssi;
         root["address"] = hex_str(addr);
         root["title"] = dev.config.name;
-        root["last_seen"] = dev.rf.last_seen_ms;
         root["last_channel"] = remote.last_channel;
         root["last_command"] = hex_str8(remote.last_command);
         root["last_target"] = hex_str(remote.last_target);
     });
 
     ctx_.publish(DeviceType::REMOTE, addr, mqtt_topic::STATE, payload, false);
+    publish_last_seen_(DeviceType::REMOTE, addr);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SHARED HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void MqttAdapter::publish_last_seen_(DeviceType type, uint32_t addr) {
+    auto ts = format_iso8601_now();
+    if (!ts.empty()) {
+        ctx_.publish(type, addr, mqtt_topic::LAST_SEEN, ts, false);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GATEWAY SENSOR — always published, keeps HA device alive with 0 child entities
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void MqttAdapter::publish_gateway_discovery_() {
+    auto oid = ctx_.device_id + "_gateway";
+    auto st = ctx_.topic_prefix + "/gateway/state";
+
+    std::string payload = json::build_json([&](JsonObject root) {
+        root["name"] = "Gateway";
+        root["unique_id"] = oid;
+        root["object_id"] = oid;
+        root["state_topic"] = st;
+        root["value_template"] = "{{ value_json.active_devices }}";
+        root["unit_of_measurement"] = "devices";
+        root["icon"] = "mdi:radio-tower";
+        root["entity_category"] = "diagnostic";
+        root["json_attributes_topic"] = st;
+        root["json_attributes_template"] = "{{ value_json | tojson }}";
+        ctx_.add_availability(root);
+        JsonObject device = root["device"].to<JsonObject>();
+        ctx_.add_device_block(device);
+    });
+
+    ctx_.mqtt->publish(
+        ctx_.discovery_topic(ha_discovery::SENSOR, oid).c_str(),
+        payload.c_str(), true);
+}
+
+void MqttAdapter::publish_gateway_state_() {
+    if (!ctx_.mqtt->is_connected() || registry_ == nullptr) return;
+
+    size_t covers = registry_->count_active(DeviceType::COVER);
+    size_t lights = registry_->count_active(DeviceType::LIGHT);
+    size_t remotes = registry_->count_active(DeviceType::REMOTE);
+
+    std::string payload = json::build_json([&](JsonObject root) {
+        root["active_devices"] = static_cast<int>(covers + lights + remotes);
+        root["covers"] = static_cast<int>(covers);
+        root["lights"] = static_cast<int>(lights);
+        root["remotes"] = static_cast<int>(remotes);
+    });
+
+    ctx_.mqtt->publish(
+        (ctx_.topic_prefix + "/gateway/state").c_str(),
+        payload.c_str(), false);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STALE DISCOVERY CLEANUP
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void MqttAdapter::start_stale_collection_() {
+    collected_topics_.clear();
+
+    // Subscribe to wildcard discovery topics to collect all retained messages
+    for (size_t i = 0; i < DISCOVERY_DOMAIN_COUNT; ++i) {
+        std::string topic = ctx_.discovery_prefix + "/" + DISCOVERY_DOMAINS[i] + "/+/config";
+        ctx_.mqtt->subscribe(topic.c_str(),
+            [this](const char *topic, const char *payload) {
+                if (cleanup_state_ != CleanupState::COLLECTING) return;
+                if (payload == nullptr || payload[0] == '\0') return;
+
+                // Only collect topics that belong to OUR device
+                std::string device_id = ctx_.device_id;
+                bool is_ours = json::parse_json(payload, [&](JsonObject root) -> bool {
+                    JsonObject dev = root["device"];
+                    if (dev.isNull()) return false;
+                    JsonArray ids = dev["identifiers"];
+                    if (ids.isNull() || ids.size() == 0) return false;
+                    const char *id = ids[0];
+                    return id != nullptr && device_id == id;
+                });
+                if (is_ours) {
+                    collected_topics_.emplace_back(topic);
+                }
+            });
+    }
+
+    cleanup_state_ = CleanupState::COLLECTING;
+    collect_start_ms_ = millis();
+}
+
+void MqttAdapter::finish_stale_cleanup_() {
+    // Unsubscribe from wildcard discovery topics
+    for (size_t i = 0; i < DISCOVERY_DOMAIN_COUNT; ++i) {
+        std::string topic = ctx_.discovery_prefix + "/" + DISCOVERY_DOMAINS[i] + "/+/config";
+        ctx_.mqtt->unsubscribe(topic.c_str());
+    }
+
+    // Build set of discovery topics we expect to have
+    std::vector<std::string> expected;
+    collect_expected_topics_(expected);
+
+    // Remove any collected topic not in the expected set
+    size_t removed = 0;
+    for (const auto &topic : collected_topics_) {
+        bool is_expected = false;
+        for (const auto &e : expected) {
+            if (topic == e) { is_expected = true; break; }
+        }
+        if (!is_expected) {
+            ESP_LOGI(TAG, "Removing stale discovery: %s", topic.c_str());
+            ctx_.mqtt->publish(topic.c_str(), "", true);
+            ++removed;
+        }
+    }
+
+    collected_topics_.clear();
+    collected_topics_.shrink_to_fit();
+
+    // Now publish birth + gateway + all active discoveries
+    ctx_.publish_birth();
+    publish_gateway_discovery_();
+    publish_gateway_state_();
+    republish_all_();
+
+    cleanup_state_ = CleanupState::DONE;
+    ESP_LOGI(TAG, "Stale cleanup complete: removed %zu, published %zu active",
+             removed, expected.size());
+}
+
+void MqttAdapter::collect_expected_topics_(std::vector<std::string> &out) const {
+    // Gateway sensor is always published
+    out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.device_id + "_gateway"));
+
+    if (registry_ == nullptr) return;
+
+    registry_->for_each_active([&](const Device &dev) {
+        if (!dev.config.is_enabled()) return;
+        uint32_t addr = dev.config.dst_address;
+
+        if (dev.is_cover()) {
+            out.push_back(ctx_.discovery_topic(ha_discovery::COVER, ctx_.object_id(DeviceType::COVER, addr)));
+            out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "rssi")));
+            out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "state")));
+            out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "last_seen")));
+            out.push_back(ctx_.discovery_topic(ha_discovery::BINARY_SENSOR, ctx_.object_id(DeviceType::COVER, addr, "problem")));
+        } else if (dev.is_light()) {
+            out.push_back(ctx_.discovery_topic(ha_discovery::LIGHT, ctx_.object_id(DeviceType::LIGHT, addr)));
+            out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "rssi")));
+            out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "state")));
+            out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "last_seen")));
+            out.push_back(ctx_.discovery_topic(ha_discovery::BINARY_SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "problem")));
+        } else if (dev.is_remote()) {
+            out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr)));
+            out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr, "last_seen")));
+        }
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -502,6 +757,7 @@ void MqttAdapter::republish_all_() {
     if (registry_ == nullptr) return;
 
     registry_->for_each_active([this](const Device &dev) {
+        if (!dev.config.is_enabled()) return;
         if (dev.is_cover()) {
             publish_cover_discovery_(dev);
             subscribe_cover_commands_(dev);

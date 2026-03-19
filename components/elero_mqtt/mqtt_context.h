@@ -34,6 +34,7 @@ inline constexpr const char *STATUS = "/status";
 inline constexpr const char *SET = "/set";
 inline constexpr const char *TILT = "/tilt";
 inline constexpr const char *CONFIG = "/config";
+inline constexpr const char *LAST_SEEN = "/last_seen";
 }  // namespace mqtt_topic
 
 // ═══════════════════════════════════════════════════════════════════════════════

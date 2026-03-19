@@ -181,6 +181,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #endif
 #ifdef USE_TEXT_SENSOR
   void register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor);
+  void register_last_seen_sensor(uint32_t address, text_sensor::TextSensor *sensor);
 #endif
 #ifdef USE_BINARY_SENSOR
   void register_problem_sensor(uint32_t address, binary_sensor::BinarySensor *sensor);
@@ -265,6 +266,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #endif
 #ifdef USE_TEXT_SENSOR
   std::map<uint32_t, text_sensor::TextSensor *> address_to_text_sensor_;
+  std::map<uint32_t, text_sensor::TextSensor *> address_to_last_seen_sensor_;
 #endif
 #ifdef USE_BINARY_SENSOR
   std::map<uint32_t, binary_sensor::BinarySensor *> address_to_problem_sensor_;

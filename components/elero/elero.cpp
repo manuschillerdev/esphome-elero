@@ -1114,6 +1114,17 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
       text_it->second->publish_state(elero_state_to_string(pkt.state));
     }
   }
+
+  // Update last_seen timestamp sensor (any packet from a known source)
+  {
+    auto ls_it = this->address_to_last_seen_sensor_.find(pkt.src);
+    if (ls_it != this->address_to_last_seen_sensor_.end()) {
+      auto ts = format_iso8601_now();
+      if (!ts.empty()) {
+        ls_it->second->publish_state(ts);
+      }
+    }
+  }
 #endif
 
   // Update problem binary sensor for status packets
@@ -1144,6 +1155,10 @@ void Elero::register_rssi_sensor(uint32_t address, sensor::Sensor *sensor) {
 #ifdef USE_TEXT_SENSOR
 void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor) {
   this->address_to_text_sensor_[address] = sensor;
+}
+
+void Elero::register_last_seen_sensor(uint32_t address, text_sensor::TextSensor *sensor) {
+  this->address_to_last_seen_sensor_[address] = sensor;
 }
 #endif
 
