@@ -12,7 +12,6 @@
 #ifdef USE_ESP32
 #include <esp_timer.h>
 #include <esp_task_wdt.h>
-#include <esp32/rom/ets_sys.h>
 #endif
 
 #ifdef USE_SENSOR
@@ -372,8 +371,9 @@ void Elero::flush_and_rx() {
   (void) this->write_cmd(CC1101_SRX);
 
   // 5. Verify radio entered RX — caller (recover_radio_) handles escalation
+  //    Calibration states are transient (~700µs) — only warn on truly stuck states.
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-  if (marc != CC1101_MARCSTATE_RX) {
+  if (marc != CC1101_MARCSTATE_RX && !marcstate_is_transient(marc)) {
     ESP_LOGW(TAG, "flush_and_rx: not in RX after SRX, MARCSTATE=0x%02x", marc);
   }
 }
@@ -557,12 +557,8 @@ void Elero::check_radio_health_() {
     return;
   }
 
-  // Transient calibration/synthesizer states — let them complete
-  if (marc >= CC1101_MARCSTATE_VCOON_MC && marc <= CC1101_MARCSTATE_ENDCAL) {
-    return;
-  }
-  // RX wind-down states are also transient
-  if (marc == CC1101_MARCSTATE_RX_END || marc == CC1101_MARCSTATE_RX_RST) {
+  // Transient calibration/wind-down states — will reach RX on their own
+  if (marcstate_is_transient(marc)) {
     return;
   }
 
