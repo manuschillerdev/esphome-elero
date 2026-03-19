@@ -129,12 +129,13 @@ inline light_sm::Context light_context(const NvsDeviceConfig &cfg) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Configure a CommandSender's command template from device config.
+/// Uses 0x6A targeted command packets (29 bytes, with dst_addr).
 inline void configure_sender(CommandSender &sender, const NvsDeviceConfig &cfg) {
     auto &cmd = sender.command();
     cmd.dst_addr = cfg.dst_address;
     cmd.src_addr = cfg.src_address;
     cmd.channel = cfg.channel;
-    cmd.type = cfg.type_byte;
+    cmd.type = packet::msg_type::COMMAND;
     cmd.type2 = cfg.type2;
     cmd.hop = cfg.hop;
     cmd.payload[0] = cfg.payload_1;

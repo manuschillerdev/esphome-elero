@@ -256,8 +256,11 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
 
             if (cmd_byte == packet::command::STOP) {
                 d->sender.clear_queue();
+                (void) d->sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::COMMAND);
+            } else {
+                (void) d->sender.enqueue(cmd_byte);
             }
-            (void) d->sender.enqueue(cmd_byte);
+            (void) d->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
             cover.poll.on_command_sent(now);
         });
 
@@ -276,6 +279,7 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
             cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
 
             (void) d->sender.enqueue(cmd_byte);
+            (void) d->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
             cover.poll.on_command_sent(now);
         });
 

@@ -312,9 +312,12 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
         cover.last_command_source = CommandSource::HUB;
         if (cmd_byte == packet::command::STOP) {
           dev->sender.clear_queue();
+          (void) dev->sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::COMMAND);
+        } else {
+          (void) dev->sender.enqueue(cmd_byte);
         }
+        (void) dev->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
         cover.state = cover_sm::on_command(cover.state, cmd_byte, now_ms, ctx);
-        (void) dev->sender.enqueue(cmd_byte);
         cover.poll.on_command_sent(now_ms);
       } else if (dev->is_light()) {
         auto &light_dev = std::get<LightDevice>(dev->logic);
@@ -327,6 +330,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
           light_dev.state = light_sm::on_turn_on(light_dev.state, now_ms, ctx);
         }
         (void) dev->sender.enqueue(cmd_byte);
+        (void) dev->sender.enqueue(packet::button::RELEASE, packet::button::PACKETS, packet::msg_type::BUTTON);
       }
       return true;
     }

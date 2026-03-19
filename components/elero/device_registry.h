@@ -153,9 +153,6 @@ class DeviceRegistry {
     /// Handle an RF status packet for a specific device.
     void dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now);
 
-    /// Handle an RF command packet (from a remote) targeting a device.
-    void dispatch_remote_command_(Device &dev, uint8_t cmd_byte, uint32_t now);
-
     /// Track a remote control from an observed RF command packet.
     void track_remote_(const RfPacketInfo &pkt, uint32_t now);
 

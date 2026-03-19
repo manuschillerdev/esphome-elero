@@ -109,6 +109,12 @@ class MockElero {
 
 using namespace esphome::elero;
 
+// Backoff constants for readability (mirrors calculate_backoff_ms_)
+// Backoff = INTER_PACKET_MS << retry_count, capped at 400ms
+static constexpr uint32_t BACKOFF_RETRY_1 = packet::button::INTER_PACKET_MS << 1;  // 20ms
+static constexpr uint32_t BACKOFF_RETRY_2 = packet::button::INTER_PACKET_MS << 2;  // 40ms
+static constexpr uint32_t BACKOFF_RETRY_3 = packet::button::INTER_PACKET_MS << 3;  // 80ms
+
 // ============================================================================
 // Test Fixture
 // ============================================================================
@@ -181,7 +187,7 @@ TEST_F(CommandSenderTest, WaitsForDelayBeforeTx) {
   EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
 
   // Process after delay elapsed
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
 
   // Now TX should be requested
@@ -191,24 +197,16 @@ TEST_F(CommandSenderTest, WaitsForDelayBeforeTx) {
 
 TEST_F(CommandSenderTest, SendsMultiplePacketsPerCommand) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
 
-  // First packet
-  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
-  EXPECT_EQ(mock_hub_.recorded_requests.size(), 1u);
-  EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
+  // Send all 3 packets (button protocol default)
+  for (int pkt = 0; pkt < packet::button::PACKETS; ++pkt) {
+    mock_time_.advance(packet::button::INTER_PACKET_MS);
+    sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+    EXPECT_EQ(mock_hub_.recorded_requests.size(), static_cast<size_t>(pkt + 1));
+    EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
+    mock_hub_.complete_tx(true);
+  }
 
-  // Complete first packet successfully
-  mock_hub_.complete_tx(true);
-  EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
-
-  // Wait for delay and send second packet
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
-  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
-  EXPECT_EQ(mock_hub_.recorded_requests.size(), 2u);
-
-  // Complete second packet - command should be done
-  mock_hub_.complete_tx(true);
   EXPECT_EQ(sender_.state(), CommandSender::State::IDLE);
   EXPECT_FALSE(sender_.is_busy());
 }
@@ -219,7 +217,7 @@ TEST_F(CommandSenderTest, SendsMultiplePacketsPerCommand) {
 
 TEST_F(CommandSenderTest, RetriesOnFailure) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // First attempt
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -228,7 +226,7 @@ TEST_F(CommandSenderTest, RetriesOnFailure) {
   EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
 
   // Should retry after exponential backoff (DELAY << 1 for first retry)
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS << 1);
+  mock_time_.advance(packet::button::INTER_PACKET_MS << 1);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(mock_hub_.recorded_requests.size(), 2u);
 }
@@ -238,7 +236,7 @@ TEST_F(CommandSenderTest, DropsCommandAfterMaxRetries) {
 
   // Fail more than packet::limits::SEND_RETRIES times
   for (int i = 0; i <= packet::limits::SEND_RETRIES + 1; i++) {
-    mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+    mock_time_.advance(packet::button::INTER_PACKET_MS);
     sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
 
     if (mock_hub_.pending_client != nullptr) {
@@ -268,7 +266,7 @@ TEST_F(CommandSenderTest, ClearQueueWhileIdle) {
 
 TEST_F(CommandSenderTest, ClearQueueDuringTx) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
 
   EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
@@ -288,7 +286,7 @@ TEST_F(CommandSenderTest, ClearQueueDuringTx) {
 
 TEST_F(CommandSenderTest, ClearQueueDuringTx_FailureIgnored) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
 
   sender_.clear_queue();
@@ -305,7 +303,7 @@ TEST_F(CommandSenderTest, ClearQueueDuringTx_TimeoutRecovery) {
   // 3. Timeout fires before callback (moves to WAIT_DELAY)
   // 4. process_queue called - must not crash on empty queue
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // Start TX
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -324,7 +322,7 @@ TEST_F(CommandSenderTest, ClearQueueDuringTx_TimeoutRecovery) {
 
   // Next process_queue should NOT crash on empty queue
   // Need to wait for backoff (DELAY << 1 for first retry) before queue check happens
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS << 1);
+  mock_time_.advance(packet::button::INTER_PACKET_MS << 1);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
 
   // Should detect empty queue and go to IDLE
@@ -338,7 +336,7 @@ TEST_F(CommandSenderTest, ClearQueueDuringTx_TimeoutRecovery) {
 
 TEST_F(CommandSenderTest, RetriesWhenRadioBusy) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // Radio is busy
   mock_hub_.next_request_result = false;
@@ -361,7 +359,7 @@ TEST_F(CommandSenderTest, RetriesWhenRadioBusy) {
 
 TEST_F(CommandSenderTest, TimeoutInTxPending_TriggersRetry) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // Start TX
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -375,7 +373,7 @@ TEST_F(CommandSenderTest, TimeoutInTxPending_TriggersRetry) {
   EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
 
   // Can retry successfully (need to wait for backoff: DELAY << 1 for first retry)
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS << 1);
+  mock_time_.advance(packet::button::INTER_PACKET_MS << 1);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
   EXPECT_EQ(mock_hub_.recorded_requests.size(), 2u);
@@ -386,7 +384,7 @@ TEST_F(CommandSenderTest, TimeoutInTxPending_DropsAfterMaxRetries) {
 
   // Repeatedly timeout (never call on_tx_complete)
   for (int i = 0; i <= packet::limits::SEND_RETRIES + 1; i++) {
-    mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+    mock_time_.advance(packet::button::INTER_PACKET_MS);
     sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
 
     if (sender_.state() == CommandSender::State::TX_PENDING) {
@@ -403,7 +401,7 @@ TEST_F(CommandSenderTest, TimeoutInTxPending_DropsAfterMaxRetries) {
 
 TEST_F(CommandSenderTest, NoTimeoutIfCallbackArrives) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // Start TX
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -424,7 +422,7 @@ TEST_F(CommandSenderTest, NoTimeoutIfCallbackArrives) {
 
 TEST_F(CommandSenderTest, StaleCallbackAfterTimeoutIsIgnored) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // Start TX
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -444,7 +442,7 @@ TEST_F(CommandSenderTest, StaleCallbackAfterTimeoutIsIgnored) {
   EXPECT_EQ(sender_.queue_size(), queue_before);
 
   // State machine should still work - complete normally (wait for backoff: DELAY << 1)
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS << 1);
+  mock_time_.advance(packet::button::INTER_PACKET_MS << 1);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
   mock_hub_.complete_tx(true);
@@ -456,37 +454,35 @@ TEST_F(CommandSenderTest, StaleCallbackAfterTimeoutIsIgnored) {
 // ============================================================================
 
 TEST_F(CommandSenderTest, ProcessesMultipleCommandsInOrder) {
-  sender_.enqueue(packet::command::UP);  // UP
-  sender_.enqueue(packet::command::DOWN);  // DOWN
+  sender_.enqueue(packet::command::UP);
+  sender_.enqueue(packet::command::DOWN);
 
-  // Complete first command (2 packets)
-  for (int pkt = 0; pkt < packet::limits::SEND_PACKETS; pkt++) {
-    mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  // Complete first command (3 packets)
+  for (int pkt = 0; pkt < packet::button::PACKETS; ++pkt) {
+    mock_time_.advance(packet::button::INTER_PACKET_MS);
     sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
     mock_hub_.complete_tx(true);
   }
 
-  // Should still have second command
   EXPECT_TRUE(sender_.has_pending_commands());
   EXPECT_EQ(sender_.queue_size(), 1u);
 
-  // Complete second command
-  for (int pkt = 0; pkt < packet::limits::SEND_PACKETS; pkt++) {
-    mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  // Complete second command (3 packets)
+  for (int pkt = 0; pkt < packet::button::PACKETS; ++pkt) {
+    mock_time_.advance(packet::button::INTER_PACKET_MS);
     sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
     mock_hub_.complete_tx(true);
   }
 
-  // Should be done
   EXPECT_EQ(sender_.state(), CommandSender::State::IDLE);
   EXPECT_FALSE(sender_.has_pending_commands());
 
-  // Verify commands were sent in order
-  ASSERT_EQ(mock_hub_.recorded_requests.size(), 4u);
-  EXPECT_EQ(std::get<2>(mock_hub_.recorded_requests[0]), packet::command::UP);    // First UP
-  EXPECT_EQ(std::get<2>(mock_hub_.recorded_requests[1]), packet::command::UP);    // Second UP
-  EXPECT_EQ(std::get<2>(mock_hub_.recorded_requests[2]), packet::command::DOWN);  // First DOWN
-  EXPECT_EQ(std::get<2>(mock_hub_.recorded_requests[3]), packet::command::DOWN);  // Second DOWN
+  // Verify commands were sent in order: 3x UP then 3x DOWN
+  ASSERT_EQ(mock_hub_.recorded_requests.size(), 6u);
+  for (int i = 0; i < 3; ++i)
+    EXPECT_EQ(std::get<2>(mock_hub_.recorded_requests[i]), packet::command::UP);
+  for (int i = 3; i < 6; ++i)
+    EXPECT_EQ(std::get<2>(mock_hub_.recorded_requests[i]), packet::command::DOWN);
 }
 
 // ============================================================================
@@ -499,8 +495,8 @@ TEST_F(CommandSenderTest, CounterIncrementsAfterCommand) {
   sender_.enqueue(packet::command::UP);
 
   // Complete command
-  for (int pkt = 0; pkt < packet::limits::SEND_PACKETS; pkt++) {
-    mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  for (int pkt = 0; pkt < packet::button::PACKETS; pkt++) {
+    mock_time_.advance(packet::button::INTER_PACKET_MS);
     sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
     mock_hub_.complete_tx(true);
   }
@@ -512,8 +508,8 @@ TEST_F(CommandSenderTest, CounterWrapsFrom255To1) {
   sender_.command().counter = 255;
   sender_.enqueue(packet::command::UP);
 
-  for (int pkt = 0; pkt < packet::limits::SEND_PACKETS; pkt++) {
-    mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  for (int pkt = 0; pkt < packet::button::PACKETS; pkt++) {
+    mock_time_.advance(packet::button::INTER_PACKET_MS);
     sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
     mock_hub_.complete_tx(true);
   }
@@ -527,7 +523,7 @@ TEST_F(CommandSenderTest, CounterWrapsFrom255To1) {
 
 TEST_F(CommandSenderTest, PartialCompletion_Packet1Success_Packet2Failure) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // First packet succeeds
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -535,19 +531,27 @@ TEST_F(CommandSenderTest, PartialCompletion_Packet1Success_Packet2Failure) {
   EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
 
   // Second packet fails
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   mock_hub_.complete_tx(false);
 
-  // Should retry second packet
+  // Should retry
   EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
 
-  // Retry succeeds (need to wait for backoff: DELAY << 1 for first retry)
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS << 1);
+  // Retry succeeds
+  mock_time_.advance(BACKOFF_RETRY_1);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   mock_hub_.complete_tx(true);
 
-  // Command should be complete now
+  // Still need third packet
+  EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
+
+  // Third packet succeeds
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  mock_hub_.complete_tx(true);
+
+  // Command complete
   EXPECT_EQ(sender_.state(), CommandSender::State::IDLE);
 }
 
@@ -565,8 +569,8 @@ TEST_F(CommandSenderTest, QueueAllTenCommands) {
 
   // Process all commands
   for (int cmd = 0; cmd < packet::limits::MAX_COMMAND_QUEUE; cmd++) {
-    for (int pkt = 0; pkt < packet::limits::SEND_PACKETS; pkt++) {
-      mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+    for (int pkt = 0; pkt < packet::button::PACKETS; pkt++) {
+      mock_time_.advance(packet::button::INTER_PACKET_MS);
       sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
       mock_hub_.complete_tx(true);
     }
@@ -574,7 +578,7 @@ TEST_F(CommandSenderTest, QueueAllTenCommands) {
 
   EXPECT_EQ(sender_.state(), CommandSender::State::IDLE);
   EXPECT_EQ(sender_.queue_size(), 0u);
-  EXPECT_EQ(mock_hub_.recorded_requests.size(), packet::limits::MAX_COMMAND_QUEUE * packet::limits::SEND_PACKETS);
+  EXPECT_EQ(mock_hub_.recorded_requests.size(), packet::limits::MAX_COMMAND_QUEUE * packet::button::PACKETS);
 }
 
 // ============================================================================
@@ -638,7 +642,7 @@ TEST_F(CommandSenderTest, EnqueueDuringWaitDelay_GrowsQueueKeepsState) {
 
 TEST_F(CommandSenderTest, EnqueueDuringTxPending_GrowsQueueKeepsState) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
 
@@ -650,7 +654,7 @@ TEST_F(CommandSenderTest, EnqueueDuringTxPending_GrowsQueueKeepsState) {
   // Complete TX and process second command normally
   mock_hub_.complete_tx(true);
   // After 2 packets for UP, should move to DOWN
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   mock_hub_.complete_tx(true);
   // UP complete, now DOWN
@@ -686,15 +690,9 @@ TEST_F(CommandSenderTest, IsBusyWhenIdleWithQueuedCommands) {
 // Exponential Backoff Tests
 // ============================================================================
 
-// Backoff constants for readability (mirrors calculate_backoff_ms_)
-// Backoff = DELAY_SEND_PACKETS << retry_count, capped at 400ms
-static constexpr uint32_t BACKOFF_RETRY_1 = packet::timing::DELAY_SEND_PACKETS << 1;  // 100ms
-static constexpr uint32_t BACKOFF_RETRY_2 = packet::timing::DELAY_SEND_PACKETS << 2;  // 200ms
-static constexpr uint32_t BACKOFF_RETRY_3 = packet::timing::DELAY_SEND_PACKETS << 3;  // 400ms (capped)
-
 TEST_F(CommandSenderTest, ExponentialBackoffOnFirstRetry) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // Start TX
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -718,7 +716,7 @@ TEST_F(CommandSenderTest, ExponentialBackoffOnFirstRetry) {
 
 TEST_F(CommandSenderTest, ExponentialBackoffIncreasesWithRetries) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // Retry 1: BACKOFF_RETRY_1
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -743,11 +741,10 @@ TEST_F(CommandSenderTest, ExponentialBackoffIncreasesWithRetries) {
   EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
 }
 
-TEST_F(CommandSenderTest, ExponentialBackoffCapsAt400ms) {
-  // This test verifies backoff caps at 400ms (DELAY << 3)
-  // We need to reach retry 3 without exceeding SEND_RETRIES (3)
+TEST_F(CommandSenderTest, ExponentialBackoffIncreasesPerRetry) {
+  // Backoff = INTER_PACKET_MS << retry_count: 20, 40, 80ms
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // First TX attempt (not a retry yet)
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -761,21 +758,21 @@ TEST_F(CommandSenderTest, ExponentialBackoffCapsAt400ms) {
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   mock_hub_.complete_tx(false);  // Fail -> retry 3 (last before drop)
 
-  // Now at retry 3 - backoff should be capped at BACKOFF_RETRY_3 (400ms)
+  // Now at retry 3 - backoff should be BACKOFF_RETRY_3 (80ms)
   // Wait less than full backoff - should NOT be ready
-  mock_time_.advance(BACKOFF_RETRY_3 - packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(BACKOFF_RETRY_3 - packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
 
   // Wait remaining time - NOW should be ready
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
 }
 
 TEST_F(CommandSenderTest, SuccessResetsBackoff) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // Fail once (triggers BACKOFF_RETRY_1)
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -790,7 +787,7 @@ TEST_F(CommandSenderTest, SuccessResetsBackoff) {
   EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
 
   // Next packet should only need standard delay (not backoff)
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
 }
@@ -801,7 +798,7 @@ TEST_F(CommandSenderTest, SuccessResetsBackoff) {
 
 TEST_F(CommandSenderTest, ClearQueue_ResetsDelayForImmediateStop) {
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   mock_hub_.complete_tx(true);
   // UP packet 1 sent, last_tx_time_ is now recent
@@ -820,7 +817,7 @@ TEST_F(CommandSenderTest, ClearQueue_ResetsDelayForImmediateStop) {
 TEST_F(CommandSenderTest, SinglePacketCommand) {
   // Enqueue a command with packets=1; only 1 TX before advance
   sender_.enqueue(packet::command::CHECK, 1);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // First (and only) packet
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -835,24 +832,16 @@ TEST_F(CommandSenderTest, SinglePacketCommand) {
 }
 
 TEST_F(CommandSenderTest, DefaultPacketCount) {
-  // Enqueue without explicit packets param — should default to SEND_PACKETS (2)
+  // Enqueue without explicit packets param — should default to PACKETS (3)
   sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
 
-  // First packet
-  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
-  EXPECT_EQ(mock_hub_.recorded_requests.size(), 1u);
-  mock_hub_.complete_tx(true);
-
-  // Should need a second packet (not done yet)
-  EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
-  EXPECT_TRUE(sender_.is_busy());
-
-  // Second packet
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
-  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
-  EXPECT_EQ(mock_hub_.recorded_requests.size(), 2u);
-  mock_hub_.complete_tx(true);
+  // Send all 3 packets
+  for (int pkt = 0; pkt < packet::button::PACKETS; ++pkt) {
+    mock_time_.advance(packet::button::INTER_PACKET_MS);
+    sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+    EXPECT_EQ(mock_hub_.recorded_requests.size(), static_cast<size_t>(pkt + 1));
+    mock_hub_.complete_tx(true);
+  }
 
   // Now done
   EXPECT_EQ(sender_.state(), CommandSender::State::IDLE);
@@ -865,7 +854,7 @@ TEST_F(CommandSenderTest, MixedPacketCounts) {
   sender_.enqueue(packet::command::UP, 2);
 
   // --- Process first command (1 packet) ---
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(mock_hub_.recorded_requests.size(), 1u);
   EXPECT_EQ(std::get<2>(mock_hub_.recorded_requests[0]), packet::command::CHECK);
@@ -878,7 +867,7 @@ TEST_F(CommandSenderTest, MixedPacketCounts) {
 
   // --- Process second command (2 packets) ---
   // Packet 1
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(mock_hub_.recorded_requests.size(), 2u);
   EXPECT_EQ(std::get<2>(mock_hub_.recorded_requests[1]), packet::command::UP);
@@ -888,7 +877,7 @@ TEST_F(CommandSenderTest, MixedPacketCounts) {
   EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
 
   // Packet 2
-  mock_time_.advance(packet::timing::DELAY_SEND_PACKETS);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(mock_hub_.recorded_requests.size(), 3u);
   EXPECT_EQ(std::get<2>(mock_hub_.recorded_requests[2]), packet::command::UP);
@@ -898,6 +887,39 @@ TEST_F(CommandSenderTest, MixedPacketCounts) {
   EXPECT_EQ(sender_.state(), CommandSender::State::IDLE);
   EXPECT_FALSE(sender_.is_busy());
   EXPECT_EQ(sender_.queue_size(), 0u);
+}
+
+// ============================================================================
+// Button Packet Timing Tests (10ms delay, 3 packets)
+// ============================================================================
+
+TEST_F(CommandSenderTest, Uses10msInterPacketDelay) {
+  sender_.enqueue(packet::command::UP);
+
+  // At 0ms: should NOT transmit yet
+  mock_time_.current_time = 0;
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  EXPECT_EQ(mock_hub_.recorded_requests.size(), 0u);
+
+  // At 10ms: delay elapsed, should transmit
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  EXPECT_EQ(mock_hub_.recorded_requests.size(), 1u);
+  EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
+
+  // Complete first packet and verify 10ms delay for second
+  mock_hub_.complete_tx(true);
+  EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
+
+  // At 5ms after: too early
+  mock_time_.advance(5);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  EXPECT_EQ(mock_hub_.recorded_requests.size(), 1u);
+
+  // At 10ms after: should send second packet
+  mock_time_.advance(5);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  EXPECT_EQ(mock_hub_.recorded_requests.size(), 2u);
 }
 
 // ============================================================================

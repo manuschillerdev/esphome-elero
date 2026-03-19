@@ -98,7 +98,8 @@ class EspCoverShell : public cover::Cover, public Component {
 
     if (call.get_stop()) {
       device_->sender.clear_queue();
-      (void) device_->sender.enqueue(packet::command::STOP);
+      (void) device_->sender.enqueue(packet::command::STOP, packet::button::PACKETS, packet::msg_type::COMMAND);
+      (void) device_->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
       cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
       cover.target_position = cover_sm::NO_TARGET;
       sync_and_publish_();
@@ -120,6 +121,7 @@ class EspCoverShell : public cover::Cover, public Component {
         cover.target_position = target;
       }
       (void) device_->sender.enqueue(cmd);
+      (void) device_->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
       cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
       if (cmd == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
       if (cmd == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
@@ -130,6 +132,7 @@ class EspCoverShell : public cover::Cover, public Component {
 
     if (call.get_tilt().has_value()) {
       (void) device_->sender.enqueue(packet::command::TILT);
+      (void) device_->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
       cover.state = cover_sm::on_command(cover.state, packet::command::TILT, now, ctx);
       cover.poll.on_command_sent(now);
       sync_and_publish_();
@@ -148,6 +151,7 @@ class EspCoverShell : public cover::Cover, public Component {
         cmd = (pos <= cover_sm::POSITION_CLOSED || was_closing) ? packet::command::UP : packet::command::DOWN;
       }
       (void) device_->sender.enqueue(cmd);
+      (void) device_->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
       cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
       cover.poll.on_command_sent(now);
       sync_and_publish_();

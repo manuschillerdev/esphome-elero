@@ -12,7 +12,7 @@ The component is loaded directly from GitHub in an ESPHome YAML configuration:
 
 ```yaml
 external_components:
-  - source: github://pfriedrich84/esphome-elero
+  - source: github://manuschillerdev/esphome-elero
 ```
 
 **Key capabilities:**
@@ -22,11 +22,6 @@ external_components:
 - RSSI signal strength monitoring per blind
 - RF discovery scan to find nearby blinds (web UI and log-based)
 - Optional web UI served at `http://<device-ip>/elero` for discovery and YAML generation
-
-**Upstream credits:**
-- Encryption/decryption: [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT)
-- Remote handling: [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3)
-- Based on the no-longer-maintained [andyboeh/esphome-elero](https://github.com/pfriedrich84/esphome-elero)
 
 **Available skills (USE THEM!):**
 
@@ -77,8 +72,8 @@ esphome-elero/
 └── components/
     ├── elero/                         # Main hub component
     │   ├── __init__.py                # ESPHome component schema & code-gen (hub)
-    │   ├── elero.h                    # C++ hub class header (TX state machine, SPI)
-    │   ├── elero.cpp                  # C++ RF protocol implementation
+    │   ├── elero.h                    # C++ hub class header (RF task, FreeRTOS IPC, TX state machine)
+    │   ├── elero.cpp                  # C++ RF protocol (Core 0 RF task + Core 1 dispatch)
     │   ├── elero_packet.{h,cpp}       # Packet encoding/decoding, encryption
     │   ├── elero_protocol.h           # Protocol constants (commands, states, timing)
     │   ├── elero_strings.{h,cpp}      # State/command byte string conversions
@@ -133,62 +128,65 @@ esphome-elero/
 
 2. **One path, no redundant implementations.** There is exactly one `Device` struct, one `DeviceRegistry`, one set of state machines (`cover_sm`, `light_sm`). Output adapters (MQTT, native API, WebSocket, Matter) are thin translators — they never duplicate logic. If you find yourself writing the same behavior twice, the abstraction is wrong.
 
-3. **Route and fail early.** Data is classified and routed at the earliest possible point — RF packets are decoded and dispatched in the hub's `loop()`, device type is resolved on upsert, invalid configs are rejected before NVS write. This prevents complexity from compounding downstream.
+3. **Route and fail early.** Data is classified and routed at the earliest possible point — RF packets are decoded on Core 0 (RF task) and dispatched on Core 1 (main loop) via FreeRTOS queues, device type is resolved on upsert, invalid configs are rejected before NVS write. This prevents complexity from compounding downstream.
 
 4. **Solve the state-space explosion.** Three operating modes x three device types x multiple output formats would explode into dozens of classes without discipline. The variant-based `Device` + `OutputAdapter` observer pattern keeps the combinatorial surface flat: adding a new mode or device type is additive (one new adapter or variant arm), not multiplicative.
 
-5. **Clear, unidirectional data flow.** Hardware → Hub → Registry → Adapters. Commands flow the reverse path. No lateral coupling between adapters. No circular dependencies.
+5. **Clear, unidirectional data flow.** Hardware → RF Task (Core 0) → FreeRTOS Queues → Main Loop (Core 1) → Registry → Adapters. Commands flow the reverse path via `tx_queue`. No lateral coupling between adapters. No circular dependencies. No shared mutable state between cores — only queue-based IPC.
 
 ### Layered Architecture (CRITICAL)
 
 The system is split into **four distinct layers** with strict responsibilities. Code MUST live in the correct layer.
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  CLIENT (Browser/Preact)                                                │
-│  ─────────────────────────────────────────────────────────────────────  │
-│  • Derives ALL state from: config + rf events + logs                    │
-│  • Discovery = RF addresses NOT in config                               │
-│  • Blind states = latest status from RF packets                         │
-│  • Position = derived from movement timing                              │
-│  • YAML generation = client-side from discovered addresses              │
-│  • NO server round-trips for state queries                              │
-└─────────────────────────────────────────────────────────────────────────┘
-                              ▲
-                              │ WebSocket (events down, commands up)
-                              ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  SERVER (EleroWebServer)                                                │
-│  ─────────────────────────────────────────────────────────────────────  │
-│  • STATELESS - no business logic, no state tracking                     │
-│  • Dumb pipe: forwards RF packets → client, commands → hub              │
-│  • On connect: sends config (blinds array from YAML)                    │
-│  • On RF packet: broadcasts to all WebSocket clients                    │
-│  • On log: forwards elero.* tagged logs to clients                      │
-│  • Logger injected via callback (DI pattern)                            │
-└─────────────────────────────────────────────────────────────────────────┘
-                              ▲
-                              │ Callbacks (on_rf_packet, logger)
-                              ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  CORE (Elero Hub)                                                       │
-│  ─────────────────────────────────────────────────────────────────────  │
-│  • CC1101 initialization and SPI communication                          │
-│  • Non-blocking RX/TX via interrupt + loop() polling                    │
-│  • Packet encoding/decoding and encryption                              │
-│  • Notifies observers via callbacks (not direct coupling)               │
-│  • ESPHome entity management (covers, lights, sensors)                  │
-└─────────────────────────────────────────────────────────────────────────┘
-                              ▲
-                              │ SPI + GPIO interrupt
-                              ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  HARDWARE (CC1101)                                                      │
-│  ─────────────────────────────────────────────────────────────────────  │
-│  • 868 MHz RF transceiver                                               │
-│  • GDO0 interrupt on packet received                                    │
-│  • 64-byte TX/RX FIFO                                                   │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+block-beta
+  columns 1
+
+  block:CLIENT["CLIENT (Browser/Preact)"]
+    columns 1
+    c1["Derives ALL state from: config + rf events + logs"]
+    c2["Discovery = RF addresses NOT in config"]
+    c3["Position = derived from movement timing"]
+    c4["YAML generation = client-side, NO server round-trips"]
+  end
+
+  space
+
+  block:SERVER["SERVER (EleroWebServer) — STATELESS"]
+    columns 1
+    s1["Dumb pipe: RF packets → client, commands → hub"]
+    s2["On connect: sends config | On RF: broadcasts | On log: forwards"]
+  end
+
+  space
+
+  block:CORE["CORE (Elero Hub) — dual-core ESP32"]
+    columns 2
+    block:CORE0["Core 0: RF Task (FreeRTOS, prio 5)"]
+      columns 1
+      r1["Owns all SPI after setup()"]
+      r2["TX state machine + FIFO drain"]
+      r3["AES decrypt + radio watchdog + ESP-IDF task WDT"]
+    end
+    block:CORE1["Core 1: ESPHome main loop"]
+      columns 1
+      m1["rx_queue → dispatch (log, registry, sensors)"]
+      m2["tx_done_queue → CommandSender callbacks"]
+      m3["Registry loop → tx_queue"]
+    end
+  end
+
+  space
+
+  block:HW["HARDWARE (CC1101 868 MHz)"]
+    columns 1
+    h1["GDO0 interrupt → vTaskNotifyGiveFromISR"]
+    h2["64-byte TX/RX FIFO, SPI @ 2 MHz"]
+  end
+
+  CLIENT <-- "WebSocket" --> SERVER
+  SERVER <-- "Callbacks" --> CORE
+  CORE <-- "SPI (Core 0 only)" --> HW
 ```
 
 ### Why This Matters
@@ -249,7 +247,7 @@ The system supports three mutually exclusive operating modes. All modes use the 
 - No MQTT broker required — uses ESPHome's built-in native API
 
 **DeviceRegistry** (`device_registry.h`) is the single source of truth:
-- Hub holds `DeviceRegistry*` and calls `registry_->on_rf_packet()` for every decoded packet
+- Main loop (Core 1) drains `rx_queue` and calls `registry_->on_rf_packet()` for every decoded packet
 - Web server calls `registry->upsert()` / `registry->remove()` for CRUD
 - Output adapters observe the registry via `OutputAdapter` interface (`on_device_added()`, `on_state_changed()`, etc.)
 - In native mode, NVS is disabled — devices are registered at compile-time from YAML
@@ -257,7 +255,7 @@ The system supports three mutually exclusive operating modes. All modes use the 
 ### Component Hierarchy
 
 ```
-Elero (hub, SPIDevice + Component — CC1101 SPI, TX scheduler, interrupt)
+Elero (hub, SPIDevice + Component — RF task on Core 0, dispatch on Core 1)
 ├── DeviceRegistry (single source of truth — CRUD, NVS, RF dispatch, adapter notification)
 │   ├── Device[] (unified 48-slot pool)
 │   │   ├── NvsDeviceConfig (64-byte POD struct — RF params, timing, metadata)
@@ -266,7 +264,7 @@ Elero (hub, SPIDevice + Component — CC1101 SPI, TX scheduler, interrupt)
 │   │   │   ├── CoverDevice (cover_sm::State — Idle/Opening/Closing/Stopping)
 │   │   │   ├── LightDevice (light_sm::State — Off/On/DimmingUp/DimmingDown)
 │   │   │   └── RemoteDevice (passive tracker, last_seen only)
-│   │   └── CommandSender (non-blocking TX queue via TxClient)
+│   │   └── CommandSender (non-blocking TX queue → tx_queue → RF task)
 │   └── OutputAdapter[] (registered observers)
 │       ├── EspCoverShell (cover::Cover + Component)     ← Native / NVS modes
 │       ├── EspLightShell (light::LightOutput + Component) ← Native / NVS modes
@@ -282,12 +280,199 @@ The `Device` struct is the single entity representation across all modes. Output
 
 ### Core Data Flow
 
-1. `Elero::setup()` configures CC1101 registers over SPI and attaches a GPIO interrupt on `gdo0_pin`.
-2. When the CC1101 signals a received packet (GDO0 interrupt), `Elero::interrupt()` sets `received_ = true`.
-3. `Elero::loop()` detects `received_`, reads the FIFO, decodes and decrypts the packet, then:
-   - Calls `registry_->on_rf_packet()` → registry updates matching `Device` state machines, notifies adapters
-   - Calls `on_rf_packet_` callback → web server broadcasts to WebSocket clients
-4. `DeviceRegistry::loop()` processes all active devices: state machine transitions, polling timers, command queue draining, adapter loops.
+`Elero::setup()` configures CC1101 registers over SPI, attaches the GDO0 interrupt, creates 3 FreeRTOS queues, and spawns the RF task on Core 0. After setup, **Core 0 exclusively owns all SPI** — Core 1 never touches hardware again.
+
+**RX path** — packet reception (ISR → Core 0 → queue → Core 1 → adapters):
+
+```mermaid
+sequenceDiagram
+    box rgb(40,40,60) Core 0 — RF Task
+        participant HW as CC1101
+        participant ISR as GDO0 ISR
+        participant RF as rf_task_func_
+    end
+    participant RXQ as rx_queue<br/>(depth 16)
+    box rgb(40,60,40) Core 1 — ESPHome Loop
+        participant Loop as Elero::loop()
+        participant Disp as dispatch_packet()
+        participant Reg as DeviceRegistry
+        participant FSM as cover_sm / light_sm
+        participant Adapt as OutputAdapters
+        participant Sensor as ESPHome Sensors
+    end
+
+    HW->>ISR: GDO0 falling edge (packet in FIFO)
+    ISR->>RF: received_.store(true)
+    ISR->>RF: vTaskNotifyGiveFromISR (wake)
+
+    Note over RF: drain_fifo_()
+    RF->>HW: read_status_reliable_(RXBYTES)
+    alt FIFO overflow
+        RF->>HW: flush_and_rx() — reset radio
+    else valid data
+        RF->>HW: read_buf() — SPI burst read entire FIFO
+        loop for each packet in FIFO buffer
+            RF->>RF: decode_packet()<br/>parse_packet() + AES-128 decrypt<br/>+ CRC check + echo detection<br/>+ stamp decoded_at_us
+            RF->>RXQ: xQueueSend(RfPacketInfo)
+        end
+    end
+
+    Note over Loop: Elero::loop() — next iteration
+    loop while rx_queue not empty
+        Loop->>RXQ: xQueueReceive (non-blocking)
+        RXQ->>Disp: RfPacketInfo (copy)
+
+        Note over Disp: 1. JSON log (snprintf, ~1ms)
+        Disp->>Disp: ESP_LOGD(TAG_RF, JSON)
+
+        Note over Disp: 2. Registry dispatch
+        Disp->>Reg: on_rf_packet(pkt, timestamp)
+        Reg->>Adapt: notify_rf_packet_() — all adapters see raw pkt
+
+        alt status packet (0xCA/0xC9)
+            Reg->>Reg: find(pkt.src) — lookup Device by address
+            Reg->>Reg: update rf_meta (last_seen, rssi, state_raw)
+            Reg->>FSM: dispatch_status_() → on_rf_status()
+            FSM->>FSM: state transition (variant swap)
+            Reg->>Reg: poll.on_rf_received(now)
+            Reg->>Reg: tilt state tracking
+            alt state changed
+                Reg->>Adapt: notify_state_changed_(dev)
+                Adapt->>Adapt: MqttAdapter: publish 5-6 MQTT topics
+                Adapt->>Adapt: EleroWebServer: JSON + WS broadcast
+                Adapt->>Adapt: EspCoverShell: publish_state()
+            end
+        else command packet (0x6A) + not echo
+            Reg->>Reg: track_remote_() — auto-discover RemoteDevice
+        end
+
+        Note over Disp: 3. Direct callbacks
+        Disp->>Adapt: on_rf_packet_ callback (WebSocket raw pkt)
+
+        Note over Disp: 4. Direct sensor updates
+        Disp->>Sensor: RSSI sensor publish_state()
+        Disp->>Sensor: status text_sensor publish_state()
+        Disp->>Sensor: problem binary_sensor publish_state()
+    end
+```
+
+**TX path** — command transmission (user action → Core 1 → queue → Core 0 → SPI → completion):
+
+```mermaid
+sequenceDiagram
+    box rgb(40,60,40) Core 1 — ESPHome Loop
+        participant User as HA / WebUI / MQTT
+        participant Shell as EspCoverShell /<br/>WebServer / MqttAdapter
+        participant Sender as CommandSender
+        participant ReqTx as request_tx()
+    end
+    participant TXQ as tx_queue<br/>(depth 4)
+    participant DQ as tx_done_queue<br/>(depth 4)
+    box rgb(40,40,60) Core 0 — RF Task
+        participant RF as rf_task_func_
+        participant TXSM as TX State Machine
+        participant HW as CC1101
+    end
+
+    User->>Shell: cover command (up/down/stop/tilt)
+
+    Note over Shell: Enqueue action + follow-up
+    Shell->>Sender: enqueue(cmd, 3, BUTTON)<br/>collapse consecutive duplicates
+    Shell->>Sender: enqueue(CHECK, 3, COMMAND)<br/>for covers: get "moving" status
+
+    Note over Sender: CommandSender state: IDLE → WAIT_DELAY
+    Note over Sender: registry->loop() → loop_cover_() → process_queue()
+
+    Sender->>Sender: wait inter-packet delay (10ms)
+    Sender->>Sender: set cmd fields from QueueEntry<br/>(payload[4], type, type2, hop)
+    Sender->>ReqTx: request_tx(this, command_)
+
+    Note over ReqTx: JSON TX log (no SPI, Core 1)
+    ReqTx->>ReqTx: ESP_LOGD(TAG_RF, TX JSON)
+    ReqTx->>TXQ: xQueueSend(RfTaskRequest)
+
+    Note over Sender: state: WAIT_DELAY → TX_PENDING
+
+    RF->>TXQ: xQueueReceive
+    TXQ->>RF: RfTaskRequest (copy)
+    RF->>RF: build_tx_packet_(cmd)<br/>select builder: 0x44 button vs 0x6a command
+    RF->>RF: record_tx_(counter) — echo detection ring
+
+    Note over TXSM: TX state machine (see state diagram)
+    RF->>TXSM: start_transmit()
+    TXSM->>HW: SIDLE → SFTX → write FIFO → STX
+    HW-->>RF: GDO0 interrupt (TX complete)
+    TXSM->>HW: verify TXBYTES==0
+    TXSM->>HW: flush_and_rx() — return to RX
+
+    RF->>DQ: xQueueSend(TxResult{client, success})
+
+    Note over Sender: Next main loop iteration
+    User->>DQ: Elero::loop() drains tx_done_queue
+    DQ->>Sender: on_tx_complete(success)
+
+    alt success + more packets needed
+        Sender->>Sender: send_packets_++ → WAIT_DELAY<br/>repeat (3 packets per command)
+    else success + all packets sent
+        Sender->>Sender: advance_queue_()<br/>pop front, increment counter<br/>process next QueueEntry (CHECK)
+    else failure
+        Sender->>Sender: retry with exponential backoff<br/>or drop after max retries
+    end
+```
+
+**Registry cover loop** — per-device processing each main loop iteration:
+
+```mermaid
+flowchart TD
+    START["DeviceRegistry::loop(now)"] --> ITER["for each active Device"]
+    ITER --> VARIANT{device type?}
+
+    VARIANT -->|CoverDevice| TICK["1. cover_sm::on_tick(state, now)<br/>check movement timeout<br/>check post-stop cooldown"]
+    VARIANT -->|LightDevice| LTICK["1. light_sm::on_tick()<br/>check dimming completion"]
+    VARIANT -->|RemoteDevice| SKIP[no-op]
+
+    TICK --> POLL{"2. should_poll?<br/>(PollTimer)"}
+    POLL -->|Yes, moving| POLL_FAST["enqueue CHECK<br/>(1 pkt, 0x6a)"]
+    POLL -->|Yes, idle| POLL_FULL["enqueue CHECK<br/>(3 pkts, 0x6a)"]
+    POLL -->|No| POS_CHECK
+
+    POLL_FAST --> POS_CHECK
+    POLL_FULL --> POS_CHECK
+
+    POS_CHECK{"3. position tracking?<br/>moving + has target?"}
+    POS_CHECK -->|At target| POS_STOP["clear_queue()<br/>enqueue STOP (0x6a)<br/>enqueue CHECK (0x6a)<br/>clear target_position"]
+    POS_CHECK -->|Not at target| CMD_Q
+    POS_STOP --> CMD_Q
+
+    CMD_Q["4. sender.process_queue(now, hub)<br/>→ request_tx() → tx_queue"]
+
+    CMD_Q --> NOTIFY{"5. state changed?"}
+    NOTIFY -->|Yes| PUB["notify_state_changed_()<br/>→ all OutputAdapters"]
+    NOTIFY -->|Moving + throttle elapsed| PUB
+    NOTIFY -->|No| NEXT[next device]
+
+    PUB --> NEXT
+    NEXT --> ITER
+
+    LTICK --> LDIM{"2. dimming just ended?"}
+    LDIM -->|Yes| LRELEASE["enqueue RELEASE<br/>(0x44 button)"]
+    LDIM -->|No| LCMD
+    LRELEASE --> LCMD["3. sender.process_queue()"]
+    LCMD --> LNOTIFY{"4. state changed?"}
+    LNOTIFY -->|Yes| LPUB["notify_state_changed_()"]
+    LNOTIFY -->|No| NEXT
+    LPUB --> NEXT
+
+    SKIP --> NEXT
+
+    ITER -->|done| ADAPTERS["adapter->loop() for each<br/>(MQTT reconnect, WS poll, etc.)"]
+```
+
+**Key properties:**
+- Core 0 (RF task) and Core 1 (ESPHome loop) never share mutable state — only FreeRTOS queues (copy semantics).
+- The RF task drains the CC1101 FIFO within 1ms of a packet arrival regardless of how busy the main loop is.
+- `dispatch_packet()` runs ~13ms (JSON log + MQTT + WS + sensors). During this time, the RF task continues to service the radio independently.
+- Cover commands auto-append CHECK (0x6a) to get "moving" status. Light commands use RELEASE (0x44) to stop dimming (sent by `loop_light_` on completion).
 
 ### Device Lifecycle (NVS modes)
 
@@ -326,16 +511,176 @@ The hub sets the registry via `Elero::set_registry(DeviceRegistry*)`. This keeps
 **Class:** `Elero : public spi::SPIDevice<...>, public Component`
 **Namespace:** `esphome::elero`
 
+**Dual-core architecture:** After `setup()`, all SPI/CC1101 access runs on a dedicated FreeRTOS task (Core 0, priority 5, registered with ESP-IDF task watchdog). The ESPHome main loop (Core 1) handles dispatch and entity management. Communication is via 3 FreeRTOS queues (rx depth 16, tx depth 4, tx_done depth 4) — no shared mutable state.
+
+IPC structs (defined in `elero.h`):
+- `RfTaskRequest` — main loop → RF task (TX commands, frequency reinit)
+- `TxResult` — RF task → main loop (TX completion notifications)
+- `RfPacketInfo` — RF task → main loop (decoded RX packets)
+
 Critical public API:
 - `set_registry(DeviceRegistry*)` — connect the unified device registry
-- `send_command(EleroCommand*)` — encodes, encrypts, and transmits a command via TX state machine
+- `request_tx(TxClient*, const EleroCommand&)` — posts TX command to RF task queue (non-blocking, returns true if queued)
+- `send_raw_command(...)` — fire-and-forget TX for WebSocket debugging
+- `dispatch_packet(const RfPacketInfo&)` — slow-path dispatch (logging, registry, sensors) — Core 1 only
 - `register_rssi_sensor(uint32_t addr, sensor::Sensor*)` — link RSSI sensor to a blind address
 - `register_text_sensor(uint32_t addr, text_sensor::TextSensor*)` — link text sensor to a blind address
-- `interrupt(Elero *arg)` — static ISR, sets `received_` flag
+- `interrupt(Elero *arg)` — static ISR, sets `received_` flag + wakes RF task via `vTaskNotifyGiveFromISR`
 
-TX state machine (`TxState`): `IDLE → GOTO_IDLE → FLUSH_TX → LOAD_FIFO → TRIGGER_TX → WAIT_TX_DONE → VERIFY_DONE → RETURN_RX`
+RF task loop (`rf_task_func_`, Core 0) — all SPI access is here:
 
-Key protocol constants are now in `elero_protocol.h`.
+```mermaid
+flowchart TD
+    SLEEP["ulTaskNotifyTake(pdTRUE, 1ms)<br/>woken by: ISR notification OR timeout"] --> TX_IDLE{tx_ctx_.state<br/>== IDLE?}
+
+    TX_IDLE -->|Yes| DEQUEUE{"xQueueReceive<br/>(tx_queue, 0)"}
+    TX_IDLE -->|No| PROGRESS
+
+    DEQUEUE -->|TX request| BUILD["build_tx_packet_(cmd)<br/>→ select 0x44 button or 0x6a command builder<br/>→ AES-128 encrypt → write to msg_tx_[]"]
+    BUILD --> RECORD["record_tx_(counter)<br/>→ push to 16-entry echo ring"]
+    RECORD --> START{"start_transmit()"}
+    START -->|OK| OWN["tx_owner_ = client"]
+    START -->|SPI fail| FAIL_RESULT["xQueueSend(tx_done_queue,<br/>{client, false})"]
+
+    DEQUEUE -->|REINIT_FREQ| ABORT_PENDING{"tx_owner_<br/>!= nullptr?"}
+    ABORT_PENDING -->|Yes| ABORT_NOTIFY["xQueueSend(tx_done_queue,<br/>{owner, false})<br/>tx_owner_ = nullptr"]
+    ABORT_PENDING -->|No| REINIT_DO
+    ABORT_NOTIFY --> REINIT_DO["received_ = false<br/>freq_ = {f2,f1,f0}<br/>reset() → init()<br/>(SPI: 30+ register writes)"]
+
+    DEQUEUE -->|Empty| RX_CHECK
+
+    OWN --> PROGRESS
+    FAIL_RESULT --> RX_CHECK
+    REINIT_DO --> RX_CHECK
+
+    PROGRESS["handle_tx_state_(now)<br/>→ one state transition per iteration<br/>(see TX state machine diagram)"]
+    PROGRESS --> DONE{tx_ctx_.state == IDLE<br/>AND tx_owner_ != nullptr?}
+    DONE -->|Yes| POST_RESULT["xQueueSend(tx_done_queue,<br/>{owner, tx_pending_success_})<br/>tx_owner_ = nullptr"]
+    DONE -->|No| RX_CHECK
+
+    POST_RESULT --> RX_CHECK
+
+    RX_CHECK{"received_<br/>.exchange(false)"} -->|true| DRAIN
+    RX_CHECK -->|false| HEALTH
+
+    subgraph DRAIN [drain_fifo_]
+        D1["read_status_reliable_(RXBYTES)<br/>double-read errata workaround"]
+        D1 --> D2{overflow bit?}
+        D2 -->|Yes| D3["flush_and_rx()<br/>SIDLE → SFRX → SFTX → SRX"]
+        D2 -->|No| D4["read_buf(RXFIFO, fifo_count)<br/>single SPI burst"]
+        D4 --> D5["loop: decode_packet() per frame<br/>parse_packet → AES decrypt → CRC<br/>→ is_own_echo_ check<br/>→ stamp decoded_at_us"]
+        D5 --> D6["xQueueSend(rx_queue, &pkt)<br/>or drop + warn if full"]
+    end
+
+    D3 --> HEALTH
+    D6 --> HEALTH
+
+    HEALTH{idle AND<br/>5s elapsed?}
+    HEALTH -->|Yes| HCHECK["read_status(MARCSTATE)<br/>detect: overflow → flush<br/>stuck IDLE → SRX strobe<br/>unexpected → flush_and_rx"]
+    HEALTH -->|No| STACK_CHECK
+    HCHECK --> STACK_CHECK
+
+    STACK_CHECK{"30s elapsed?"} -->|Yes| HWM["log uxTaskGetStackHighWaterMark()"]
+    STACK_CHECK -->|No| WDT
+    HWM --> WDT
+
+    WDT["esp_task_wdt_reset()<br/>(feed ESP-IDF watchdog)"] --> SLEEP
+```
+
+TX state machine (`handle_tx_state_`, runs on Core 0, one state per RF task iteration):
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+
+    IDLE --> GOTO_IDLE : start_transmit()<br/>write_cmd(SIDLE)
+
+    state GOTO_IDLE {
+        [*] --> check_backoff : backoff_until > now?
+        check_backoff --> wait : yes, return
+        check_backoff --> check_defer : no
+        check_defer --> read_marc : defer_count < MAX
+        read_marc --> success : MARCSTATE == IDLE
+    }
+    GOTO_IDLE --> FLUSH_TX : MARCSTATE == IDLE<br/>write_cmd(SFTX)
+    GOTO_IDLE --> IDLE : timeout 50ms / defer_count >= 10<br/>abort_tx_()
+
+    FLUSH_TX --> LOAD_FIFO : elapsed >= 1ms<br/>write_burst(TXFIFO, msg_tx_)
+    FLUSH_TX --> IDLE : timeout 50ms<br/>abort_tx_()
+
+    state LOAD_FIFO {
+        [*] --> force_idle : write_cmd(SIDLE)
+        force_idle --> clear_rx : received_ = false
+        clear_rx --> send_stx : write_cmd(STX)
+        send_stx --> poll_marc : poll MARCSTATE × 20<br/>(5µs gaps, max 100µs)
+    }
+    LOAD_FIFO --> WAIT_TX_DONE : MARCSTATE == TX
+    LOAD_FIFO --> TRIGGER_TX : transitional (FSTXON, CAL)
+    LOAD_FIFO --> GOTO_IDLE : MARCSTATE == RX<br/>defer_tx_(backoff)
+
+    TRIGGER_TX --> WAIT_TX_DONE : MARCSTATE == TX
+    TRIGGER_TX --> GOTO_IDLE : MARCSTATE == RX<br/>defer_tx_(backoff)
+    TRIGGER_TX --> IDLE : FIFO underflow / overflow<br/>abort_tx_()
+    TRIGGER_TX --> IDLE : timeout 50ms<br/>abort_tx_()
+
+    WAIT_TX_DONE --> VERIFY_DONE : received_.load() == true<br/>(GDO0 interrupt)
+    WAIT_TX_DONE --> IDLE : timeout 50ms<br/>abort_tx_()
+
+    state VERIFY_DONE {
+        [*] --> poll_txbytes : read_status_reliable_(TXBYTES)<br/>retry × 3, 100µs gaps
+    }
+    VERIFY_DONE --> RETURN_RX : TXBYTES == 0
+    VERIFY_DONE --> IDLE : FIFO not empty after 3 tries<br/>abort_tx_()
+
+    RETURN_RX --> IDLE : flush_and_rx()<br/>tx_pending_success_ = true
+
+    note right of IDLE : rf_task_func_ detects completion:<br/>posts TxResult to tx_done_queue
+    note left of GOTO_IDLE : abort_tx_() on all error paths:<br/>reads MARCSTATE, detects zombie (0x00/0x1F),<br/>rate-limited chip reset (10s min gap),<br/>flush_and_rx(), tx_pending_success_ = false
+```
+
+Main loop (`Elero::loop()`, Core 1) — no SPI, pure dispatch:
+
+```mermaid
+flowchart TD
+    START["Elero::loop()"] --> RX_DRAIN
+
+    subgraph RX_DRAIN ["1. Drain rx_queue"]
+        RX1{"xQueueReceive<br/>(rx_queue, 0)"} -->|RfPacketInfo| DISPATCH
+        RX1 -->|empty| TX_DRAIN
+
+        subgraph DISPATCH ["dispatch_packet(pkt)"]
+            DP1["find device name for logging"]
+            DP1 --> DP2["ESP_LOGD JSON log<br/>(status/command/button/unknown variants)"]
+            DP2 --> DP3["registry_->on_rf_packet(pkt)"]
+            DP3 --> DP4["on_rf_packet_ callback<br/>(WebSocket raw broadcast)"]
+            DP4 --> DP5["RSSI sensor publish_state()"]
+            DP5 --> DP6["status text_sensor publish_state()"]
+            DP6 --> DP7["problem binary_sensor publish_state()"]
+            DP7 --> DP8["log dispatch_us + queue_transit_us"]
+        end
+
+        DISPATCH --> RX1
+    end
+
+    subgraph TX_DRAIN ["2. Drain tx_done_queue"]
+        TX1{"xQueueReceive<br/>(tx_done_queue, 0)"} -->|TxResult| TX2["client->on_tx_complete(success)<br/>→ CommandSender state machine"]
+        TX1 -->|empty| REG_LOOP
+        TX2 --> TX1
+    end
+
+    subgraph REG_LOOP ["3. registry_->loop(now)"]
+        RL1["for each active Device"] --> RL2{device type}
+        RL2 -->|Cover| RL3["loop_cover_()<br/>(see registry cover loop diagram)"]
+        RL2 -->|Light| RL4["loop_light_()"]
+        RL2 -->|Remote| RL5[no-op]
+        RL3 --> RL1
+        RL4 --> RL1
+        RL5 --> RL1
+        RL1 -->|done| RL6["adapter->loop() for each<br/>(MqttAdapter: reconnect check<br/>EleroWebServer: mg_mgr_poll)"]
+    end
+```
+
+Key protocol constants are in `elero_protocol.h`.
 
 ### `components/elero/device.h`
 

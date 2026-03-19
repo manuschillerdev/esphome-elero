@@ -9,6 +9,11 @@
 #include <cstring>
 #include <algorithm>
 
+#ifdef USE_ESP32
+#include <esp_timer.h>
+#include <esp_task_wdt.h>
+#endif
+
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
 #endif
@@ -39,44 +44,36 @@ SpiTransaction::~SpiTransaction() {
 // elero_action_to_command) are defined in elero_strings.cpp for testability.
 
 void Elero::loop() {
-  const uint32_t now = millis();
+#ifdef USE_ESP32
+  // ─── Core 1: Drain FreeRTOS queues from RF task, run ESPHome dispatch ──────
 
-  // Progress TX state machine (non-blocking, must run every loop)
-  if (this->tx_ctx_.state != TxState::IDLE) {
-    this->handle_tx_state_(now);
+  // 1. Drain decoded RX packets from RF task
+  RfPacketInfo pkt{};
+  while (xQueueReceive(this->rx_queue_handle_, &pkt, 0) == pdPASS) {
+    this->dispatch_packet(pkt);
+  }
 
-    // Check if TX just completed (for non-blocking API)
-    if (this->tx_ctx_.state == TxState::IDLE && this->tx_owner_ != nullptr) {
-      bool success = this->tx_pending_success_;
-      ESP_LOGV(TAG, "TX complete, notifying owner, success=%d", success);
-      this->notify_tx_owner_(success);
+  // 2. Drain TX completion results and notify CommandSenders
+  TxResult result{};
+  while (xQueueReceive(this->tx_done_queue_handle_, &result, 0) == pdPASS) {
+    if (result.client != nullptr) {
+      result.client->on_tx_complete(result.success);
     }
-    // Dispatch queued RX packets even during TX (don't let them stale)
-    this->dispatch_queued_packets_();
-    return;
   }
 
-  // Periodic radio health check (detect stuck CC1101 when idle)
-  this->check_radio_health_();
-
-  // Phase 1 — FAST: drain FIFO, decode, push to ring buffer
-  bool was_received = this->received_.exchange(false);
-  if (was_received) {
-    this->drain_fifo_();
-  }
-
-  // Phase 2 — SLOW: dispatch buffered packets (logging, registry, sensors)
-  this->dispatch_queued_packets_();
-
-  // New architecture: process device registry loop (polling, timeouts, command queues)
+  // 3. Registry loop (state machines, command queues, adapter loops)
   if (this->registry_ != nullptr) {
     this->registry_->loop(millis());
   }
+#endif
 }
 
 // ─── FIFO Drain: read all bytes, decode multiple packets ─────────────────────
 void Elero::drain_fifo_() {
   ESP_LOGVV(TAG, "drain_fifo_");
+#ifdef USE_ESP32
+  int64_t drain_start_us = esp_timer_get_time();
+#endif
   uint8_t len = this->read_status_reliable_(CC1101_RXBYTES);
 
   // Overflow — FIFO data unreliable, flush and bail
@@ -124,9 +121,11 @@ void Elero::drain_fifo_() {
 
     auto pkt = this->decode_packet(this->msg_rx_ + offset, fifo_count - offset);
     if (pkt) {
-      if (!this->rx_queue_.push(*pkt)) {
-        ESP_LOGW(TAG, "RX ring buffer full, dropping packet cnt=%d", pkt->cnt);
+#ifdef USE_ESP32
+      if (xQueueSend(this->rx_queue_handle_, &(*pkt), 0) != pdPASS) {
+        ESP_LOGW(TAG, "RX queue full, dropping packet cnt=%d", pkt->cnt);
       }
+#endif
       ++pkt_count;
     }
 
@@ -136,32 +135,36 @@ void Elero::drain_fifo_() {
   if (pkt_count > 1) {
     ESP_LOGD(TAG, "Decoded %d packets from single FIFO read (%d bytes)", pkt_count, fifo_count);
   }
-}
 
-// ─── Dispatch queued packets (slow path) ─────────────────────────────────────
-// NOTE: This is safe to call during TX (from loop() line 55). Registry callbacks
-// that call send_command()/request_tx() will be rejected because tx_owner_ != nullptr
-// or tx_ctx_.state != IDLE. The CommandSender retries on the next loop iteration.
-void Elero::dispatch_queued_packets_() {
-  RfPacketInfo pkt{};
-  while (this->rx_queue_.pop(pkt)) {
-    this->dispatch_packet(pkt);
+#ifdef USE_ESP32
+  if (pkt_count > 0) {
+    int64_t drain_us = esp_timer_get_time() - drain_start_us;
+    ESP_LOGD(TAG, "drain_fifo: %d pkt(s), %d bytes, %lldus", pkt_count, fifo_count, drain_us);
   }
+#endif
 }
 
+// ─── ISR: dual signal — atomic flag + task notification ──────────────────────
 void IRAM_ATTR Elero::interrupt(Elero *arg) {
-  arg->set_received();
-}
+  // Set atomic flag for TX state machine's WAIT_TX_DONE check
+  arg->received_.store(true, std::memory_order_release);
 
-void IRAM_ATTR Elero::set_received() {
-  this->received_.store(true, std::memory_order_release);
+#ifdef USE_ESP32
+  // Wake RF task immediately (bypasses 1ms sleep)
+  if (arg->rf_task_handle_ != nullptr) {
+    BaseType_t woken = pdFALSE;
+    vTaskNotifyGiveFromISR(arg->rf_task_handle_, &woken);
+    portYIELD_FROM_ISR(woken);
+  }
+#endif
 }
 
 void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero CC1101:");
   ESP_LOGCONFIG(TAG, "  Version: %s", this->version_);
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
-  ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
+  ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x",
+                this->freq2_.load(), this->freq1_.load(), this->freq0_.load());
   if (this->registry_) {
     ESP_LOGCONFIG(TAG, "  Registered devices: %d", this->registry_->count_active());
   }
@@ -200,22 +203,144 @@ void Elero::setup() {
       this->registry_->restore_all();
     }
   }
-}
 
-void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
-  // Abort any pending TX first (notifies owner with failure)
-  if (this->tx_owner_ != nullptr || this->tx_ctx_.state != TxState::IDLE) {
-    ESP_LOGW(TAG, "reinit_frequency: aborting pending TX");
-    this->abort_tx_();
+#ifdef USE_ESP32
+  // ─── Create FreeRTOS queues and spawn RF task on Core 0 ────────────────────
+  this->rx_queue_handle_ = xQueueCreate(16, sizeof(RfPacketInfo));
+  this->tx_queue_handle_ = xQueueCreate(4, sizeof(RfTaskRequest));
+  this->tx_done_queue_handle_ = xQueueCreate(4, sizeof(TxResult));
+
+  if (this->rx_queue_handle_ == nullptr ||
+      this->tx_queue_handle_ == nullptr ||
+      this->tx_done_queue_handle_ == nullptr) {
+    ESP_LOGE(TAG, "Failed to create FreeRTOS queues (heap exhausted?)");
+    this->mark_failed();
+    return;
   }
 
-  this->received_.store(false);
-  this->freq2_ = freq2;
-  this->freq1_ = freq1;
-  this->freq0_ = freq0;
-  this->reset();
-  this->init();
-  ESP_LOGI(TAG, "CC1101 re-initialised: freq2=0x%02x freq1=0x%02x freq0=0x%02x", freq2, freq1, freq0);
+  BaseType_t task_created = xTaskCreatePinnedToCore(
+      rf_task_func_,         // Task function
+      "elero_rf",            // Name (for debugging)
+      4096,                  // Stack size (bytes)
+      this,                  // Parameter
+      5,                     // Priority (above default ESPHome loop)
+      &this->rf_task_handle_,  // Handle
+      0                      // Core 0 (ESPHome runs on Core 1)
+  );
+  if (task_created != pdPASS) {
+    ESP_LOGE(TAG, "Failed to create RF task (heap exhausted?)");
+    this->mark_failed();
+    return;
+  }
+  esp_task_wdt_add(this->rf_task_handle_);
+  ESP_LOGI(TAG, "RF task started on Core 0 (priority 5, stack 4096, WDT registered)");
+#endif
+}
+
+// ─── RF Task: Core 0 dedicated radio controller ─────────────────────────────
+// Owns all SPI access after setup(). Communicates with main loop via FreeRTOS
+// queues only. Woken by GDO0 ISR notification or 1ms timeout.
+#ifdef USE_ESP32
+void Elero::rf_task_func_(void *arg) {
+  auto *self = static_cast<Elero *>(arg);
+  uint32_t last_stack_check_ms = 0;
+
+  for (;;) {
+    uint32_t now = millis();
+
+    // 1. Process TX requests from main loop (only when radio is idle)
+    if (self->tx_ctx_.state == TxState::IDLE) {
+      RfTaskRequest req{};
+      if (xQueueReceive(self->tx_queue_handle_, &req, 0) == pdPASS) {
+        switch (req.type) {
+          case RfTaskRequest::Type::TX:
+            self->build_tx_packet_(req.cmd);
+            self->record_tx_(req.cmd.counter);
+            if (self->start_transmit()) {
+              self->tx_owner_ = req.client;
+            } else {
+              // start_transmit failed — report failure immediately
+              TxResult r{req.client, false};
+              xQueueSend(self->tx_done_queue_handle_, &r, 0);
+            }
+            break;
+
+          case RfTaskRequest::Type::REINIT_FREQ:
+            // Abort any pending TX
+            if (self->tx_owner_ != nullptr) {
+              TxResult r{self->tx_owner_, false};
+              self->tx_owner_ = nullptr;
+              xQueueSend(self->tx_done_queue_handle_, &r, 0);
+            }
+            self->received_.store(false);
+            self->freq2_.store(req.freq.f2);
+            self->freq1_.store(req.freq.f1);
+            self->freq0_.store(req.freq.f0);
+            self->reset();
+            self->init();
+            ESP_LOGI(TAG, "CC1101 re-initialised: freq2=0x%02x freq1=0x%02x freq0=0x%02x",
+                     req.freq.f2, req.freq.f1, req.freq.f0);
+            break;
+        }
+      }
+    }
+
+    // 2. Progress TX state machine
+    now = millis();
+    if (self->tx_ctx_.state != TxState::IDLE) {
+      self->handle_tx_state_(now);
+
+      // Check if TX just completed — post result to main loop
+      if (self->tx_ctx_.state == TxState::IDLE && self->tx_owner_ != nullptr) {
+        TxResult r{self->tx_owner_, self->tx_pending_success_};
+        self->tx_owner_ = nullptr;
+        xQueueSend(self->tx_done_queue_handle_, &r, 0);
+      }
+    }
+
+    // 3. Drain FIFO if GDO0 interrupt fired
+    if (self->received_.exchange(false)) {
+      self->drain_fifo_();
+    }
+
+    // 4. Radio health check (only when idle, throttled internally to every 5s)
+    if (self->tx_ctx_.state == TxState::IDLE) {
+      self->check_radio_health_();
+    }
+
+    // 5. Stack watermark check (development aid, every 30s)
+    now = millis();
+    if (now - last_stack_check_ms > 30000) {
+      last_stack_check_ms = now;
+      ESP_LOGV(TAG, "RF task stack HWM: %u bytes free",
+               static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));
+    }
+
+    // 6. Feed task watchdog (registered in setup)
+    esp_task_wdt_reset();
+
+    // 7. Yield — sleep until ISR notification or 1ms timeout
+    //    This ensures Core 0 IDLE task runs (prevents TWDT) while keeping
+    //    the RF task responsive to both RX interrupts and TX requests.
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
+  }
+}
+#endif
+
+void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
+#ifdef USE_ESP32
+  // Post frequency change request to RF task (all SPI happens on Core 0)
+  RfTaskRequest req{};
+  req.type = RfTaskRequest::Type::REINIT_FREQ;
+  req.freq = {freq2, freq1, freq0};
+  xQueueSend(this->tx_queue_handle_, &req, pdMS_TO_TICKS(100));
+
+  // Update atomic copies for get_freq*() accessors (immediate visibility on Core 1)
+  this->freq2_.store(freq2);
+  this->freq1_.store(freq1);
+  this->freq0_.store(freq0);
+  ESP_LOGI(TAG, "Frequency change queued: freq2=0x%02x freq1=0x%02x freq0=0x%02x", freq2, freq1, freq0);
+#endif
 }
 
 void Elero::flush_and_rx() {
@@ -285,9 +410,9 @@ void Elero::init() {
   // Reference: https://github.com/QuadCorei8085/elero_protocol
   (void) this->write_reg(CC1101_FSCTRL1, 0x08);
   (void) this->write_reg(CC1101_FSCTRL0, 0x00);
-  (void) this->write_reg(CC1101_FREQ2, this->freq2_);
-  (void) this->write_reg(CC1101_FREQ1, this->freq1_);
-  (void) this->write_reg(CC1101_FREQ0, this->freq0_);
+  (void) this->write_reg(CC1101_FREQ2, this->freq2_.load());
+  (void) this->write_reg(CC1101_FREQ1, this->freq1_.load());
+  (void) this->write_reg(CC1101_FREQ0, this->freq0_.load());
   (void) this->write_reg(CC1101_MDMCFG4, 0x7B);
   (void) this->write_reg(CC1101_MDMCFG3, 0x83);
   (void) this->write_reg(CC1101_MDMCFG2, 0x13);
@@ -390,106 +515,6 @@ bool Elero::wait_rx() {
   return false;
 }
 
-bool Elero::wait_idle() {
-  ESP_LOGVV(TAG, "wait_idle");
-  uint8_t timeout = 200;
-  while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_IDLE) && (--timeout != 0)) {
-    delay_microseconds_safe(200);
-  }
-
-  if (timeout > 0)
-    return true;
-  ESP_LOGE(TAG, "Timed out waiting for Idle: 0x%02x", this->read_status(CC1101_MARCSTATE));
-  return false;
-}
-
-bool Elero::wait_tx() {
-  ESP_LOGVV(TAG, "wait_tx");
-  uint8_t timeout = 200;
-
-  while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_TX) && (--timeout != 0)) {
-    delay_microseconds_safe(200);
-  }
-
-  if (timeout > 0)
-    return true;
-  ESP_LOGE(TAG, "Timed out waiting for TX: 0x%02x", this->read_status(CC1101_MARCSTATE));
-  return false;
-}
-
-bool Elero::wait_tx_done() {
-  ESP_LOGVV(TAG, "wait_tx_done");
-  uint8_t timeout = 200;
-
-  while ((!this->received_.load()) && (--timeout != 0)) {
-    delay_microseconds_safe(200);
-  }
-
-  if (timeout > 0)
-    return true;
-  ESP_LOGE(TAG, "Timed out waiting for TX Done: 0x%02x", this->read_status(CC1101_MARCSTATE));
-  return false;
-}
-
-bool Elero::transmit() {
-  ESP_LOGVV(TAG, "transmit called for %d data bytes", this->msg_tx_[0]);
-
-  // Go to IDLE first so the subsequent STX is not subject to CCA.
-  // (STX from RX with MCSM1 CCA_MODE=3 requires a clear channel, which
-  // fails when Elero motors are actively transmitting status replies.)
-  if (!this->write_cmd(CC1101_SIDLE)) {
-    this->flush_and_rx();
-    return false;
-  }
-  if (!this->wait_idle()) {
-    this->flush_and_rx();
-    return false;
-  }
-
-  // Flush TX FIFO before loading new data (required from IDLE state)
-  if (!this->write_cmd(CC1101_SFTX)) {
-    this->flush_and_rx();
-    return false;
-  }
-  delay_microseconds_safe(100);
-
-  // Load TX FIFO
-  if (!this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1)) {
-    this->flush_and_rx();
-    return false;
-  }
-
-  // Clear received_ so wait_tx_done() waits for the actual TX-end GDO0
-  // falling edge, not a stale flag left over from a previously received packet.
-  this->received_.store(false);
-
-  // Trigger TX — no CCA check when issuing STX from IDLE state
-  if (!this->write_cmd(CC1101_STX)) {
-    this->flush_and_rx();
-    return false;
-  }
-
-  if (!this->wait_tx()) {
-    this->flush_and_rx();
-    return false;
-  }
-  if (!this->wait_tx_done()) {
-    this->flush_and_rx();
-    return false;
-  }
-
-  uint8_t bytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
-  if (bytes != 0) {
-    ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
-    this->flush_and_rx();
-    return false;
-  }
-
-  ESP_LOGV(TAG, "Transmission successful");
-  this->flush_and_rx();  // return chip to clean RX state and clear received_
-  return true;
-}
-
 // ─── Non-blocking TX State Machine ─────────────────────────────────────────
 
 void Elero::defer_tx_(uint32_t now) {
@@ -550,17 +575,9 @@ void Elero::abort_tx_() {
   this->tx_ctx_.reset();  // Reset defer count
   this->tx_pending_success_ = false;
   this->flush_and_rx();
-
-  // Notify owner of failure (must happen after state cleanup)
-  this->notify_tx_owner_(false);
-}
-
-void Elero::notify_tx_owner_(bool success) {
-  if (this->tx_owner_ != nullptr) {
-    TxClient *owner = this->tx_owner_;
-    this->tx_owner_ = nullptr;  // Clear BEFORE callback (re-entrancy safe)
-    owner->on_tx_complete(success);
-  }
+  // NOTE: tx_owner_ is NOT cleared here — the rf_task_func_ loop detects
+  // tx_ctx_.state == IDLE && tx_owner_ != nullptr and posts TxResult to
+  // tx_done_queue_, which the main loop drains to call on_tx_complete().
 }
 
 // ─── Radio Health Watchdog ───────────────────────────────────────────────────
@@ -626,35 +643,34 @@ bool Elero::is_own_echo_(uint8_t counter) const {
 }
 
 void Elero::build_tx_packet_(const EleroCommand &cmd) {
-  // Convert EleroCommand to TxParams
-  packet::TxParams params;
-  params.counter = cmd.counter;
-  params.dst_addr = cmd.dst_addr;
-  params.src_addr = cmd.src_addr;
-  params.channel = cmd.channel;
-  params.type = cmd.type;
-  params.type2 = cmd.type2;
-  params.hop = cmd.hop;
-  params.command = cmd.payload[4];
-  params.payload_1 = cmd.payload[0];
-  params.payload_2 = cmd.payload[1];
-
-  // Use pure function to build packet
-  packet::build_tx_packet(params, this->msg_tx_);
+  if (cmd.type == packet::msg_type::BUTTON) {
+    packet::ButtonTxParams params;
+    params.counter = cmd.counter;
+    params.src_addr = cmd.src_addr;
+    params.channel = cmd.channel;
+    params.command = cmd.payload[4];
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    packet::build_button_packet(params, this->msg_tx_);
+  } else {
+    packet::TxParams params;
+    params.counter = cmd.counter;
+    params.dst_addr = cmd.dst_addr;
+    params.src_addr = cmd.src_addr;
+    params.channel = cmd.channel;
+    params.type = cmd.type;
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    params.command = cmd.payload[4];
+    params.payload_1 = cmd.payload[0];
+    params.payload_2 = cmd.payload[1];
+    packet::build_tx_packet(params, this->msg_tx_);
+  }
 }
 
 bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
-  // Reject if already transmitting or another client owns the TX
-  if (this->tx_owner_ != nullptr || this->tx_ctx_.state != TxState::IDLE) {
-    ESP_LOGVV(TAG, "request_tx rejected: busy");
-    return false;
-  }
-
-  // Build packet and record for echo detection
-  this->build_tx_packet_(cmd);
-  this->record_tx_(cmd.counter);
-
-  // Look up device name by dst address (store string to avoid dangling pointer)
+#ifdef USE_ESP32
+  // Look up device name for TX intent log (runs on Core 1, no SPI)
   std::string blind_name;
   if (this->registry_) {
     Device *dev = this->registry_->find(cmd.dst_addr);
@@ -663,34 +679,34 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
     }
   }
 
-  // JSON log for TX packet (machine-readable, tagged for WS forwarding)
+  // JSON log for TX packet (no msg_tx_ reference — packet built on RF task)
   if (!blind_name.empty()) {
     ESP_LOGD(TAG_RF,
-             "{\"ts_ms\":%lu,\"dir\":\"tx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "{\"ts_ms\":%lu,\"dir\":\"tx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"cnt\":%d,"
              "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
              (unsigned long) millis(), blind_name.c_str(), elero_command_to_string(cmd.payload[4]),
-             this->msg_tx_[0], cmd.counter, cmd.type, cmd.type2, cmd.hop,
+             cmd.counter, cmd.type, cmd.type2, cmd.hop,
              cmd.channel, cmd.src_addr, cmd.dst_addr, cmd.payload[4]);
   } else {
     ESP_LOGD(TAG_RF,
-             "{\"ts_ms\":%lu,\"dir\":\"tx\",\"blind\":\"0x%06x\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
+             "{\"ts_ms\":%lu,\"dir\":\"tx\",\"blind\":\"0x%06x\",\"cmd_name\":\"%s\",\"cnt\":%d,"
              "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
              (unsigned long) millis(), cmd.dst_addr, elero_command_to_string(cmd.payload[4]),
-             this->msg_tx_[0], cmd.counter, cmd.type, cmd.type2, cmd.hop,
+             cmd.counter, cmd.type, cmd.type2, cmd.hop,
              cmd.channel, cmd.src_addr, cmd.dst_addr, cmd.payload[4]);
   }
 
-  // Start non-blocking TX
-  if (!this->start_transmit()) {
-    ESP_LOGW(TAG, "request_tx: start_transmit failed");
-    return false;
-  }
-
-  // Take ownership
-  this->tx_owner_ = client;
-  return true;
+  // Post to RF task queue (non-blocking, no SPI)
+  RfTaskRequest req{};
+  req.type = RfTaskRequest::Type::TX;
+  req.cmd = cmd;
+  req.client = client;
+  return xQueueSend(this->tx_queue_handle_, &req, 0) == pdPASS;
+#else
+  return false;
+#endif
 }
 
 bool Elero::start_transmit() {
@@ -712,13 +728,6 @@ bool Elero::start_transmit() {
   }
 
   return true;
-}
-
-bool Elero::poll_tx_result() {
-  if (this->tx_ctx_.state != TxState::IDLE) {
-    return false;  // Still in progress
-  }
-  return this->tx_pending_success_;
 }
 
 void Elero::handle_tx_state_(uint32_t now) {
@@ -992,6 +1001,9 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
   pkt.lqi = r.lqi;
   pkt.crc_ok = (r.crc_ok != 0);
   pkt.hop = r.hop;
+#ifdef USE_ESP32
+  pkt.decoded_at_us = esp_timer_get_time();
+#endif
   memcpy(pkt.payload, r.payload, sizeof(pkt.payload));
 
   // Copy raw bytes for WebSocket broadcast
@@ -1005,7 +1017,9 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
 // ─── dispatch_packet: slow path — logging, registry, sensors ─────────────────
 void Elero::dispatch_packet(const RfPacketInfo &pkt) {
   using namespace packet;
-  const uint32_t dispatch_start = millis();
+#ifdef USE_ESP32
+  const int64_t dispatch_start_us = esp_timer_get_time();
+#endif
 
   bool is_cmd = is_command_packet(pkt.type);
   bool is_status_pkt = is_status_packet(pkt.type);
@@ -1112,10 +1126,13 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
   }
 #endif
 
-  uint32_t dispatch_duration = millis() - dispatch_start;
-  if (dispatch_duration > 1) {
-    ESP_LOGD(TAG, "dispatch_packet took %lums (cnt=%d)", (unsigned long) dispatch_duration, pkt.cnt);
-  }
+#ifdef USE_ESP32
+  int64_t dispatch_us = esp_timer_get_time() - dispatch_start_us;
+  int64_t queue_transit_us = (pkt.decoded_at_us > 0) ? (dispatch_start_us - pkt.decoded_at_us) : 0;
+  // Log timing: dispatch cost + queue transit (decode→dispatch latency)
+  ESP_LOGD(TAG, "dispatch: %lldus, queue_transit: %lldus (cnt=%d)",
+           dispatch_us, queue_transit_us, pkt.cnt);
+#endif
 }
 
 #ifdef USE_SENSOR
@@ -1136,44 +1153,9 @@ void Elero::register_problem_sensor(uint32_t address, binary_sensor::BinarySenso
 }
 #endif
 
-bool Elero::send_command(EleroCommand *cmd) {
-  ESP_LOGVV(TAG, "send_command called");
-  this->build_tx_packet_(*cmd);
-  this->record_tx_(cmd->counter);
-
-  // Look up device name by dst address
-  std::string blind_name;
-  if (this->registry_) {
-    Device *dev = this->registry_->find(cmd->dst_addr);
-    if (dev) {
-      blind_name = dev->config.name;
-    }
-  }
-
-  // JSON log for TX packet (machine-readable, tagged for WS forwarding)
-  if (!blind_name.empty()) {
-    ESP_LOGD(TAG_RF,
-             "{\"ts_ms\":%lu,\"dir\":\"tx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
-             "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
-             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
-             (unsigned long) millis(), blind_name.c_str(), elero_command_to_string(cmd->payload[4]),
-             this->msg_tx_[0], cmd->counter, cmd->type, cmd->type2, cmd->hop,
-             cmd->channel, cmd->src_addr, cmd->dst_addr, cmd->payload[4]);
-  } else {
-    ESP_LOGD(TAG_RF,
-             "{\"ts_ms\":%lu,\"dir\":\"tx\",\"blind\":\"0x%06x\",\"cmd_name\":\"%s\",\"len\":%d,\"cnt\":%d,"
-             "\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
-             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\"}",
-             (unsigned long) millis(), cmd->dst_addr, elero_command_to_string(cmd->payload[4]),
-             this->msg_tx_[0], cmd->counter, cmd->type, cmd->type2, cmd->hop,
-             cmd->channel, cmd->src_addr, cmd->dst_addr, cmd->payload[4]);
-  }
-  return transmit();
-}
-
 bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t channel, uint8_t command,
                               uint8_t payload_1, uint8_t payload_2, uint8_t type, uint8_t type2, uint8_t hop) {
-  // Use a static counter for raw commands (persists across calls)
+#ifdef USE_ESP32
   static uint8_t raw_msg_cnt = 1;
 
   EleroCommand cmd{};
@@ -1188,16 +1170,22 @@ bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t chann
   cmd.payload[1] = payload_2;
   cmd.payload[4] = command;
 
-  // WARNING: Blocking TX — only for debugging unknown addresses.
-  // For known entities, callers should use perform_command() instead,
-  // which routes through the entity's non-blocking CommandSender.
-  bool success = this->send_command(&cmd);
-  if (success) {
+  // Fire-and-forget via RF task queue (no blocking, no completion callback)
+  RfTaskRequest req{};
+  req.type = RfTaskRequest::Type::TX;
+  req.cmd = cmd;
+  req.client = nullptr;  // No completion callback
+
+  if (xQueueSend(this->tx_queue_handle_, &req, 0) == pdPASS) {
     ++raw_msg_cnt;
     if (raw_msg_cnt > packet::limits::COUNTER_MAX)
       raw_msg_cnt = 1;
+    return true;
   }
-  return success;
+  return false;
+#else
+  return false;
+#endif
 }
 
 }  // namespace elero

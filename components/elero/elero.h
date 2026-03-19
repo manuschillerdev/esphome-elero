@@ -13,6 +13,12 @@
 #include <atomic>
 #include <functional>
 
+#ifdef USE_ESP32
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#endif
+
 // Forward declaration for new architecture registry
 namespace esphome { namespace elero { class DeviceRegistry; } }
 
@@ -72,6 +78,7 @@ struct TxContext {
 /// Decoded RF packet info for WebSocket broadcast
 struct RfPacketInfo {
   uint32_t timestamp_ms;
+  int64_t decoded_at_us{0};  ///< esp_timer_get_time() when decode completed (µs, for latency tracking)
   uint32_t src;           ///< Source address (remote for commands, blind for status)
   uint32_t dst;           ///< Destination address (blind for commands, remote for status)
   uint8_t channel;
@@ -92,15 +99,33 @@ struct RfPacketInfo {
 
 // String conversion declarations (elero_state_to_string, etc.) are in elero_strings.h
 
+// ─── RF Task IPC Structs ─────────────────────────────────────────────────────
+
+/// Request from main loop → RF task (via tx_queue).
+/// Uses a union to minimize queue item size (~50 bytes).
+struct RfTaskRequest {
+  enum class Type : uint8_t { TX, REINIT_FREQ } type;
+  TxClient *client{nullptr};  ///< TX: completion callback target (stable ptr on Device)
+  union {
+    EleroCommand cmd;                            ///< TX: command to transmit
+    struct { uint8_t f2, f1, f0; } freq;         ///< REINIT_FREQ: new frequency registers
+  };
+
+  RfTaskRequest() : type(Type::TX), client(nullptr), cmd{} {}
+};
+
+/// Result from RF task → main loop (via tx_done_queue).
+struct TxResult {
+  TxClient *client{nullptr};  ///< nullptr for fire-and-forget (raw TX)
+  bool success{false};
+};
+
 }  // namespace elero
 }  // namespace esphome
 
 // Lock payload size invariant: decode_packet memcpy's ParseResult::payload → RfPacketInfo::payload
 static_assert(sizeof(esphome::elero::RfPacketInfo::payload) == sizeof(esphome::elero::packet::ParseResult::payload),
               "RfPacketInfo::payload and ParseResult::payload must have the same size");
-
-// Include after RfPacketInfo is defined (rx_ring_buffer.h is a template that needs the full type)
-#include "rx_ring_buffer.h"
 
 namespace esphome {
 namespace elero {
@@ -127,55 +152,22 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void setup() override;
   void loop() override;
 
-  static void interrupt(Elero *arg);
-  void set_received();
+  static void IRAM_ATTR interrupt(Elero *arg);
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
   void reset();
   void init();
 
-  // SPI communication methods — return false on CC1101 RXFIFO overflow
-  [[nodiscard]] bool write_reg(uint8_t addr, uint8_t data);
-  [[nodiscard]] bool write_burst(uint8_t addr, uint8_t *data, uint8_t len);
-  [[nodiscard]] bool write_cmd(uint8_t cmd);
-  [[nodiscard]] bool wait_rx();
-  [[nodiscard]] bool wait_tx();
-  [[nodiscard]] bool wait_tx_done();
-  [[nodiscard]] bool wait_idle();
-  [[nodiscard]] bool transmit();
-  [[nodiscard]] uint8_t read_reg(uint8_t addr, bool *ok = nullptr);
-  [[nodiscard]] uint8_t read_status(uint8_t addr);
-  void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
-  void flush_and_rx();
-
-  /// Decode a single packet from a raw buffer (fast path — no side effects).
-  /// @param buf Pointer to start of packet in FIFO data
-  /// @param buf_len Remaining bytes available from this offset
-  /// @return Populated RfPacketInfo, or nullopt on invalid/short packet
-  [[nodiscard]] optional<RfPacketInfo> decode_packet(const uint8_t *buf, size_t buf_len);
-
   /// Dispatch a decoded packet (slow path — logging, registry, sensors).
+  /// Called from main loop only (Core 1).
   void dispatch_packet(const RfPacketInfo &pkt);
 
-  // Non-blocking TX state machine (internal)
-  [[nodiscard]] bool start_transmit();  // Begin async TX, returns true if started
-  bool is_tx_busy() const { return tx_ctx_.state != TxState::IDLE || tx_owner_ != nullptr; }
-  [[nodiscard]] bool poll_tx_result();  // Check if TX completed, get result
-
-  // Non-blocking TX API for CommandSender
-  /// Request to transmit a command. Non-blocking.
-  /// @param client The sender requesting TX (receives completion callback)
-  /// @param cmd The command to transmit
-  /// @return true if TX started, false if hub is busy
+  // Non-blocking TX API for CommandSender.
+  // Posts command to RF task queue. Returns true if queued, false if queue full.
+  // Completion is notified asynchronously via TxClient::on_tx_complete() on Core 1.
   [[nodiscard]] bool request_tx(TxClient *client, const EleroCommand &cmd);
 
-  /// Get the current TX owner (for debugging/testing).
-  TxClient *get_tx_owner() const { return tx_owner_; }
-
-  // Legacy blocking TX API (for backwards compatibility and simple use cases)
-  [[nodiscard]] bool send_command(EleroCommand *cmd);
-
-  // Raw TX API (for WebSocket debugging/testing)
+  // Raw TX API (for WebSocket debugging/testing) — fire-and-forget via queue.
   [[nodiscard]] bool send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t channel,
                                       uint8_t command,
                                       uint8_t payload_1 = packet::defaults::PAYLOAD_1,
@@ -195,9 +187,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #endif
 
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
-  void set_freq0(uint8_t freq) { freq0_ = freq; }
-  void set_freq1(uint8_t freq) { freq1_ = freq; }
-  void set_freq2(uint8_t freq) { freq2_ = freq; }
+  void set_freq0(uint8_t freq) { freq0_.store(freq); }
+  void set_freq1(uint8_t freq) { freq1_.store(freq); }
+  void set_freq2(uint8_t freq) { freq2_.store(freq); }
 
   void set_version(const char *version) { version_ = version; }
   const char *get_version() const { return version_; }
@@ -211,35 +203,62 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   DeviceRegistry *get_registry() const { return registry_; }
 
   void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
-  uint8_t get_freq0() const { return freq0_; }
-  uint8_t get_freq1() const { return freq1_; }
-  uint8_t get_freq2() const { return freq2_; }
+  uint8_t get_freq0() const { return freq0_.load(); }
+  uint8_t get_freq1() const { return freq1_.load(); }
+  uint8_t get_freq2() const { return freq2_.load(); }
 
  private:
+  // ─── SPI communication (called exclusively from RF task after setup) ────────
+  [[nodiscard]] bool write_reg(uint8_t addr, uint8_t data);
+  [[nodiscard]] bool write_burst(uint8_t addr, uint8_t *data, uint8_t len);
+  [[nodiscard]] bool write_cmd(uint8_t cmd);
+  [[nodiscard]] bool wait_rx();
+  [[nodiscard]] uint8_t read_reg(uint8_t addr, bool *ok = nullptr);
+  [[nodiscard]] uint8_t read_status(uint8_t addr);
+  void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
+  void flush_and_rx();
+  [[nodiscard]] bool start_transmit();
+  [[nodiscard]] optional<RfPacketInfo> decode_packet(const uint8_t *buf, size_t buf_len);
+
+  // ─── TX state machine (RF task only) ──────────────────────────────────────
   void handle_tx_state_(uint32_t now);  // Progress TX state machine
   void defer_tx_(uint32_t now);         // Defer TX due to busy channel
   void abort_tx_();                     // Abort TX and return to RX
   void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
-  void notify_tx_owner_(bool success);  // Notify owner and clear
-  /// Read a CC1101 status register twice until consistent (CC1101 errata workaround).
-  uint8_t read_status_reliable_(uint8_t addr);
+  uint8_t read_status_reliable_(uint8_t addr);     // CC1101 errata workaround
   void check_radio_health_();           // Periodic watchdog for stuck radio states
-  void record_tx_(uint8_t counter);           // Record TX counter for echo detection
-  bool is_own_echo_(uint8_t counter) const;   // Check if RX counter matches a recent TX
-  void drain_fifo_();                         // Read FIFO, decode packets, push to ring buffer
-  void dispatch_queued_packets_();            // Pop ring buffer, dispatch each packet
+  void record_tx_(uint8_t counter);     // Record TX counter for echo detection
+  bool is_own_echo_(uint8_t counter) const;  // Check if RX counter matches a recent TX
+  void drain_fifo_();                   // Read FIFO, decode packets, push to queue
 
-  std::atomic<bool> received_{false};
+  // ─── RF task entry point ───────────────────────────────────────────────────
+#ifdef USE_ESP32
+  static void rf_task_func_(void *arg);
+#endif
+
+  // ─── ISR-shared state ──────────────────────────────────────────────────────
+  std::atomic<bool> received_{false};   ///< Set by ISR, consumed by RF task
+
+  // ─── RF task-exclusive state (never accessed from main loop after setup) ───
   TxContext tx_ctx_;
   bool tx_pending_success_{false};
-  TxClient *tx_owner_{nullptr};  // Current TX owner (for non-blocking API)
-  uint32_t last_chip_reset_ms_{0};  ///< Rate-limit chip resets (zombie recovery)
-  uint32_t last_radio_check_ms_{0}; ///< Last radio health check timestamp
-  uint8_t msg_rx_[CC1101_FIFO_LENGTH];
-  uint8_t msg_tx_[CC1101_FIFO_LENGTH];
-  uint8_t freq0_{defaults::FREQ0};
-  uint8_t freq1_{defaults::FREQ1};
-  uint8_t freq2_{defaults::FREQ2};
+  TxClient *tx_owner_{nullptr};        ///< Current TX owner (for completion callback)
+  uint32_t last_chip_reset_ms_{0};     ///< Rate-limit chip resets (zombie recovery)
+  uint32_t last_radio_check_ms_{0};    ///< Last radio health check timestamp
+  uint8_t msg_rx_[CC1101_FIFO_LENGTH]; ///< RX FIFO buffer (RF task only)
+  uint8_t msg_tx_[CC1101_FIFO_LENGTH]; ///< TX packet buffer (RF task only)
+
+  // TX echo detection: ring buffer of recently sent counter values (RF task only)
+  static constexpr size_t TX_HISTORY_SIZE = 16;
+  uint8_t tx_history_[TX_HISTORY_SIZE]{};
+  uint8_t tx_history_idx_{0};
+
+  // ─── Atomic state (written by RF task, read by main loop) ──────────────────
+  std::atomic<uint8_t> freq0_{defaults::FREQ0};
+  std::atomic<uint8_t> freq1_{defaults::FREQ1};
+  std::atomic<uint8_t> freq2_{defaults::FREQ2};
+
+  // ─── Main loop-exclusive state ─────────────────────────────────────────────
   InternalGPIOPin *gdo0_pin_{nullptr};
 #ifdef USE_SENSOR
   std::map<uint32_t, sensor::Sensor *> address_to_rssi_sensor_;
@@ -251,14 +270,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::map<uint32_t, binary_sensor::BinarySensor *> address_to_problem_sensor_;
 #endif
 
-  // TX echo detection: ring buffer of recently sent counter values
-  static constexpr size_t TX_HISTORY_SIZE = 16;
-  uint8_t tx_history_[TX_HISTORY_SIZE]{};
-  uint8_t tx_history_idx_{0};
-
-  // RX ring buffer: decouples fast-path FIFO decode from slow-path dispatch
-  RxRingBuffer<RfPacketInfo, 8> rx_queue_;
-
   // RF packet notification callback (optional, set by web server)
   RfPacketCallback on_rf_packet_{};
 
@@ -266,6 +277,14 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   DeviceRegistry *registry_{nullptr};
 
   const char *version_{"unknown"};
+
+  // ─── FreeRTOS IPC (cross-core communication) ──────────────────────────────
+#ifdef USE_ESP32
+  TaskHandle_t rf_task_handle_{nullptr};
+  QueueHandle_t rx_queue_handle_{nullptr};       ///< RF task → main loop: RfPacketInfo
+  QueueHandle_t tx_queue_handle_{nullptr};       ///< Main loop → RF task: RfTaskRequest
+  QueueHandle_t tx_done_queue_handle_{nullptr};  ///< RF task → main loop: TxResult
+#endif
 };
 
 }  // namespace elero

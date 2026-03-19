@@ -181,12 +181,8 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
             dispatch_status_(*dev, pkt.state, now);
         }
     } else if (packet::is_command_packet(pkt.type) && !pkt.echo) {
-        // Command from a remote — target is dst
-        Device *dev = find(pkt.dst);
-        if (dev && dev->active) {
-            dispatch_remote_command_(*dev, pkt.command, now);
-        }
-        // Auto-discover the remote itself
+        // Remote commands are passive — we only auto-discover the remote.
+        // The blind's status response (via dispatch_status_) handles state.
         track_remote_(pkt, now);
     }
 }
@@ -229,34 +225,10 @@ void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t 
 
     if (changed) {
         notify_state_changed_(dev);
+        dev.last_notify_ms = now;  // Prevent duplicate publish from position throttle
     }
 }
 
-void DeviceRegistry::dispatch_remote_command_(Device &dev, uint8_t cmd_byte,
-                                               uint32_t now) {
-    bool changed = false;
-
-    std::visit(overloaded{
-        [&](CoverDevice &cover) {
-            auto ctx = cover_context(dev.config);
-            auto old_idx = cover.state.index();
-            cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
-            cover.poll.request_immediate_poll();
-            cover.last_command_source = CommandSource::REMOTE;
-            if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
-            if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
-            changed = (cover.state.index() != old_idx);
-        },
-        [&](LightDevice &light) {
-            light.last_command_source = CommandSource::REMOTE;
-        },
-        [](RemoteDevice &) {},
-    }, dev.logic);
-
-    if (changed) {
-        notify_state_changed_(dev);
-    }
-}
 
 void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
     // Native mode doesn't auto-discover remotes — devices are YAML-defined
@@ -333,9 +305,9 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
     bool moving = cover_sm::is_moving(cover.state);
     if (cover.poll.should_poll(now, moving)) {
         // Single packet for movement polls (blind responds to each packet,
-        // if missed we retry in 2s). Full 2 packets for idle polls (less frequent).
-        uint8_t packets = moving ? 1 : packet::limits::SEND_PACKETS;
-        (void) dev.sender.enqueue(packet::command::CHECK, packets);
+        // if missed we retry in 2s). Full 3 packets for idle polls (less frequent).
+        uint8_t packets = moving ? 1 : packet::button::PACKETS;
+        (void) dev.sender.enqueue(packet::command::CHECK, packets, packet::msg_type::COMMAND);
         cover.poll.on_poll_sent(now);
     }
 
@@ -352,7 +324,8 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
         // Don't send stop for fully open/closed — the blind handles those endpoints
         if (at_target && cover.target_position > cover_sm::POSITION_CLOSED && cover.target_position < cover_sm::POSITION_OPEN) {
             dev.sender.clear_queue();
-            (void) dev.sender.enqueue(packet::command::STOP);
+            (void) dev.sender.enqueue(packet::command::STOP, packet::button::PACKETS, packet::msg_type::COMMAND);
+            (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
             cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
             state_type_changed = true;
             cover.target_position = cover_sm::NO_TARGET;  // Clear target
@@ -384,10 +357,11 @@ void DeviceRegistry::loop_light_(Device &dev, LightDevice &light, uint32_t now) 
     light.state = light_sm::on_tick(light.state, now, ctx);
     bool state_type_changed = (light.state.index() != old_idx);
 
-    // 2. Send STOP when dimming completes (freeze brightness on the receiver)
+    // 2. Send RELEASE when dimming completes (freeze brightness on the receiver).
+    //    Button packets use RELEASE (0x00) instead of STOP (0x10).
     if (state_type_changed && !light_sm::is_dimming(light.state) &&
         light_sm::is_on(light.state)) {
-        (void) dev.sender.enqueue(packet::command::STOP);
+        (void) dev.sender.enqueue(packet::button::RELEASE, packet::button::PACKETS);
     }
 
     // 3. Process command queue

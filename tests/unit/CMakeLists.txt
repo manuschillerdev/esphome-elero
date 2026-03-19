@@ -100,12 +100,6 @@ add_executable(test_poll_timer
 )
 target_link_libraries(test_poll_timer GTest::gtest_main)
 
-# RxRingBuffer (pure template, no ESPHome deps)
-add_executable(test_rx_ring_buffer
-  test_rx_ring_buffer.cpp
-)
-target_link_libraries(test_rx_ring_buffer GTest::gtest_main)
-
 # Discover all tests
 include(GoogleTest)
 gtest_discover_tests(test_protocol)
@@ -118,13 +112,12 @@ gtest_discover_tests(test_string_functions)
 gtest_discover_tests(test_cover_sm)
 gtest_discover_tests(test_light_sm)
 gtest_discover_tests(test_poll_timer)
-gtest_discover_tests(test_rx_ring_buffer)
 
 # All test targets
 set(ALL_TEST_TARGETS
   test_protocol test_packet_vectors test_command_sender test_golden_vectors
   test_encryption_vectors test_parse_roundtrip test_string_functions
-  test_cover_sm test_light_sm test_poll_timer test_rx_ring_buffer
+  test_cover_sm test_light_sm test_poll_timer
 )
 
 # Combined target for running all tests

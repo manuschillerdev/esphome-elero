@@ -141,7 +141,7 @@ constexpr uint8_t DEST_COUNT = 0x01;          ///< Single destination
 
 namespace timing {
 constexpr uint32_t POLL_INTERVAL_MOVING = 2000;   ///< Poll every 2s while moving
-constexpr uint32_t DELAY_SEND_PACKETS = 50;       ///< 50ms between packet repeats
+constexpr uint32_t DELAY_SEND_PACKETS = 50;       ///< 50ms between targeted packet repeats
 constexpr uint32_t TIMEOUT_MOVEMENT = 120000;     ///< Max 2min movement timeout
 constexpr uint32_t POLL_OFFSET_SPACING = 5000;    ///< 5s spacing between blind polls
 constexpr uint32_t TX_PENDING_TIMEOUT = 500;      ///< TX completion timeout
@@ -163,6 +163,19 @@ constexpr uint8_t SEND_PACKETS = 2;           ///< Packets sent per command
 constexpr uint8_t MAX_COMMAND_QUEUE = 10;     ///< Max commands per blind
 constexpr uint8_t COUNTER_MAX = 255;          ///< Counter wrap-around value
 }  // namespace limits
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUTTON PACKET CONSTANTS (0x44 type — PRESS/RELEASE for dimming)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+namespace button {
+constexpr uint8_t RELEASE = 0x00;                 ///< Release command byte (stops dimming)
+constexpr uint8_t PACKETS = 3;                    ///< 3 packets per button phase
+constexpr uint32_t INTER_PACKET_MS = 10;          ///< 10ms between button packet repeats
+constexpr uint8_t MSG_LENGTH = 0x1B;              ///< Button packet length (27 bytes)
+constexpr uint8_t TYPE2 = 0x10;                   ///< type2 for button packets
+constexpr uint8_t HOP = 0x00;                     ///< hop count for button packets
+}  // namespace button
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENCRYPTION CONSTANTS
@@ -321,6 +334,14 @@ constexpr size_t PAYLOAD = 20;      // Payload start (payload_1, payload_2)
 constexpr size_t CRYPTO_CODE = 22;  // Start of 8-byte encrypted section
 }  // namespace tx_offset
 
+/// Button TX-specific offsets (0x44 type, no dst_addr, shorter packet)
+namespace btn_offset {
+constexpr size_t CHANNEL_DEST = 17;  // Channel byte (replaces dst_addr)
+constexpr size_t ZERO_BYTE = 18;     // Always 0x00
+constexpr size_t FIXED_03 = 19;      // Always 0x03
+constexpr size_t CRYPTO_CODE = 20;   // Start of 8-byte encrypted section
+}  // namespace btn_offset
+
 /// Address size in bytes (big-endian 24-bit addresses)
 constexpr size_t ADDR_SIZE = 3;
 
@@ -380,6 +401,29 @@ inline uint16_t calc_crypto_code(uint8_t counter) {
 /// @param out_buf Output buffer (must be at least 30 bytes)
 /// @return Packet length (always TX_MSG_LENGTH + 1 = 30)
 size_t build_tx_packet(const TxParams& params, uint8_t* out_buf);
+
+/// Parameters for building a 0x44 button TX packet (PRESS/RELEASE for dimming).
+struct ButtonTxParams {
+  uint8_t counter{1};                              ///< Rolling message counter
+  uint32_t src_addr{0};                            ///< Source address (emulated remote)
+  uint8_t channel{0};                              ///< RF channel
+  uint8_t command{button::RELEASE};                ///< Command byte (UP/DOWN/RELEASE)
+  uint8_t type2{button::TYPE2};                    ///< Secondary type byte (0x10)
+  uint8_t hop{button::HOP};                        ///< Hop count (0x00 for button)
+};
+
+/// Build a 0x44 button TX packet (PRESS/RELEASE).
+///
+/// Button packets differ from targeted (0x6A) packets:
+/// - Length: 27 bytes (vs 29)
+/// - No destination address (broadcasts on channel)
+/// - No payload_1/payload_2 before encrypted section
+/// - Encrypted section at offset 20 (vs 22)
+///
+/// @param params Button command parameters
+/// @param out_buf Output buffer (must be at least 28 bytes)
+/// @return Packet length (always button::MSG_LENGTH + 1 = 28)
+size_t build_button_packet(const ButtonTxParams& params, uint8_t* out_buf);
 
 // ─── Cover State Mapping ────────────────────────────────────────────────────
 
