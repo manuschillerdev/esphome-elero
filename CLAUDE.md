@@ -534,9 +534,8 @@ flowchart TD
 
     DEQUEUE -->|TX request| BUILD["build_tx_packet_(cmd)<br/>→ select 0x44 button or 0x6a command builder<br/>→ AES-128 encrypt → write to msg_tx_[]"]
     BUILD --> RECORD["record_tx_(counter)<br/>→ push to 16-entry echo ring"]
-    RECORD --> START{"start_transmit()"}
-    START -->|OK| OWN["tx_owner_ = client"]
-    START -->|SPI fail| FAIL_RESULT["xQueueSend(tx_done_queue,<br/>{client, false})"]
+    RECORD --> START["start_transmit()<br/>→ state = PREPARE"]
+    START --> OWN["tx_owner_ = client"]
 
     DEQUEUE -->|REINIT_FREQ| ABORT_PENDING{"tx_owner_<br/>!= nullptr?"}
     ABORT_PENDING -->|Yes| ABORT_NOTIFY["xQueueSend(tx_done_queue,<br/>{owner, false})<br/>tx_owner_ = nullptr"]
@@ -546,10 +545,9 @@ flowchart TD
     DEQUEUE -->|Empty| RX_CHECK
 
     OWN --> PROGRESS
-    FAIL_RESULT --> RX_CHECK
     REINIT_DO --> RX_CHECK
 
-    PROGRESS["handle_tx_state_(now)<br/>→ one state transition per iteration<br/>(see TX state machine diagram)"]
+    PROGRESS["handle_tx_state_(now)<br/>→ PREPARE is synchronous (~1ms),<br/>WAIT_TX polls, RECOVER resets"]
     PROGRESS --> DONE{tx_ctx_.state == IDLE<br/>AND tx_owner_ != nullptr?}
     DONE -->|Yes| POST_RESULT["xQueueSend(tx_done_queue,<br/>{owner, tx_pending_success_})<br/>tx_owner_ = nullptr"]
     DONE -->|No| RX_CHECK
@@ -562,7 +560,7 @@ flowchart TD
     subgraph DRAIN [drain_fifo_]
         D1["read_status_reliable_(RXBYTES)<br/>double-read errata workaround"]
         D1 --> D2{overflow bit?}
-        D2 -->|Yes| D3["flush_and_rx()<br/>SIDLE → SFRX → SFTX → SRX"]
+        D2 -->|Yes| D3["flush_and_rx()<br/>SIDLE → 100µs → SFRX → SFTX → SRX"]
         D2 -->|No| D4["read_buf(RXFIFO, fifo_count)<br/>single SPI burst"]
         D4 --> D5["loop: decode_packet() per frame<br/>parse_packet → AES decrypt → CRC<br/>→ is_own_echo_ check<br/>→ stamp decoded_at_us"]
         D5 --> D6["xQueueSend(rx_queue, &pkt)<br/>or drop + warn if full"]
@@ -583,55 +581,51 @@ flowchart TD
     WDT["esp_task_wdt_reset()<br/>(feed ESP-IDF watchdog)"] --> SLEEP
 ```
 
-TX state machine (`handle_tx_state_`, runs on Core 0, one state per RF task iteration):
+TX state machine (`handle_tx_state_`, runs on Core 0, 4 states):
 
 ```mermaid
 stateDiagram-v2
     [*] --> IDLE
 
-    IDLE --> GOTO_IDLE : start_transmit()<br/>write_cmd(SIDLE)
+    IDLE --> PREPARE : start_transmit()
 
-    state GOTO_IDLE {
-        [*] --> check_backoff : backoff_until > now?
-        check_backoff --> wait : yes, return
-        check_backoff --> check_defer : no
-        check_defer --> read_marc : defer_count < MAX
-        read_marc --> success : MARCSTATE == IDLE
+    state PREPARE {
+        [*] --> sidle : write_cmd(SIDLE)
+        sidle --> poll_idle : poll MARCSTATE × 20<br/>(50µs gaps, max 1ms)
+        poll_idle --> sftx : MARCSTATE == IDLE<br/>write_cmd(SFTX)
+        sftx --> load_fifo : esp_rom_delay_us(100)<br/>write_burst(TXFIFO, msg_tx_)
+        load_fifo --> clear_rx : received_ = false
+        clear_rx --> stx : write_cmd(STX)
+        stx --> poll_tx : poll MARCSTATE × 20<br/>(50µs gaps, max 1ms)
     }
-    GOTO_IDLE --> FLUSH_TX : MARCSTATE == IDLE<br/>write_cmd(SFTX)
-    GOTO_IDLE --> IDLE : timeout 50ms / defer_count >= 10<br/>abort_tx_()
+    PREPARE --> WAIT_TX : MARCSTATE == TX
+    PREPARE --> RECOVER : any failure<br/>(SIDLE timeout, FIFO write fail, STX fail)
 
-    FLUSH_TX --> LOAD_FIFO : elapsed >= 1ms<br/>write_burst(TXFIFO, msg_tx_)
-    FLUSH_TX --> IDLE : timeout 50ms<br/>abort_tx_()
-
-    state LOAD_FIFO {
-        [*] --> force_idle : write_cmd(SIDLE)
-        force_idle --> clear_rx : received_ = false
-        clear_rx --> send_stx : write_cmd(STX)
-        send_stx --> poll_marc : poll MARCSTATE × 20<br/>(5µs gaps, max 100µs)
+    state WAIT_TX {
+        [*] --> check_gdo0 : received_.load()?
+        check_gdo0 --> verify_fifo : true (GDO0 fired)
+        check_gdo0 --> check_marc : false
+        check_marc --> verify_fifo : MARCSTATE == IDLE/RX<br/>(fallback: GDO0 missed)
+        verify_fifo --> complete : TXBYTES == 0
+        verify_fifo --> grace : TXBYTES > 0<br/>esp_rom_delay_us(100)
+        grace --> complete : TXBYTES == 0
     }
-    LOAD_FIFO --> WAIT_TX_DONE : MARCSTATE == TX
-    LOAD_FIFO --> TRIGGER_TX : transitional (FSTXON, CAL)
-    LOAD_FIFO --> GOTO_IDLE : MARCSTATE == RX<br/>defer_tx_(backoff)
+    WAIT_TX --> IDLE : TX complete<br/>flush_and_rx(), tx_pending_success_ = true
+    WAIT_TX --> RECOVER : timeout 50ms<br/>OR FIFO not empty after grace
 
-    TRIGGER_TX --> WAIT_TX_DONE : MARCSTATE == TX
-    TRIGGER_TX --> GOTO_IDLE : MARCSTATE == RX<br/>defer_tx_(backoff)
-    TRIGGER_TX --> IDLE : FIFO underflow / overflow<br/>abort_tx_()
-    TRIGGER_TX --> IDLE : timeout 50ms<br/>abort_tx_()
-
-    WAIT_TX_DONE --> VERIFY_DONE : received_.load() == true<br/>(GDO0 interrupt)
-    WAIT_TX_DONE --> IDLE : timeout 50ms<br/>abort_tx_()
-
-    state VERIFY_DONE {
-        [*] --> poll_txbytes : read_status_reliable_(TXBYTES)<br/>retry × 3, 100µs gaps
+    state RECOVER {
+        [*] --> flush : flush_and_rx()
+        flush --> check : MARCSTATE == RX?
+        check --> done : yes
+        check --> reset_chip : no<br/>reset() + init()
+        reset_chip --> verify : read VERSION register
+        verify --> done : VERSION valid (SPI alive)
+        verify --> log_error : VERSION 0x00/0xFF
     }
-    VERIFY_DONE --> RETURN_RX : TXBYTES == 0
-    VERIFY_DONE --> IDLE : FIFO not empty after 3 tries<br/>abort_tx_()
-
-    RETURN_RX --> IDLE : flush_and_rx()<br/>tx_pending_success_ = true
+    RECOVER --> IDLE : tx_pending_success_ = false
 
     note right of IDLE : rf_task_func_ detects completion:<br/>posts TxResult to tx_done_queue
-    note left of GOTO_IDLE : abort_tx_() on all error paths:<br/>reads MARCSTATE, detects zombie (0x00/0x1F),<br/>rate-limited chip reset (10s min gap),<br/>flush_and_rx(), tx_pending_success_ = false
+    note right of RECOVER : recover_radio_(): no rate-limiting,<br/>immediate reset if flush fails
 ```
 
 Main loop (`Elero::loop()`, Core 1) — no SPI, pure dispatch:
