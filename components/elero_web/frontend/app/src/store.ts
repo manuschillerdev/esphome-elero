@@ -2,10 +2,11 @@ import { signal, computed, batch } from '@preact/signals'
 import type {
   ConfigData, RfData, DeviceType, CrudEventData, DeviceUpsertedData,
   StateChangedData, FreqConfig, HubMode, BlindConfig, LightConfig, RemoteConfig,
+  RfStateName,
 } from '@/generated'
 
 // Re-export generated types used by components
-export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, CrudEventData, DeviceUpsertedData, StateChangedData }
+export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, CrudEventData, DeviceUpsertedData, StateChangedData, RfStateName }
 
 // ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
 
@@ -26,30 +27,36 @@ export const command = {
   INTERMEDIATE: '0x44',
 } as const
 
-export const state = {
-  UNKNOWN: '0x00',
-  TOP: '0x01',
-  BOTTOM: '0x02',
-  INTERMEDIATE: '0x03',
-  TILT: '0x04',
-  BLOCKING: '0x05',
-  OVERHEATED: '0x06',
-  TIMEOUT: '0x07',
-  START_MOVING_UP: '0x08',
-  START_MOVING_DOWN: '0x09',
-  MOVING_UP: '0x0a',
-  MOVING_DOWN: '0x0b',
-  STOPPED: '0x0d',
-  TOP_TILT: '0x0e',
-  BOTTOM_TILT: '0x0f',
-  LIGHT_OFF: '0x0f',
-  LIGHT_ON: '0x10',
-} as const
+/// Hex byte → RfStateName (from AsyncAPI spec). Single source of truth for
+/// normalizing RF packet state bytes to the canonical snake_case names that
+/// state_changed events already use.
+const STATE_HEX: Record<string, RfStateName> = {
+  '0x00': 'unknown',
+  '0x01': 'top',
+  '0x02': 'bottom',
+  '0x03': 'intermediate',
+  '0x04': 'tilt',
+  '0x05': 'blocking',
+  '0x06': 'overheated',
+  '0x07': 'timeout',
+  '0x08': 'start_moving_up',
+  '0x09': 'start_moving_down',
+  '0x0a': 'moving_up',
+  '0x0b': 'moving_down',
+  '0x0d': 'stopped',
+  '0x0e': 'top_tilt',
+  '0x0f': 'bottom_tilt',
+  '0x10': 'light_on',
+}
+
+/// Resolve a state value (hex byte or snake_case name) to its canonical RfStateName.
+export function resolveStateName(raw: string | undefined): RfStateName | undefined {
+  if (!raw) return undefined
+  return STATE_HEX[raw.toLowerCase()] ?? (raw as RfStateName)
+}
 
 const STATE_LABELS: Record<string, string> = Object.fromEntries(
-  Object.entries(state)
-    .filter(([k]) => k !== 'LIGHT_OFF')
-    .map(([k, v]) => [v, k])
+  Object.entries(STATE_HEX).map(([, name]) => [name, name.toUpperCase()])
 )
 const COMMAND_LABELS: Record<string, string> = Object.fromEntries(
   Object.entries(command).map(([k, v]) => [v, k])
@@ -62,9 +69,10 @@ const MSG_TYPE_LABELS: Record<string, string> = Object.fromEntries(
 
 export type RfPacketWithTimestamp = RfData & { received_at?: number }
 
-export function getStateLabel(hexState: string | undefined): string {
-  if (!hexState) return 'UNKNOWN'
-  return STATE_LABELS[hexState.toLowerCase()] ?? hexState
+export function getStateLabel(state: string | undefined): string {
+  if (!state) return 'UNKNOWN'
+  const name = resolveStateName(state)
+  return (name && STATE_LABELS[name]) ?? state
 }
 
 export function getCommandLabel(hexCmd: string | undefined): string {
@@ -91,11 +99,10 @@ export function isButtonPacket(pkt: RfData): boolean {
   return pkt.type?.toLowerCase() === msg_type.BUTTON
 }
 
-export function isMovingState(hexState: string | undefined): boolean {
-  if (!hexState) return false
-  const s = hexState.toLowerCase()
-  return s === state.START_MOVING_UP || s === state.START_MOVING_DOWN ||
-         s === state.MOVING_UP || s === state.MOVING_DOWN
+export function isMovingState(raw: string | undefined): boolean {
+  const name = resolveStateName(raw)
+  return name === 'start_moving_up' || name === 'start_moving_down' ||
+         name === 'moving_up' || name === 'moving_down'
 }
 
 export function parseFreq(val: number | string | undefined, defaultVal: number): number {
@@ -328,9 +335,9 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
     const existing = (next ?? devs).get(pkt.src)
     if (existing) {
       // Type correction: if we see a light state, correct cover→light
-      const s = pkt.state?.toLowerCase()
+      const name = resolveStateName(pkt.state)
       const correctedType: DeviceType =
-        (s === state.LIGHT_ON || s === state.LIGHT_OFF) ? 'light' : existing.type
+        (name === 'light_on' || name === 'bottom_tilt') ? 'light' : existing.type
       mut().set(pkt.src, { ...existing, type: correctedType, lastStatus: pkt })
     }
     // Do NOT create devices from status packets — byte offset 6 is not the RF channel.

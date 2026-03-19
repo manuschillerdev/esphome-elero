@@ -304,34 +304,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
         return true;
       }
 
-      // Transition state machine and enqueue command
-      if (dev->is_cover()) {
-        auto &cover = std::get<CoverDevice>(dev->logic);
-        auto ctx = cover_context(dev->config);
-        uint32_t now_ms = millis();
-        cover.last_command_source = CommandSource::HUB;
-        if (cmd_byte == packet::command::STOP) {
-          dev->sender.clear_queue();
-          (void) dev->sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::COMMAND);
-        } else {
-          (void) dev->sender.enqueue(cmd_byte);
-        }
-        (void) dev->sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
-        cover.state = cover_sm::on_command(cover.state, cmd_byte, now_ms, ctx);
-        cover.poll.on_command_sent(now_ms);
-      } else if (dev->is_light()) {
-        auto &light_dev = std::get<LightDevice>(dev->logic);
-        auto ctx = light_context(dev->config);
-        uint32_t now_ms = millis();
-        light_dev.last_command_source = CommandSource::HUB;
-        if (strcmp(action_str, action::OFF) == 0) {
-          light_dev.state = light_sm::on_turn_off(light_dev.state);
-        } else if (strcmp(action_str, action::ON) == 0) {
-          light_dev.state = light_sm::on_turn_on(light_dev.state, now_ms, ctx);
-        }
-        (void) dev->sender.enqueue(cmd_byte);
-        (void) dev->sender.enqueue(packet::button::RELEASE, packet::button::PACKETS, packet::msg_type::BUTTON);
-      }
+      this->dispatch_device_command_(*dev, cmd_byte);
       return true;
     }
 
@@ -354,8 +327,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       if (registry != nullptr) {
         Device *dev = registry->find(dst_addr);
         if (dev != nullptr) {
-          (void) dev->sender.enqueue(raw_command);
-          ESP_LOGI(TAG, "Entity TX to 0x%06x cmd=0x%02x", dst_addr, raw_command);
+          this->dispatch_device_command_(*dev, raw_command);
           return true;
         }
       }
@@ -513,6 +485,39 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // Device Config Parser (shared by save/update)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+void EleroWebServer::dispatch_device_command_(Device &dev, uint8_t cmd_byte) {
+  if (dev.is_cover()) {
+    auto &cover = std::get<CoverDevice>(dev.logic);
+    auto ctx = cover_context(dev.config);
+    uint32_t now_ms = millis();
+    cover.last_command_source = CommandSource::HUB;
+    if (cmd_byte == packet::command::STOP) {
+      dev.sender.clear_queue();
+      (void) dev.sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::COMMAND);
+    } else {
+      (void) dev.sender.enqueue(cmd_byte);
+    }
+    (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+    cover.state = cover_sm::on_command(cover.state, cmd_byte, now_ms, ctx);
+    cover.poll.on_command_sent(now_ms);
+  } else if (dev.is_light()) {
+    auto &light_dev = std::get<LightDevice>(dev.logic);
+    auto ctx = light_context(dev.config);
+    uint32_t now_ms = millis();
+    light_dev.last_command_source = CommandSource::HUB;
+    if (cmd_byte == packet::command::DOWN) {
+      light_dev.state = light_sm::on_turn_off(light_dev.state);
+    } else if (cmd_byte == packet::command::UP) {
+      light_dev.state = light_sm::on_turn_on(light_dev.state, now_ms, ctx);
+    }
+    (void) dev.sender.enqueue(cmd_byte);
+    (void) dev.sender.enqueue(packet::button::RELEASE, packet::button::PACKETS, packet::msg_type::BUTTON);
+  } else {
+    (void) dev.sender.enqueue(cmd_byte);
+  }
+  ESP_LOGI(TAG, "Device TX to 0x%06x cmd=0x%02x", dev.config.dst_address, cmd_byte);
+}
 
 bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error) {
   if (!parse_device_type(root["device_type"] | "", config.type)) {

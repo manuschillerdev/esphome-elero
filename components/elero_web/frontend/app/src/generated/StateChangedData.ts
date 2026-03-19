@@ -1,7 +1,8 @@
 import {DeviceType} from './DeviceType';
 import {AnonymousSchema_71} from './AnonymousSchema_71';
 import {AnonymousSchema_77} from './AnonymousSchema_77';
-import {AnonymousSchema_80} from './AnonymousSchema_80';
+import {RfStateName} from './RfStateName';
+import {AnonymousSchema_79} from './AnonymousSchema_79';
 /**
  * Snapshot of a device's derived state at the moment of change.
  * Sent on user commands (optimistic), RF status responses (confirmed),
@@ -58,14 +59,19 @@ interface StateChangedData {
    */
   'rssi'?: number;
   /**
-   * Raw RF state name (top, moving_up, bottom_tilt, etc.)
-   * @example moving_up
+   * RF state name as returned by elero_state_to_string().
+   * Maps 1:1 to the protocol state bytes:
+   *   0x00=unknown, 0x01=top, 0x02=bottom, 0x03=intermediate,
+   *   0x04=tilt, 0x05=blocking, 0x06=overheated, 0x07=timeout,
+   *   0x08=start_moving_up, 0x09=start_moving_down, 0x0a=moving_up,
+   *   0x0b=moving_down, 0x0d=stopped, 0x0e=top_tilt,
+   *   0x0f=bottom_tilt, 0x10=light_on
    */
-  'state'?: string;
+  'state'?: RfStateName;
   /**
    * Who issued the last command
    */
-  'command_source'?: AnonymousSchema_80;
+  'command_source'?: AnonymousSchema_79;
   /**
    * Timestamp (millis()) of last RF packet from this device
    * @example 1234567

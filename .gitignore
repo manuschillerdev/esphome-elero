@@ -23,6 +23,9 @@ config.dev.yaml
 # Clangd cache
 .cache/
 
+# Frontend build output (rebuilt by pnpm build)
+components/elero_web/frontend/app/dist/
+
 # Mongoose (downloaded at build time by elero_web component)
 components/elero_web/mongoose.c
 components/elero_web/mongoose.h
