@@ -12,6 +12,7 @@
 #ifdef USE_ESP32
 #include <esp_timer.h>
 #include <esp_task_wdt.h>
+#include <esp32/rom/ets_sys.h>
 #endif
 
 #ifdef USE_SENSOR
@@ -56,6 +57,11 @@ void Elero::loop() {
   // 2. Drain TX completion results and notify CommandSenders
   TxResult result{};
   while (xQueueReceive(this->tx_done_queue_handle_, &result, 0) == pdPASS) {
+    if (result.success) {
+      this->stat_tx_success_++;
+    } else {
+      this->stat_tx_fail_++;
+    }
     if (result.client != nullptr) {
       result.client->on_tx_complete(result.success);
     }
@@ -65,6 +71,9 @@ void Elero::loop() {
   if (this->registry_ != nullptr) {
     this->registry_->loop(millis());
   }
+
+  // 4. Publish RF stats sensors (throttled to every 30s)
+  this->publish_stats_();
 #endif
 }
 
@@ -79,6 +88,7 @@ void Elero::drain_fifo_() {
   // Overflow — FIFO data unreliable, flush and bail
   if (len & packet::cc1101_status::RXBYTES_OVERFLOW_BIT) {
     ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
+    this->stat_fifo_overflows_.fetch_add(1, std::memory_order_relaxed);
     this->flush_and_rx();
     return;
   }
@@ -124,6 +134,7 @@ void Elero::drain_fifo_() {
 #ifdef USE_ESP32
       if (xQueueSend(this->rx_queue_handle_, &(*pkt), 0) != pdPASS) {
         ESP_LOGW(TAG, "RX queue full, dropping packet cnt=%d", pkt->cnt);
+        this->stat_rx_drops_.fetch_add(1, std::memory_order_relaxed);
       }
 #endif
       ++pkt_count;
@@ -146,7 +157,7 @@ void Elero::drain_fifo_() {
 
 // ─── ISR: dual signal — atomic flag + task notification ──────────────────────
 void IRAM_ATTR Elero::interrupt(Elero *arg) {
-  // Set atomic flag for TX state machine's WAIT_TX_DONE check
+  // Set atomic flag for TX state machine's WAIT_TX check
   arg->received_.store(true, std::memory_order_release);
 
 #ifdef USE_ESP32
@@ -346,47 +357,25 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 void Elero::flush_and_rx() {
   ESP_LOGVV(TAG, "flush_and_rx");
 
-  // Check if there's RX data before flushing - don't discard valid packets!
-  uint8_t rx_bytes = this->read_status_reliable_(CC1101_RXBYTES);
-  if ((rx_bytes & packet::cc1101_status::BYTE_COUNT_MASK) > 0 &&
-      !(rx_bytes & packet::cc1101_status::RXBYTES_OVERFLOW_BIT)) {
-    // Valid data in RX FIFO (no overflow) - rescue via drain_fifo_
-    ESP_LOGV(TAG, "flush_and_rx: rescuing %d bytes from RX FIFO",
-             rx_bytes & packet::cc1101_status::BYTE_COUNT_MASK);
-    this->drain_fifo_();
-  }
-
-  // 1. Force IDLE to stop any current radio activity
+  // 1. Force IDLE
   (void) this->write_cmd(CC1101_SIDLE);
+  esp_rom_delay_us(100);
 
-  // 2. Wait for IDLE with bounded timeout (no GDO0 edges possible in IDLE)
-  uint32_t start = millis();
-  bool reached_idle = false;
-  while (true) {
-    uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-    if (marc == CC1101_MARCSTATE_IDLE) {
-      reached_idle = true;
-      break;
-    }
-    if (millis() - start > TxContext::STATE_TIMEOUT_MS) {
-      ESP_LOGE(TAG, "flush_and_rx: wait_idle timeout, MARCSTATE=0x%02x", marc);
-      break;
-    }
-    delay_microseconds_safe(50);
-  }
-  if (!reached_idle) {
-    ESP_LOGW(TAG, "flush_and_rx: proceeding after timeout (best-effort recovery)");
-  }
-
-  // 3. Clear atomic flag while in IDLE (safe window - no new interrupts)
+  // 2. Clear atomic flag (safe — radio is idle, no new interrupts)
   this->received_.store(false, std::memory_order_release);
 
-  // 4. Flush FIFOs
+  // 3. Flush both FIFOs
   (void) this->write_cmd(CC1101_SFRX);
   (void) this->write_cmd(CC1101_SFTX);
 
-  // 5. Re-enable RX
+  // 4. Re-enable RX
   (void) this->write_cmd(CC1101_SRX);
+
+  // 5. Verify radio entered RX — caller (recover_radio_) handles escalation
+  uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+  if (marc != CC1101_MARCSTATE_RX) {
+    ESP_LOGW(TAG, "flush_and_rx: not in RX after SRX, MARCSTATE=0x%02x", marc);
+  }
 }
 
 void Elero::reset() {
@@ -517,64 +506,32 @@ bool Elero::wait_rx() {
 
 // ─── Non-blocking TX State Machine ─────────────────────────────────────────
 
-void Elero::defer_tx_(uint32_t now) {
-  this->tx_ctx_.defer_count++;
+void Elero::recover_radio_() {
+  ESP_LOGW(TAG, "recover_radio_: flushing and checking radio state");
+  this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
 
-  // Apply backoff if deferred multiple times
-  if (this->tx_ctx_.defer_count > TxContext::DEFER_BACKOFF_THRESHOLD) {
-    // Random backoff: scale with defer count for exponential-ish backoff
-    uint32_t backoff_ms = (random_uint32() % TxContext::BACKOFF_MAX_MS) + 1;
-    backoff_ms *= (this->tx_ctx_.defer_count - TxContext::DEFER_BACKOFF_THRESHOLD);
-    if (backoff_ms > TxContext::BACKOFF_MAX_MS * 3) {
-      backoff_ms = TxContext::BACKOFF_MAX_MS * 3;  // Cap at 150ms
-    }
-    this->tx_ctx_.backoff_until = now + backoff_ms;
-    ESP_LOGD(TAG, "TX defer %d, backoff %ums", this->tx_ctx_.defer_count, backoff_ms);
-  }
-
-  // Go back to GOTO_IDLE to retry (best-effort, ignore failure)
-  (void) this->write_cmd(CC1101_SIDLE);
-  this->tx_ctx_.state = TxState::GOTO_IDLE;
-  this->tx_ctx_.state_enter_time = now;
-}
-
-void Elero::abort_tx_() {
-  if (this->tx_ctx_.state == TxState::IDLE) {
-    return;  // Already idle, nothing to abort
-  }
-  uint8_t marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-  ESP_LOGW(TAG, "TX aborted in state %d, marcstate=0x%02x", static_cast<int>(this->tx_ctx_.state), marcstate);
-
-  // Detect zombie state: 0x00 (SLEEP) or 0x1F (SPI failure/disconnected) are suspicious
-  if (marcstate == 0x00 || marcstate == 0x1F) {
-    // Retry read to filter transient SPI noise
-    bool confirmed_zombie = true;
-    for (int i = 0; i < 2; ++i) {
-      delay_microseconds_safe(100);
-      uint8_t marc2 = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-      if (marc2 != marcstate) {
-        confirmed_zombie = false;
-        break;
-      }
-    }
-    if (confirmed_zombie) {
-      // Rate-limit resets to prevent infinite loop under failing power supply
-      uint32_t now = millis();
-      if (now - this->last_chip_reset_ms_ > 10000) {  // 10s minimum gap
-        this->last_chip_reset_ms_ = now;
-        ESP_LOGE(TAG, "CC1101 zombie state confirmed (0x%02x), reinitializing chip", marcstate);
-        this->reset();
-        this->init();
-      } else {
-        ESP_LOGW(TAG, "CC1101 zombie state (0x%02x), skipping reset (rate-limited)", marcstate);
-      }
-    }
-  }
-
-  this->tx_ctx_.state = TxState::IDLE;
-  this->tx_ctx_.reset();  // Reset defer count
-  this->tx_pending_success_ = false;
+  // 1. Flush FIFOs and return to RX
   this->flush_and_rx();
+
+  // 2. Check if radio recovered
+  uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+  if (marc != CC1101_MARCSTATE_RX) {
+    // Radio didn't recover — full reset + init
+    ESP_LOGE(TAG, "Radio not in RX after flush (MARCSTATE=0x%02x), resetting chip", marc);
+    this->reset();
+    this->init();
+
+    // Verify radio came back — read VERSION register to confirm SPI alive
+    uint8_t version = this->read_status(CC1101_VERSION);
+    if (version == packet::cc1101_status::VERSION_NOT_CONNECTED_LOW ||
+        version == packet::cc1101_status::VERSION_NOT_CONNECTED_HIGH) {
+      ESP_LOGE(TAG, "Radio failed to recover after reset (VERSION=0x%02x)", version);
+    }
+  }
+
+  // 3. Return to IDLE state with failure
+  this->tx_ctx_.state = TxState::IDLE;
+  this->tx_pending_success_ = false;
   // NOTE: tx_owner_ is NOT cleared here — the rf_task_func_ loop detects
   // tx_ctx_.state == IDLE && tx_owner_ != nullptr and posts TxResult to
   // tx_done_queue_, which the main loop drains to call on_tx_complete().
@@ -612,6 +569,7 @@ void Elero::check_radio_health_() {
   // RXFIFO overflow — radio is deaf until flushed
   if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
     ESP_LOGW(TAG, "Radio watchdog: RX FIFO overflow, flushing");
+    this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
     this->flush_and_rx();
     return;
   }
@@ -619,12 +577,14 @@ void Elero::check_radio_health_() {
   // Stuck in IDLE — radio stopped listening, one strobe restarts it
   if (marc == CC1101_MARCSTATE_IDLE) {
     ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
+    this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
     (void) this->write_cmd(CC1101_SRX);
     return;
   }
 
   // Anything else unexpected — full reset to known-good RX state
   ESP_LOGW(TAG, "Radio watchdog: unexpected MARCSTATE 0x%02x, reinitializing", marc);
+  this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
   this->flush_and_rx();
 }
 
@@ -716,16 +676,10 @@ bool Elero::start_transmit() {
 
   ESP_LOGVV(TAG, "start_transmit called for %d data bytes", this->msg_tx_[0]);
 
-  // Begin state machine: go to IDLE first
-  this->tx_ctx_.state = TxState::GOTO_IDLE;
+  // Transition to PREPARE — synchronous pre-TX sequence
+  this->tx_ctx_.state = TxState::PREPARE;
   this->tx_ctx_.state_enter_time = millis();
   this->tx_pending_success_ = false;
-
-  // Send SIDLE command
-  if (!this->write_cmd(CC1101_SIDLE)) {
-    this->abort_tx_();
-    return false;
-  }
 
   return true;
 }
@@ -739,163 +693,122 @@ void Elero::handle_tx_state_(uint32_t now) {
   uint8_t marcstate;
 
   switch (this->tx_ctx_.state) {
-    case TxState::GOTO_IDLE:
-      // Check backoff timer first
-      if (now < this->tx_ctx_.backoff_until) {
-        return;  // Still in backoff, wait
-      }
+    case TxState::PREPARE: {
+      // Synchronous pre-TX sequence (~1ms total)
 
-      // Check defer limit
-      if (this->tx_ctx_.defer_count >= TxContext::DEFER_MAX) {
-        ESP_LOGW(TAG, "TX deferred %d times, channel busy, aborting", this->tx_ctx_.defer_count);
-        this->abort_tx_();
-        return;
-      }
-
-      marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-      if (marcstate == CC1101_MARCSTATE_IDLE) {
-        // Transition to FLUSH_TX
-        if (!this->write_cmd(CC1101_SFTX)) {
-          this->abort_tx_();
-          return;
-        }
-        this->tx_ctx_.state = TxState::FLUSH_TX;
-        this->tx_ctx_.state_enter_time = now;
-      } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in GOTO_IDLE after %ums, marcstate=0x%02x", elapsed, marcstate);
-        this->abort_tx_();
-      }
-      break;
-
-    case TxState::FLUSH_TX:
-      // Check timeout FIRST (elapsed >= 1 would always trigger before timeout otherwise)
-      if (elapsed > TxContext::STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in FLUSH_TX after %ums", elapsed);
-        this->abort_tx_();
-      } else if (elapsed >= 1) {
-        // Brief settling time after SFTX (millis() has 1ms resolution)
-        // Load TX FIFO
-        if (!this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1)) {
-          this->abort_tx_();
-          return;
-        }
-        this->tx_ctx_.state = TxState::LOAD_FIFO;
-        this->tx_ctx_.state_enter_time = now;
-      }
-      break;
-
-    case TxState::LOAD_FIFO:
-      // Force IDLE to prevent starting new packet reception between our check and STX.
-      // This is aggressive but necessary when the channel is flooded with status packets.
+      // 1. SIDLE
       (void) this->write_cmd(CC1101_SIDLE);
 
-      // Clear received_ so we can detect TX-end interrupt
-      this->received_.store(false);
-
-      // Trigger TX immediately - no CCA check from IDLE state
-      if (!this->write_cmd(CC1101_STX)) {
-        this->abort_tx_();
+      // 2. Poll MARCSTATE == IDLE, max ~1ms
+      bool reached_idle = false;
+      for (int i = 0; i < 20; ++i) {
+        esp_rom_delay_us(50);
+        marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+        if (marcstate == CC1101_MARCSTATE_IDLE) {
+          reached_idle = true;
+          break;
+        }
+      }
+      if (!reached_idle) {
+        marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+        ESP_LOGW(TAG, "PREPARE: SIDLE failed, MARCSTATE=0x%02x", marcstate);
+        this->tx_ctx_.state = TxState::RECOVER;
+        this->tx_ctx_.state_enter_time = now;
         return;
       }
 
-      // Poll MARCSTATE waiting for TX (deterministic: max 20 iterations × 5μs = 100μs)
-      for (int i = 0; i < 20; i++) {
-        delay_microseconds_safe(5);
+      // 3. Flush TX FIFO
+      (void) this->write_cmd(CC1101_SFTX);
+      esp_rom_delay_us(100);
+
+      // 4. Load TX FIFO
+      if (!this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1)) {
+        ESP_LOGW(TAG, "PREPARE: FIFO write failed");
+        this->tx_ctx_.state = TxState::RECOVER;
+        this->tx_ctx_.state_enter_time = now;
+        return;
+      }
+
+      // 5. Clear received_ so we can detect TX-end interrupt
+      this->received_.store(false);
+
+      // 6. Trigger TX
+      (void) this->write_cmd(CC1101_STX);
+
+      // 7. Poll MARCSTATE == TX, max ~1ms (covers ~700µs calibration)
+      for (int i = 0; i < 20; ++i) {
+        esp_rom_delay_us(50);
         marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
         if (marcstate == CC1101_MARCSTATE_TX) {
-          this->tx_ctx_.state = TxState::WAIT_TX_DONE;
+          this->tx_ctx_.state = TxState::WAIT_TX;
           this->tx_ctx_.state_enter_time = now;
           return;
         }
-        // RX states mean we lost the race - stop polling
-        if (marcstate == CC1101_MARCSTATE_RX) {
-          break;
-        }
       }
 
-      // Didn't reach TX - check final state
+      // STX didn't reach TX state
       marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-      if (marcstate == CC1101_MARCSTATE_TX) {
-        this->tx_ctx_.state = TxState::WAIT_TX_DONE;
-        this->tx_ctx_.state_enter_time = now;
-      } else if (marcstate == CC1101_MARCSTATE_RX) {
-        ESP_LOGD(TAG, "Radio went to RX instead of TX, deferring");
-        this->defer_tx_(now);
-      } else {
-        // Transitional state (FSTXON, CALIBRATE, etc.) - continue via state machine
-        this->tx_ctx_.state = TxState::TRIGGER_TX;
-        this->tx_ctx_.state_enter_time = now;
-      }
-      break;
-
-    case TxState::TRIGGER_TX:
-      marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-      if (marcstate == CC1101_MARCSTATE_TX) {
-        this->tx_ctx_.state = TxState::WAIT_TX_DONE;
-        this->tx_ctx_.state_enter_time = now;
-      } else if (marcstate == CC1101_MARCSTATE_TXFIFO_UFLOW) {
-        ESP_LOGE(TAG, "TX FIFO underflow detected, aborting");
-        this->abort_tx_();
-      } else if (marcstate == CC1101_MARCSTATE_RXFIFO_OFLOW) {
-        ESP_LOGE(TAG, "RX FIFO overflow during TX, aborting");
-        this->abort_tx_();
-      } else if (marcstate == CC1101_MARCSTATE_RX) {
-        ESP_LOGD(TAG, "Radio in RX during TRIGGER_TX, deferring");
-        this->defer_tx_(now);
-      } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in TRIGGER_TX after %ums, marcstate=0x%02x", elapsed, marcstate);
-        this->abort_tx_();
-      }
-      // else: transitional state (FSTXON, CALIBRATE, IDLE), keep polling
-      break;
-
-    case TxState::WAIT_TX_DONE:
-      if (this->received_.load()) {
-        // GDO0 interrupt fired - TX complete
-        this->tx_ctx_.state = TxState::VERIFY_DONE;
-        this->tx_ctx_.state_enter_time = now;
-      } else if (elapsed > TxContext::STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in WAIT_TX_DONE after %ums", elapsed);
-        this->abort_tx_();
-      }
-      break;
-
-    case TxState::VERIFY_DONE: {
-      // Poll TXBYTES - GDO0 may fire slightly before FIFO fully drains
-      bool fifo_empty = false;
-      for (int retry = 0; retry < 3; ++retry) {
-        uint8_t bytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
-        if (bytes == 0) {
-          fifo_empty = true;
-          break;
-        }
-        delay_microseconds_safe(100);
-      }
-
-      if (fifo_empty) {
-        ESP_LOGV(TAG, "TX successful (async)");
-        this->tx_ctx_.state = TxState::RETURN_RX;
-        this->tx_ctx_.state_enter_time = now;
-      } else {
-        // Capture state for diagnostics
-        uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-        uint8_t bytes_final = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
-        ESP_LOGE(TAG, "TX error: FIFO stuck, txbytes=%u, MARCSTATE=0x%02x", bytes_final, marc);
-        this->abort_tx_();
-      }
+      ESP_LOGW(TAG, "PREPARE: STX failed, MARCSTATE=0x%02x", marcstate);
+      this->tx_ctx_.state = TxState::RECOVER;
+      this->tx_ctx_.state_enter_time = now;
       break;
     }
 
-    case TxState::RETURN_RX:
-      // Return to RX state
-      this->flush_and_rx();
-      this->tx_pending_success_ = true;
-      this->tx_ctx_.state = TxState::IDLE;
-      this->tx_ctx_.reset();  // Reset defer count on success
+    case TxState::WAIT_TX:
+      // Interrupt-driven with MARCSTATE polling fallback
+      if (this->received_.load()) {
+        // GDO0 interrupt fired — TX likely complete, verify FIFO empty
+        esp_rom_delay_us(50);
+        uint8_t txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
+        if (txbytes == 0) {
+          ESP_LOGV(TAG, "TX successful");
+          this->flush_and_rx();
+          this->tx_pending_success_ = true;
+          this->tx_ctx_.state = TxState::IDLE;
+          return;
+        }
+        // Grace window — GDO0 may fire slightly before FIFO fully drains
+        esp_rom_delay_us(100);
+        txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
+        if (txbytes == 0) {
+          ESP_LOGV(TAG, "TX successful (after grace)");
+          this->flush_and_rx();
+          this->tx_pending_success_ = true;
+          this->tx_ctx_.state = TxState::IDLE;
+          return;
+        }
+        ESP_LOGE(TAG, "FIFO not empty after TX interrupt, txbytes=%u", txbytes);
+        this->tx_ctx_.state = TxState::RECOVER;
+        this->tx_ctx_.state_enter_time = now;
+        return;
+      }
+
+      // MARCSTATE polling fallback — detect TX completion if GDO0 was missed
+      marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+      if (marcstate == CC1101_MARCSTATE_IDLE || marcstate == CC1101_MARCSTATE_RX) {
+        uint8_t txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
+        if (txbytes == 0) {
+          ESP_LOGV(TAG, "TX successful (MARCSTATE fallback)");
+          this->flush_and_rx();
+          this->tx_pending_success_ = true;
+          this->tx_ctx_.state = TxState::IDLE;
+          return;
+        }
+      }
+
+      // Timeout
+      if (elapsed > TxContext::STATE_TIMEOUT_MS) {
+        ESP_LOGE(TAG, "TX timeout in WAIT_TX after %ums", elapsed);
+        this->tx_ctx_.state = TxState::RECOVER;
+        this->tx_ctx_.state_enter_time = now;
+      }
       break;
 
-    default:
-      this->abort_tx_();
+    case TxState::RECOVER:
+      this->recover_radio_();
+      break;
+
+    case TxState::IDLE:
       break;
   }
 }
@@ -1133,6 +1046,12 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
   // Log timing: dispatch cost + queue transit (decode→dispatch latency)
   ESP_LOGD(TAG, "dispatch: %lldus, queue_transit: %lldus (cnt=%d)",
            dispatch_us, queue_transit_us, pkt.cnt);
+
+  // Update stats counters (Core 1 only)
+  this->stat_rx_packets_++;
+  this->stat_last_rx_ms_ = pkt.timestamp_ms;
+  this->stat_dispatch_latency_us_ = static_cast<float>(dispatch_us);
+  this->stat_queue_transit_us_ = static_cast<float>(queue_transit_us);
 #endif
 }
 
@@ -1187,6 +1106,37 @@ bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t chann
   return false;
 #else
   return false;
+#endif
+}
+
+// ─── RF Stats Publishing ──────────────────────────────────────────────────────
+void Elero::publish_stats_() {
+#ifdef USE_SENSOR
+  uint32_t now = millis();
+  if (now - this->last_stats_publish_ms_ < 30000)
+    return;
+  this->last_stats_publish_ms_ = now;
+
+  if (this->stats_tx_success_)
+    this->stats_tx_success_->publish_state(this->stat_tx_success_);
+  if (this->stats_tx_fail_)
+    this->stats_tx_fail_->publish_state(this->stat_tx_fail_);
+  if (this->stats_tx_recover_)
+    this->stats_tx_recover_->publish_state(this->stat_tx_recover_.load(std::memory_order_relaxed));
+  if (this->stats_rx_packets_)
+    this->stats_rx_packets_->publish_state(this->stat_rx_packets_);
+  if (this->stats_rx_drops_)
+    this->stats_rx_drops_->publish_state(this->stat_rx_drops_.load(std::memory_order_relaxed));
+  if (this->stats_fifo_overflows_)
+    this->stats_fifo_overflows_->publish_state(this->stat_fifo_overflows_.load(std::memory_order_relaxed));
+  if (this->stats_watchdog_)
+    this->stats_watchdog_->publish_state(this->stat_watchdog_recoveries_.load(std::memory_order_relaxed));
+  if (this->stats_dispatch_latency_)
+    this->stats_dispatch_latency_->publish_state(this->stat_dispatch_latency_us_);
+  if (this->stats_queue_transit_)
+    this->stats_queue_transit_->publish_state(this->stat_queue_transit_us_);
+  if (this->stats_last_rx_age_)
+    this->stats_last_rx_age_->publish_state(this->stat_last_rx_ms_ > 0 ? static_cast<float>(now - this->stat_last_rx_ms_) : -1.0f);
 #endif
 }
 

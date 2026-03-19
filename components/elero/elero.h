@@ -48,31 +48,17 @@ namespace elero {
 
 // ─── TX State Machine ────────────────────────────────────────────────────────
 enum class TxState : uint8_t {
-  IDLE,          // Not transmitting
-  GOTO_IDLE,     // Sent SIDLE, waiting for MARCSTATE_IDLE
-  FLUSH_TX,      // Sent SFTX, brief settling
-  LOAD_FIFO,     // Loaded TX FIFO, preparing STX
-  TRIGGER_TX,    // Sent STX, waiting for MARCSTATE_TX
-  WAIT_TX_DONE,  // TX in progress, waiting for GDO0 interrupt
-  VERIFY_DONE,   // Checking TXBYTES == 0
-  RETURN_RX,     // Returning to RX state
+  IDLE,     // Radio in RX, waiting for tx_queue
+  PREPARE,  // SIDLE → SFTX → LOAD_FIFO → STX → poll TX (synchronous, ~1ms)
+  WAIT_TX,  // Wait for GDO0 or MARCSTATE==IDLE fallback (50ms timeout)
+  RECOVER,  // flush → check → reset+init if stuck → verify radio alive
 };
 
 struct TxContext {
   TxState state{TxState::IDLE};
   uint32_t state_enter_time{0};
-  uint8_t defer_count{0};        ///< Times deferred due to busy channel
-  uint32_t backoff_until{0};     ///< Don't attempt TX until this time (millis)
 
   static constexpr uint32_t STATE_TIMEOUT_MS = 50;
-  static constexpr uint8_t DEFER_BACKOFF_THRESHOLD = 3;   ///< Start backoff after N defers
-  static constexpr uint8_t DEFER_MAX = 10;                ///< Abort after N defers
-  static constexpr uint32_t BACKOFF_MAX_MS = 50;          ///< Max random backoff (ms)
-
-  void reset() {
-    defer_count = 0;
-    backoff_until = 0;
-  }
 };
 
 /// Decoded RF packet info for WebSocket broadcast
@@ -186,6 +172,19 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void register_problem_sensor(uint32_t address, binary_sensor::BinarySensor *sensor);
 #endif
 
+#ifdef USE_SENSOR
+  void set_stats_tx_success_sensor(sensor::Sensor *s) { stats_tx_success_ = s; }
+  void set_stats_tx_fail_sensor(sensor::Sensor *s) { stats_tx_fail_ = s; }
+  void set_stats_tx_recover_sensor(sensor::Sensor *s) { stats_tx_recover_ = s; }
+  void set_stats_rx_packets_sensor(sensor::Sensor *s) { stats_rx_packets_ = s; }
+  void set_stats_rx_drops_sensor(sensor::Sensor *s) { stats_rx_drops_ = s; }
+  void set_stats_fifo_overflows_sensor(sensor::Sensor *s) { stats_fifo_overflows_ = s; }
+  void set_stats_watchdog_sensor(sensor::Sensor *s) { stats_watchdog_ = s; }
+  void set_stats_dispatch_latency_sensor(sensor::Sensor *s) { stats_dispatch_latency_ = s; }
+  void set_stats_queue_transit_sensor(sensor::Sensor *s) { stats_queue_transit_ = s; }
+  void set_stats_last_rx_age_sensor(sensor::Sensor *s) { stats_last_rx_age_ = s; }
+#endif
+
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_.store(freq); }
   void set_freq1(uint8_t freq) { freq1_.store(freq); }
@@ -222,8 +221,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   // ─── TX state machine (RF task only) ──────────────────────────────────────
   void handle_tx_state_(uint32_t now);  // Progress TX state machine
-  void defer_tx_(uint32_t now);         // Defer TX due to busy channel
-  void abort_tx_();                     // Abort TX and return to RX
+  void recover_radio_();                // Flush, check, reset if stuck
   void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
   uint8_t read_status_reliable_(uint8_t addr);     // CC1101 errata workaround
   void check_radio_health_();           // Periodic watchdog for stuck radio states
@@ -243,7 +241,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   TxContext tx_ctx_;
   bool tx_pending_success_{false};
   TxClient *tx_owner_{nullptr};        ///< Current TX owner (for completion callback)
-  uint32_t last_chip_reset_ms_{0};     ///< Rate-limit chip resets (zombie recovery)
   uint32_t last_radio_check_ms_{0};    ///< Last radio health check timestamp
   uint8_t msg_rx_[CC1101_FIFO_LENGTH]; ///< RX FIFO buffer (RF task only)
   uint8_t msg_tx_[CC1101_FIFO_LENGTH]; ///< TX packet buffer (RF task only)
@@ -277,6 +274,38 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   DeviceRegistry *registry_{nullptr};
 
   const char *version_{"unknown"};
+
+  // ─── RF Stats (mixed core access) ──────────────────────────────────────────
+  // Core 0 atomics (incremented on RF task, read on Core 1)
+  std::atomic<uint32_t> stat_tx_recover_{0};
+  std::atomic<uint32_t> stat_rx_drops_{0};
+  std::atomic<uint32_t> stat_fifo_overflows_{0};
+  std::atomic<uint32_t> stat_watchdog_recoveries_{0};
+
+  // Core 1 only (incremented and read on main loop)
+  uint32_t stat_tx_success_{0};
+  uint32_t stat_tx_fail_{0};
+  uint32_t stat_rx_packets_{0};
+  uint32_t stat_last_rx_ms_{0};
+  float stat_dispatch_latency_us_{0};
+  float stat_queue_transit_us_{0};
+  uint32_t last_stats_publish_ms_{0};
+
+  void publish_stats_();
+
+#ifdef USE_SENSOR
+  // Internal diagnostic sensors (optional, created by codegen when auto_stats: true)
+  sensor::Sensor *stats_tx_success_{nullptr};
+  sensor::Sensor *stats_tx_fail_{nullptr};
+  sensor::Sensor *stats_tx_recover_{nullptr};
+  sensor::Sensor *stats_rx_packets_{nullptr};
+  sensor::Sensor *stats_rx_drops_{nullptr};
+  sensor::Sensor *stats_fifo_overflows_{nullptr};
+  sensor::Sensor *stats_watchdog_{nullptr};
+  sensor::Sensor *stats_dispatch_latency_{nullptr};
+  sensor::Sensor *stats_queue_transit_{nullptr};
+  sensor::Sensor *stats_last_rx_age_{nullptr};
+#endif
 
   // ─── FreeRTOS IPC (cross-core communication) ──────────────────────────────
 #ifdef USE_ESP32
