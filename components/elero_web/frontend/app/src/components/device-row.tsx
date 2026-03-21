@@ -75,18 +75,23 @@ export function LightDeviceCell({ device }: { device: Device }) {
 }
 
 export function StateCell({ device }: { device: Device }) {
-  const stateLabel = getStateLabel(device.lastStatus?.state)
-  const moving = isMovingState(device.lastStatus?.state)
+  const status = device.lastStatus as Record<string, unknown> | null
+  const rfState = getStateLabel(status?.state as string | undefined)
+  const haState = (status?.ha_state as string | undefined)?.toUpperCase() ?? '—'
+  const moving = isMovingState(status?.state as string | undefined)
   return (
-    <Badge
-      variant="secondary"
-      className={cn(
-        'text-[10px] px-2 py-0.5',
-        moving && 'bg-warning/10 text-warning-foreground animate-pulse',
-      )}
-    >
-      {stateLabel}
-    </Badge>
+    <div className="flex items-center gap-1.5">
+      <Badge
+        variant="secondary"
+        className={cn(
+          'text-[10px] px-2 py-0.5',
+          moving && 'bg-warning/10 text-warning-foreground animate-pulse',
+        )}
+      >
+        {haState}
+      </Badge>
+      <span className="text-[10px] text-muted-foreground">{rfState}</span>
+    </div>
   )
 }
 

@@ -79,7 +79,8 @@ async def to_code(config):
     cg.add_define("MG_ENABLE_PACKED_FS", 0)
     cg.add_define("MG_ENABLE_TLS", 0)
     cg.add_define("MG_IO_SIZE", 512)
-    cg.add_define("MG_ENABLE_LOG", 0)
+    # Build flag ensures mongoose.c sees this before its own default (#ifndef guard)
+    cg.add_build_flag("-DMG_ENABLE_LOG=0")
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
