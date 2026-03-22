@@ -73,12 +73,16 @@ class MockElero {
   /// Recorded request_tx calls: (client, dst_addr, command_byte)
   std::vector<std::tuple<TxClient*, uint32_t, uint8_t>> recorded_requests;
 
+  /// Full command records for type routing verification
+  std::vector<EleroCommand> recorded_commands;
+
   /// Currently pending client (simulates hub ownership)
   TxClient* pending_client{nullptr};
 
   /// Request to transmit a command.
   bool request_tx(TxClient* client, const EleroCommand& cmd) {
     recorded_requests.push_back({client, cmd.dst_addr, cmd.payload[4]});
+    recorded_commands.push_back(cmd);
 
     if (next_request_result) {
       pending_client = client;
@@ -98,6 +102,7 @@ class MockElero {
   /// Clear recorded requests
   void clear_records() {
     recorded_requests.clear();
+    recorded_commands.clear();
   }
 };
 
@@ -920,6 +925,67 @@ TEST_F(CommandSenderTest, Uses10msInterPacketDelay) {
   mock_time_.advance(5);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(mock_hub_.recorded_requests.size(), 2u);
+}
+
+// ============================================================================
+// Type Routing Tests (BUTTON vs COMMAND packet type)
+// ============================================================================
+
+TEST_F(CommandSenderTest, ButtonType_SetsCorrectType2AndHop) {
+  // Default enqueue uses BUTTON type
+  sender_.enqueue(packet::command::UP);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+
+  ASSERT_EQ(mock_hub_.recorded_commands.size(), 1u);
+  auto &cmd = mock_hub_.recorded_commands[0];
+  EXPECT_EQ(cmd.type, packet::msg_type::BUTTON);
+  EXPECT_EQ(cmd.type2, packet::button::TYPE2);  // 0x10
+  EXPECT_EQ(cmd.hop, packet::button::HOP);      // 0x00
+}
+
+TEST_F(CommandSenderTest, CommandType_SetsCorrectType2AndHop) {
+  sender_.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+
+  ASSERT_EQ(mock_hub_.recorded_commands.size(), 1u);
+  auto &cmd = mock_hub_.recorded_commands[0];
+  EXPECT_EQ(cmd.type, packet::msg_type::COMMAND);
+  EXPECT_EQ(cmd.type2, packet::defaults::TYPE2);  // 0x00
+  EXPECT_EQ(cmd.hop, packet::defaults::HOP);      // 0x0a
+}
+
+TEST_F(CommandSenderTest, DuplicateCollapse_SameCmdDifferentType_NotCollapsed) {
+  sender_.enqueue(packet::command::UP, 3, packet::msg_type::BUTTON);
+  sender_.enqueue(packet::command::UP, 3, packet::msg_type::COMMAND);
+  EXPECT_EQ(sender_.queue_size(), 2u);  // Different types → not collapsed
+}
+
+TEST_F(CommandSenderTest, DuplicateCollapse_SameCmdSameType_Collapsed) {
+  sender_.enqueue(packet::command::UP, 3, packet::msg_type::BUTTON);
+  sender_.enqueue(packet::command::UP, 3, packet::msg_type::BUTTON);
+  EXPECT_EQ(sender_.queue_size(), 1u);  // Same cmd + same type → collapsed
+}
+
+// ============================================================================
+// Counter Wrap Tests
+// ============================================================================
+
+TEST_F(CommandSenderTest, CounterWrapsAtMax) {
+  // Set counter to COUNTER_MAX
+  sender_.command().counter = packet::limits::COUNTER_MAX;
+
+  // Send one complete command (3 packets) to trigger advance_queue_ → increase_counter_
+  sender_.enqueue(packet::command::UP);
+  for (int pkt = 0; pkt < packet::button::PACKETS; ++pkt) {
+    mock_time_.advance(packet::button::INTER_PACKET_MS);
+    sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+    mock_hub_.complete_tx(true);
+  }
+
+  // Counter should have wrapped from COUNTER_MAX to 1
+  EXPECT_EQ(sender_.command().counter, 1u);
 }
 
 // ============================================================================
