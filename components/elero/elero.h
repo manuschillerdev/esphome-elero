@@ -9,9 +9,7 @@
 #include "elero_strings.h"
 #include "device_type.h"
 #include <string>
-#include <map>
 #include <atomic>
-#include <functional>
 
 #ifdef USE_ESP32
 #include <freertos/FreeRTOS.h>
@@ -31,16 +29,6 @@ namespace esphome {
 #ifdef USE_SENSOR
 namespace sensor {
 class Sensor;
-}
-#endif
-#ifdef USE_TEXT_SENSOR
-namespace text_sensor {
-class TextSensor;
-}
-#endif
-#ifdef USE_BINARY_SENSOR
-namespace binary_sensor {
-class BinarySensor;
 }
 #endif
 
@@ -163,16 +151,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
                                       uint8_t hop = packet::defaults::HOP);
 
 #ifdef USE_SENSOR
-  void register_rssi_sensor(uint32_t address, sensor::Sensor *sensor);
-#endif
-#ifdef USE_TEXT_SENSOR
-  void register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor);
-#endif
-#ifdef USE_BINARY_SENSOR
-  void register_problem_sensor(uint32_t address, binary_sensor::BinarySensor *sensor);
-#endif
-
-#ifdef USE_SENSOR
   void set_stats_tx_success_sensor(sensor::Sensor *s) { stats_tx_success_ = s; }
   void set_stats_tx_fail_sensor(sensor::Sensor *s) { stats_tx_fail_ = s; }
   void set_stats_tx_recover_sensor(sensor::Sensor *s) { stats_tx_recover_ = s; }
@@ -192,10 +170,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   void set_version(const char *version) { version_ = version; }
   const char *get_version() const { return version_; }
-
-  // RF packet notification callback (used by web server)
-  using RfPacketCallback = std::function<void(const RfPacketInfo &)>;
-  void set_rf_packet_callback(RfPacketCallback cb) { on_rf_packet_ = std::move(cb); }
 
   // Unified device registry
   void set_registry(DeviceRegistry *reg) { registry_ = reg; }
@@ -257,18 +231,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   // ─── Main loop-exclusive state ─────────────────────────────────────────────
   InternalGPIOPin *gdo0_pin_{nullptr};
-#ifdef USE_SENSOR
-  std::map<uint32_t, sensor::Sensor *> address_to_rssi_sensor_;
-#endif
-#ifdef USE_TEXT_SENSOR
-  std::map<uint32_t, text_sensor::TextSensor *> address_to_text_sensor_;
-#endif
-#ifdef USE_BINARY_SENSOR
-  std::map<uint32_t, binary_sensor::BinarySensor *> address_to_problem_sensor_;
-#endif
-
-  // RF packet notification callback (optional, set by web server)
-  RfPacketCallback on_rf_packet_{};
 
   // Unified device registry
   DeviceRegistry *registry_{nullptr};

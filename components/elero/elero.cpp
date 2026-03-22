@@ -17,13 +17,6 @@
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
 #endif
-#ifdef USE_TEXT_SENSOR
-#include "esphome/components/text_sensor/text_sensor.h"
-#endif
-#ifdef USE_BINARY_SENSOR
-#include "esphome/components/binary_sensor/binary_sensor.h"
-#include "state_snapshot.h"
-#endif
 
 namespace esphome {
 namespace elero {
@@ -343,7 +336,10 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
   RfTaskRequest req{};
   req.type = RfTaskRequest::Type::REINIT_FREQ;
   req.freq = {freq2, freq1, freq0};
-  xQueueSend(this->tx_queue_handle_, &req, pdMS_TO_TICKS(100));
+  if (xQueueSend(this->tx_queue_handle_, &req, 0) != pdPASS) {
+    ESP_LOGW(TAG, "Frequency change failed: tx_queue full");
+    return;
+  }
 
   // Update atomic copies for get_freq*() accessors (immediate visibility on Core 1)
   this->freq2_.store(freq2);
@@ -1000,42 +996,6 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
     this->registry_->on_rf_packet(pkt, pkt.timestamp_ms);
   }
 
-  // Notify direct RF callback (web server → WebSocket broadcast)
-  if (this->on_rf_packet_) {
-    this->on_rf_packet_(pkt);
-  }
-
-  // Update RSSI sensor for any message from a known blind
-#ifdef USE_SENSOR
-  {
-    auto rssi_it = this->address_to_rssi_sensor_.find(pkt.src);
-    if (rssi_it != this->address_to_rssi_sensor_.end()) {
-      rssi_it->second->publish_state(pkt.rssi);
-    }
-  }
-#endif
-
-  // Update text sensor for status packets
-#ifdef USE_TEXT_SENSOR
-  if (is_status_pkt) {
-    auto text_it = this->address_to_text_sensor_.find(pkt.src);
-    if (text_it != this->address_to_text_sensor_.end()) {
-      text_it->second->publish_state(elero_state_to_string(pkt.state));
-    }
-  }
-
-#endif
-
-  // Update problem binary sensor for status packets
-#ifdef USE_BINARY_SENSOR
-  if (is_status_pkt) {
-    auto problem_it = this->address_to_problem_sensor_.find(pkt.src);
-    if (problem_it != this->address_to_problem_sensor_.end()) {
-      problem_it->second->publish_state(is_problem_state(pkt.state));
-    }
-  }
-#endif
-
 #ifdef USE_ESP32
   int64_t dispatch_us = esp_timer_get_time() - dispatch_start_us;
   int64_t queue_transit_us = (pkt.decoded_at_us > 0) ? (dispatch_start_us - pkt.decoded_at_us) : 0;
@@ -1051,24 +1011,6 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
 #endif
 }
 
-#ifdef USE_SENSOR
-void Elero::register_rssi_sensor(uint32_t address, sensor::Sensor *sensor) {
-  this->address_to_rssi_sensor_[address] = sensor;
-}
-#endif
-
-#ifdef USE_TEXT_SENSOR
-void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor) {
-  this->address_to_text_sensor_[address] = sensor;
-}
-
-#endif
-
-#ifdef USE_BINARY_SENSOR
-void Elero::register_problem_sensor(uint32_t address, binary_sensor::BinarySensor *sensor) {
-  this->address_to_problem_sensor_[address] = sensor;
-}
-#endif
 
 bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t channel, uint8_t command,
                               uint8_t payload_1, uint8_t payload_2, uint8_t type, uint8_t type2, uint8_t hop) {

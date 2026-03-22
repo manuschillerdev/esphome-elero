@@ -178,24 +178,19 @@ async def to_code(config):
     }
     cg.add(var.set_ha_device_class(device_class_map.get(config[CONF_DEVICE_CLASS], 0)))
 
-    addr = config[CONF_DST_ADDRESS]
-
-    # RSSI sensor — still registered with hub (legacy dispatch handles it)
+    # All sensors registered with the shell (published from snapshot in sync_and_publish_)
     if CONF_RSSI_SENSOR in config:
         rssi_var = await sensor.new_sensor(config[CONF_RSSI_SENSOR])
-        cg.add(parent.register_rssi_sensor(addr, rssi_var))
+        cg.add(var.set_rssi_sensor(rssi_var))
 
-    # Status text sensor — still registered with hub
     if CONF_STATUS_SENSOR in config:
         status_var = await text_sensor.new_text_sensor(config[CONF_STATUS_SENSOR])
-        cg.add(parent.register_text_sensor(addr, status_var))
+        cg.add(var.set_status_sensor(status_var))
 
-    # Problem binary sensor — registered with hub
     if CONF_PROBLEM_SENSOR in config:
         problem_var = await binary_sensor.new_binary_sensor(config[CONF_PROBLEM_SENSOR])
-        cg.add(parent.register_problem_sensor(addr, problem_var))
+        cg.add(var.set_problem_sensor(problem_var))
 
-    # Snapshot-based sensors — registered with the shell (not the hub)
     if CONF_COMMAND_SOURCE_SENSOR in config:
         cs_var = await text_sensor.new_text_sensor(config[CONF_COMMAND_SOURCE_SENSOR])
         cg.add(var.set_command_source_sensor(cs_var))

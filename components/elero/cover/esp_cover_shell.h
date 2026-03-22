@@ -10,8 +10,14 @@
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/components/cover/cover.h"
+#ifdef USE_SENSOR
+#include "esphome/components/sensor/sensor.h"
+#endif
 #ifdef USE_TEXT_SENSOR
 #include "esphome/components/text_sensor/text_sensor.h"
+#endif
+#ifdef USE_BINARY_SENSOR
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #endif
 #include "../device.h"
 #include "../device_registry.h"
@@ -40,10 +46,17 @@ class EspCoverShell : public cover::Cover, public Component {
   void set_supports_tilt(bool v) { cfg_.supports_tilt = v ? 1 : 0; }
   void set_ha_device_class(uint8_t v) { cfg_.ha_device_class = v; }
 
-  // ── Snapshot-based sensor setters (published from sync_and_publish_) ──
+  // ── Sensor setters (all published from sync_and_publish_ via snapshot) ──
+#ifdef USE_SENSOR
+  void set_rssi_sensor(sensor::Sensor *s) { rssi_sensor_ = s; }
+#endif
 #ifdef USE_TEXT_SENSOR
+  void set_status_sensor(text_sensor::TextSensor *s) { status_sensor_ = s; }
   void set_command_source_sensor(text_sensor::TextSensor *s) { command_source_sensor_ = s; }
   void set_problem_type_sensor(text_sensor::TextSensor *s) { problem_type_sensor_ = s; }
+#endif
+#ifdef USE_BINARY_SENSOR
+  void set_problem_sensor(binary_sensor::BinarySensor *s) { problem_sensor_ = s; }
 #endif
 
   void set_open_duration(uint32_t v) { cfg_.open_duration_ms = v; }
@@ -152,14 +165,16 @@ class EspCoverShell : public cover::Cover, public Component {
     }
     this->publish_state();
 
-    // Snapshot-based sensors (command_source, problem_type, last_seen)
+#ifdef USE_SENSOR
+    if (rssi_sensor_ != nullptr) rssi_sensor_->publish_state(snap.rssi);
+#endif
 #ifdef USE_TEXT_SENSOR
-    if (command_source_sensor_ != nullptr) {
-      command_source_sensor_->publish_state(snap.command_source);
-    }
-    if (problem_type_sensor_ != nullptr) {
-      problem_type_sensor_->publish_state(snap.problem_type);
-    }
+    if (status_sensor_ != nullptr) status_sensor_->publish_state(snap.state_string);
+    if (command_source_sensor_ != nullptr) command_source_sensor_->publish_state(snap.command_source);
+    if (problem_type_sensor_ != nullptr) problem_type_sensor_->publish_state(snap.problem_type);
+#endif
+#ifdef USE_BINARY_SENSOR
+    if (problem_sensor_ != nullptr) problem_sensor_->publish_state(snap.is_problem);
 #endif
   }
 
@@ -169,10 +184,16 @@ class EspCoverShell : public cover::Cover, public Component {
   uint32_t last_published_ms_{0};
   int slot_index_{-1};  ///< -1 = native mode (use cfg_), >=0 = NVS mode (bind to registry slot)
 
-  // Snapshot-based sensors (published from sync_and_publish_)
+#ifdef USE_SENSOR
+  sensor::Sensor *rssi_sensor_{nullptr};
+#endif
 #ifdef USE_TEXT_SENSOR
+  text_sensor::TextSensor *status_sensor_{nullptr};
   text_sensor::TextSensor *command_source_sensor_{nullptr};
   text_sensor::TextSensor *problem_type_sensor_{nullptr};
+#endif
+#ifdef USE_BINARY_SENSOR
+  binary_sensor::BinarySensor *problem_sensor_{nullptr};
 #endif
 };
 

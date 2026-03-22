@@ -31,17 +31,9 @@ light:
     name: "Wohnzimmerlicht"
     # dim_duration: 5s    # Uncomment for brightness/dimming support
 
-# RSSI sensor - reports signal strength for a specific blind
-sensor:
-  - platform: elero
-    dst_address: 0xa831e5     # Blind address to monitor
-    name: "Schlafzimmer RSSI"
-
-# Text sensor - reports blind state as text (top, bottom, moving_up, etc.)
-text_sensor:
-  - platform: elero
-    dst_address: 0xa831e5     # Blind address to monitor
-    name: "Schlafzimmer Status"
+# Sensors (RSSI, status, problem, command_source, problem_type) are auto-created
+# by each cover/light block when auto_sensors: true (the default).
+# No standalone sensor: or text_sensor: platform: elero blocks are needed.
 
 # HTTP server (auto-loaded by elero_web; no default ESPHome UI, only /elero is served)
 # Do NOT use web_server: here — it would re-enable the unwanted default UI at /

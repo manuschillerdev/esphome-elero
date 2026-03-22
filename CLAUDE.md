@@ -518,9 +518,7 @@ Critical public API:
 - `set_registry(DeviceRegistry*)` — connect the unified device registry
 - `request_tx(TxClient*, const EleroCommand&)` — posts TX command to RF task queue (non-blocking, returns true if queued)
 - `send_raw_command(...)` — fire-and-forget TX for WebSocket debugging
-- `dispatch_packet(const RfPacketInfo&)` — slow-path dispatch (logging, registry, sensors) — Core 1 only
-- `register_rssi_sensor(uint32_t addr, sensor::Sensor*)` — link RSSI sensor to a blind address
-- `register_text_sensor(uint32_t addr, text_sensor::TextSensor*)` — link text sensor to a blind address
+- `dispatch_packet(const RfPacketInfo&)` — slow-path dispatch (logging, registry) — Core 1 only
 - `interrupt(Elero *arg)` — static ISR, sets `received_` flag + wakes RF task via `vTaskNotifyGiveFromISR`
 
 RF task loop (`rf_task_func_`, Core 0) — all SPI access is here:
@@ -876,17 +874,7 @@ Optional parameters (with defaults):
 
 ### Sensors
 
-```yaml
-sensor:
-  - platform: elero
-    dst_address: 0xa831e5     # Required: which blind
-    name: "Blind RSSI"        # Unit: dBm
-
-text_sensor:
-  - platform: elero
-    dst_address: 0xa831e5
-    name: "Blind Status"      # Values: see state constants above
-```
+Sensors (RSSI, status, problem, command_source, problem_type) are auto-created by each cover/light block when `auto_sensors: true` (the default). Standalone sensor platforms (`sensor: platform: elero`, `text_sensor: platform: elero`) have been removed.
 
 ### MQTT Mode (`elero_mqtt`)
 

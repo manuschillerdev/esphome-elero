@@ -100,15 +100,12 @@ async def to_code(config):
     if "name" in config:
         cg.add(var.set_device_name(config["name"]))
 
-    addr = config[CONF_DST_ADDRESS]
-
-    # RSSI sensor — registered with hub (address-keyed maps)
+    # All sensors registered with the shell (published from snapshot in sync_and_publish_)
     if CONF_RSSI_SENSOR in config:
         rssi_var = await sensor.new_sensor(config[CONF_RSSI_SENSOR])
-        cg.add(parent.register_rssi_sensor(addr, rssi_var))
+        cg.add(var.set_rssi_sensor(rssi_var))
 
-    # Status text sensor — registered with hub
     if CONF_STATUS_SENSOR in config:
         status_var = await text_sensor.new_text_sensor(config[CONF_STATUS_SENSOR])
-        cg.add(parent.register_text_sensor(addr, status_var))
+        cg.add(var.set_status_sensor(status_var))
 

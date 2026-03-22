@@ -171,30 +171,23 @@ Diese Werte werden aus dem Log der echten Fernbedienung ausgelesen (gleiche Bede
 
 ---
 
-## Plattform: `sensor` (RSSI)
+## Automatische Sensoren (`auto_sensors`)
 
-Zeigt die Empfangsstärke (RSSI) des letzten empfangenen Pakets eines bestimmten Rollladens.
+Diagnose-Sensoren werden automatisch für jeden Cover- und Light-Block erstellt, wenn `auto_sensors: true` gesetzt ist (Standard). Separate `sensor:` / `text_sensor:` / `binary_sensor:` Plattform-Blöcke sind nicht mehr nötig.
 
-```yaml
-sensor:
-  - platform: elero
-    dst_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-```
+Automatisch erstellte Sensoren pro Gerät:
 
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `dst_address` | Hex (24-bit) | Ja | - | RF-Adresse des zu überwachenden Rollladens |
-| `name` | String | Ja | - | Anzeigename in Home Assistant |
+| Sensor | Typ | Beschreibung |
+|---|---|---|
+| RSSI | `sensor` (dBm, device_class: signal_strength) | Empfangsstärke des letzten Pakets |
+| Status | `text_sensor` | Letzter Blind-Status als Text |
+| Problem | `binary_sensor` | `true` bei Blocking/Overheated/Timeout |
+| Befehlsquelle | `text_sensor` | Letzte Befehlsquelle |
+| Problemtyp | `text_sensor` | Art des Problems |
 
-**Automatisch gesetzte Werte:**
+Um die automatische Sensor-Erstellung zu deaktivieren, setze `auto_sensors: false` im Cover-/Light-Block.
 
-| Eigenschaft | Wert |
-|---|---|
-| `unit_of_measurement` | dBm |
-| `accuracy_decimals` | 1 |
-| `device_class` | signal_strength |
-| `state_class` | measurement |
+> **Migration:** Eigenständige Sensor-Plattformen (`sensor: platform: elero`, `text_sensor: platform: elero`) wurden entfernt. Sensoren werden jetzt automatisch von Cover-/Light-Entities über `auto_sensors: true` erstellt.
 
 ### RSSI-Richtwerte
 
@@ -204,24 +197,6 @@ sensor:
 | -50 bis -70 | Gut |
 | -70 bis -85 | Akzeptabel |
 | < -85 | Schwach / unzuverlässig |
-
----
-
-## Plattform: `text_sensor` (Status)
-
-Zeigt den aktuellen Blind-Status als lesbaren Text.
-
-```yaml
-text_sensor:
-  - platform: elero
-    dst_address: 0xa831e5
-    name: "Schlafzimmer Status"
-```
-
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `dst_address` | Hex (24-bit) | Ja | - | RF-Adresse des zu überwachenden Rollladens |
-| `name` | String | Ja | - | Anzeigename in Home Assistant |
 
 ### Mögliche Status-Werte
 
@@ -363,21 +338,8 @@ light:
     src_address: 0xf0d008
     # dim_duration: 5s  # Aktivieren für Helligkeitssteuerung
 
-sensor:
-  - platform: elero
-    dst_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-  - platform: elero
-    dst_address: 0xb912f3
-    name: "Wohnzimmer RSSI"
-
-text_sensor:
-  - platform: elero
-    dst_address: 0xa831e5
-    name: "Schlafzimmer Status"
-  - platform: elero
-    dst_address: 0xb912f3
-    name: "Wohnzimmer Status"
+# Sensoren (RSSI, Status, Problem etc.) werden automatisch von den Cover-/Light-Blöcken
+# erstellt, wenn auto_sensors: true (Standard). Keine separaten sensor:/text_sensor: Blöcke nötig.
 
 # Web UI for discovery (do NOT use web_server: — use web_server_base: instead)
 web_server_base:

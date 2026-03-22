@@ -59,11 +59,6 @@ void EleroWebServer::setup() {
     return;
   }
 
-  // Register callback with hub for RF packet notifications
-  this->parent_->set_rf_packet_callback([this](const RfPacketInfo &pkt) {
-    this->on_rf_packet(pkt);
-  });
-
   // Register as log listener to forward logs to WebSocket clients
   if (logger::global_logger != nullptr) {
     logger::global_logger->add_log_listener(this);

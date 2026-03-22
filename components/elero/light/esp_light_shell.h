@@ -7,9 +7,16 @@
 #include "esphome/core/hal.h"
 #include "esphome/components/light/light_output.h"
 #include "esphome/components/light/light_state.h"
+#ifdef USE_SENSOR
+#include "esphome/components/sensor/sensor.h"
+#endif
+#ifdef USE_TEXT_SENSOR
+#include "esphome/components/text_sensor/text_sensor.h"
+#endif
 #include "../device.h"
 #include "../device_registry.h"
 #include "../light_sm.h"
+#include "../state_snapshot.h"
 #include "../elero_packet.h"
 
 namespace esphome {
@@ -33,6 +40,14 @@ class EspLightShell : public light::LightOutput, public Component {
   void set_light_state(light::LightState *s) { light_state_ = s; }
   void set_device_name(const char *n) { cfg_.set_name(n); }
   void set_slot_index(int idx) { slot_index_ = idx; }  ///< NVS mode: bind to pre-restored slot
+
+  // ── Sensor setters (published from sync_and_publish_ via snapshot) ──
+#ifdef USE_SENSOR
+  void set_rssi_sensor(sensor::Sensor *s) { rssi_sensor_ = s; }
+#endif
+#ifdef USE_TEXT_SENSOR
+  void set_status_sensor(text_sensor::TextSensor *s) { status_sensor_ = s; }
+#endif
 
   // ── ESPHome Component lifecycle ────────────────────────────
   void setup() override {
@@ -87,21 +102,24 @@ class EspLightShell : public light::LightOutput, public Component {
   void sync_and_publish_() {
     if (!device_ || !device_->is_light() || !light_state_) return;
 
-    auto &light = std::get<LightDevice>(device_->logic);
-    auto ctx = light_context(device_->config);
-    uint32_t now = millis();
-
-    bool on = light_sm::is_on(light.state);
-    float bri = light_sm::brightness(light.state, now, ctx);
+    auto snap = compute_light_snapshot(*device_, millis());
 
     ignore_write_state_ = true;
     auto call = light_state_->make_call();
-    call.set_state(on);
-    if (on && light_sm::supports_brightness(ctx)) {
-      call.set_brightness(bri);
+    call.set_state(snap.is_on);
+    auto ctx = light_context(device_->config);
+    if (snap.is_on && light_sm::supports_brightness(ctx)) {
+      call.set_brightness(snap.brightness);
     }
     call.perform();
     ignore_write_state_ = false;
+
+#ifdef USE_SENSOR
+    if (rssi_sensor_ != nullptr) rssi_sensor_->publish_state(snap.rssi);
+#endif
+#ifdef USE_TEXT_SENSOR
+    if (status_sensor_ != nullptr) status_sensor_->publish_state(snap.state_string);
+#endif
   }
 
   NvsDeviceConfig cfg_{};
@@ -111,6 +129,13 @@ class EspLightShell : public light::LightOutput, public Component {
   uint32_t last_published_ms_{0};
   bool ignore_write_state_{false};
   int slot_index_{-1};  ///< -1 = native mode, >=0 = NVS mode
+
+#ifdef USE_SENSOR
+  sensor::Sensor *rssi_sensor_{nullptr};
+#endif
+#ifdef USE_TEXT_SENSOR
+  text_sensor::TextSensor *status_sensor_{nullptr};
+#endif
 };
 
 }  // namespace elero
