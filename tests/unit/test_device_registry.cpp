@@ -81,9 +81,6 @@ constexpr float DATA = 0.0f;
 namespace esphome {
 namespace elero {
 
-SpiTransaction::SpiTransaction(Elero *) {}
-SpiTransaction::~SpiTransaction() {}
-
 // Auto-complete TX — registry tests verify dispatch logic, not TX pipeline
 bool Elero::request_tx(TxClient *client, const EleroCommand &) {
     client->on_tx_complete(true);
@@ -93,8 +90,6 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &) {
 void Elero::setup() {}
 void Elero::loop() {}
 void Elero::dump_config() {}
-void Elero::reset() {}
-void Elero::init() {}
 void Elero::dispatch_packet(const RfPacketInfo &) {}
 bool Elero::send_raw_command(uint32_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t) { return false; }
 void Elero::reinit_frequency(uint8_t, uint8_t, uint8_t) {}

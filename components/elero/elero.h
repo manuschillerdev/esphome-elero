@@ -1,8 +1,9 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/preferences.h"
-#include "esphome/components/spi/spi.h"
+#include "radio_driver.h"
 #include "cc1101.h"
 #include "tx_client.h"
 #include "elero_packet.h"
@@ -34,25 +35,10 @@ class Sensor;
 
 namespace elero {
 
-// ─── TX State Machine ────────────────────────────────────────────────────────
-enum class TxState : uint8_t {
-  IDLE,     // Radio in RX, waiting for tx_queue
-  PREPARE,  // SIDLE → SFTX → LOAD_FIFO → STX → poll TX (synchronous, ~1ms)
-  WAIT_TX,  // Wait for GDO0 or MARCSTATE==IDLE fallback (50ms timeout)
-  RECOVER,  // flush → check → reset+init if stuck → verify radio alive
-};
-
-struct TxContext {
-  TxState state{TxState::IDLE};
-  uint32_t state_enter_time{0};
-
-  static constexpr uint32_t STATE_TIMEOUT_MS = 50;
-};
-
 /// Decoded RF packet info for WebSocket broadcast
 struct RfPacketInfo {
   uint32_t timestamp_ms;
-  int64_t decoded_at_us{0};  ///< esp_timer_get_time() when decode completed (µs, for latency tracking)
+  int64_t decoded_at_us{0};  ///< esp_timer_get_time() when decode completed (us, for latency tracking)
   uint32_t src;           ///< Source address (remote for commands, blind for status)
   uint32_t dst;           ///< Destination address (blind for commands, remote for status)
   uint8_t channel;
@@ -63,7 +49,7 @@ struct RfPacketInfo {
   bool echo;              ///< true if this command packet matches a recent TX (mesh echo)
   uint8_t cnt;            ///< Rolling counter value from packet
   float rssi;
-  uint8_t lqi;            ///< Link Quality Indicator (0–127)
+  uint8_t lqi;            ///< Link Quality Indicator (0-127)
   bool crc_ok;            ///< CRC status from CC1101 appended byte
   uint8_t hop;
   uint8_t payload[10];
@@ -75,7 +61,7 @@ struct RfPacketInfo {
 
 // ─── RF Task IPC Structs ─────────────────────────────────────────────────────
 
-/// Request from main loop → RF task (via tx_queue).
+/// Request from main loop -> RF task (via tx_queue).
 /// Uses a union to minimize queue item size (~50 bytes).
 struct RfTaskRequest {
   enum class Type : uint8_t { TX, REINIT_FREQ } type;
@@ -88,7 +74,7 @@ struct RfTaskRequest {
   RfTaskRequest() : type(Type::TX), client(nullptr), cmd{} {}
 };
 
-/// Result from RF task → main loop (via tx_done_queue).
+/// Result from RF task -> main loop (via tx_done_queue).
 struct TxResult {
   TxClient *client{nullptr};  ///< nullptr for fire-and-forget (raw TX)
   bool success{false};
@@ -97,31 +83,14 @@ struct TxResult {
 }  // namespace elero
 }  // namespace esphome
 
-// Lock payload size invariant: decode_packet memcpy's ParseResult::payload → RfPacketInfo::payload
+// Lock payload size invariant: decode_packet memcpy's ParseResult::payload -> RfPacketInfo::payload
 static_assert(sizeof(esphome::elero::RfPacketInfo::payload) == sizeof(esphome::elero::packet::ParseResult::payload),
               "RfPacketInfo::payload and ParseResult::payload must have the same size");
 
 namespace esphome {
 namespace elero {
 
-class Elero;  // Forward declaration for SpiTransaction
-
-/// RAII guard for SPI transactions. Calls enable() on construction and
-/// disable() on destruction, ensuring CS is always released even on early return.
-class SpiTransaction {
- public:
-  explicit SpiTransaction(Elero *device);
-  ~SpiTransaction();
-  SpiTransaction(const SpiTransaction &) = delete;
-  SpiTransaction &operator=(const SpiTransaction &) = delete;
-
- private:
-  Elero *device_;
-};
-
-class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW, spi::CLOCK_PHASE_LEADING,
-                                    spi::DATA_RATE_2MHZ>,
-              public Component {
+class Elero : public Component {
  public:
   void setup() override;
   void loop() override;
@@ -129,8 +98,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   static void IRAM_ATTR interrupt(Elero *arg);
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
-  void reset();
-  void init();
 
   /// Dispatch a decoded packet (slow path — logging, registry, sensors).
   /// Called from main loop only (Core 1).
@@ -163,7 +130,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_stats_last_rx_age_sensor(sensor::Sensor *s) { stats_last_rx_age_ = s; }
 #endif
 
-  void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
+  // ── Radio driver ──────────────────────────────────────────────────────────
+  void set_driver(RadioDriver *d) { driver_ = d; }
+  RadioDriver *get_driver() const { return driver_; }
+
+  // ── IRQ pin (for ISR setup — driver doesn't own the pin, hub does) ────────
+  void set_irq_pin(InternalGPIOPin *pin) { irq_pin_ = pin; }
+  /// @deprecated Use set_irq_pin instead. Kept for backward YAML compatibility.
+  void set_gdo0_pin(InternalGPIOPin *pin) { irq_pin_ = pin; }
+
   void set_freq0(uint8_t freq) { freq0_.store(freq); }
   void set_freq1(uint8_t freq) { freq1_.store(freq); }
   void set_freq2(uint8_t freq) { freq2_.store(freq); }
@@ -181,27 +156,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t get_freq2() const { return freq2_.load(); }
 
  private:
-  // ─── SPI communication (called exclusively from RF task after setup) ────────
-  [[nodiscard]] bool write_reg(uint8_t addr, uint8_t data);
-  [[nodiscard]] bool write_burst(uint8_t addr, uint8_t *data, uint8_t len);
-  [[nodiscard]] bool write_cmd(uint8_t cmd);
-  [[nodiscard]] bool wait_rx();
-  [[nodiscard]] uint8_t read_reg(uint8_t addr, bool *ok = nullptr);
-  [[nodiscard]] uint8_t read_status(uint8_t addr);
-  void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
-  void flush_and_rx();
-  [[nodiscard]] bool start_transmit();
+  // ─── Protocol-level methods (stay on Elero — not hardware) ─────────────────
   [[nodiscard]] optional<RfPacketInfo> decode_packet(const uint8_t *buf, size_t buf_len);
-
-  // ─── TX state machine (RF task only) ──────────────────────────────────────
-  void handle_tx_state_(uint32_t now);  // Progress TX state machine
-  void recover_radio_();                // Flush, check, reset if stuck
   void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
-  uint8_t read_status_reliable_(uint8_t addr);     // CC1101 errata workaround
-  void check_radio_health_();           // Periodic watchdog for stuck radio states
   void record_tx_(uint8_t counter);     // Record TX counter for echo detection
   bool is_own_echo_(uint8_t counter) const;  // Check if RX counter matches a recent TX
-  void drain_fifo_();                   // Read FIFO, decode packets, push to queue
+  void decode_fifo_packets_(size_t fifo_count);  // Parse multiple packets from FIFO buffer
 
   // ─── RF task entry point ───────────────────────────────────────────────────
 #ifdef USE_ESP32
@@ -209,13 +169,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #endif
 
   // ─── ISR-shared state ──────────────────────────────────────────────────────
-  std::atomic<bool> received_{false};   ///< Set by ISR, consumed by RF task
+  std::atomic<bool> received_{false};   ///< Set by ISR, consumed by RF task via driver
 
   // ─── RF task-exclusive state (never accessed from main loop after setup) ───
-  TxContext tx_ctx_;
-  bool tx_pending_success_{false};
   TxClient *tx_owner_{nullptr};        ///< Current TX owner (for completion callback)
-  uint32_t last_radio_check_ms_{0};    ///< Last radio health check timestamp
   uint8_t msg_rx_[CC1101_FIFO_LENGTH]; ///< RX FIFO buffer (RF task only)
   uint8_t msg_tx_[CC1101_FIFO_LENGTH]; ///< TX packet buffer (RF task only)
 
@@ -230,7 +187,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::atomic<uint8_t> freq2_{defaults::FREQ2};
 
   // ─── Main loop-exclusive state ─────────────────────────────────────────────
-  InternalGPIOPin *gdo0_pin_{nullptr};
+  RadioDriver *driver_{nullptr};         ///< Radio hardware driver (CC1101, SX1262, etc.)
+  InternalGPIOPin *irq_pin_{nullptr};    ///< Radio IRQ pin (GDO0 for CC1101, DIO1 for SX1262)
 
   // Unified device registry
   DeviceRegistry *registry_{nullptr};
@@ -272,9 +230,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   // ─── FreeRTOS IPC (cross-core communication) ──────────────────────────────
 #ifdef USE_ESP32
   TaskHandle_t rf_task_handle_{nullptr};
-  QueueHandle_t rx_queue_handle_{nullptr};       ///< RF task → main loop: RfPacketInfo
-  QueueHandle_t tx_queue_handle_{nullptr};       ///< Main loop → RF task: RfTaskRequest
-  QueueHandle_t tx_done_queue_handle_{nullptr};  ///< RF task → main loop: TxResult
+  QueueHandle_t rx_queue_handle_{nullptr};       ///< RF task -> main loop: RfPacketInfo
+  QueueHandle_t tx_queue_handle_{nullptr};       ///< Main loop -> RF task: RfTaskRequest
+  QueueHandle_t tx_done_queue_handle_{nullptr};  ///< RF task -> main loop: TxResult
 #endif
 };
 

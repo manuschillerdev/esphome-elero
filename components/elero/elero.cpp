@@ -5,6 +5,7 @@
 #include "device.h"
 #include "device_registry.h"
 #include "esphome/core/log.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
 #include <algorithm>
@@ -23,15 +24,6 @@ namespace elero {
 
 static const char *const TAG = "elero";
 static const char *const TAG_RF = "elero.rf";
-
-// ─── SpiTransaction RAII Implementation ───────────────────────────────────
-SpiTransaction::SpiTransaction(Elero *device) : device_(device) {
-  device_->enable();
-}
-
-SpiTransaction::~SpiTransaction() {
-  device_->disable();
-}
 
 // String conversion functions (elero_state_to_string, elero_command_to_string,
 // elero_action_to_command) are defined in elero_strings.cpp for testability.
@@ -69,36 +61,14 @@ void Elero::loop() {
 #endif
 }
 
-// ─── FIFO Drain: read all bytes, decode multiple packets ─────────────────────
-void Elero::drain_fifo_() {
-  ESP_LOGVV(TAG, "drain_fifo_");
+// ─── decode_fifo_packets_: parse multiple packets from raw FIFO buffer ───────
+void Elero::decode_fifo_packets_(size_t fifo_count) {
 #ifdef USE_ESP32
   int64_t drain_start_us = esp_timer_get_time();
 #endif
-  uint8_t len = this->read_status_reliable_(CC1101_RXBYTES);
-
-  // Overflow — FIFO data unreliable, flush and bail
-  if (len & packet::cc1101_status::RXBYTES_OVERFLOW_BIT) {
-    ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
-    this->stat_fifo_overflows_.fetch_add(1, std::memory_order_relaxed);
-    this->flush_and_rx();
-    return;
-  }
-
-  uint8_t fifo_count = len & packet::cc1101_status::BYTE_COUNT_MASK;
-  if (fifo_count == 0) {
-    return;
-  }
-
-  // Read entire FIFO in one SPI burst
-  if (fifo_count > CC1101_FIFO_LENGTH) {
-    ESP_LOGV(TAG, "RXBYTES > FIFO length (%d), clamping", fifo_count);
-    fifo_count = CC1101_FIFO_LENGTH;
-  }
-  this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
 
   // Log raw bytes at VERBOSE level for analysis
-  ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
+  ESP_LOGV(TAG, "RAW RX %d bytes: %s", static_cast<int>(fifo_count),
            format_hex_pretty(this->msg_rx_, fifo_count).c_str());
 
   // Parse multiple packets from the buffer
@@ -136,13 +106,13 @@ void Elero::drain_fifo_() {
   }
 
   if (pkt_count > 1) {
-    ESP_LOGD(TAG, "Decoded %d packets from single FIFO read (%d bytes)", pkt_count, fifo_count);
+    ESP_LOGD(TAG, "Decoded %d packets from single FIFO read (%d bytes)", pkt_count, static_cast<int>(fifo_count));
   }
 
 #ifdef USE_ESP32
   if (pkt_count > 0) {
     int64_t drain_us = esp_timer_get_time() - drain_start_us;
-    ESP_LOGD(TAG, "drain_fifo: %d pkt(s), %d bytes, %lldus", pkt_count, fifo_count, drain_us);
+    ESP_LOGD(TAG, "decode_fifo: %d pkt(s), %d bytes, %lldus", pkt_count, static_cast<int>(fifo_count), drain_us);
   }
 #endif
 }
@@ -163,11 +133,12 @@ void IRAM_ATTR Elero::interrupt(Elero *arg) {
 }
 
 void Elero::dump_config() {
-  ESP_LOGCONFIG(TAG, "Elero CC1101:");
+  ESP_LOGCONFIG(TAG, "Elero RF:");
   ESP_LOGCONFIG(TAG, "  Version: %s", this->version_);
-  LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
-  ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x",
-                this->freq2_.load(), this->freq1_.load(), this->freq0_.load());
+  LOG_PIN("  IRQ Pin: ", this->irq_pin_);
+  if (this->driver_) {
+    this->driver_->dump_config();
+  }
   if (this->registry_) {
     ESP_LOGCONFIG(TAG, "  Registered devices: %d", this->registry_->count_active());
   }
@@ -175,25 +146,25 @@ void Elero::dump_config() {
 
 void Elero::setup() {
   ESP_LOGI(TAG, "Setting up Elero Component...");
-  this->spi_setup();
-  this->gdo0_pin_->setup();
-  this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
-  this->reset();
 
-  // Wait for crystal oscillator to stabilize after reset (CC1101 datasheet: ~1ms typical)
-  delay(5);
-
-  // Verify CC1101 is responding — known versions: 0x04, 0x14, 0x82 (per RadioLib)
-  uint8_t version = this->read_status(CC1101_VERSION);
-  if (version == packet::cc1101_status::VERSION_NOT_CONNECTED_LOW ||
-      version == packet::cc1101_status::VERSION_NOT_CONNECTED_HIGH) {
-    ESP_LOGE(TAG, "CC1101 not found (VERSION=0x%02x). Check SPI wiring and CS pin.", version);
+  // Initialize radio driver
+  if (this->driver_ == nullptr) {
+    ESP_LOGE(TAG, "No radio driver configured");
     this->mark_failed();
     return;
   }
-  ESP_LOGI(TAG, "CC1101 version: 0x%02x", version);
 
-  this->init();
+  // Pass ISR flag to driver and initialize
+  this->driver_->set_irq_flag(&this->received_);
+  if (!this->driver_->init()) {
+    ESP_LOGE(TAG, "Radio driver initialization failed");
+    this->mark_failed();
+    return;
+  }
+
+  // Setup IRQ pin and attach interrupt
+  this->irq_pin_->setup();
+  this->irq_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
 
   // New architecture: device registry lifecycle
   if (this->registry_ != nullptr) {
@@ -247,22 +218,24 @@ void Elero::setup() {
 void Elero::rf_task_func_(void *arg) {
   auto *self = static_cast<Elero *>(arg);
   uint32_t last_stack_check_ms = 0;
+  bool tx_in_progress = false;
 
   for (;;) {
     uint32_t now = millis();
 
     // 1. Process TX requests from main loop (only when radio is idle)
-    if (self->tx_ctx_.state == TxState::IDLE) {
+    if (!tx_in_progress) {
       RfTaskRequest req{};
       if (xQueueReceive(self->tx_queue_handle_, &req, 0) == pdPASS) {
         switch (req.type) {
           case RfTaskRequest::Type::TX:
             self->build_tx_packet_(req.cmd);
             self->record_tx_(req.cmd.counter);
-            if (self->start_transmit()) {
+            if (self->driver_->load_and_transmit(self->msg_tx_, self->msg_tx_[0] + 1)) {
               self->tx_owner_ = req.client;
+              tx_in_progress = true;
             } else {
-              // start_transmit failed — report failure immediately
+              // load_and_transmit failed — report failure immediately
               TxResult r{req.client, false};
               xQueueSend(self->tx_done_queue_handle_, &r, 0);
             }
@@ -274,41 +247,71 @@ void Elero::rf_task_func_(void *arg) {
               TxResult r{self->tx_owner_, false};
               self->tx_owner_ = nullptr;
               xQueueSend(self->tx_done_queue_handle_, &r, 0);
+              tx_in_progress = false;
             }
             self->received_.store(false);
             self->freq2_.store(req.freq.f2);
             self->freq1_.store(req.freq.f1);
             self->freq0_.store(req.freq.f0);
-            self->reset();
-            self->init();
-            ESP_LOGI(TAG, "CC1101 re-initialised: freq2=0x%02x freq1=0x%02x freq0=0x%02x",
-                     req.freq.f2, req.freq.f1, req.freq.f0);
+            self->driver_->set_frequency_regs(req.freq.f2, req.freq.f1, req.freq.f0);
             break;
         }
       }
     }
 
-    // 2. Progress TX state machine
-    now = millis();
-    if (self->tx_ctx_.state != TxState::IDLE) {
-      self->handle_tx_state_(now);
-
-      // Check if TX just completed — post result to main loop
-      if (self->tx_ctx_.state == TxState::IDLE && self->tx_owner_ != nullptr) {
-        TxResult r{self->tx_owner_, self->tx_pending_success_};
-        self->tx_owner_ = nullptr;
-        xQueueSend(self->tx_done_queue_handle_, &r, 0);
+    // 2. Progress TX via driver
+    if (tx_in_progress) {
+      auto result = self->driver_->poll_tx();
+      switch (result) {
+        case TxPollResult::PENDING:
+          break;
+        case TxPollResult::SUCCESS:
+          ESP_LOGV(TAG, "TX complete (success)");
+          {
+            TxResult r{self->tx_owner_, true};
+            self->tx_owner_ = nullptr;
+            tx_in_progress = false;
+            xQueueSend(self->tx_done_queue_handle_, &r, 0);
+          }
+          break;
+        case TxPollResult::FAILED:
+          ESP_LOGW(TAG, "TX complete (failed)");
+          self->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
+          {
+            TxResult r{self->tx_owner_, false};
+            self->tx_owner_ = nullptr;
+            tx_in_progress = false;
+            xQueueSend(self->tx_done_queue_handle_, &r, 0);
+          }
+          break;
       }
     }
 
     // 3. Drain FIFO if GDO0 interrupt fired
-    if (self->received_.exchange(false)) {
-      self->drain_fifo_();
+    if (self->driver_->has_data()) {
+      // Clear IRQ flag
+      self->received_.exchange(false);
+      // Read FIFO bytes from driver
+      size_t count = self->driver_->read_fifo(self->msg_rx_, sizeof(self->msg_rx_));
+      if (count > 0) {
+        // Parse packets from buffer (same multi-packet logic as before)
+        self->decode_fifo_packets_(count);
+      }
     }
 
     // 4. Radio health check (only when idle, throttled internally to every 5s)
-    if (self->tx_ctx_.state == TxState::IDLE) {
-      self->check_radio_health_();
+    if (!tx_in_progress) {
+      auto health = self->driver_->check_health();
+      switch (health) {
+        case RadioHealth::OK:
+          break;
+        case RadioHealth::FIFO_OVERFLOW:
+        case RadioHealth::STUCK:
+        case RadioHealth::UNRECOVERABLE:
+          self->driver_->recover();
+          self->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
+          break;
+      }
     }
 
     // 5. Stack watermark check (development aid, every 30s)
@@ -347,237 +350,6 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
   this->freq0_.store(freq0);
   ESP_LOGI(TAG, "Frequency change queued: freq2=0x%02x freq1=0x%02x freq0=0x%02x", freq2, freq1, freq0);
 #endif
-}
-
-void Elero::flush_and_rx() {
-  ESP_LOGVV(TAG, "flush_and_rx");
-
-  // 1. Force IDLE
-  (void) this->write_cmd(CC1101_SIDLE);
-  esp_rom_delay_us(100);
-
-  // 2. Clear atomic flag (safe — radio is idle, no new interrupts)
-  this->received_.store(false, std::memory_order_release);
-
-  // 3. Flush both FIFOs
-  (void) this->write_cmd(CC1101_SFRX);
-  (void) this->write_cmd(CC1101_SFTX);
-
-  // 4. Re-enable RX
-  (void) this->write_cmd(CC1101_SRX);
-
-  // 5. Verify radio entered RX — caller (recover_radio_) handles escalation
-  //    Calibration states are transient (~700µs) — only warn on truly stuck states.
-  uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-  if (marc != CC1101_MARCSTATE_RX && !marcstate_is_transient(marc)) {
-    ESP_LOGW(TAG, "flush_and_rx: not in RX after SRX, MARCSTATE=0x%02x", marc);
-  }
-}
-
-void Elero::reset() {
-  // We don't do a hardware reset as we can't read
-  // the MISO pin directly. Rely on software-reset only.
-
-  this->enable();
-  this->write_byte(CC1101_SRES);
-  delay_microseconds_safe(50);
-  this->write_byte(CC1101_SIDLE);
-  delay_microseconds_safe(50);
-  this->disable();
-}
-
-void Elero::init() {
-  // PA table: +10 dBm output power for all 8 power levels
-  uint8_t patable_data[] = {0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0};
-
-  // CC1101 register configuration for Elero protocol (868 MHz, 2-FSK, 9.6 kBaud).
-  // Values derived from TI SmartRF Studio and Elero protocol reverse-engineering.
-  // Reference: https://github.com/QuadCorei8085/elero_protocol
-  (void) this->write_reg(CC1101_FSCTRL1, 0x08);
-  (void) this->write_reg(CC1101_FSCTRL0, 0x00);
-  (void) this->write_reg(CC1101_FREQ2, this->freq2_.load());
-  (void) this->write_reg(CC1101_FREQ1, this->freq1_.load());
-  (void) this->write_reg(CC1101_FREQ0, this->freq0_.load());
-  (void) this->write_reg(CC1101_MDMCFG4, 0x7B);
-  (void) this->write_reg(CC1101_MDMCFG3, 0x83);
-  (void) this->write_reg(CC1101_MDMCFG2, 0x13);
-  (void) this->write_reg(CC1101_MDMCFG1, 0x52);
-  (void) this->write_reg(CC1101_MDMCFG0, 0xF8);
-  (void) this->write_reg(CC1101_CHANNR, 0x00);
-  (void) this->write_reg(CC1101_DEVIATN, 0x43);
-  (void) this->write_reg(CC1101_FREND1, 0xB6);
-  (void) this->write_reg(CC1101_FREND0, 0x10);
-  (void) this->write_reg(CC1101_MCSM0, 0x18);
-  (void) this->write_reg(CC1101_MCSM1, 0x3F);
-  (void) this->write_reg(CC1101_FOCCFG, 0x1D);
-  (void) this->write_reg(CC1101_BSCFG, 0x1F);
-  (void) this->write_reg(CC1101_AGCCTRL2, 0xC7);
-  (void) this->write_reg(CC1101_AGCCTRL1, 0x00);
-  (void) this->write_reg(CC1101_AGCCTRL0, 0xB2);
-  (void) this->write_reg(CC1101_FSCAL3, 0xEA);
-  (void) this->write_reg(CC1101_FSCAL2, 0x2A);
-  (void) this->write_reg(CC1101_FSCAL1, 0x00);
-  (void) this->write_reg(CC1101_FSCAL0, 0x1F);
-  (void) this->write_reg(CC1101_FSTEST, 0x59);
-  (void) this->write_reg(CC1101_TEST2, 0x81);
-  (void) this->write_reg(CC1101_TEST1, 0x35);
-  (void) this->write_reg(CC1101_TEST0, 0x09);
-  (void) this->write_reg(CC1101_IOCFG0, 0x06);
-  (void) this->write_reg(CC1101_PKTCTRL1, 0x8C);
-  (void) this->write_reg(CC1101_PKTCTRL0, 0x45);
-  (void) this->write_reg(CC1101_ADDR, 0x00);
-  (void) this->write_reg(CC1101_PKTLEN, 0x3C);
-  (void) this->write_reg(CC1101_SYNC1, 0xD3);
-  (void) this->write_reg(CC1101_SYNC0, 0x91);
-  (void) this->write_burst(CC1101_PATABLE, patable_data, 8);
-
-  (void) this->write_cmd(CC1101_SRX);
-  (void) this->wait_rx();
-}
-
-bool Elero::write_reg(uint8_t addr, uint8_t data) {
-  uint8_t status;
-  {
-    SpiTransaction txn(this);
-    status = this->transfer_byte(addr);
-    this->write_byte(data);
-  }  // CS released here
-  delay_microseconds_safe(15);
-
-  // Check SPI status byte state field (bits 6:4) for RXFIFO overflow
-  if ((status & packet::cc1101_status::SPI_STATE_MASK) == packet::cc1101_status::SPI_STATE_RXFIFO_OVERFLOW) {
-    ESP_LOGW(TAG, "SPI write_reg 0x%02x: RXFIFO overflow (status=0x%02x)", addr, status);
-    return false;
-  }
-  return true;
-}
-
-bool Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
-  uint8_t status;
-  {
-    SpiTransaction txn(this);
-    status = this->transfer_byte(addr | CC1101_WRITE_BURST);
-    for (int i = 0; i < len; ++i) {
-      this->write_byte(data[i]);
-    }
-  }  // CS released here
-  delay_microseconds_safe(15);
-
-  // Check SPI status byte state field (bits 6:4) for RXFIFO overflow
-  if ((status & packet::cc1101_status::SPI_STATE_MASK) == packet::cc1101_status::SPI_STATE_RXFIFO_OVERFLOW) {
-    ESP_LOGW(TAG, "SPI write_burst 0x%02x (%d bytes): RXFIFO overflow (status=0x%02x)", addr, len, status);
-    return false;
-  }
-  return true;
-}
-
-bool Elero::write_cmd(uint8_t cmd) {
-  uint8_t status;
-  {
-    SpiTransaction txn(this);
-    status = this->transfer_byte(cmd);
-  }  // CS released here
-  delay_microseconds_safe(15);
-
-  // Check SPI status byte state field (bits 6:4) for RXFIFO overflow
-  if ((status & packet::cc1101_status::SPI_STATE_MASK) == packet::cc1101_status::SPI_STATE_RXFIFO_OVERFLOW) {
-    ESP_LOGW(TAG, "SPI write_cmd 0x%02x: RXFIFO overflow (status=0x%02x)", cmd, status);
-    return false;
-  }
-  return true;
-}
-
-bool Elero::wait_rx() {
-  ESP_LOGVV(TAG, "wait_rx");
-  uint8_t timeout = 200;
-  while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_RX) && (--timeout != 0)) {
-    delay_microseconds_safe(200);
-  }
-
-  if (timeout > 0)
-    return true;
-  ESP_LOGE(TAG, "Timed out waiting for RX: 0x%02x", this->read_status(CC1101_MARCSTATE));
-  return false;
-}
-
-// ─── Non-blocking TX State Machine ─────────────────────────────────────────
-
-void Elero::recover_radio_() {
-  ESP_LOGW(TAG, "recover_radio_: flushing and checking radio state");
-  this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
-
-  // 1. Flush FIFOs and return to RX
-  this->flush_and_rx();
-
-  // 2. Check if radio recovered
-  uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-  if (marc != CC1101_MARCSTATE_RX) {
-    // Radio didn't recover — full reset + init
-    ESP_LOGE(TAG, "Radio not in RX after flush (MARCSTATE=0x%02x), resetting chip", marc);
-    this->reset();
-    this->init();
-
-    // Verify radio came back — read VERSION register to confirm SPI alive
-    uint8_t version = this->read_status(CC1101_VERSION);
-    if (version == packet::cc1101_status::VERSION_NOT_CONNECTED_LOW ||
-        version == packet::cc1101_status::VERSION_NOT_CONNECTED_HIGH) {
-      ESP_LOGE(TAG, "Radio failed to recover after reset (VERSION=0x%02x)", version);
-    }
-  }
-
-  // 3. Return to IDLE state with failure
-  this->tx_ctx_.state = TxState::IDLE;
-  this->tx_pending_success_ = false;
-  // NOTE: tx_owner_ is NOT cleared here — the rf_task_func_ loop detects
-  // tx_ctx_.state == IDLE && tx_owner_ != nullptr and posts TxResult to
-  // tx_done_queue_, which the main loop drains to call on_tx_complete().
-}
-
-// ─── Radio Health Watchdog ───────────────────────────────────────────────────
-// Periodically checks MARCSTATE when idle to detect and recover from stuck
-// CC1101 states that don't trigger interrupts. Covers:
-// - RXFIFO overflow without ISR (deaf radio)
-// - Stuck in IDLE (stopped listening)
-// - Any other unexpected state
-void Elero::check_radio_health_() {
-  uint32_t now = millis();
-  if (now - this->last_radio_check_ms_ < packet::timing::RADIO_WATCHDOG_INTERVAL) {
-    return;
-  }
-  this->last_radio_check_ms_ = now;
-
-  uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-
-  // RX is the expected idle state
-  if (marc == CC1101_MARCSTATE_RX) {
-    return;
-  }
-
-  // Transient calibration/wind-down states — will reach RX on their own
-  if (marcstate_is_transient(marc)) {
-    return;
-  }
-
-  // RXFIFO overflow — radio is deaf until flushed
-  if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
-    ESP_LOGW(TAG, "Radio watchdog: RX FIFO overflow, flushing");
-    this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
-    this->flush_and_rx();
-    return;
-  }
-
-  // Stuck in IDLE — radio stopped listening, one strobe restarts it
-  if (marc == CC1101_MARCSTATE_IDLE) {
-    ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
-    this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
-    (void) this->write_cmd(CC1101_SRX);
-    return;
-  }
-
-  // Anything else unexpected — full reset to known-good RX state
-  ESP_LOGW(TAG, "Radio watchdog: unexpected MARCSTATE 0x%02x, reinitializing", marc);
-  this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
-  this->flush_and_rx();
 }
 
 void Elero::record_tx_(uint8_t counter) {
@@ -659,214 +431,6 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
 #else
   return false;
 #endif
-}
-
-bool Elero::start_transmit() {
-  if (this->tx_ctx_.state != TxState::IDLE) {
-    return false;  // Already transmitting
-  }
-
-  ESP_LOGVV(TAG, "start_transmit called for %d data bytes", this->msg_tx_[0]);
-
-  // Transition to PREPARE — synchronous pre-TX sequence
-  this->tx_ctx_.state = TxState::PREPARE;
-  this->tx_ctx_.state_enter_time = millis();
-  this->tx_pending_success_ = false;
-
-  return true;
-}
-
-void Elero::handle_tx_state_(uint32_t now) {
-  if (this->tx_ctx_.state == TxState::IDLE) {
-    return;
-  }
-
-  uint32_t elapsed = now - this->tx_ctx_.state_enter_time;
-  uint8_t marcstate;
-
-  switch (this->tx_ctx_.state) {
-    case TxState::PREPARE: {
-      // Synchronous pre-TX sequence (~1ms total)
-
-      // 1. SIDLE
-      (void) this->write_cmd(CC1101_SIDLE);
-
-      // 2. Poll MARCSTATE == IDLE, max ~1ms
-      bool reached_idle = false;
-      for (int i = 0; i < 20; ++i) {
-        esp_rom_delay_us(50);
-        marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-        if (marcstate == CC1101_MARCSTATE_IDLE) {
-          reached_idle = true;
-          break;
-        }
-      }
-      if (!reached_idle) {
-        marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-        ESP_LOGW(TAG, "PREPARE: SIDLE failed, MARCSTATE=0x%02x", marcstate);
-        this->tx_ctx_.state = TxState::RECOVER;
-        this->tx_ctx_.state_enter_time = now;
-        return;
-      }
-
-      // 3. Flush TX FIFO
-      (void) this->write_cmd(CC1101_SFTX);
-      esp_rom_delay_us(100);
-
-      // 4. Load TX FIFO
-      if (!this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1)) {
-        ESP_LOGW(TAG, "PREPARE: FIFO write failed");
-        this->tx_ctx_.state = TxState::RECOVER;
-        this->tx_ctx_.state_enter_time = now;
-        return;
-      }
-
-      // 5. Clear received_ so we can detect TX-end interrupt
-      this->received_.store(false);
-
-      // 6. Trigger TX
-      (void) this->write_cmd(CC1101_STX);
-
-      // 7. Poll MARCSTATE == TX, max ~1ms (covers ~700µs calibration)
-      for (int i = 0; i < 20; ++i) {
-        esp_rom_delay_us(50);
-        marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-        if (marcstate == CC1101_MARCSTATE_TX) {
-          this->tx_ctx_.state = TxState::WAIT_TX;
-          this->tx_ctx_.state_enter_time = now;
-          return;
-        }
-      }
-
-      // STX didn't reach TX state
-      marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-      ESP_LOGW(TAG, "PREPARE: STX failed, MARCSTATE=0x%02x", marcstate);
-      this->tx_ctx_.state = TxState::RECOVER;
-      this->tx_ctx_.state_enter_time = now;
-      break;
-    }
-
-    case TxState::WAIT_TX:
-      // Interrupt-driven with MARCSTATE polling fallback
-      if (this->received_.load()) {
-        // GDO0 interrupt fired — TX likely complete, verify FIFO empty
-        esp_rom_delay_us(50);
-        uint8_t txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
-        if (txbytes == 0) {
-          ESP_LOGV(TAG, "TX successful");
-          this->flush_and_rx();
-          this->tx_pending_success_ = true;
-          this->tx_ctx_.state = TxState::IDLE;
-          return;
-        }
-        // Grace window — GDO0 may fire slightly before FIFO fully drains
-        esp_rom_delay_us(100);
-        txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
-        if (txbytes == 0) {
-          ESP_LOGV(TAG, "TX successful (after grace)");
-          this->flush_and_rx();
-          this->tx_pending_success_ = true;
-          this->tx_ctx_.state = TxState::IDLE;
-          return;
-        }
-        ESP_LOGE(TAG, "FIFO not empty after TX interrupt, txbytes=%u", txbytes);
-        this->tx_ctx_.state = TxState::RECOVER;
-        this->tx_ctx_.state_enter_time = now;
-        return;
-      }
-
-      // MARCSTATE polling fallback — detect TX completion if GDO0 was missed
-      marcstate = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-      if (marcstate == CC1101_MARCSTATE_IDLE || marcstate == CC1101_MARCSTATE_RX) {
-        uint8_t txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
-        if (txbytes == 0) {
-          ESP_LOGV(TAG, "TX successful (MARCSTATE fallback)");
-          this->flush_and_rx();
-          this->tx_pending_success_ = true;
-          this->tx_ctx_.state = TxState::IDLE;
-          return;
-        }
-      }
-
-      // Timeout
-      if (elapsed > TxContext::STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in WAIT_TX after %ums", elapsed);
-        this->tx_ctx_.state = TxState::RECOVER;
-        this->tx_ctx_.state_enter_time = now;
-      }
-      break;
-
-    case TxState::RECOVER:
-      this->recover_radio_();
-      break;
-
-    case TxState::IDLE:
-      break;
-  }
-}
-
-uint8_t Elero::read_reg(uint8_t addr, bool *ok) {
-  // read_reg() uses CC1101_READ_SINGLE which does NOT set the 0x40 bit needed
-  // for status registers (addr > 0x2E). Use read_status() for those.
-  if (addr > CC1101_TEST0) {
-    ESP_LOGW(TAG, "read_reg(0x%02x): addr > 0x2E is a status register, use read_status() instead", addr);
-  }
-
-  uint8_t status;
-  uint8_t data;
-  {
-    SpiTransaction txn(this);
-    status = this->transfer_byte(addr | CC1101_READ_SINGLE);
-    data = this->read_byte();
-  }  // CS released here
-  delay_microseconds_safe(15);
-
-  // Check SPI status byte state field (bits 6:4) for RXFIFO overflow
-  if ((status & packet::cc1101_status::SPI_STATE_MASK) == packet::cc1101_status::SPI_STATE_RXFIFO_OVERFLOW) {
-    ESP_LOGW(TAG, "SPI read_reg 0x%02x: RXFIFO overflow (status=0x%02x)", addr, status);
-    if (ok != nullptr) {
-      *ok = false;
-    }
-  } else if (ok != nullptr) {
-    *ok = true;
-  }
-  return data;
-}
-
-uint8_t Elero::read_status(uint8_t addr) {
-  // CC1101 datasheet section 10.4: status registers (addr > 0x2E) require the
-  // burst access bit (0x40) to be set. CC1101_READ_BURST (0xC0) includes this
-  // bit, so this works correctly for both status registers and burst reads.
-  uint8_t data;
-  {
-    SpiTransaction txn(this);
-    this->write_byte(addr | CC1101_READ_BURST);
-    data = this->read_byte();
-  }  // CS released here
-  delay_microseconds_safe(15);
-  return data;
-}
-
-uint8_t Elero::read_status_reliable_(uint8_t addr) {
-  // CC1101 errata: RXBYTES and TXBYTES can return incorrect values on a single read.
-  // Workaround (per RadioLib): read twice until both values match.
-  uint8_t a, b;
-  do {
-    a = this->read_status(addr);
-    b = this->read_status(addr);
-  } while (a != b);
-  return a;
-}
-
-void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
-  {
-    SpiTransaction txn(this);
-    this->write_byte(addr | CC1101_READ_BURST);
-    for (uint8_t i = 0; i < len; ++i) {
-      buf[i] = this->read_byte();
-    }
-  }  // CS released here
-  delay_microseconds_safe(15);
 }
 
 // ─── decode_packet: fast path — pure decoding, no side effects ───────────────
@@ -999,7 +563,7 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
 #ifdef USE_ESP32
   int64_t dispatch_us = esp_timer_get_time() - dispatch_start_us;
   int64_t queue_transit_us = (pkt.decoded_at_us > 0) ? (dispatch_start_us - pkt.decoded_at_us) : 0;
-  // Log timing: dispatch cost + queue transit (decode→dispatch latency)
+  // Log timing: dispatch cost + queue transit (decode->dispatch latency)
   ESP_LOGD(TAG, "dispatch: %lldus, queue_transit: %lldus (cnt=%d)",
            dispatch_us, queue_transit_us, pkt.cnt);
 
