@@ -41,7 +41,8 @@ const isValidHex = (s: string) => /^0x[0-9a-fA-F]+$/.test(s)
 // ─── Hub Info Card ──────────────────────────────────────────────────────────
 
 function HubInfoCard() {
-  const { device, freq } = hub.value
+  const { device } = hub.value
+  const freq = radio.value.freq
   const counts = filterCounts.value
 
   const f2 = parseFreq(freq.freq2, 0x21)
