@@ -1,6 +1,6 @@
 import { signal, computed } from '@preact/signals'
 import type { DeviceType, BlindConfig, LightConfig, RemoteConfig } from '@/generated'
-import { msg_type, state as rfState, DISCOVERY_COMMANDS } from '@/lib/protocol'
+import { msg_type, resolveStateName, DISCOVERY_COMMANDS } from '@/lib/protocol'
 import type { RfPacketWithTimestamp } from '@/lib/protocol'
 import type { UiModel } from './ui'
 import type { HubModel } from './hub'
@@ -156,7 +156,7 @@ export function createDeviceModel(uiModel: UiModel, hubModel: HubModel) {
           }
         }
       } else if (t === msg_type.STATUS || t === msg_type.STATUS_ALT) {
-        if (pkt.state?.toLowerCase() === rfState.LIGHT_ON) {
+        if (resolveStateName(pkt.state) === 'light_on') {
           typeCorrections.set(pkt.src, 'light')
         }
       } else if (t === msg_type.BUTTON) {

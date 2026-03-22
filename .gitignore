@@ -10,6 +10,9 @@ __pycache__/
 .claude/*
 !.claude/skills/
 build/
+node_modules/
+.pnpm-store/
+.idea/
 
 # Dev config (contains credentials)
 config.dev.yaml
@@ -19,6 +22,9 @@ config.dev.yaml
 
 # Clangd cache
 .cache/
+
+# Frontend build output (rebuilt by pnpm build)
+components/elero_web/frontend/app/dist/
 
 # Mongoose (downloaded at build time by elero_web component)
 components/elero_web/mongoose.c

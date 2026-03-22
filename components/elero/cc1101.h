@@ -152,5 +152,12 @@ constexpr uint8_t CC1101_MARCSTATE_TX_END = 0x14;
 constexpr uint8_t CC1101_MARCSTATE_RXTX_SWITCH = 0x15;
 constexpr uint8_t CC1101_MARCSTATE_TXFIFO_UFLOW = 0x16;
 
+/// True if MARCSTATE is a transient calibration/wind-down state that will
+/// naturally transition to RX without intervention (~700µs).
+constexpr bool marcstate_is_transient(uint8_t marc) {
+  return (marc >= CC1101_MARCSTATE_VCOON_MC && marc <= CC1101_MARCSTATE_ENDCAL) ||
+         marc == CC1101_MARCSTATE_RX_END || marc == CC1101_MARCSTATE_RX_RST;
+}
+
 }  // namespace elero
 }  // namespace esphome

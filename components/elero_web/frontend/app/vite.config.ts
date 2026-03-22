@@ -17,8 +17,8 @@ function eleroGzipHeader(): Plugin {
     name: 'elero-gzip-header',
     apply: 'build',
     closeBundle() {
-      const htmlPath = resolve(__dirname, 'dist/index.html')
-      const headerPath = resolve(__dirname, '../../elero_web_ui.h')
+      const htmlPath = resolve(import.meta.dirname, 'dist/index.html')
+      const headerPath = resolve(import.meta.dirname, '../../elero_web_ui.h')
 
       const html = readFileSync(htmlPath)
       const gz = gzipSync(html, { level: 9 })
@@ -82,7 +82,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@': resolve(__dirname, './src'),
+      '@': resolve(import.meta.dirname, './src'),
       'react': 'preact/compat',
       'react-dom': 'preact/compat',
       'react/jsx-runtime': 'preact/jsx-runtime',

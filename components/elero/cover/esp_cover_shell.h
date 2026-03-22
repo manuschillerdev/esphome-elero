@@ -10,9 +10,19 @@
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/components/cover/cover.h"
+#ifdef USE_SENSOR
+#include "esphome/components/sensor/sensor.h"
+#endif
+#ifdef USE_TEXT_SENSOR
+#include "esphome/components/text_sensor/text_sensor.h"
+#endif
+#ifdef USE_BINARY_SENSOR
+#include "esphome/components/binary_sensor/binary_sensor.h"
+#endif
 #include "../device.h"
 #include "../device_registry.h"
 #include "../cover_sm.h"
+#include "../state_snapshot.h"
 #include "../elero_packet.h"
 
 namespace esphome {
@@ -34,6 +44,21 @@ class EspCoverShell : public cover::Cover, public Component {
   void set_type(uint8_t v) { cfg_.type_byte = v; }
   void set_type2(uint8_t v) { cfg_.type2 = v; }
   void set_supports_tilt(bool v) { cfg_.supports_tilt = v ? 1 : 0; }
+  void set_ha_device_class(uint8_t v) { cfg_.ha_device_class = v; }
+
+  // ── Sensor setters (all published from sync_and_publish_ via snapshot) ──
+#ifdef USE_SENSOR
+  void set_rssi_sensor(sensor::Sensor *s) { rssi_sensor_ = s; }
+#endif
+#ifdef USE_TEXT_SENSOR
+  void set_status_sensor(text_sensor::TextSensor *s) { status_sensor_ = s; }
+  void set_command_source_sensor(text_sensor::TextSensor *s) { command_source_sensor_ = s; }
+  void set_problem_type_sensor(text_sensor::TextSensor *s) { problem_type_sensor_ = s; }
+#endif
+#ifdef USE_BINARY_SENSOR
+  void set_problem_sensor(binary_sensor::BinarySensor *s) { problem_sensor_ = s; }
+#endif
+
   void set_open_duration(uint32_t v) { cfg_.open_duration_ms = v; }
   void set_close_duration(uint32_t v) { cfg_.close_duration_ms = v; }
   void set_poll_interval(uint32_t v) { cfg_.poll_interval_ms = v; }
@@ -77,66 +102,46 @@ class EspCoverShell : public cover::Cover, public Component {
 
  protected:
   void control(const cover::CoverCall &call) override {
-    if (!device_ || !device_->is_cover()) return;
-
-    auto &cover = std::get<CoverDevice>(device_->logic);
-    auto ctx = cover_context(device_->config);
-    uint32_t now = millis();
+    if (!device_ || !device_->is_cover() || !registry_) return;
 
     if (call.get_stop()) {
-      device_->sender.clear_queue();
-      (void) device_->sender.enqueue(packet::command::STOP);
-      cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
-      cover.target_position = -1.0f;
+      registry_->command_cover(*device_, packet::command::STOP);
       sync_and_publish_();
       return;
     }
 
     if (call.get_position().has_value()) {
       float target = *call.get_position();
-      uint8_t cmd;
-      if (target >= 1.0f) {
-        cmd = packet::command::UP;
-        cover.target_position = -1.0f;  // Blind handles endpoint
-      } else if (target <= 0.0f) {
-        cmd = packet::command::DOWN;
-        cover.target_position = -1.0f;  // Blind handles endpoint
+      auto ctx = cover_context(device_->config);
+      if (cover_sm::has_position_tracking(ctx) &&
+          target > cover_sm::POSITION_CLOSED && target < cover_sm::POSITION_OPEN) {
+        registry_->set_cover_position(*device_, target);
       } else {
-        float current = cover_sm::position(cover.state, now, ctx);
-        cmd = (target > current) ? packet::command::UP : packet::command::DOWN;
-        cover.target_position = target;
+        uint8_t cmd = (target >= cover_sm::POSITION_OPEN) ? packet::command::UP : packet::command::DOWN;
+        registry_->command_cover(*device_, cmd);
       }
-      (void) device_->sender.enqueue(cmd);
-      cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
-      if (cmd == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
-      if (cmd == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
-      cover.poll.on_command_sent(now);
       sync_and_publish_();
       return;
     }
 
     if (call.get_tilt().has_value()) {
-      (void) device_->sender.enqueue(packet::command::TILT);
-      cover.state = cover_sm::on_command(cover.state, packet::command::TILT, now, ctx);
-      cover.poll.on_command_sent(now);
+      registry_->command_cover_tilt(*device_);
       sync_and_publish_();
       return;
     }
 
     if (call.get_toggle().has_value()) {
-      // Toggle: if moving → stop; if closed or was closing → open; else close
+      auto &cover = std::get<CoverDevice>(device_->logic);
       uint8_t cmd;
       if (cover_sm::is_moving(cover.state)) {
-        device_->sender.clear_queue();
         cmd = packet::command::STOP;
       } else {
-        float pos = cover_sm::position(cover.state, now, ctx);
+        auto ctx = cover_context(device_->config);
+        float pos = cover_sm::position(cover.state, millis(), ctx);
         bool was_closing = (cover.last_direction == cover_sm::Operation::CLOSING);
-        cmd = (pos <= 0.0f || was_closing) ? packet::command::UP : packet::command::DOWN;
+        cmd = (pos <= cover_sm::POSITION_CLOSED || was_closing) ? packet::command::UP : packet::command::DOWN;
       }
-      (void) device_->sender.enqueue(cmd);
-      cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
-      cover.poll.on_command_sent(now);
+      registry_->command_cover(*device_, cmd);
       sync_and_publish_();
     }
   }
@@ -144,13 +149,13 @@ class EspCoverShell : public cover::Cover, public Component {
  private:
   void sync_and_publish_() {
     if (!device_ || !device_->is_cover()) return;
-    auto &cover = std::get<CoverDevice>(device_->logic);
-    auto ctx = cover_context(device_->config);
-    uint32_t now = millis();
+    auto snap = compute_cover_snapshot(*device_, millis());
 
-    this->position = cover_sm::position(cover.state, now, ctx);
-    auto op = cover_sm::operation(cover.state);
-    switch (op) {
+    this->position = snap.position;
+    if (device_->config.supports_tilt != 0) {
+      this->tilt = snap.tilted ? cover_sm::POSITION_OPEN : cover_sm::POSITION_CLOSED;
+    }
+    switch (snap.operation) {
       case cover_sm::Operation::IDLE:
         this->current_operation = cover::COVER_OPERATION_IDLE; break;
       case cover_sm::Operation::OPENING:
@@ -159,6 +164,18 @@ class EspCoverShell : public cover::Cover, public Component {
         this->current_operation = cover::COVER_OPERATION_CLOSING; break;
     }
     this->publish_state();
+
+#ifdef USE_SENSOR
+    if (rssi_sensor_ != nullptr) rssi_sensor_->publish_state(snap.rssi);
+#endif
+#ifdef USE_TEXT_SENSOR
+    if (status_sensor_ != nullptr) status_sensor_->publish_state(snap.state_string);
+    if (command_source_sensor_ != nullptr) command_source_sensor_->publish_state(snap.command_source);
+    if (problem_type_sensor_ != nullptr) problem_type_sensor_->publish_state(snap.problem_type);
+#endif
+#ifdef USE_BINARY_SENSOR
+    if (problem_sensor_ != nullptr) problem_sensor_->publish_state(snap.is_problem);
+#endif
   }
 
   NvsDeviceConfig cfg_{};
@@ -166,6 +183,18 @@ class EspCoverShell : public cover::Cover, public Component {
   Device *device_{nullptr};
   uint32_t last_published_ms_{0};
   int slot_index_{-1};  ///< -1 = native mode (use cfg_), >=0 = NVS mode (bind to registry slot)
+
+#ifdef USE_SENSOR
+  sensor::Sensor *rssi_sensor_{nullptr};
+#endif
+#ifdef USE_TEXT_SENSOR
+  text_sensor::TextSensor *status_sensor_{nullptr};
+  text_sensor::TextSensor *command_source_sensor_{nullptr};
+  text_sensor::TextSensor *problem_type_sensor_{nullptr};
+#endif
+#ifdef USE_BINARY_SENSOR
+  binary_sensor::BinarySensor *problem_sensor_{nullptr};
+#endif
 };
 
 }  // namespace elero

@@ -274,39 +274,23 @@ cover:
 | `command_check` | Hex (0x00-0xFF) | Nein | `0x00` | Befehlscode: Status abfragen |
 | `command_tilt` | Hex (0x00-0xFF) | Nein | `0x24` | Befehlscode: Tilt/Kipp |
 
-### Plattform `sensor` (RSSI Signalstärke)
+### Automatische Sensoren (`auto_sensors`)
 
-Zeigt die Empfangsstärke (RSSI) des letzten empfangenen Pakets eines bestimmten Rollladens in dBm.
+Jeder Cover- und Light-Block erstellt automatisch Diagnose-Sensoren, wenn `auto_sensors: true` gesetzt ist (Standard). Separate `sensor:` / `text_sensor:` / `binary_sensor:` Plattform-Blöcke sind nicht mehr nötig.
 
-```yaml
-sensor:
-  - platform: elero
-    dst_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-```
+Automatisch erstellte Sensoren pro Gerät:
 
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `dst_address` | Hex (24-bit) | Ja | - | Zieladresse des Rollladens |
-| `name` | String | Ja | - | Name in Home Assistant |
+| Sensor | Typ | Beschreibung |
+|---|---|---|
+| RSSI | `sensor` | Empfangsstärke in dBm |
+| Status | `text_sensor` | Letzter Blind-Status als Text |
+| Problem | `binary_sensor` | `true` bei Blocking/Overheated/Timeout |
+| Befehlsquelle | `text_sensor` | Letzte Befehlsquelle (HA, Remote, etc.) |
+| Problemtyp | `text_sensor` | Art des Problems (blocking, overheated, timeout) |
 
-### Plattform `text_sensor` (Status-Text)
+Um die automatische Sensor-Erstellung zu deaktivieren, setze `auto_sensors: false` im Cover-/Light-Block.
 
-Zeigt den aktuellen Blind-Status als lesbaren Text.
-
-```yaml
-text_sensor:
-  - platform: elero
-    dst_address: 0xa831e5
-    name: "Schlafzimmer Status"
-```
-
-Mögliche Werte: `top`, `bottom`, `intermediate`, `tilt`, `top_tilt`, `bottom_tilt`, `moving_up`, `moving_down`, `start_moving_up`, `start_moving_down`, `stopped`, `blocking`, `overheated`, `timeout`, `on`, `unknown`
-
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `dst_address` | Hex (24-bit) | Ja | - | Zieladresse des Rollladens |
-| `name` | String | Ja | - | Name in Home Assistant |
+> **Migration:** Eigenständige Sensor-Plattformen (`sensor: platform: elero`, `text_sensor: platform: elero`) wurden entfernt. Sensoren werden jetzt automatisch von Cover-/Light-Entities über `auto_sensors: true` erstellt.
 
 ### Plattform `button` (RF-Scan)
 
@@ -459,18 +443,11 @@ light:
 
 ## Diagnose-Sensoren
 
-### RSSI-Sensor
+Diagnose-Sensoren (RSSI, Status, Problem, Befehlsquelle, Problemtyp) werden automatisch für jeden Cover- und Light-Block erstellt, wenn `auto_sensors: true` gesetzt ist (Standard). Separate Sensor-Plattformen sind nicht mehr nötig.
 
-Überwacht die Signalstärke der Kommunikation:
+> **Migration:** Eigenständige Sensor-Plattformen (`sensor: platform: elero`, `text_sensor: platform: elero`) wurden entfernt. Sensoren werden jetzt automatisch von Cover-/Light-Entities über `auto_sensors: true` erstellt.
 
-```yaml
-sensor:
-  - platform: elero
-    dst_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-```
-
-**Richtwerte:**
+**RSSI-Richtwerte:**
 | RSSI (dBm) | Bewertung |
 |---|---|
 | > -50 | Ausgezeichnet |
@@ -478,18 +455,7 @@ sensor:
 | -70 bis -85 | Akzeptabel |
 | < -85 | Schwach / unzuverlässig |
 
-### Status-Text-Sensor
-
-Zeigt den letzten empfangenen Blind-Status als Text:
-
-```yaml
-text_sensor:
-  - platform: elero
-    dst_address: 0xa831e5
-    name: "Schlafzimmer Status"
-```
-
-Kann für Home-Assistant-Automationen genutzt werden:
+Die Status-Text-Sensoren können für Home-Assistant-Automationen genutzt werden:
 
 ```yaml
 # Home Assistant Automation Beispiel

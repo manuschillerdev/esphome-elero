@@ -3,8 +3,7 @@
 #include "../elero/elero_packet.h"
 #include "../elero/elero_strings.h"
 #include "../elero/nvs_config.h"
-#include "../elero/cover_sm.h"
-#include "../elero/light_sm.h"
+#include "../elero/state_snapshot.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include "esphome/components/logger/logger.h"
@@ -60,11 +59,6 @@ void EleroWebServer::setup() {
     return;
   }
 
-  // Register callback with hub for RF packet notifications
-  this->parent_->set_rf_packet_callback([this](const RfPacketInfo &pkt) {
-    this->on_rf_packet(pkt);
-  });
-
   // Register as log listener to forward logs to WebSocket clients
   if (logger::global_logger != nullptr) {
     logger::global_logger->add_log_listener(this);
@@ -104,6 +98,64 @@ void EleroWebServer::dump_config() {
   ESP_LOGCONFIG(TAG, "  Port: %d", this->port_);
   ESP_LOGCONFIG(TAG, "  URL: /elero");
   ESP_LOGCONFIG(TAG, "  WebSocket: /elero/ws");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OutputAdapter — Device CRUD Events
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void EleroWebServer::on_device_added(const Device &dev) {
+  if (this->ws_clients_.empty() || !this->enabled_)
+    return;
+  this->ws_broadcast("device_upserted", this->build_device_upserted_json_(dev));
+}
+
+void EleroWebServer::on_config_changed(const Device &dev) {
+  if (this->ws_clients_.empty() || !this->enabled_)
+    return;
+  this->ws_broadcast("device_upserted", this->build_device_upserted_json_(dev));
+}
+
+void EleroWebServer::on_device_removed(const Device &dev) {
+  if (this->ws_clients_.empty() || !this->enabled_)
+    return;
+  std::string payload = json::build_json([&](JsonObject root) {
+    root["address"] = hex_str(dev.config.dst_address);
+    root["device_type"] = device_type_str(dev.config.type);
+  });
+  this->ws_broadcast("device_removed", payload);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// State Changed (OutputAdapter — optimistic updates)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void EleroWebServer::on_state_changed(const Device &dev) {
+  if (this->ws_clients_.empty() || !this->enabled_)
+    return;
+
+  uint32_t now = millis();
+  std::string payload;
+
+  if (dev.is_cover()) {
+    auto snap = compute_cover_snapshot(dev, now);
+    payload = json::build_json([&](JsonObject root) {
+      root["address"] = hex_str(dev.config.dst_address);
+      root["device_type"] = device_type_str(dev.config.type);
+      snap.to_json(root);
+    });
+  } else if (dev.is_light()) {
+    auto snap = compute_light_snapshot(dev, now);
+    payload = json::build_json([&](JsonObject root) {
+      root["address"] = hex_str(dev.config.dst_address);
+      root["device_type"] = device_type_str(dev.config.type);
+      snap.to_json(root);
+    });
+  } else {
+    return;
+  }
+
+  this->ws_broadcast("state_changed", payload);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -267,28 +319,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
         return true;
       }
 
-      // Transition state machine and enqueue command
-      if (dev->is_cover()) {
-        auto &cover = std::get<CoverDevice>(dev->logic);
-        auto ctx = cover_context(dev->config);
-        uint32_t now_ms = millis();
-        if (cmd_byte == packet::command::STOP) {
-          dev->sender.clear_queue();
-        }
-        cover.state = cover_sm::on_command(cover.state, cmd_byte, now_ms, ctx);
-        (void) dev->sender.enqueue(cmd_byte);
-        cover.poll.on_command_sent(now_ms);
-      } else if (dev->is_light()) {
-        auto &light_dev = std::get<LightDevice>(dev->logic);
-        auto ctx = light_context(dev->config);
-        uint32_t now_ms = millis();
-        if (strcmp(action_str, action::OFF) == 0) {
-          light_dev.state = light_sm::on_turn_off(light_dev.state);
-        } else if (strcmp(action_str, action::ON) == 0) {
-          light_dev.state = light_sm::on_turn_on(light_dev.state, now_ms, ctx);
-        }
-        (void) dev->sender.enqueue(cmd_byte);
-      }
+      this->dispatch_device_command_(*dev, cmd_byte);
       return true;
     }
 
@@ -311,8 +342,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       if (registry != nullptr) {
         Device *dev = registry->find(dst_addr);
         if (dev != nullptr) {
-          (void) dev->sender.enqueue(raw_command);
-          ESP_LOGI(TAG, "Entity TX to 0x%06x cmd=0x%02x", dst_addr, raw_command);
+          this->dispatch_device_command_(*dev, raw_command);
           return true;
         }
       }
@@ -368,16 +398,25 @@ void EleroWebServer::ws_cleanup() {
 
 std::string EleroWebServer::build_config_json() {
   return json::build_json([this](JsonObject root) {
-    root["device"] = App.get_name();
-    root["version"] = this->parent_->get_version();
+    auto *registry = this->parent_->get_registry();
+    bool has_nvs = registry != nullptr && registry->is_nvs_enabled();
 
-    JsonObject freq = root["freq"].to<JsonObject>();
+    // hub — gateway identity and operating mode
+    JsonObject hub = root["hub"].to<JsonObject>();
+    hub["device"] = App.get_name();
+    hub["version"] = this->parent_->get_version();
+    hub["mode"] = has_nvs ? "mqtt" : "native";
+    hub["crud"] = has_nvs;
+
+    // radio — RF hardware configuration and capabilities
+    auto *drv = this->parent_->get_driver();
+    JsonObject radio = root["radio"].to<JsonObject>();
+    radio["chipset"] = drv ? drv->radio_name() : "unknown";
+    radio["rx_sensitivity"] = drv ? drv->rx_sensitivity_dbm() : -104;
+    JsonObject freq = radio["freq"].to<JsonObject>();
     freq["freq2"] = hex_str8(this->parent_->get_freq2());
     freq["freq1"] = hex_str8(this->parent_->get_freq1());
     freq["freq0"] = hex_str8(this->parent_->get_freq0());
-
-    auto *registry = this->parent_->get_registry();
-    bool has_nvs = registry != nullptr && registry->is_nvs_enabled();
 
     JsonArray blinds = root["blinds"].to<JsonArray>();
     JsonArray lights_arr = root["lights"].to<JsonArray>();
@@ -388,8 +427,7 @@ std::string EleroWebServer::build_config_json() {
       uint32_t now = millis();
 
       registry->for_each_active(DeviceType::COVER, [&](const Device &dev) {
-        auto &cover = std::get<CoverDevice>(dev.logic);
-        auto ctx = cover_context(dev.config);
+        auto snap = compute_cover_snapshot(dev, now);
         JsonObject obj = blinds.add<JsonObject>();
         obj["address"] = hex_str(dev.config.dst_address);
         obj["name"] = dev.config.name;
@@ -401,16 +439,12 @@ std::string EleroWebServer::build_config_json() {
         obj["supports_tilt"] = dev.config.supports_tilt != 0;
         obj["enabled"] = dev.config.is_enabled();
         obj["updated_at"] = dev.config.updated_at;
-        obj["position"] = cover_sm::position(cover.state, now, ctx);
-        obj["state"] = hex_str8(dev.rf.last_state_raw);
-        obj["rssi"] = round_rssi(dev.rf.last_rssi);
-        obj["last_seen"] = dev.rf.last_seen_ms;
+        snap.to_json(obj);
         remote_addrs.insert(dev.config.src_address);
       });
 
       registry->for_each_active(DeviceType::LIGHT, [&](const Device &dev) {
-        auto &light = std::get<LightDevice>(dev.logic);
-        auto ctx = light_context(dev.config);
+        auto snap = compute_light_snapshot(dev, now);
         JsonObject obj = lights_arr.add<JsonObject>();
         obj["address"] = hex_str(dev.config.dst_address);
         obj["name"] = dev.config.name;
@@ -419,11 +453,7 @@ std::string EleroWebServer::build_config_json() {
         obj["dim_ms"] = dev.config.dim_duration_ms;
         obj["enabled"] = dev.config.is_enabled();
         obj["updated_at"] = dev.config.updated_at;
-        obj["brightness"] = light_sm::brightness(light.state, now, ctx);
-        obj["is_on"] = light_sm::is_on(light.state);
-        obj["state"] = hex_str8(dev.rf.last_state_raw);
-        obj["rssi"] = round_rssi(dev.rf.last_rssi);
-        obj["last_seen"] = dev.rf.last_seen_ms;
+        snap.to_json(obj);
         remote_addrs.insert(dev.config.src_address);
       });
 
@@ -444,8 +474,7 @@ std::string EleroWebServer::build_config_json() {
       }
     }
 
-    root["mode"] = has_nvs ? "mqtt" : "native";
-    root["crud"] = has_nvs;
+    // mode and crud are in hub object above
   });
 }
 
@@ -476,9 +505,50 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
   });
 }
 
+std::string EleroWebServer::build_device_upserted_json_(const Device &dev) {
+  return json::build_json([&](JsonObject root) {
+    root["address"] = hex_str(dev.config.dst_address);
+    root["device_type"] = device_type_str(dev.config.type);
+    root["name"] = dev.config.name;
+    root["enabled"] = dev.config.is_enabled();
+    root["updated_at"] = dev.config.updated_at;
+
+    if (!dev.config.is_remote()) {
+      root["channel"] = dev.config.channel;
+      root["remote"] = hex_str(dev.config.src_address);
+    }
+    if (dev.config.is_cover()) {
+      root["open_ms"] = dev.config.open_duration_ms;
+      root["close_ms"] = dev.config.close_duration_ms;
+      root["poll_ms"] = dev.config.poll_interval_ms;
+      root["supports_tilt"] = dev.config.supports_tilt != 0;
+    }
+    if (dev.config.is_light()) {
+      root["dim_ms"] = dev.config.dim_duration_ms;
+    }
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Device Config Parser (shared by save/update)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+void EleroWebServer::dispatch_device_command_(Device &dev, uint8_t cmd_byte) {
+  auto *registry = this->parent_->get_registry();
+  if (registry == nullptr) {
+    ESP_LOGW(TAG, "No registry for command dispatch");
+    return;
+  }
+
+  if (dev.is_cover()) {
+    registry->command_cover(dev, cmd_byte);
+  } else if (dev.is_light()) {
+    registry->command_light(dev, cmd_byte);
+  } else {
+    (void) dev.sender.enqueue(cmd_byte);
+  }
+  ESP_LOGI(TAG, "Device TX to 0x%06x cmd=0x%02x", dev.config.dst_address, cmd_byte);
+}
 
 bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error) {
   if (!parse_device_type(root["device_type"] | "", config.type)) {

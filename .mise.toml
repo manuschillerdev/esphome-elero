@@ -18,6 +18,7 @@ cd components/elero_web/frontend/app && pnpm install
 
 [tasks.compile]
 description = "Compile ESPHome firmware (dev config)"
+depends = ["frontend:build"]
 run = "uv run esphome compile config.dev.yaml"
 
 [tasks."compile:all"]
@@ -76,11 +77,11 @@ run = "pnpm build"
 
 [tasks.build]
 description = "Full build: install deps, build frontend, compile firmware"
-depends = ["setup", "frontend:build", "compile"]
+depends = ["setup", "compile"]
 
 [tasks.all]
 description = "Full build + lint + unit tests"
-depends = ["setup", "frontend:build", "lint", "test", "compile"]
+depends = ["setup", "lint", "test", "compile"]
 
 [tasks.deploy]
 description = "Full build from scratch, then flash via USB"
@@ -93,6 +94,9 @@ depends = ["build"]
 run = "uv run esphome run config.dev.yaml --device {{vars.device_ip}}"
 
 [tasks."deploy:erase"]
-description = "Erase flash, then full build and flash via USB"
+description = "Clean build cache, erase flash, then full build and flash via USB"
 depends = ["erase", "build"]
-run = "uv run esphome run config.dev.yaml --device {{vars.usb_port}}"
+run = """
+uv run esphome clean config.dev.yaml
+uv run esphome run config.dev.yaml --device {{vars.usb_port}}
+"""

@@ -487,6 +487,135 @@ TEST(CoverStateMapping, MapState_MovingPositionUnchanged) {
 }
 
 // ============================================================================
+// Button Packet Building Tests (0x44 type)
+// ============================================================================
+
+TEST(ButtonPacketBuilding, BuildButtonPacket_HeaderFields) {
+  ButtonTxParams params;
+  params.counter = 7;
+  params.src_addr = 0x4FCA30;
+  params.channel = 6;
+  params.command = command::DOWN;
+
+  uint8_t buf[28] = {0};
+  size_t len = build_button_packet(params, buf);
+
+  EXPECT_EQ(len, 28u);  // MSG_LENGTH (27) + 1
+  EXPECT_EQ(buf[pkt_offset::LENGTH], button::MSG_LENGTH);  // 0x1B = 27
+  EXPECT_EQ(buf[pkt_offset::COUNTER], 7);
+  EXPECT_EQ(buf[pkt_offset::TYPE], msg_type::BUTTON);  // 0x44
+  EXPECT_EQ(buf[pkt_offset::TYPE2], button::TYPE2);     // 0x10
+  EXPECT_EQ(buf[pkt_offset::HOP], button::HOP);         // 0x00
+  EXPECT_EQ(buf[pkt_offset::SYS], TX_SYS_ADDR);         // 0x01
+  EXPECT_EQ(buf[pkt_offset::CHANNEL], 6);
+}
+
+TEST(ButtonPacketBuilding, BuildButtonPacket_Addresses) {
+  ButtonTxParams params;
+  params.src_addr = 0x4FCA30;
+
+  uint8_t buf[28] = {0};
+  build_button_packet(params, buf);
+
+  // All three address fields should be src_addr
+  EXPECT_EQ(extract_addr(&buf[pkt_offset::SRC_ADDR]), 0x4FCA30u);
+  EXPECT_EQ(extract_addr(&buf[pkt_offset::BWD_ADDR]), 0x4FCA30u);
+  EXPECT_EQ(extract_addr(&buf[pkt_offset::FWD_ADDR]), 0x4FCA30u);
+}
+
+TEST(ButtonPacketBuilding, BuildButtonPacket_ChannelDest) {
+  // Button packets use channel in the destination field, not a blind address
+  ButtonTxParams params;
+  params.channel = 6;
+
+  uint8_t buf[28] = {0};
+  build_button_packet(params, buf);
+
+  EXPECT_EQ(buf[pkt_offset::NUM_DESTS], TX_DEST_COUNT);
+  EXPECT_EQ(buf[btn_offset::CHANNEL_DEST], 6);
+  EXPECT_EQ(buf[btn_offset::ZERO_BYTE], 0x00);
+  EXPECT_EQ(buf[btn_offset::FIXED_03], 0x03);
+}
+
+TEST(ButtonPacketBuilding, BuildButtonPacket_Channel1MapsTo0x11) {
+  // Channel 1 has a special mapping to 0x11 in button packets
+  ButtonTxParams params;
+  params.channel = 1;
+
+  uint8_t buf[28] = {0};
+  build_button_packet(params, buf);
+
+  EXPECT_EQ(buf[pkt_offset::CHANNEL], 0x11);
+  EXPECT_EQ(buf[btn_offset::CHANNEL_DEST], 0x11);
+}
+
+TEST(ButtonPacketBuilding, BuildButtonPacket_PayloadRoundtrip) {
+  ButtonTxParams params;
+  params.counter = 3;
+  params.command = command::UP;  // 0x20
+
+  uint8_t buf[28] = {0};
+  build_button_packet(params, buf);
+
+  // Decrypt the payload to verify command is recoverable
+  uint8_t payload[8];
+  memcpy(payload, &buf[btn_offset::CRYPTO_CODE], 8);
+  esphome::elero::protocol::msg_decode(payload);
+
+  EXPECT_EQ(payload[payload_offset::COMMAND], command::UP);
+}
+
+TEST(ButtonPacketBuilding, BuildButtonPacket_ReleaseCommand) {
+  // RELEASE (0x00) is sent to stop dimming
+  ButtonTxParams params;
+  params.counter = 5;
+  params.command = button::RELEASE;
+
+  uint8_t buf[28] = {0};
+  build_button_packet(params, buf);
+
+  uint8_t payload[8];
+  memcpy(payload, &buf[btn_offset::CRYPTO_CODE], 8);
+  esphome::elero::protocol::msg_decode(payload);
+
+  EXPECT_EQ(payload[payload_offset::COMMAND], button::RELEASE);
+}
+
+TEST(ButtonPacketBuilding, BuildButtonPacket_ShorterThanTargeted) {
+  // Button packets (28 bytes total) are shorter than targeted (30 bytes)
+  ButtonTxParams btn_params;
+  btn_params.counter = 1;
+  btn_params.command = command::DOWN;
+
+  TxParams tx_params;
+  tx_params.counter = 1;
+  tx_params.command = command::DOWN;
+
+  uint8_t btn_buf[30] = {0};
+  uint8_t tx_buf[30] = {0};
+
+  size_t btn_len = build_button_packet(btn_params, btn_buf);
+  size_t tx_len = build_tx_packet(tx_params, tx_buf);
+
+  EXPECT_EQ(btn_len, 28u);
+  EXPECT_EQ(tx_len, 30u);
+  EXPECT_LT(btn_len, tx_len);
+}
+
+// ============================================================================
+// Button Constants Tests
+// ============================================================================
+
+TEST(ButtonConstants, Values) {
+  EXPECT_EQ(button::RELEASE, 0x00);
+  EXPECT_EQ(button::PACKETS, 3);
+  EXPECT_EQ(button::INTER_PACKET_MS, 10u);
+  EXPECT_EQ(button::MSG_LENGTH, 0x1B);
+  EXPECT_EQ(button::TYPE2, 0x10);
+  EXPECT_EQ(button::HOP, 0x00);
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 

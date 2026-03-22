@@ -62,6 +62,8 @@ channels:
         $ref: "#/components/messages/deviceUpsertedEvent"
       deviceRemovedEvent:
         $ref: "#/components/messages/deviceRemovedEvent"
+      stateChangedEvent:
+        $ref: "#/components/messages/stateChangedEvent"
       errorEvent:
         $ref: "#/components/messages/errorEvent"
       cmdMessage:
@@ -109,6 +111,19 @@ operations:
     description: Broadcast when a device is removed from NVS (CRUD modes only).
     messages:
       - $ref: "#/channels/eleroWs/messages/deviceRemovedEvent"
+
+  receiveStateChanged:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive device state change (optimistic update)
+    description: |
+      Broadcast when a device's state changes — from user commands (optimistic),
+      RF status responses (confirmed), or timeouts (recovery). Contains a snapshot
+      of the device's derived state computed from the FSM at the moment of change.
+      Enables immediate UI feedback on command, auto-healed by subsequent RF responses.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/stateChangedEvent"
 
   receiveError:
     action: receive
@@ -190,6 +205,14 @@ components:
       contentType: application/json
       payload:
         $ref: "#/components/schemas/CrudEventEnvelope"
+
+    stateChangedEvent:
+      name: state_changed
+      title: State Changed Event
+      summary: Device state snapshot (optimistic update or RF-confirmed)
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/StateChangedEnvelope"
 
     errorEvent:
       name: error
@@ -280,6 +303,17 @@ components:
         data:
           $ref: "#/components/schemas/CrudEventData"
 
+    StateChangedEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: state_changed
+        data:
+          $ref: "#/components/schemas/StateChangedData"
+
     ErrorEventEnvelope:
       type: object
       additionalProperties: false
@@ -296,18 +330,12 @@ components:
     ConfigData:
       type: object
       additionalProperties: false
-      required: [device, version, freq, blinds, lights, remotes, mode, crud]
+      required: [hub, radio, blinds, lights, remotes]
       properties:
-        device:
-          type: string
-          description: ESPHome device name (from `esphome.name` in YAML)
-          examples: ["elero-gateway"]
-        version:
-          type: string
-          description: Component version string
-          examples: ["1.2.3"]
-        freq:
-          $ref: "#/components/schemas/FreqConfig"
+        hub:
+          $ref: "#/components/schemas/HubConfig"
+        radio:
+          $ref: "#/components/schemas/RadioConfig"
         blinds:
           type: array
           description: Configured cover entities
@@ -323,17 +351,49 @@ components:
           description: Known remote controls. In native mode, derived from cover/light src_address. In NVS modes, includes auto-discovered remotes.
           items:
             $ref: "#/components/schemas/RemoteConfig"
+
+    HubConfig:
+      type: object
+      additionalProperties: false
+      required: [device, version, mode, crud]
+      description: Gateway identity and operating mode
+      properties:
+        device:
+          type: string
+          description: ESPHome device name (from `esphome.name` in YAML)
+          examples: ["elero-gateway"]
+        version:
+          type: string
+          description: Component version string
+          examples: ["1.2.3"]
         mode:
           $ref: "#/components/schemas/HubMode"
         crud:
           type: boolean
           description: Whether CRUD operations (upsert_device, remove_device) are supported
 
+    RadioConfig:
+      type: object
+      additionalProperties: false
+      required: [chipset, rx_sensitivity, freq]
+      description: RF radio hardware configuration and capabilities
+      properties:
+        chipset:
+          type: string
+          description: Radio chip identifier
+          examples: ["cc1101", "sx1262"]
+        rx_sensitivity:
+          type: integer
+          description: Receiver sensitivity in dBm (e.g., -104 for CC1101, -117 for SX1262). Used to derive signal strength thresholds.
+          examples: [-104, -117]
+        freq:
+          $ref: "#/components/schemas/FreqConfig"
+
     FreqConfig:
       type: object
       additionalProperties: false
       required: [freq2, freq1, freq0]
-      description: CC1101 frequency register values
+      description: Frequency register values (chip-specific encoding)
       properties:
         freq2:
           type: string
@@ -636,6 +696,71 @@ components:
         device_type:
           $ref: "#/components/schemas/DeviceType"
 
+    StateChangedData:
+      type: object
+      additionalProperties: false
+      required: [address, device_type]
+      description: |
+        Snapshot of a device's derived state at the moment of change.
+        Sent on user commands (optimistic), RF status responses (confirmed),
+        FSM timeouts (recovery), and throttled position updates during movement.
+        Fields vary by device_type — covers include position/ha_state/tilted/device_class,
+        lights include is_on/brightness.
+      properties:
+        address:
+          type: string
+          description: 3-byte device address (hex string)
+          examples: ["0xa831e5"]
+        device_type:
+          $ref: "#/components/schemas/DeviceType"
+        # Cover fields (device_type = "cover")
+        position:
+          type: number
+          format: float
+          description: Cover position (0.0 = closed, 1.0 = open). Cover only.
+        ha_state:
+          type: string
+          enum: [open, closed, opening, closing, stopped]
+          description: HA-compatible cover state. Cover only.
+        tilted:
+          type: boolean
+          description: Whether the cover is tilted. Cover only.
+        device_class:
+          type: string
+          description: HA device class (shutter, blind, awning, etc.). Cover only.
+          examples: ["shutter"]
+        # Light fields (device_type = "light")
+        is_on:
+          type: boolean
+          description: Whether the light is on. Light only.
+        brightness:
+          type: number
+          format: float
+          description: Light brightness (0.0–1.0). Light only.
+        # Shared fields (all device types)
+        is_problem:
+          type: boolean
+          description: Whether the device is in a problem state (blocking, overheated, timeout)
+        problem_type:
+          type: string
+          enum: [none, blocking, overheated, timeout]
+          description: Problem classification or "none"
+        rssi:
+          type: number
+          format: float
+          description: Last RSSI in dBm
+          examples: [-65.5]
+        state:
+          $ref: "#/components/schemas/RfStateName"
+        command_source:
+          type: string
+          enum: [unknown, hub, remote]
+          description: Who issued the last command
+        last_seen:
+          type: integer
+          description: Timestamp (millis()) of last RF packet from this device
+          examples: [1234567]
+
     ErrorData:
       type: object
       additionalProperties: false
@@ -820,3 +945,31 @@ components:
       type: string
       enum: [cover, light, remote]
       description: Type of device (cover, light, or remote control)
+
+    RfStateName:
+      type: string
+      enum:
+        - unknown
+        - top
+        - bottom
+        - intermediate
+        - tilt
+        - blocking
+        - overheated
+        - timeout
+        - start_moving_up
+        - start_moving_down
+        - moving_up
+        - moving_down
+        - stopped
+        - top_tilt
+        - bottom_tilt
+        - light_on
+      description: |
+        RF state name as returned by elero_state_to_string().
+        Maps 1:1 to the protocol state bytes:
+          0x00=unknown, 0x01=top, 0x02=bottom, 0x03=intermediate,
+          0x04=tilt, 0x05=blocking, 0x06=overheated, 0x07=timeout,
+          0x08=start_moving_up, 0x09=start_moving_down, 0x0a=moving_up,
+          0x0b=moving_down, 0x0d=stopped, 0x0e=top_tilt,
+          0x0f=bottom_tilt, 0x10=light_on

@@ -16,20 +16,28 @@
 namespace esphome::elero::cover_sm {
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// POSITION CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+constexpr float POSITION_CLOSED = 0.0f;   ///< Fully closed (bottom)
+constexpr float POSITION_OPEN = 1.0f;     ///< Fully open (top)
+constexpr float NO_TARGET = -1.0f;        ///< No intermediate target position
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // STATES — each carries exactly its own data
 // ═══════════════════════════════════════════════════════════════════════════════
 
 struct Idle {
-    float position{0.0f};  ///< Known position (0.0 = closed, 1.0 = open)
+    float position{POSITION_CLOSED};  ///< Known position (0.0 = closed, 1.0 = open)
 };
 
 struct Opening {
-    float    start_position{0.0f};
+    float    start_position{POSITION_CLOSED};
     uint32_t start_ms{0};
 };
 
 struct Closing {
-    float    start_position{0.0f};
+    float    start_position{POSITION_CLOSED};
     uint32_t start_ms{0};
 };
 
@@ -37,7 +45,7 @@ struct Closing {
 /// blocked for post_stop_cooldown_ms after an explicit STOP.
 /// User commands override the cooldown.
 struct Stopping {
-    float    position{0.0f};  ///< Frozen at moment of stop
+    float    position{POSITION_CLOSED};  ///< Frozen at moment of stop
     uint32_t stop_ms{0};
 };
 

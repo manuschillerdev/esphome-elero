@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import cover, sensor, text_sensor
+from esphome.components import binary_sensor, cover, sensor, text_sensor
 from esphome.const import (
     CONF_CHANNEL,
     CONF_CLOSE_DURATION,
@@ -15,7 +15,7 @@ from .. import CONF_ELERO_ID, elero, elero_ns
 
 DEPENDENCIES = ["elero"]
 CODEOWNERS = ["@andyboeh"]
-AUTO_LOAD = ["sensor", "text_sensor"]
+AUTO_LOAD = ["binary_sensor", "sensor", "text_sensor"]
 
 CONF_DST_ADDRESS = "dst_address"
 CONF_SRC_ADDRESS = "src_address"
@@ -34,6 +34,10 @@ CONF_SUPPORTS_TILT = "supports_tilt"
 CONF_AUTO_SENSORS = "auto_sensors"
 CONF_RSSI_SENSOR = "rssi_sensor"
 CONF_STATUS_SENSOR = "status_sensor"
+CONF_PROBLEM_SENSOR = "problem_sensor"
+CONF_COMMAND_SOURCE_SENSOR = "command_source_sensor"
+CONF_PROBLEM_TYPE_SENSOR = "problem_type_sensor"
+CONF_DEVICE_CLASS = "device_class"
 
 # New architecture: EspCoverShell replaces EleroCover
 EspCoverShell = elero_ns.class_("EspCoverShell", cover.Cover, cg.Component)
@@ -45,6 +49,18 @@ _RSSI_SENSOR_SCHEMA = sensor.sensor_schema(
     state_class=STATE_CLASS_MEASUREMENT,
 )
 _STATUS_SENSOR_SCHEMA = text_sensor.text_sensor_schema()
+_PROBLEM_SENSOR_SCHEMA = binary_sensor.binary_sensor_schema(
+    device_class="problem",
+)
+_COMMAND_SOURCE_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
+    entity_category="diagnostic",
+    icon="mdi:remote",
+)
+_PROBLEM_TYPE_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
+    entity_category="diagnostic",
+    icon="mdi:alert-circle-outline",
+)
+
 
 
 def poll_interval(value):
@@ -83,6 +99,12 @@ def _auto_sensor_validator(config):
         result[CONF_RSSI_SENSOR] = _RSSI_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} RSSI"})
     if CONF_STATUS_SENSOR not in result:
         result[CONF_STATUS_SENSOR] = _STATUS_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Status"})
+    if CONF_PROBLEM_SENSOR not in result:
+        result[CONF_PROBLEM_SENSOR] = _PROBLEM_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Problem"})
+    if CONF_COMMAND_SOURCE_SENSOR not in result:
+        result[CONF_COMMAND_SOURCE_SENSOR] = _COMMAND_SOURCE_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Command Source"})
+    if CONF_PROBLEM_TYPE_SENSOR not in result:
+        result[CONF_PROBLEM_TYPE_SENSOR] = _PROBLEM_TYPE_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Problem Type"})
     return result
 
 
@@ -109,9 +131,15 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_COMMAND_CHECK, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_COMMAND_TILT, default=0x24): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_SUPPORTS_TILT, default=False): cv.boolean,
+            cv.Optional(CONF_DEVICE_CLASS, default="shutter"): cv.one_of(
+                "shutter", "blind", "awning", "curtain", "shade", "garage", lower=True
+            ),
             cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
             cv.Optional(CONF_RSSI_SENSOR): _RSSI_SENSOR_SCHEMA,
             cv.Optional(CONF_STATUS_SENSOR): _STATUS_SENSOR_SCHEMA,
+            cv.Optional(CONF_PROBLEM_SENSOR): _PROBLEM_SENSOR_SCHEMA,
+            cv.Optional(CONF_COMMAND_SOURCE_SENSOR): _COMMAND_SOURCE_SENSOR_SCHEMA,
+            cv.Optional(CONF_PROBLEM_TYPE_SENSOR): _PROBLEM_TYPE_SENSOR_SCHEMA,
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -143,14 +171,33 @@ async def to_code(config):
     cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
     cg.add(var.set_supports_tilt(config[CONF_SUPPORTS_TILT]))
 
-    addr = config[CONF_DST_ADDRESS]
+    # Device class for HA — values must match HaCoverClass enum in device_type.h
+    device_class_map = {
+        "shutter": 0, "blind": 1, "awning": 2,
+        "curtain": 3, "shade": 4, "garage": 5,
+    }
+    cg.add(var.set_ha_device_class(device_class_map.get(config[CONF_DEVICE_CLASS], 0)))
 
-    # RSSI sensor — still registered with hub (legacy dispatch handles it)
+    # All sensors registered with the shell (published from snapshot in sync_and_publish_)
     if CONF_RSSI_SENSOR in config:
         rssi_var = await sensor.new_sensor(config[CONF_RSSI_SENSOR])
-        cg.add(parent.register_rssi_sensor(addr, rssi_var))
+        cg.add(var.set_rssi_sensor(rssi_var))
 
-    # Status text sensor — still registered with hub
     if CONF_STATUS_SENSOR in config:
         status_var = await text_sensor.new_text_sensor(config[CONF_STATUS_SENSOR])
-        cg.add(parent.register_text_sensor(addr, status_var))
+        cg.add(var.set_status_sensor(status_var))
+
+    if CONF_PROBLEM_SENSOR in config:
+        problem_var = await binary_sensor.new_binary_sensor(config[CONF_PROBLEM_SENSOR])
+        cg.add(var.set_problem_sensor(problem_var))
+
+    if CONF_COMMAND_SOURCE_SENSOR in config:
+        cs_var = await text_sensor.new_text_sensor(config[CONF_COMMAND_SOURCE_SENSOR])
+        cg.add(var.set_command_source_sensor(cs_var))
+
+    if CONF_PROBLEM_TYPE_SENSOR in config:
+        pt_var = await text_sensor.new_text_sensor(config[CONF_PROBLEM_TYPE_SENSOR])
+        cg.add(var.set_problem_type_sensor(pt_var))
+
+
+

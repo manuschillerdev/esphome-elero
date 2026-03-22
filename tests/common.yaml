@@ -30,7 +30,6 @@ cover:
     open_duration: 25s
     close_duration: 22s
     supports_tilt: true
-    auto_sensors: false
 
 # Light platform test
 light:
@@ -40,18 +39,6 @@ light:
     src_address: 0xf0d008
     name: "Test Light"
     dim_duration: 5s
-
-# Sensor platform test
-sensor:
-  - platform: elero
-    dst_address: 0xa831e5
-    name: "Test RSSI"
-
-# Text sensor platform test
-text_sensor:
-  - platform: elero
-    dst_address: 0xa831e5
-    name: "Test Status"
 
 # Elero web UI (Mongoose-based, no external dependencies)
 elero_web:

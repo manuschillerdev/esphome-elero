@@ -1,9 +1,9 @@
 import { Lightbulb, Blinds } from './icons'
 import { FilterBar, type FilterOption } from './ui/filter-bar'
-import { ui, filterCounts, setStatusFilter, setDeviceTypeFilter, type StatusFilter, type DeviceTypeFilter } from '@/store'
+import { filters as filtersSignal, filterCounts, setStatusFilter, setDeviceTypeFilter, type StatusFilter, type DeviceTypeFilter } from '@/store'
 
 export function ControlBar() {
-  const { status: statusFilter, deviceType: deviceTypeFilter } = ui.value.filters
+  const { status: statusFilter, deviceType: deviceTypeFilter } = filtersSignal.value
   const counts = filterCounts.value
 
   const filters: FilterOption<StatusFilter>[] = [

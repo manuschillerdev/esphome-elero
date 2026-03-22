@@ -273,16 +273,8 @@ cover:
     close_duration: 22s       # Für Positionssteuerung (optional)
     poll_interval: 5min
 
-# ── Diagnose-Sensoren (optional) ──
-sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-
-text_sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer Status"
+# Diagnose-Sensoren (RSSI, Status, Problem etc.) werden automatisch erstellt
+# durch auto_sensors: true (Standard) im Cover-/Light-Block.
 
 # ── Web UI ──
 web_server_base:
@@ -358,28 +350,8 @@ cover:
     open_duration: 30s
     close_duration: 27s
 
-# RSSI und Status für alle Rollläden
-sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-  - platform: elero
-    blind_address: 0xb912f3
-    name: "Wohnzimmer Links RSSI"
-  - platform: elero
-    blind_address: 0xc4a7d2
-    name: "Wohnzimmer Rechts RSSI"
-
-text_sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer Status"
-  - platform: elero
-    blind_address: 0xb912f3
-    name: "Wohnzimmer Links Status"
-  - platform: elero
-    blind_address: 0xc4a7d2
-    name: "Wohnzimmer Rechts Status"
+# Diagnose-Sensoren (RSSI, Status, Problem etc.) werden automatisch von den
+# Cover-/Light-Blöcken erstellt (auto_sensors: true ist Standard).
 ```
 
 > **Hinweis:** Die Komponente staggert die Polling-Abfragen automatisch (5 Sekunden Versatz pro Rollladen), um Kollisionen auf dem Funkkanal zu vermeiden.

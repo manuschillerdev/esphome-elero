@@ -164,6 +164,135 @@ Device *DeviceRegistry::find(uint32_t address) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// COMMAND DISPATCH
+// ═════════════════════════════════════════════════════════════════════════════
+
+void DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte, CommandSource src) {
+    if (!dev.is_cover()) return;
+
+    auto &cover = std::get<CoverDevice>(dev.logic);
+    auto ctx = cover_context(dev.config);
+    uint32_t now = millis();
+    cover.last_command_source = src;
+
+    if (cmd_byte == packet::command::STOP) {
+        dev.sender.clear_queue();
+        (void) dev.sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::COMMAND);
+        (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+        cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
+        cover.target_position = cover_sm::NO_TARGET;
+    } else {
+        if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
+        if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
+        (void) dev.sender.enqueue(cmd_byte);
+        (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+        cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
+        cover.poll.on_command_sent(now);
+    }
+
+    notify_state_changed_(dev);
+}
+
+void DeviceRegistry::set_cover_position(Device &dev, float target, CommandSource src) {
+    if (!dev.is_cover()) return;
+
+    auto &cover = std::get<CoverDevice>(dev.logic);
+    auto ctx = cover_context(dev.config);
+    if (!cover_sm::has_position_tracking(ctx)) return;
+
+    uint32_t now = millis();
+    cover.last_command_source = src;
+
+    uint8_t cmd;
+    if (target >= cover_sm::POSITION_OPEN) {
+        cmd = packet::command::UP;
+        cover.target_position = cover_sm::NO_TARGET;  // Blind handles endpoint
+    } else if (target <= cover_sm::POSITION_CLOSED) {
+        cmd = packet::command::DOWN;
+        cover.target_position = cover_sm::NO_TARGET;  // Blind handles endpoint
+    } else {
+        float current = cover_sm::position(cover.state, now, ctx);
+        cmd = (target > current) ? packet::command::UP : packet::command::DOWN;
+        cover.target_position = target;
+    }
+    (void) dev.sender.enqueue(cmd);
+    (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+    cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
+    if (cmd == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
+    if (cmd == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
+    cover.poll.on_command_sent(now);
+
+    notify_state_changed_(dev);
+}
+
+void DeviceRegistry::command_cover_tilt(Device &dev, CommandSource src) {
+    if (!dev.is_cover()) return;
+
+    auto &cover = std::get<CoverDevice>(dev.logic);
+    auto ctx = cover_context(dev.config);
+    uint32_t now = millis();
+    cover.last_command_source = src;
+
+    (void) dev.sender.enqueue(packet::command::TILT);
+    (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+    cover.state = cover_sm::on_command(cover.state, packet::command::TILT, now, ctx);
+    cover.poll.on_command_sent(now);
+
+    notify_state_changed_(dev);
+}
+
+void DeviceRegistry::command_light(Device &dev, uint8_t cmd_byte, CommandSource src) {
+    if (!dev.is_light()) return;
+
+    auto &light = std::get<LightDevice>(dev.logic);
+    auto ctx = light_context(dev.config);
+    uint32_t now = millis();
+    light.last_command_source = src;
+
+    if (cmd_byte == packet::command::DOWN) {
+        light.state = light_sm::on_turn_off(light.state);
+        dev.sender.clear_queue();
+        (void) dev.sender.enqueue(cmd_byte);
+    } else if (cmd_byte == packet::command::UP) {
+        light.state = light_sm::on_turn_on(light.state, now, ctx);
+        (void) dev.sender.enqueue(cmd_byte);
+    } else {
+        (void) dev.sender.enqueue(cmd_byte);
+    }
+
+    notify_state_changed_(dev);
+}
+
+void DeviceRegistry::set_light_brightness(Device &dev, float brightness, CommandSource src) {
+    if (!dev.is_light()) return;
+
+    auto &light = std::get<LightDevice>(dev.logic);
+    auto ctx = light_context(dev.config);
+    uint32_t now = millis();
+    light.last_command_source = src;
+
+    if (brightness <= 0.0f) {
+        light.state = light_sm::on_turn_off(light.state);
+        dev.sender.clear_queue();
+        (void) dev.sender.enqueue(packet::command::DOWN);
+    } else if (!light_sm::supports_brightness(ctx)) {
+        light.state = light_sm::on_turn_on(light.state, now, ctx);
+        (void) dev.sender.enqueue(packet::command::UP);
+    } else {
+        light.state = light_sm::on_set_brightness(light.state, brightness, now, ctx);
+        if (std::holds_alternative<light_sm::DimmingUp>(light.state)) {
+            (void) dev.sender.enqueue(packet::command::UP);
+        } else if (std::holds_alternative<light_sm::DimmingDown>(light.state)) {
+            (void) dev.sender.enqueue(packet::command::DOWN);
+        } else if (light_sm::is_on(light.state)) {
+            (void) dev.sender.enqueue(packet::command::UP);
+        }
+    }
+
+    notify_state_changed_(dev);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // RF DISPATCH
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -181,12 +310,8 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
             dispatch_status_(*dev, pkt.state, now);
         }
     } else if (packet::is_command_packet(pkt.type) && !pkt.echo) {
-        // Command from a remote — target is dst
-        Device *dev = find(pkt.dst);
-        if (dev && dev->active) {
-            dispatch_remote_command_(*dev, pkt.command, now);
-        }
-        // Auto-discover the remote itself
+        // Remote commands are passive — we only auto-discover the remote.
+        // The blind's status response (via dispatch_status_) handles state.
         track_remote_(pkt, now);
     }
 }
@@ -200,7 +325,23 @@ void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t 
             auto old_idx = cover.state.index();
             cover.state = cover_sm::on_rf_status(cover.state, state_byte, now, ctx);
             cover.poll.on_rf_received(now);
-            changed = (cover.state.index() != old_idx);
+
+            // Track tilt state from RF
+            bool was_tilted = cover.tilted;
+            if (state_byte == packet::state::TILT ||
+                state_byte == packet::state::TOP_TILT ||
+                state_byte == packet::state::BOTTOM_TILT) {
+                cover.tilted = true;
+            } else if (state_byte == packet::state::TOP ||
+                       state_byte == packet::state::BOTTOM ||
+                       state_byte == packet::state::MOVING_UP ||
+                       state_byte == packet::state::MOVING_DOWN ||
+                       state_byte == packet::state::START_MOVING_UP ||
+                       state_byte == packet::state::START_MOVING_DOWN) {
+                cover.tilted = false;
+            }
+
+            changed = (cover.state.index() != old_idx) || (cover.tilted != was_tilted);
         },
         [&](LightDevice &light) {
             auto ctx = light_context(dev.config);
@@ -211,42 +352,20 @@ void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t 
         [](RemoteDevice &) {},
     }, dev.logic);
 
+    // Always notify on status packets — even when FSM state doesn't change,
+    // adapters need to publish updated RSSI, last_seen, and other rf_meta.
+    notify_state_changed_(dev);
     if (changed) {
-        notify_state_changed_(dev);
+        dev.last_notify_ms = now;  // Prevent duplicate publish from position throttle
     }
 }
 
-void DeviceRegistry::dispatch_remote_command_(Device &dev, uint8_t cmd_byte,
-                                               uint32_t now) {
-    bool changed = false;
-
-    std::visit(overloaded{
-        [&](CoverDevice &cover) {
-            auto ctx = cover_context(dev.config);
-            auto old_idx = cover.state.index();
-            cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
-            cover.poll.request_immediate_poll();
-            if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
-            if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
-            changed = (cover.state.index() != old_idx);
-        },
-        [&](LightDevice &) {
-            // Remote command heard — schedule immediate check
-            // (we don't transition light state from remote commands)
-        },
-        [](RemoteDevice &) {},
-    }, dev.logic);
-
-    if (changed) {
-        notify_state_changed_(dev);
-    }
-}
 
 void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
     // Native mode doesn't auto-discover remotes — devices are YAML-defined
     if (!nvs_enabled_) return;
 
-    // Check if we already track this remote
+    // Check if we already track this remote (active, any enabled state)
     Device *existing = find(pkt.src, DeviceType::REMOTE);
     if (existing) {
         existing->rf.last_seen_ms = now;
@@ -255,7 +374,10 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
         remote.last_command = pkt.command;
         remote.last_target = pkt.dst;
         remote.last_channel = pkt.channel;
-        notify_state_changed_(*existing);
+        // Only broadcast state for enabled remotes (disabled = unpublished)
+        if (existing->config.is_enabled()) {
+            notify_state_changed_(*existing);
+        }
         return;
     }
 
@@ -279,7 +401,8 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
     remote.last_channel = pkt.channel;
     slot->rf.last_seen_ms = now;
     slot->rf.last_rssi = pkt.rssi;
-    persist(*slot);
+    // Don't persist — auto-discovered remotes are ephemeral until user saves.
+    // updated_at remains 0, so adapters know not to publish to MQTT.
     notify_added_(*slot);
     ESP_LOGI(TAG, "Discovered remote 0x%06x (slot %zu)", pkt.src, slot_index_(*slot));
 }
@@ -317,15 +440,15 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
     bool moving = cover_sm::is_moving(cover.state);
     if (cover.poll.should_poll(now, moving)) {
         // Single packet for movement polls (blind responds to each packet,
-        // if missed we retry in 2s). Full 2 packets for idle polls (less frequent).
-        uint8_t packets = moving ? 1 : packet::limits::SEND_PACKETS;
-        (void) dev.sender.enqueue(packet::command::CHECK, packets);
+        // if missed we retry in 2s). Full 3 packets for idle polls (less frequent).
+        uint8_t packets = moving ? 1 : packet::button::PACKETS;
+        (void) dev.sender.enqueue(packet::command::CHECK, packets, packet::msg_type::COMMAND);
         cover.poll.on_poll_sent(now);
     }
 
     // 3. Intermediate position stop — if cover has position tracking and
     //    has reached its target position, stop it.
-    if (moving && cover_sm::has_position_tracking(ctx) && cover.target_position >= 0.0f) {
+    if (moving && cover_sm::has_position_tracking(ctx) && cover.target_position >= cover_sm::POSITION_CLOSED) {
         float pos = cover_sm::position(cover.state, now, ctx);
         bool at_target = false;
         if (std::holds_alternative<cover_sm::Opening>(cover.state)) {
@@ -334,12 +457,13 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
             at_target = pos <= cover.target_position;
         }
         // Don't send stop for fully open/closed — the blind handles those endpoints
-        if (at_target && cover.target_position > 0.0f && cover.target_position < 1.0f) {
+        if (at_target && cover.target_position > cover_sm::POSITION_CLOSED && cover.target_position < cover_sm::POSITION_OPEN) {
             dev.sender.clear_queue();
-            (void) dev.sender.enqueue(packet::command::STOP);
+            (void) dev.sender.enqueue(packet::command::STOP, packet::button::PACKETS, packet::msg_type::COMMAND);
+            (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
             cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
             state_type_changed = true;
-            cover.target_position = -1.0f;  // Clear target
+            cover.target_position = cover_sm::NO_TARGET;  // Clear target
         }
     }
 
@@ -368,10 +492,11 @@ void DeviceRegistry::loop_light_(Device &dev, LightDevice &light, uint32_t now) 
     light.state = light_sm::on_tick(light.state, now, ctx);
     bool state_type_changed = (light.state.index() != old_idx);
 
-    // 2. Send STOP when dimming completes (freeze brightness on the receiver)
+    // 2. Send RELEASE when dimming completes (freeze brightness on the receiver).
+    //    Button packets use RELEASE (0x00) instead of STOP (0x10).
     if (state_type_changed && !light_sm::is_dimming(light.state) &&
         light_sm::is_on(light.state)) {
-        (void) dev.sender.enqueue(packet::command::STOP);
+        (void) dev.sender.enqueue(packet::button::RELEASE, packet::button::PACKETS);
     }
 
     // 3. Process command queue

@@ -160,6 +160,51 @@ size_t build_tx_packet(const TxParams& params, uint8_t* out_buf) {
   return TX_MSG_LENGTH + 1;
 }
 
+size_t build_button_packet(const ButtonTxParams& params, uint8_t* out_buf) {
+  // Clear buffer
+  memset(out_buf, 0, button::MSG_LENGTH + 1);
+
+  // Header fields
+  out_buf[pkt_offset::LENGTH] = button::MSG_LENGTH;
+  out_buf[pkt_offset::COUNTER] = params.counter;
+  out_buf[pkt_offset::TYPE] = msg_type::BUTTON;
+  out_buf[pkt_offset::TYPE2] = params.type2;
+  out_buf[pkt_offset::HOP] = params.hop;
+  out_buf[pkt_offset::SYS] = TX_SYS_ADDR;
+
+  // Channel: special case — channel 1 maps to 0x11
+  uint8_t ch = (params.channel == 1) ? 0x11 : params.channel;
+  out_buf[pkt_offset::CHANNEL] = ch;
+
+  // Addresses (all same for direct button press)
+  write_addr(&out_buf[pkt_offset::SRC_ADDR], params.src_addr);
+  write_addr(&out_buf[pkt_offset::BWD_ADDR], params.src_addr);
+  write_addr(&out_buf[pkt_offset::FWD_ADDR], params.src_addr);
+
+  // Destination count + channel-based destination (not address)
+  out_buf[pkt_offset::NUM_DESTS] = TX_DEST_COUNT;
+  out_buf[btn_offset::CHANNEL_DEST] = ch;
+  out_buf[btn_offset::ZERO_BYTE] = 0x00;
+  out_buf[btn_offset::FIXED_03] = 0x03;
+
+  // Build encrypted section at offset 20
+  uint8_t *enc = &out_buf[btn_offset::CRYPTO_CODE];
+  uint16_t code = calc_crypto_code(params.counter);
+  enc[payload_offset::CRYPTO_HIGH] = (code >> 8) & 0xFF;
+  enc[payload_offset::CRYPTO_LOW] = code & 0xFF;
+  enc[payload_offset::COMMAND] = params.command;
+  enc[payload_offset::COMMAND2] = 0;
+  enc[4] = 0;
+  enc[5] = 0;
+  enc[payload_offset::STATE] = 0;
+  enc[payload_offset::PARITY] = 0;
+
+  // Encrypt the 8-byte section in-place
+  protocol::msg_encode(enc);
+
+  return button::MSG_LENGTH + 1;
+}
+
 CoverStateResult map_cover_state(uint8_t elero_state) {
   CoverStateResult r{};
   r.position = -1.0f;  // -1 means "unchanged"

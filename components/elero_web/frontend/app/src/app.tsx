@@ -1,5 +1,5 @@
 import { effect } from '@preact/signals'
-import { ui, setActiveTab } from './store'
+import { activeTab as activeTabSignal, setActiveTab } from './store'
 import { initWs } from './ws'
 import { DashboardHeader } from './components/dashboard-header'
 import { DashboardNav } from './components/dashboard-nav'
@@ -31,7 +31,7 @@ window.addEventListener('hashchange', () => {
 
 // On signal change: store → hash
 effect(() => {
-  const tab = ui.value.activeTab
+  const tab = activeTabSignal.value
   const hash = tab === 'devices' ? '' : `#${tab}`
   if (location.hash !== hash) {
     history.replaceState(null, '', hash || location.pathname)
@@ -44,7 +44,7 @@ initWs()
 // ─── App Component ──────────────────────────────────────────────────────────
 
 export function App() {
-  const activeTab = ui.value.activeTab
+  const activeTab = activeTabSignal.value
 
   return (
     <div className="min-h-screen bg-background">

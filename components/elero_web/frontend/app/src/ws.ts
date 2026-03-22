@@ -1,7 +1,7 @@
-import type { RawPayload, UpsertDevicePayload, RemoveDevicePayload, DeviceAction } from '@/generated'
+import type { RawPayload, UpsertDevicePayload, RemoveDevicePayload, DeviceAction, StateChangedData } from '@/generated'
 import {
   setConnected, setDevices, addRfPacket,
-  onDeviceUpserted, onDeviceRemoved,
+  onDeviceUpserted, onDeviceRemoved, onStateChanged,
   devices,
   type Device,
 } from './store'
@@ -46,6 +46,8 @@ export function initWs() {
     } else if (event === 'rf') {
       data.received_at = Date.now()
       addRfPacket(data)
+    } else if (event === 'state_changed') {
+      onStateChanged(data as StateChangedData)
     } else if (event === 'device_upserted') {
       onDeviceUpserted(data)
     } else if (event === 'device_removed') {
@@ -77,17 +79,12 @@ export function sendRawCommand(params: Omit<RawPayload, 'type'>) {
 }
 
 export function sendDeviceCommand(
-  device: Pick<Device, 'address' | 'remote' | 'channel'>,
+  device: Pick<Device, 'address'>,
   action: DeviceAction,
 ) {
-  const cmd = ACTION_COMMANDS[action]
-  if (!cmd) return
-  sendRawCommand({
-    dst_address: device.address,
-    src_address: device.remote,
-    channel: device.channel,
-    command: cmd,
-  })
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'cmd', address: device.address, action }))
+  }
 }
 
 export function sendUpsertDevice(device: Device) {

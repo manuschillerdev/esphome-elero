@@ -74,6 +74,25 @@ class DeviceRegistry {
     [[nodiscard]] Device *find(uint32_t address);
 
     // ═════════════════════════════════════════════════════════════════════════
+    // COMMAND DISPATCH
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /// Dispatch a command byte to a cover device (open/close/stop + FSM + enqueue + poll).
+    void command_cover(Device &dev, uint8_t cmd_byte, CommandSource src = CommandSource::HUB);
+
+    /// Set a cover's target position (0.0–1.0). Determines direction, sets target, starts movement.
+    void set_cover_position(Device &dev, float target, CommandSource src = CommandSource::HUB);
+
+    /// Dispatch a tilt command to a cover device.
+    void command_cover_tilt(Device &dev, CommandSource src = CommandSource::HUB);
+
+    /// Dispatch a command byte to a light device (on/off + FSM + enqueue).
+    void command_light(Device &dev, uint8_t cmd_byte, CommandSource src = CommandSource::HUB);
+
+    /// Set a light's target brightness (0.0–1.0). Determines dim direction, starts dimming.
+    void set_light_brightness(Device &dev, float brightness, CommandSource src = CommandSource::HUB);
+
+    // ═════════════════════════════════════════════════════════════════════════
     // RF DISPATCH
     // ═════════════════════════════════════════════════════════════════════════
 
@@ -152,9 +171,6 @@ class DeviceRegistry {
 
     /// Handle an RF status packet for a specific device.
     void dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now);
-
-    /// Handle an RF command packet (from a remote) targeting a device.
-    void dispatch_remote_command_(Device &dev, uint8_t cmd_byte, uint32_t now);
 
     /// Track a remote control from an observed RF command packet.
     void track_remote_(const RfPacketInfo &pkt, uint32_t now);
