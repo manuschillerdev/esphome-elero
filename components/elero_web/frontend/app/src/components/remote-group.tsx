@@ -4,13 +4,13 @@ import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 import { InlineEdit } from './ui/inline-edit'
 import { Badge } from './ui/badge'
 import { DataTable, type Column } from './ui/data-table'
-import { Save, CheckCircle2, Trash2 } from './icons'
-import { StatusDot, DeviceCell, LightDeviceCell, StateCell, SignalCell, BlindControls, LightControls, DeviceActions, DeviceExpandedPanel } from './device-row'
+import { Save } from './icons'
+import { StatusDot, DeviceCell, LightDeviceCell, HaStateCell, RfStateCell, SignalCell, BlindControls, LightControls, DeviceActions, DeviceExpandedPanel } from './device-row'
 import {
   hub, updateDevice, getStateLabel,
   type Device, type DeviceGroup,
 } from '@/store'
-import { sendUpsertDevice, sendRemoveDevice } from '@/ws'
+import { sendUpsertDevice } from '@/ws'
 
 export function RemoteGroup({ group }: { group: DeviceGroup }) {
   const { remote, devices } = group
@@ -29,10 +29,16 @@ export function RemoteGroup({ group }: { group: DeviceGroup }) {
         : <LightDeviceCell device={row} />,
     },
     {
-      key: 'state', label: 'State', sortable: true,
+      key: 'ha_state', label: 'HA State', sortable: true,
+      value: (row) => (row.lastStatus as Record<string, unknown> | null)?.ha_state as string ?? '',
+      headerClass: 'whitespace-nowrap', cellClass: 'py-2.5 whitespace-nowrap',
+      render: (row) => <HaStateCell device={row} />,
+    },
+    {
+      key: 'state', label: 'RF Blind State', sortable: true,
       value: (row) => getStateLabel(row.lastStatus?.state),
       headerClass: 'whitespace-nowrap', cellClass: 'py-2.5 whitespace-nowrap',
-      render: (row) => <StateCell device={row} />,
+      render: (row) => <RfStateCell device={row} />,
     },
     {
       key: 'signal', label: 'Signal', sortable: true,
@@ -83,6 +89,18 @@ export function RemoteGroup({ group }: { group: DeviceGroup }) {
           )}
           {crudEnabled && (
             <div className="flex items-center gap-1">
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer mr-1">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={remote.enabled}
+                  onClick={() => updateDevice(remote.address, { enabled: !remote.enabled })}
+                  className={`relative inline-flex h-4 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors ${remote.enabled ? 'bg-primary' : 'bg-input'}`}
+                >
+                  <span className={`pointer-events-none block size-3 rounded-full bg-background shadow-sm transition-transform ${remote.enabled ? 'translate-x-3' : 'translate-x-0'}`} />
+                </button>
+                <span className="text-muted-foreground">Active</span>
+              </label>
               <Tooltip>
                 <TooltipTrigger>
                   <Button
@@ -91,28 +109,11 @@ export function RemoteGroup({ group }: { group: DeviceGroup }) {
                     className="size-7 text-primary hover:text-primary"
                     onClick={() => sendUpsertDevice(remote)}
                   >
-                    {remote.updated_at !== null
-                      ? <CheckCircle2 className="size-3.5" />
-                      : <Save className="size-3.5" />}
+                    <Save className="size-3.5" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent align="end">{remote.updated_at !== null ? 'Saved — click to update' : 'Save remote to NVS'}</TooltipContent>
               </Tooltip>
-              {remote.updated_at !== null && (
-                <Tooltip>
-                  <TooltipTrigger>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-7 text-primary hover:text-primary"
-                      onClick={() => sendRemoveDevice(remote.address, 'remote')}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent align="end">Remove remote from NVS</TooltipContent>
-                </Tooltip>
-              )}
             </div>
           )}
         </div>

@@ -330,18 +330,12 @@ components:
     ConfigData:
       type: object
       additionalProperties: false
-      required: [device, version, freq, blinds, lights, remotes, mode, crud]
+      required: [hub, radio, blinds, lights, remotes]
       properties:
-        device:
-          type: string
-          description: ESPHome device name (from `esphome.name` in YAML)
-          examples: ["elero-gateway"]
-        version:
-          type: string
-          description: Component version string
-          examples: ["1.2.3"]
-        freq:
-          $ref: "#/components/schemas/FreqConfig"
+        hub:
+          $ref: "#/components/schemas/HubConfig"
+        radio:
+          $ref: "#/components/schemas/RadioConfig"
         blinds:
           type: array
           description: Configured cover entities
@@ -357,17 +351,49 @@ components:
           description: Known remote controls. In native mode, derived from cover/light src_address. In NVS modes, includes auto-discovered remotes.
           items:
             $ref: "#/components/schemas/RemoteConfig"
+
+    HubConfig:
+      type: object
+      additionalProperties: false
+      required: [device, version, mode, crud]
+      description: Gateway identity and operating mode
+      properties:
+        device:
+          type: string
+          description: ESPHome device name (from `esphome.name` in YAML)
+          examples: ["elero-gateway"]
+        version:
+          type: string
+          description: Component version string
+          examples: ["1.2.3"]
         mode:
           $ref: "#/components/schemas/HubMode"
         crud:
           type: boolean
           description: Whether CRUD operations (upsert_device, remove_device) are supported
 
+    RadioConfig:
+      type: object
+      additionalProperties: false
+      required: [chipset, rx_sensitivity, freq]
+      description: RF radio hardware configuration and capabilities
+      properties:
+        chipset:
+          type: string
+          description: Radio chip identifier
+          examples: ["cc1101", "sx1262"]
+        rx_sensitivity:
+          type: integer
+          description: Receiver sensitivity in dBm (e.g., -104 for CC1101, -117 for SX1262). Used to derive signal strength thresholds.
+          examples: [-104, -117]
+        freq:
+          $ref: "#/components/schemas/FreqConfig"
+
     FreqConfig:
       type: object
       additionalProperties: false
       required: [freq2, freq1, freq0]
-      description: CC1101 frequency register values
+      description: Frequency register values (chip-specific encoding)
       properties:
         freq2:
           type: string

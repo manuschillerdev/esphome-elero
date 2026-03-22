@@ -4,7 +4,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 import { InlineEdit } from './ui/inline-edit'
 import { SignalIndicator } from './signal-indicator'
 import { formatTime } from './packet-table'
-import { ChevronUp, Square, ChevronDown, Shrink, Lightbulb, LightbulbOff, Settings, RotateCcw, Save, Info, CheckCircle2, Trash2 } from './icons'
+import { ChevronUp, Square, ChevronDown, Shrink, Lightbulb, LightbulbOff, Settings, RotateCcw, Save, Info, Trash2 } from './icons'
 import { cn } from '@/lib/utils'
 import {
   updateDevice, getStateLabel, getCommandLabel, isMovingState, isCommandPacket, isButtonPacket,
@@ -74,24 +74,19 @@ export function LightDeviceCell({ device }: { device: Device }) {
   )
 }
 
-export function StateCell({ device }: { device: Device }) {
+export function HaStateCell({ device }: { device: Device }) {
+  const status = device.lastStatus as Record<string, unknown> | null
+  const haState = (status?.ha_state as string | undefined)?.toUpperCase() ?? '—'
+  return (
+    <span className="text-[10px] text-muted-foreground">{haState}</span>
+  )
+}
+
+export function RfStateCell({ device }: { device: Device }) {
   const status = device.lastStatus as Record<string, unknown> | null
   const rfState = getStateLabel(status?.state as string | undefined)
-  const haState = (status?.ha_state as string | undefined)?.toUpperCase() ?? '—'
-  const moving = isMovingState(status?.state as string | undefined)
   return (
-    <div className="flex items-center gap-1.5">
-      <Badge
-        variant="secondary"
-        className={cn(
-          'text-[10px] px-2 py-0.5',
-          moving && 'bg-warning/10 text-warning-foreground animate-pulse',
-        )}
-      >
-        {haState}
-      </Badge>
-      <span className="text-[10px] text-muted-foreground">{rfState}</span>
-    </div>
+    <span className="text-[10px] text-muted-foreground">{rfState}</span>
   )
 }
 
@@ -180,12 +175,10 @@ export function DeviceActions({ device, expanded, onToggleExpand }: {
           <TooltipTrigger>
             <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary"
               onClick={() => sendUpsertDevice(device)}>
-              {device.updated_at !== null
-                ? <CheckCircle2 className="size-3.5" />
-                : <Save className="size-3.5" />}
+              <Save className="size-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{device.updated_at !== null ? 'Saved — click to update' : 'Save to NVS'}</TooltipContent>
+          <TooltipContent>Save to NVS</TooltipContent>
         </Tooltip>
       )}
       <Tooltip>
@@ -306,15 +299,15 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
           )}
         </div>
 
-        {/* Right: published toggle + save/delete */}
+        {/* Right: active toggle + delete (subtle) */}
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5">
-            <Toggle checked={device.enabled} onChange={(v) => updateDevice(device.address, { enabled: v })} label="Published" />
+            <Toggle checked={device.enabled} onChange={(v) => updateDevice(device.address, { enabled: v })} label="Active" />
             <Tooltip>
               <TooltipTrigger>
                 <Info className="size-3 text-muted-foreground/60" />
               </TooltipTrigger>
-              <TooltipContent>Controls whether this device is published to Home Assistant</TooltipContent>
+              <TooltipContent>Inactive devices are hidden from the default view and unpublished from Home Assistant</TooltipContent>
             </Tooltip>
           </div>
           {crudEnabled && device.updated_at !== null && (
@@ -325,13 +318,13 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="size-7 text-destructive hover:text-destructive"
+                    className="size-7 text-muted-foreground/50 hover:text-destructive"
                     onClick={() => sendRemoveDevice(device.address, device.type === 'light' ? 'light' : 'cover')}
                   >
-                    <Trash2 className="size-3.5" />
+                    <Trash2 className="size-3" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent align="end">Remove from NVS</TooltipContent>
+                <TooltipContent align="end">Permanently delete from NVS (device will be re-discovered if still active on RF)</TooltipContent>
               </Tooltip>
             </>
           )}

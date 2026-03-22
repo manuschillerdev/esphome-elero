@@ -1,6 +1,6 @@
 
 /**
- * CC1101 frequency register values
+ * Frequency register values (chip-specific encoding)
  */
 interface FreqConfig {
   /**

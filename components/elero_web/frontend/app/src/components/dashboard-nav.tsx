@@ -1,10 +1,10 @@
 import { Badge } from './ui/badge'
 import { cn } from '@/lib/utils'
 import { LayoutGrid, Cpu } from './icons'
-import { ui, filterCounts, setActiveTab } from '@/store'
+import { activeTab as activeTabSignal, filterCounts, setActiveTab } from '@/store'
 
 export function DashboardNav() {
-  const activeTab = ui.value.activeTab
+  const activeTab = activeTabSignal.value
   const counts = filterCounts.value
 
   const tabs = [

@@ -14,8 +14,7 @@ export function DiscoveryBanner() {
       </div>
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         Press buttons on your physical Elero remotes. The UI captures live RF packets and shows
-        new addresses below. Copy the YAML snippet for each discovered device into your ESPHome
-        config, then reflash.
+        new addresses below.
       </p>
     </div>
   )

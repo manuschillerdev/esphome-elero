@@ -6,7 +6,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 import { Send, Info } from './icons'
 import { RfPackets } from './rf-packets'
 import { cn } from '@/lib/utils'
-import { hub, devices, filterCounts, parseFreq } from '@/store'
+import { hub, radio, devices, filterCounts, parseFreq } from '@/store'
 import { sendRawCommand } from '@/ws'
 
 // ─── Frequency Presets ──────────────────────────────────────────────────────
@@ -81,7 +81,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 // ─── Frequency Card ─────────────────────────────────────────────────────────
 
 function FrequencyCard() {
-  const freq = hub.value.freq
+  const freq = radio.value.freq
   const configF2 = parseFreq(freq.freq2, 0x21)
   const configF1 = parseFreq(freq.freq1, 0x71)
   const configF0 = parseFreq(freq.freq0, 0x7a)

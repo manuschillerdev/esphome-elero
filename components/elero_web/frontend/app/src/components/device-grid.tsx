@@ -1,5 +1,5 @@
 import { RemoteGroup } from './remote-group'
-import { deviceGroups, ui } from '@/store'
+import { deviceGroups, filters as filtersSignal } from '@/store'
 
 function EmptyState({ title, description }: { title: string; description: string }) {
   return (
@@ -12,7 +12,7 @@ function EmptyState({ title, description }: { title: string; description: string
 
 export function DeviceGrid() {
   const groups = deviceGroups.value
-  const { status: statusFilter, deviceType: deviceTypeFilter } = ui.value.filters
+  const { status: statusFilter, deviceType: deviceTypeFilter } = filtersSignal.value
 
   return (
     <div className="flex flex-col gap-4">

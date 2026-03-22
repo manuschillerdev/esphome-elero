@@ -1,14 +1,6 @@
 import { signal } from '@preact/signals'
-import type { ConfigData, FreqConfig, HubMode, BlindConfig, LightConfig, RemoteConfig, DeviceUpsertedData, CrudEventData } from '@/generated'
+import type { ConfigData, HubConfig, RadioConfig, FreqConfig, HubMode, BlindConfig, LightConfig, RemoteConfig, DeviceUpsertedData, CrudEventData } from '@/generated'
 import type { RfPacketWithTimestamp } from '@/lib/protocol'
-
-export interface HubState {
-  device: string
-  version: string
-  freq: FreqConfig
-  mode: HubMode
-  crud: boolean
-}
 
 export interface ServerConfig {
   blinds: BlindConfig[]
@@ -18,19 +10,24 @@ export interface ServerConfig {
 
 export function createHubModel() {
   const connected = signal(false)
-  const state = signal<HubState>({
+  const hubState = signal<HubConfig>({
     device: '',
     version: '',
-    freq: { freq0: '0x7a', freq1: '0x71', freq2: '0x21' },
     mode: 'native',
     crud: false,
+  })
+  const radioState = signal<RadioConfig>({
+    chipset: 'cc1101',
+    rx_sensitivity: -104,
+    freq: { freq0: '0x7a', freq1: '0x71', freq2: '0x21' },
   })
   const config = signal<ServerConfig>({ blinds: [], lights: [], remotes: [] })
   const packets = signal<RfPacketWithTimestamp[]>([])
 
   return {
     connected,
-    state,
+    hub: hubState,
+    radio: radioState,
     config,
     packets,
 
@@ -39,13 +36,8 @@ export function createHubModel() {
     },
 
     setFromConfig(data: ConfigData) {
-      state.value = {
-        device: data.device,
-        version: data.version,
-        freq: data.freq,
-        mode: data.mode ?? 'native',
-        crud: data.crud ?? false,
-      }
+      hubState.value = data.hub
+      radioState.value = data.radio
       config.value = {
         blinds: data.blinds ?? [],
         lights: data.lights ?? [],

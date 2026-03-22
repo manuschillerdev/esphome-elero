@@ -1,12 +1,13 @@
 import { signal, computed, batch } from '@preact/signals'
 import type {
   ConfigData, RfData, DeviceType, CrudEventData, DeviceUpsertedData,
-  StateChangedData, FreqConfig, HubMode, BlindConfig, LightConfig, RemoteConfig,
+  StateChangedData, FreqConfig, HubMode, HubConfig, RadioConfig,
+  BlindConfig, LightConfig, RemoteConfig,
   RfStateName,
 } from '@/generated'
 
 // Re-export generated types used by components
-export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, CrudEventData, DeviceUpsertedData, StateChangedData, RfStateName }
+export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, HubConfig, RadioConfig, CrudEventData, DeviceUpsertedData, StateChangedData, RfStateName }
 
 // ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
 
@@ -140,18 +141,17 @@ export interface DeviceGroup {
 
 export const connected = signal(false)
 
-export const hub = signal<{
-  device: string
-  version: string
-  freq: FreqConfig
-  mode: HubMode
-  crud: boolean
-}>({
+export const hub = signal<HubConfig>({
   device: '',
   version: '',
-  freq: { freq0: '0x7a', freq1: '0x71', freq2: '0x21' },
   mode: 'native',
   crud: false,
+})
+
+export const radio = signal<RadioConfig>({
+  chipset: 'cc1101',
+  rx_sensitivity: -104,
+  freq: { freq0: '0x7a', freq1: '0x71', freq2: '0x21' },
 })
 
 export const devices = signal<Map<string, Device>>(new Map())
@@ -162,23 +162,22 @@ export type StatusFilter = 'all' | 'saved' | 'unsaved'
 export type DeviceTypeFilter = 'all' | 'covers' | 'lights'
 export type ActiveTab = 'devices' | 'packets' | 'hub'
 
-export const ui = signal<{
-  activeTab: ActiveTab
-  filters: {
-    status: StatusFilter
-    deviceType: DeviceTypeFilter
-    rf: string
-  }
-}>({
-  activeTab: 'devices',
-  filters: { status: 'all', deviceType: 'all', rf: '' },
-})
+export interface Filters {
+  status: StatusFilter
+  deviceType: DeviceTypeFilter
+  rf: string
+}
+
+const DEFAULT_FILTERS: Filters = { status: 'all', deviceType: 'all', rf: '' }
+
+export const activeTab = signal<ActiveTab>('devices')
+export const filters = signal<Filters>(DEFAULT_FILTERS)
 
 // ─── Computed (auto-tracked, auto-memoized) ─────────────────────────────────
 
 export const deviceGroups = computed<DeviceGroup[]>(() => {
   const devs = devices.value
-  const { status, deviceType } = ui.value.filters
+  const { status, deviceType } = filters.value
   const groups = new Map<string, Device[]>()
   for (const d of devs.values()) {
     if (d.type === 'remote') continue
@@ -300,13 +299,8 @@ export function setDevices(data: ConfigData) {
   }
   batch(() => {
     devices.value = next
-    hub.value = {
-      device: data.device,
-      version: data.version,
-      freq: data.freq,
-      mode: data.mode ?? 'native',
-      crud: data.crud ?? false,
-    }
+    hub.value = data.hub
+    radio.value = data.radio
   })
 }
 
@@ -418,17 +412,21 @@ export function onDeviceRemoved({ address }: CrudEventData) {
 }
 
 export function setActiveTab(tab: ActiveTab) {
-  ui.value = { ...ui.value, activeTab: tab }
+  activeTab.value = tab
 }
 
 export function setStatusFilter(status: StatusFilter) {
-  ui.value = { ...ui.value, filters: { ...ui.value.filters, status } }
+  filters.value = { ...filters.value, status }
 }
 
 export function setDeviceTypeFilter(deviceType: DeviceTypeFilter) {
-  ui.value = { ...ui.value, filters: { ...ui.value.filters, deviceType } }
+  filters.value = { ...filters.value, deviceType }
 }
 
 export function setRfFilter(rf: string) {
-  ui.value = { ...ui.value, filters: { ...ui.value.filters, rf } }
+  filters.value = { ...filters.value, rf }
+}
+
+export function resetFilters() {
+  filters.value = DEFAULT_FILTERS
 }

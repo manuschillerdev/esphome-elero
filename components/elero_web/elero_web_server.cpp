@@ -398,16 +398,25 @@ void EleroWebServer::ws_cleanup() {
 
 std::string EleroWebServer::build_config_json() {
   return json::build_json([this](JsonObject root) {
-    root["device"] = App.get_name();
-    root["version"] = this->parent_->get_version();
+    auto *registry = this->parent_->get_registry();
+    bool has_nvs = registry != nullptr && registry->is_nvs_enabled();
 
-    JsonObject freq = root["freq"].to<JsonObject>();
+    // hub — gateway identity and operating mode
+    JsonObject hub = root["hub"].to<JsonObject>();
+    hub["device"] = App.get_name();
+    hub["version"] = this->parent_->get_version();
+    hub["mode"] = has_nvs ? "mqtt" : "native";
+    hub["crud"] = has_nvs;
+
+    // radio — RF hardware configuration and capabilities
+    auto *drv = this->parent_->get_driver();
+    JsonObject radio = root["radio"].to<JsonObject>();
+    radio["chipset"] = drv ? drv->radio_name() : "unknown";
+    radio["rx_sensitivity"] = drv ? drv->rx_sensitivity_dbm() : -104;
+    JsonObject freq = radio["freq"].to<JsonObject>();
     freq["freq2"] = hex_str8(this->parent_->get_freq2());
     freq["freq1"] = hex_str8(this->parent_->get_freq1());
     freq["freq0"] = hex_str8(this->parent_->get_freq0());
-
-    auto *registry = this->parent_->get_registry();
-    bool has_nvs = registry != nullptr && registry->is_nvs_enabled();
 
     JsonArray blinds = root["blinds"].to<JsonArray>();
     JsonArray lights_arr = root["lights"].to<JsonArray>();
@@ -465,8 +474,7 @@ std::string EleroWebServer::build_config_json() {
       }
     }
 
-    root["mode"] = has_nvs ? "mqtt" : "native";
-    root["crud"] = has_nvs;
+    // mode and crud are in hub object above
   });
 }
 

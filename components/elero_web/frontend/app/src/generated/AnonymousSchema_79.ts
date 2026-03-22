@@ -1,6 +1,6 @@
 
 /**
- * Who issued the last command
+ * Problem classification or "none"
  */
-type AnonymousSchema_79 = "unknown" | "hub" | "remote";
+type AnonymousSchema_79 = "none" | "blocking" | "overheated" | "timeout";
 export { AnonymousSchema_79 };

@@ -1,23 +1,17 @@
-import {FreqConfig} from './FreqConfig';
+import {HubConfig} from './HubConfig';
+import {RadioConfig} from './RadioConfig';
 import {BlindConfig} from './BlindConfig';
 import {LightConfig} from './LightConfig';
 import {RemoteConfig} from './RemoteConfig';
-import {HubMode} from './HubMode';
 interface ConfigData {
   /**
-   * ESPHome device name (from `esphome.name` in YAML)
-   * @example elero-gateway
+   * Gateway identity and operating mode
    */
-  'device': string;
+  'hub': HubConfig;
   /**
-   * Component version string
-   * @example 1.2.3
+   * RF radio hardware configuration and capabilities
    */
-  'version': string;
-  /**
-   * CC1101 frequency register values
-   */
-  'freq': FreqConfig;
+  'radio': RadioConfig;
   /**
    * Configured cover entities
    */
@@ -30,13 +24,5 @@ interface ConfigData {
    * Known remote controls. In native mode, derived from cover/light src_address. In NVS modes, includes auto-discovered remotes.
    */
   'remotes': RemoteConfig[];
-  /**
-   * Operating mode of the hub
-   */
-  'mode': HubMode;
-  /**
-   * Whether CRUD operations (upsert_device, remove_device) are supported
-   */
-  'crud': boolean;
 }
 export { ConfigData };
