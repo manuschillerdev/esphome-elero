@@ -91,7 +91,7 @@ async def to_code(config):
     # Auto-create internal diagnostic sensors for RF stats
     # Requires sensor component to be loaded (e.g., via RSSI sensors or explicit `sensor:` in YAML)
     if config[CONF_AUTO_STATS] and "sensor" in CORE.loaded_integrations:
-        from esphome.components import sensor
+        from esphome.components import sensor  # noqa: F401
 
         # Import sensor namespace for C++ type reference
         sensor_ns = cg.esphome_ns.namespace("sensor")
