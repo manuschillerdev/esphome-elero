@@ -15,6 +15,7 @@ elero = elero_ns.class_("Elero", cg.Component)
 
 # Radio drivers
 CC1101Driver = elero_ns.class_("CC1101Driver", spi.SPIDevice)
+Sx1262Driver = elero_ns.class_("Sx1262Driver", spi.SPIDevice)
 
 # New architecture: unified device registry
 DeviceRegistry = elero_ns.class_("DeviceRegistry")
@@ -29,6 +30,11 @@ CONF_REGISTRY_ID = "registry_id"
 CONF_AUTO_STATS = "auto_stats"
 CONF_RADIO = "radio"
 CONF_DRIVER_ID = "driver_id"
+CONF_BUSY_PIN = "busy_pin"
+CONF_RST_PIN = "rst_pin"
+CONF_RF_SWITCH = "rf_switch"
+CONF_PA_POWER = "pa_power"
+CONF_TCXO_VOLTAGE = "tcxo_voltage"
 
 
 def _validate_irq_pin(config):
@@ -38,24 +44,44 @@ def _validate_irq_pin(config):
     return config
 
 
+def _validate_sx1262_pins(config):
+    """SX1262 requires busy_pin and rst_pin."""
+    if config.get(CONF_RADIO) == "sx1262":
+        if CONF_BUSY_PIN not in config:
+            raise cv.Invalid(f"'{CONF_BUSY_PIN}' is required for SX1262 radio")
+        if CONF_RST_PIN not in config:
+            raise cv.Invalid(f"'{CONF_RST_PIN}' is required for SX1262 radio")
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(elero),
             cv.GenerateID(CONF_REGISTRY_ID): cv.declare_id(DeviceRegistry),
             cv.GenerateID(CONF_DRIVER_ID): cv.declare_id(CC1101Driver),
-            cv.Optional(CONF_RADIO, default="cc1101"): cv.one_of("cc1101", lower=True),
+            cv.Optional(CONF_RADIO, default="cc1101"): cv.one_of(
+                "cc1101", "sx1262", lower=True
+            ),
             cv.Optional(CONF_IRQ_PIN): pins.gpio_input_pin_schema,
             cv.Optional(CONF_GDO0_PIN): pins.gpio_input_pin_schema,
             cv.Optional(CONF_FREQ0, default=0x7A): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_FREQ1, default=0x71): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_FREQ2, default=0x21): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_AUTO_STATS, default=True): cv.boolean,
+            # SX1262-specific pins
+            cv.Optional(CONF_BUSY_PIN): pins.gpio_input_pin_schema,
+            cv.Optional(CONF_RST_PIN): pins.gpio_output_pin_schema,
+            # SX1262-specific options
+            cv.Optional(CONF_RF_SWITCH, default=False): cv.boolean,
+            cv.Optional(CONF_PA_POWER, default=22): cv.int_range(min=-3, max=22),
+            cv.Optional(CONF_TCXO_VOLTAGE): cv.float_range(min=1.6, max=3.3),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
     .extend(spi.spi_device_schema(cs_pin_required=True)),
     _validate_irq_pin,
+    _validate_sx1262_pins,
 )
 
 
@@ -63,12 +89,37 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
-    # Create CC1101 driver, register with SPI bus, wire to hub
-    driver = cg.new_Pvariable(config[CONF_DRIVER_ID])
-    await spi.register_spi_device(driver, config)
-    cg.add(driver.set_freq0(config[CONF_FREQ0]))
-    cg.add(driver.set_freq1(config[CONF_FREQ1]))
-    cg.add(driver.set_freq2(config[CONF_FREQ2]))
+    radio = config[CONF_RADIO]
+
+    if radio == "sx1262":
+        # Override driver_id type for SX1262
+        driver_id = config[CONF_DRIVER_ID]
+        driver_id.type = Sx1262Driver
+        driver = cg.new_Pvariable(driver_id)
+        await spi.register_spi_device(driver, config)
+        cg.add(driver.set_freq0(config[CONF_FREQ0]))
+        cg.add(driver.set_freq1(config[CONF_FREQ1]))
+        cg.add(driver.set_freq2(config[CONF_FREQ2]))
+
+        # SX1262-specific pins
+        busy_pin = await cg.gpio_pin_expression(config[CONF_BUSY_PIN])
+        cg.add(driver.set_busy_pin(busy_pin))
+        rst_pin = await cg.gpio_pin_expression(config[CONF_RST_PIN])
+        cg.add(driver.set_rst_pin(rst_pin))
+
+        # SX1262-specific options
+        cg.add(driver.set_rf_switch(config[CONF_RF_SWITCH]))
+        cg.add(driver.set_pa_power(config[CONF_PA_POWER]))
+        if CONF_TCXO_VOLTAGE in config:
+            cg.add(driver.set_tcxo_voltage(config[CONF_TCXO_VOLTAGE]))
+    else:
+        # CC1101 driver (default)
+        driver = cg.new_Pvariable(config[CONF_DRIVER_ID])
+        await spi.register_spi_device(driver, config)
+        cg.add(driver.set_freq0(config[CONF_FREQ0]))
+        cg.add(driver.set_freq1(config[CONF_FREQ1]))
+        cg.add(driver.set_freq2(config[CONF_FREQ2]))
+
     cg.add(var.set_driver(driver))
 
     # IRQ pin: prefer irq_pin, fall back to gdo0_pin for backward compat
