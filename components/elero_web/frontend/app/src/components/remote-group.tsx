@@ -4,18 +4,33 @@ import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 import { InlineEdit } from './ui/inline-edit'
 import { Badge } from './ui/badge'
 import { DataTable, type Column } from './ui/data-table'
-import { Save } from './icons'
+import { Save, ChevronUp, Square, ChevronDown, Shrink } from './icons'
 import { StatusDot, DeviceCell, LightDeviceCell, HaStateCell, RfStateCell, SignalCell, BlindControls, LightControls, DeviceActions, DeviceExpandedPanel } from './device-row'
 import {
   hub, updateDevice, getStateLabel,
   type Device, type DeviceGroup,
 } from '@/store'
-import { sendUpsertDevice } from '@/ws'
+import { sendUpsertDevice, sendRawCommand } from '@/ws'
 
 export function RemoteGroup({ group }: { group: DeviceGroup }) {
   const { remote, devices } = group
   const crudEnabled = hub.value.crud
   const expandedAddr = useSignal<string | null>(null)
+  const broadcastChannel = useSignal<number | null>(null)
+
+  const broadcast = (command: string) => {
+    const ch = broadcastChannel.value
+    if (ch == null || ch < 1) return
+    sendRawCommand({
+      dst_address: '0x000000',
+      src_address: remote.address,
+      channel: ch,
+      command,
+      msg_type: '0x44',
+      type2: '0x10',
+      hop: '0x00',
+    })
+  }
 
   // ─── Device table ───────────────────────────────────────────────────────
 
@@ -82,6 +97,33 @@ export function RemoteGroup({ group }: { group: DeviceGroup }) {
           </Badge>
         </div>
         <div className="flex items-center gap-2">
+          {/* Broadcast controls: channel input + action buttons */}
+          <div className="flex items-center gap-1">
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              CH
+              <input
+                type="number"
+                min={1} max={99}
+                placeholder="—"
+                value={broadcastChannel.value ?? ''}
+                onInput={(e) => {
+                  const v = parseInt((e.target as HTMLInputElement).value)
+                  broadcastChannel.value = isNaN(v) ? null : v
+                }}
+                className="w-10 rounded border border-input bg-background px-1.5 py-0.5 text-xs tabular-nums text-center"
+              />
+            </label>
+            <div className="flex items-center gap-0.5 ml-1">
+              {([['0x24', Shrink, 'Tilt'], ['0x20', ChevronUp, 'Up'], ['0x10', Square, 'Stop'], ['0x40', ChevronDown, 'Down']] as const).map(([cmd, Icon, label]) => (
+                <Tooltip key={cmd}><TooltipTrigger>
+                  <Button variant="ghost" size="icon" className="size-6" disabled={!broadcastChannel.value || broadcastChannel.value < 1} onClick={() => broadcast(cmd)}>
+                    <Icon className={cmd === '0x10' ? 'size-2.5' : 'size-3'} />
+                  </Button>
+                </TooltipTrigger><TooltipContent>{label}{broadcastChannel.value ? ` (CH ${broadcastChannel.value})` : ''}</TooltipContent></Tooltip>
+              ))}
+            </div>
+          </div>
+
           {remote.name && (
             <Badge variant="secondary" className="font-mono text-[9px] tracking-wider text-muted-foreground px-1.5 py-0">
               {remote.address}
