@@ -164,7 +164,14 @@ void Elero::setup() {
 
   // Setup IRQ pin and attach interrupt
   this->irq_pin_->setup();
-  this->irq_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
+  auto edge = this->driver_->irq_rising_edge() ? gpio::INTERRUPT_RISING_EDGE
+                                                : gpio::INTERRUPT_FALLING_EDGE;
+  this->irq_pin_->attach_interrupt(Elero::interrupt, this, edge);
+
+  // Clear any IRQs that fired during init() before the ISR was attached.
+  // For SX1262: DIO1 goes HIGH on preamble detection during init → rising edge missed.
+  this->received_.store(false);
+  this->driver_->recover();  // Clears hardware IRQ flags + re-enters RX
 
   // New architecture: device registry lifecycle
   if (this->registry_ != nullptr) {

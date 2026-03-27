@@ -1,0 +1,98 @@
+esphome:
+  name: "heltec-lora-v4"
+  on_boot:
+    priority: 800
+    then:
+      - output.turn_on: vext_enable
+  platformio_options:
+    board_build.mcu: esp32s3
+    board_build.name: "Heltec WiFi LoRa 32 V4"
+    board_build.upload.flash_size: "16MB"
+    board_build.upload.maximum_size: 16777216
+    board_build.vendor: "Heltec"
+    board_build.f_flash: 80000000L
+    board_build.arduino.memory_type: qio_opi
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_VFS_SUPPORT_SELECT: "y"
+  flash_size: 16MB
+
+# Heltec V4: VEXT_ENABLE (GPIO36) active-low — powers OLED + LoRa antenna boost/PA.
+# Must be LOW for TX to work (RX works without it but TX has no power).
+output:
+  - platform: gpio
+    pin:
+      number: GPIO36
+      inverted: true   # Active low: "on" = GPIO LOW = power enabled
+    id: vext_enable
+
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+  manual_ip:
+    static_ip: !secret static_ip_heltec
+    gateway: !secret gateway
+    subnet: !secret subnet
+
+logger:
+  level: DEBUG
+
+# api:
+
+ota:
+  platform: esphome
+
+mqtt:
+  broker: !secret mqtt_broker
+  port: 1883
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+
+substitutions:
+  friendly_name: "Heltec LoRa V4 Elero"
+
+elero_web:
+  port: 80
+external_components:
+  - source:
+      type: local
+      path: components
+
+# Heltec WiFi LoRa 32 V4 pin mapping:
+#   SPI (onboard SX1262):
+#     SCK:  GPIO9
+#     MOSI: GPIO10
+#     MISO: GPIO11
+#     CS:   GPIO8
+#   SX1262 control:
+#     RST:  GPIO12
+#     BUSY: GPIO13
+#     DIO1: GPIO14 (IRQ)
+
+spi:
+  clk_pin: GPIO9
+  mosi_pin: GPIO10
+  miso_pin: GPIO11
+
+elero:
+  radio: sx1262
+  cs_pin: GPIO8
+  irq_pin: GPIO14      # DIO1
+  busy_pin: GPIO13
+  rst_pin: GPIO12
+  rf_switch: true       # Heltec V4 uses DIO2 for RF switch control
+  tcxo_voltage: 1.8     # Heltec V4 uses TCXO on DIO3 at 1.8V
+  # No FEM PA on default V4 variant (USE_NONE_PA) — GPIO46 not needed
+
+# MQTT mode — devices managed via NVS, no YAML covers/lights
+elero_mqtt:
+  topic_prefix: elero
+  discovery_prefix: homeassistant
+  device_name: "Elero Gateway"
