@@ -1,5 +1,9 @@
 esphome:
   name: "heltec-lora-v4"
+  on_boot:
+    priority: 800
+    then:
+      - output.turn_on: vext_enable
   platformio_options:
     board_build.mcu: esp32s3
     board_build.name: "Heltec WiFi LoRa 32 V4"
@@ -17,6 +21,16 @@ esp32:
     sdkconfig_options:
       CONFIG_VFS_SUPPORT_SELECT: "y"
   flash_size: 16MB
+
+# Heltec V4: VEXT_ENABLE (GPIO36) active-low — powers OLED + LoRa antenna boost/PA.
+# Must be LOW for TX to work (RX works without it but TX has no power).
+output:
+  - platform: gpio
+    pin:
+      number: GPIO36
+      inverted: true   # Active low: "on" = GPIO LOW = power enabled
+    id: vext_enable
+
 
 wifi:
   networks:

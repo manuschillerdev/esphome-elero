@@ -150,6 +150,32 @@ bool Sx1262Driver::init() {
 
   ESP_LOGI(TAG, "SX1262 initialized, FSK mode, freq_reg=0x%08x",
            this->freq_reg_from_cc1101_regs_());
+
+  // === TX HARDWARE TEST: 3s continuous wave on 868.35 MHz ===
+  // If CC1101 sees RSSI spike → PA works. If not → hardware broken.
+  ESP_LOGW(TAG, "TX TEST: transmitting CW on 868.35 MHz for 10 seconds...");
+  this->set_standby_(sx1262::STDBY_XOSC);
+  this->set_pa_config_();
+  uint8_t tx_p[2] = {static_cast<uint8_t>(this->pa_power_), sx1262::PA_RAMP_200US};
+  this->write_opcode_(sx1262::SET_TX_PARAMS, tx_p, 2);
+  if (this->fem_pa_pin_) {
+    this->fem_pa_pin_->digital_write(true);
+  }
+  // SET_TX_CONTINUOUS_WAVE = 0xD1
+  this->write_opcode_(0xD1, nullptr, 0);
+  delay(10000);
+  this->set_standby_();
+  if (this->fem_pa_pin_) {
+    this->fem_pa_pin_->digital_write(false);
+  }
+  ESP_LOGW(TAG, "TX TEST: CW done. Check CC1101 RSSI logs.");
+  // === END TX TEST ===
+
+  // Re-enter RX
+  this->set_dio_irq_for_rx_();
+  this->set_rx_();
+  this->wait_busy_();
+
   return true;
 }
 
@@ -218,6 +244,11 @@ bool Sx1262Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
 
   // IBM PN9 whiten everything (length + data + CRC)
   this->whiten_fix_(tx_buf, tx_total);
+
+  // Re-apply PA config before TX (some boards lose PA settings between RX/TX transitions)
+  this->set_pa_config_();
+  uint8_t tx_params[2] = {static_cast<uint8_t>(this->pa_power_), sx1262::PA_RAMP_200US};
+  this->write_opcode_(sx1262::SET_TX_PARAMS, tx_params, 2);
 
   // Fixed-length TX: send all bytes (length + data + CRC).
   uint8_t pkt_params[9] = {
