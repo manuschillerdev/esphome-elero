@@ -24,6 +24,12 @@ bool Sx1262Driver::init() {
     this->busy_pin_->setup();
   }
 
+  // Setup FEM PA pin (Heltec V4: GPIO46 controls external PA enable)
+  if (this->fem_pa_pin_) {
+    this->fem_pa_pin_->setup();
+    this->fem_pa_pin_->digital_write(false);  // Start in RX mode (PA off)
+  }
+
   // Hardware reset via RST pin
   this->reset();
 
@@ -158,6 +164,24 @@ void Sx1262Driver::reset() {
   delay(5);  // Wait for reset to complete
 }
 
+/// CC1101 CRC-16: polynomial 0x8005, init 0xFFFF (CRC-16/IBM/ANSI).
+/// Computed over data bytes BEFORE whitening. CC1101 auto-appends this on TX;
+/// we must compute it in software since the SX1262 has no compatible CRC.
+static uint16_t cc1101_crc16(const uint8_t *data, size_t len) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < len; ++i) {
+    crc ^= static_cast<uint16_t>(data[i]) << 8;
+    for (int bit = 0; bit < 8; ++bit) {
+      if (crc & 0x8000) {
+        crc = (crc << 1) ^ 0x8005;
+      } else {
+        crc <<= 1;
+      }
+    }
+  }
+  return crc;
+}
+
 bool Sx1262Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
   if (this->tx_in_progress_) {
     return false;
@@ -166,28 +190,44 @@ bool Sx1262Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
   this->set_standby_(sx1262::STDBY_XOSC);
 
   // Hub provides: [length_byte | data...] (unwhitened CC1101 format).
-  // Apply whiten_fix (IBM⊕CCITT pre-correction) so that after SX1262's CCITT
-  // hardware whitening, the over-the-air data matches CC1101 IBM whitening.
-  // The CC1101 receiver will de-whiten correctly.
+  // CC1101 receivers expect: whitened(length + data + CRC16).
+  // 1. Copy raw packet
+  // 2. Compute CC1101 CRC-16 over the raw data (after length byte)
+  // 3. Append 2 CRC bytes
+  // 4. IBM PN9 whiten everything (length + data + CRC)
+  // 5. Transmit
   uint8_t data_len = pkt_buf[0];
-  size_t tx_total = 1 + data_len;  // length byte + payload
+  size_t raw_total = 1 + data_len;       // length byte + payload
+  size_t tx_total = raw_total + 2;       // + 2 CRC bytes
 
   uint8_t tx_buf[sx1262::MAX_PACKET_SIZE];
   if (tx_total > sizeof(tx_buf)) {
     return false;
   }
-  memcpy(tx_buf, pkt_buf, tx_total);
+  memcpy(tx_buf, pkt_buf, raw_total);
+
+  // CC1101 CRC-16 over length byte + data bytes (per CC1101 datasheet section 15.2.3:
+  // "In variable-length mode, the CRC is calculated over the length byte and the payload")
+  uint16_t crc = cc1101_crc16(tx_buf, raw_total);
+  tx_buf[raw_total] = static_cast<uint8_t>(crc >> 8);      // CRC MSB first
+  tx_buf[raw_total + 1] = static_cast<uint8_t>(crc & 0xFF);
+
+  // Log raw TX bytes before whitening
+  ESP_LOGD(TAG, "TX raw [%d]: %s", static_cast<int>(tx_total),
+           format_hex_pretty(tx_buf, tx_total).c_str());
+
+  // IBM PN9 whiten everything (length + data + CRC)
   this->whiten_fix_(tx_buf, tx_total);
 
-  // Fixed-length TX: send all bytes (length byte + payload).
+  // Fixed-length TX: send all bytes (length + data + CRC).
   uint8_t pkt_params[9] = {
       0x00, 0x20,  // Preamble: 32 bits
-      0x00,        // Preamble detector: OFF (rely on sync word only)
+      0x00,        // Preamble detector: OFF
       0x10,        // Sync word: 16 bits
       0x00,        // No address filtering
       0x00,        // Fixed length
       static_cast<uint8_t>(tx_total),
-      0x01,        // CRC OFF
+      0x01,        // CRC OFF (we compute CC1101 CRC in software)
       0x00,        // Whitening OFF (IBM PN9 applied in software)
   };
   this->write_opcode_(sx1262::SET_PACKET_PARAMS, pkt_params, 9);
@@ -200,6 +240,11 @@ bool Sx1262Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
 
   this->set_dio_irq_for_tx_();
 
+  // Enable external FEM PA before TX
+  if (this->fem_pa_pin_) {
+    this->fem_pa_pin_->digital_write(true);
+  }
+
   uint8_t timeout[3] = {0x00, 0x00, 0x00};
   this->write_opcode_(sx1262::SET_TX, timeout, 3);
 
@@ -207,7 +252,6 @@ bool Sx1262Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
   this->tx_start_ms_ = millis();
   this->tx_pending_success_ = false;
 
-  ESP_LOGVV(TAG, "load_and_transmit: %zu bytes", tx_total);
   return true;
 }
 
@@ -228,9 +272,14 @@ TxPollResult Sx1262Driver::poll_tx() {
     this->write_opcode_(sx1262::CLR_IRQ_STATUS, irq_buf, 2);
 
     if (irq_status & sx1262::IRQ_TX_DONE) {
-      ESP_LOGV(TAG, "TX successful");
+      ESP_LOGD(TAG, "TX done irq=0x%04x len=%d", irq_status, static_cast<int>(this->tx_start_ms_ ? millis() - this->tx_start_ms_ : 0));
       this->tx_in_progress_ = false;
       this->tx_pending_success_ = true;
+
+      // Disable external FEM PA after TX
+      if (this->fem_pa_pin_) {
+        this->fem_pa_pin_->digital_write(false);
+      }
 
       // Restore RX packet params (TX changed payload length)
       this->restore_rx_packet_params_();
@@ -247,6 +296,11 @@ TxPollResult Sx1262Driver::poll_tx() {
     this->tx_pending_success_ = false;
     this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
 
+    // Disable external FEM PA on TX failure
+    if (this->fem_pa_pin_) {
+      this->fem_pa_pin_->digital_write(false);
+    }
+
     // Recover: standby -> restore RX params -> re-enter RX
     this->set_standby_();
     this->restore_rx_packet_params_();
@@ -259,6 +313,9 @@ TxPollResult Sx1262Driver::poll_tx() {
 }
 
 void Sx1262Driver::abort_tx() {
+  if (this->fem_pa_pin_) {
+    this->fem_pa_pin_->digital_write(false);
+  }
   if (this->tx_in_progress_) {
     this->tx_in_progress_ = false;
     this->tx_pending_success_ = false;
@@ -567,7 +624,7 @@ void Sx1262Driver::configure_fsk_() {
       static_cast<uint8_t>((br >> 16) & 0xFF),
       static_cast<uint8_t>((br >> 8) & 0xFF),
       static_cast<uint8_t>(br & 0xFF),
-      0x00,                     // No pulse shaping (2-FSK)
+      0x09,                     // Gaussian BT=0.5 (GFSK, matches CC1101 MOD_FORMAT=GFSK)
       sx1262::BW_FSK_234300,    // RX bandwidth 234.3 kHz (matches CC1101's 232 kHz)
       static_cast<uint8_t>((fdev >> 16) & 0xFF),
       static_cast<uint8_t>((fdev >> 8) & 0xFF),

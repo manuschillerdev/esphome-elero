@@ -75,6 +75,7 @@ elero:
   rst_pin: GPIO12
   rf_switch: true       # Heltec V4 uses DIO2 for RF switch control
   tcxo_voltage: 1.8     # Heltec V4 uses TCXO on DIO3 at 1.8V
+  fem_pa_pin: GPIO46    # Heltec V4.2 FEM PA enable (external PA on/off for TX)
 
 # MQTT mode — devices managed via NVS, no YAML covers/lights
 elero_mqtt:

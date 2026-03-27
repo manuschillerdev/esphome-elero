@@ -174,6 +174,7 @@ class Sx1262Driver : public RadioDriver,
 
   void set_busy_pin(InternalGPIOPin *pin) { busy_pin_ = pin; }
   void set_rst_pin(InternalGPIOPin *pin) { rst_pin_ = pin; }
+  void set_fem_pa_pin(InternalGPIOPin *pin) { fem_pa_pin_ = pin; }
 
   // ── SX1262-specific option setters ─────────────────────────────────────────
 
@@ -230,6 +231,7 @@ class Sx1262Driver : public RadioDriver,
 
   InternalGPIOPin *busy_pin_{nullptr};
   InternalGPIOPin *rst_pin_{nullptr};
+  InternalGPIOPin *fem_pa_pin_{nullptr};  ///< FEM PA enable pin (Heltec V4: GPIO46)
 
   // ── Options ────────────────────────────────────────────────────────────────
 

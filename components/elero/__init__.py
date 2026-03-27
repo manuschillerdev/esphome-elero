@@ -35,6 +35,7 @@ CONF_RST_PIN = "rst_pin"
 CONF_RF_SWITCH = "rf_switch"
 CONF_PA_POWER = "pa_power"
 CONF_TCXO_VOLTAGE = "tcxo_voltage"
+CONF_FEM_PA_PIN = "fem_pa_pin"
 
 
 def _validate_irq_pin(config):
@@ -72,6 +73,7 @@ CONFIG_SCHEMA = cv.All(
             # SX1262-specific pins
             cv.Optional(CONF_BUSY_PIN): pins.gpio_input_pin_schema,
             cv.Optional(CONF_RST_PIN): pins.gpio_output_pin_schema,
+            cv.Optional(CONF_FEM_PA_PIN): pins.gpio_output_pin_schema,
             # SX1262-specific options
             cv.Optional(CONF_RF_SWITCH, default=False): cv.boolean,
             cv.Optional(CONF_PA_POWER, default=22): cv.int_range(min=-3, max=22),
@@ -106,6 +108,11 @@ async def to_code(config):
         cg.add(driver.set_busy_pin(busy_pin))
         rst_pin = await cg.gpio_pin_expression(config[CONF_RST_PIN])
         cg.add(driver.set_rst_pin(rst_pin))
+
+        # FEM PA pin (optional — Heltec V4 uses GPIO46 for external PA enable)
+        if CONF_FEM_PA_PIN in config:
+            fem_pa_pin = await cg.gpio_pin_expression(config[CONF_FEM_PA_PIN])
+            cg.add(driver.set_fem_pa_pin(fem_pa_pin))
 
         # SX1262-specific options
         cg.add(driver.set_rf_switch(config[CONF_RF_SWITCH]))
