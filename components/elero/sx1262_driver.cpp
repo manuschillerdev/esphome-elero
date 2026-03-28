@@ -12,7 +12,7 @@ namespace elero {
 
 static const char *const TAG = "elero.sx1262";
 
-
+static uint16_t cc1101_crc16(const uint8_t *data, size_t len);
 
 // ─── RadioDriver Interface ────────────────────────────────────────────────
 
@@ -107,20 +107,24 @@ bool Sx1262Driver::init() {
   this->write_opcode_(sx1262::CALIBRATE_IMAGE, cal_freq, 2);
   this->wait_busy_();
 
-  // 13. PA config + TX params
+  // 13. PA config + TX params + errata fixes
   this->set_pa_config_();
+  this->fix_pa_clamping_();
   uint8_t tx_params[2] = {static_cast<uint8_t>(this->pa_power_), sx1262::PA_RAMP_200US};
   this->write_opcode_(sx1262::SET_TX_PARAMS, tx_params, 2);
 
-  // 14. Current limit (OCP)
+  // 14. Sensitivity/modulation register fix (RadioLib fixSensitivity)
+  this->fix_sensitivity_();
+
+  // 15. Current limit (OCP)
   uint8_t ocp = 0x38;  // 140mA (RadioLib default for SX1262)
   this->write_register_(sx1262::REG_OCP, &ocp, 1);
 
-  // 15. Boosted RX gain
+  // 16. Boosted RX gain
   uint8_t rx_gain = 0x96;
   this->write_register_(sx1262::REG_RX_GAIN, &rx_gain, 1);
 
-  // 16. Enter RX mode
+  // 17. Enter RX mode
   this->set_dio_irq_for_rx_();
   this->set_rx_();
   this->wait_busy_();
@@ -139,42 +143,210 @@ bool Sx1262Driver::init() {
     ESP_LOGE(TAG, "Failed to enter RX mode!");
   }
 
-  // Read back whitening init registers to verify
-  {
-    uint8_t w_msb = 0, w_lsb = 0;
-    this->read_register_(sx1262::REG_WHITENING_INIT_MSB, &w_msb, 1);
-    this->read_register_(sx1262::REG_WHITENING_INIT_LSB, &w_lsb, 1);
-    uint16_t w_init = ((w_msb & 0x01) << 8) | w_lsb;
-    ESP_LOGI(TAG, "Whitening init: MSB_reg=0x%02x LSB_reg=0x%02x → 9-bit=0x%03x", w_msb, w_lsb, w_init);
-  }
-
   ESP_LOGI(TAG, "SX1262 initialized, FSK mode, freq_reg=0x%08x",
            this->freq_reg_from_cc1101_regs_());
 
-  // === TX HARDWARE TEST: 3s continuous wave on 868.35 MHz ===
-  // If CC1101 sees RSSI spike → PA works. If not → hardware broken.
-  ESP_LOGW(TAG, "TX TEST: transmitting CW on 868.35 MHz for 10 seconds...");
-  this->set_standby_(sx1262::STDBY_XOSC);
-  this->set_pa_config_();
-  uint8_t tx_p[2] = {static_cast<uint8_t>(this->pa_power_), sx1262::PA_RAMP_200US};
-  this->write_opcode_(sx1262::SET_TX_PARAMS, tx_p, 2);
-  if (this->fem_pa_pin_) {
-    this->fem_pa_pin_->digital_write(true);
+  // Verify sync word register wasn't corrupted by calibration/init
+  {
+    uint8_t sw[4] = {};
+    this->read_register_(sx1262::REG_SYNCWORD, sw, 4);
+    ESP_LOGI(TAG, "Sync word readback: %02x %02x %02x %02x (expect D3 91 D3 91)",
+             sw[0], sw[1], sw[2], sw[3]);
   }
-  // SET_TX_CONTINUOUS_WAVE = 0xD1
-  this->write_opcode_(0xD1, nullptr, 0);
-  delay(10000);
-  this->set_standby_();
-  if (this->fem_pa_pin_) {
-    this->fem_pa_pin_->digital_write(false);
-  }
-  ESP_LOGW(TAG, "TX TEST: CW done. Check CC1101 RSSI logs.");
-  // === END TX TEST ===
 
-  // Re-enter RX
+  // ── TX diagnostic (DISABLED — TX confirmed working 2026-03-28) ──────────
+  // All 5 test variants ran; Test A (hw_sync + sw_pn9) produced crc_ok:true on CC1101.
+  // Root cause was 16-bit vs 32-bit sync word (CC1101 SYNC_MODE=011 doubles it).
+#if 0  // Enable for TX debugging only
+  //
+  // Known PN9 first 8 bytes: FF E1 1D 9A ED 85 33 24
+  // CC1101 de-whitens by XOR with this sequence after sync word.
+
+  auto tx_test = [this](const char *label, const uint8_t *buf, size_t len,
+                         uint8_t sync_bits, uint8_t whiten) {
+    ESP_LOGW(TAG, "TX TEST [%s]: %d bytes, sync=%d bits, whiten=%s",
+             label, static_cast<int>(len), sync_bits, whiten ? "HW" : "OFF");
+
+    this->set_standby_(sx1262::STDBY_XOSC);
+    this->set_pa_config_();
+    this->fix_pa_clamping_();
+    uint8_t tp[2] = {static_cast<uint8_t>(this->pa_power_), sx1262::PA_RAMP_200US};
+    this->write_opcode_(sx1262::SET_TX_PARAMS, tp, 2);
+    this->fix_sensitivity_();
+
+    uint8_t pp[9] = {
+        0x00, 0x60,  // Preamble: 96 bits
+        0x00,        // Preamble detector: OFF
+        sync_bits,   // Sync word length (0x10=16 bits, 0x00=none)
+        0x00,        // No address filtering
+        0x00,        // Fixed length
+        static_cast<uint8_t>(len),
+        0x01,        // CRC OFF (hardware)
+        whiten,      // 0x00=OFF, 0x01=ON
+    };
+    this->write_opcode_(sx1262::SET_PACKET_PARAMS, pp, 9);
+
+    uint8_t ba[2] = {0x00, 0x00};
+    this->write_opcode_(sx1262::SET_BUFFER_BASE_ADDRESS, ba, 2);
+    this->write_fifo_(0x00, buf, len);
+
+    this->clear_irq_status_();
+    this->set_dio_irq_for_tx_();
+    if (this->fem_pa_pin_) this->fem_pa_pin_->digital_write(true);
+
+    uint8_t to[3] = {0x00, 0x00, 0x00};
+    this->write_opcode_(sx1262::SET_TX, to, 3);
+
+    uint32_t t0 = millis();
+    while (millis() - t0 < 50) {
+      if (this->irq_flag_ && this->irq_flag_->exchange(false)) break;
+      delay(1);
+    }
+    if (this->fem_pa_pin_) this->fem_pa_pin_->digital_write(false);
+    this->set_standby_();
+    delay(20);  // gap between packets
+  };
+
+  // ── Test A: Hardware sync + software PN9 whitening + CRC (our normal TX path) ──
+  // This is what load_and_transmit() does. If CC1101 receives → TX works!
+  {
+    // Build a simple CHECK command packet to 0x413238
+    uint8_t raw[32];
+    memset(raw, 0, sizeof(raw));
+    raw[0] = 0x1D;  // length = 29
+    raw[1] = 0xAA;  // counter (arbitrary)
+    raw[2] = 0x6A;  // type = COMMAND
+    raw[3] = 0x00;  // type2
+    raw[4] = 0x0A;  // hop
+    raw[5] = 0x01;  // sys
+    raw[6] = 0x03;  // channel
+    // src = 0x4FCA30
+    raw[7] = 0x4F; raw[8] = 0xCA; raw[9] = 0x30;
+    raw[10] = 0x4F; raw[11] = 0xCA; raw[12] = 0x30;  // bwd
+    raw[13] = 0x4F; raw[14] = 0xCA; raw[15] = 0x30;  // fwd
+    raw[16] = 0x01;  // dest count
+    // dst = 0x413238
+    raw[17] = 0x41; raw[18] = 0x32; raw[19] = 0x38;
+    raw[20] = 0x00; raw[21] = 0x04;  // payload 1,2
+    // Encrypted CHECK command (counter=0xAA)
+    uint16_t code = (0x0000 - (0xAA * 0x708F)) & 0xFFFF;
+    raw[22] = (code >> 8) & 0xFF;
+    raw[23] = code & 0xFF;
+    raw[24] = 0x00;  // CHECK command
+    // Bytes 25-29: zeros (parity will be wrong but doesn't matter for this test)
+
+    // Compute CRC-16 over [length + data] (30 bytes)
+    uint16_t crc = cc1101_crc16(raw, 30);
+    raw[30] = static_cast<uint8_t>(crc >> 8);
+    raw[31] = static_cast<uint8_t>(crc & 0xFF);
+
+    // Apply PN9 whitening
+    this->whiten_fix_(raw, 32);
+
+    for (int i = 0; i < 3; ++i)
+      tx_test("A:hw_sync+sw_pn9", raw, 32, 0x10, 0x00);
+  }
+
+  // ── Test B: Hardware sync + NO whitening at all (raw bytes) ──
+  // Chosen so CC1101 PN9 de-whitening produces valid length.
+  // First byte 0xE2: 0xE2 ^ 0xFF(PN9) = 0x1D (length=29) → valid.
+  // If CC1101 sees this with crc_ok:false → sync word detection works!
+  {
+    uint8_t raw[32];
+    memset(raw, 0xAA, sizeof(raw));
+    raw[0] = 0xE2;  // de-whitens to 0x1D
+
+    for (int i = 0; i < 3; ++i)
+      tx_test("B:hw_sync+raw", raw, 32, 0x10, 0x00);
+  }
+
+  // ── Test C: Hardware sync + SX1262 HARDWARE whitening (no software PN9) ──
+  // SX1262 applies its own whitening (different from CC1101 PN9).
+  // Sync word still added by hardware before whitening → CC1101 should detect sync.
+  // Data will be double-garbled (SX1262 whiten → CC1101 PN9 de-whiten) but sync works.
+  // First byte 0x1D: SX1262 whitens it → CC1101 PN9 de-whitens → some value.
+  // We need the CC1101-side result ≤ 60. Unpredictable, so send 0x1D and hope.
+  {
+    uint8_t raw[32];
+    memset(raw, 0x00, sizeof(raw));
+    raw[0] = 0x1D;  // length (SX1262 will whiten this further)
+
+    for (int i = 0; i < 3; ++i)
+      tx_test("C:hw_sync+hw_whiten", raw, 32, 0x10, 0x01);
+  }
+
+  // ── Test D: Sync word in buffer (sync_length=0) + software PN9 ──
+  // Same data as Test A but with D3 91 prepended and no hardware sync.
+  {
+    uint8_t raw[34];
+    raw[0] = 0xD3; raw[1] = 0x91;  // sync word in buffer
+    memset(raw + 2, 0, 32);
+    raw[2] = 0x1D; raw[3] = 0xAA; raw[4] = 0x6A; raw[5] = 0x00;
+    raw[6] = 0x0A; raw[7] = 0x01; raw[8] = 0x03;
+    raw[9] = 0x4F; raw[10] = 0xCA; raw[11] = 0x30;
+    raw[12] = 0x4F; raw[13] = 0xCA; raw[14] = 0x30;
+    raw[15] = 0x4F; raw[16] = 0xCA; raw[17] = 0x30;
+    raw[18] = 0x01; raw[19] = 0x41; raw[20] = 0x32; raw[21] = 0x38;
+    raw[22] = 0x00; raw[23] = 0x04;
+    uint16_t code = (0x0000 - (0xAA * 0x708F)) & 0xFFFF;
+    raw[24] = (code >> 8) & 0xFF; raw[25] = code & 0xFF;
+    raw[26] = 0x00;
+    uint16_t crc = cc1101_crc16(raw + 2, 30);
+    raw[32] = static_cast<uint8_t>(crc >> 8);
+    raw[33] = static_cast<uint8_t>(crc & 0xFF);
+    // Whiten only the data portion (after sync)
+    this->whiten_fix_(raw + 2, 32);
+
+    for (int i = 0; i < 3; ++i)
+      tx_test("D:buf_sync+sw_pn9", raw, 34, 0x00, 0x00);
+  }
+
+  // ── Test E: INVERTED DEVIATION hypothesis ──────────────────────────────
+  // If SX1262 maps 1→negative deviation (opposite CC1101), all bits arrive
+  // complemented. Fix: complement all TX bytes + use complemented sync word.
+  // Sync register: ~D3=2C, ~91=6E. Data: ~whitened(raw+CRC).
+  {
+    // Set complemented sync word
+    uint8_t inv_sync[8] = {0x2C, 0x6E, 0x2C, 0x6E, 0x00, 0x00, 0x00, 0x00};
+    this->write_register_(sx1262::REG_SYNCWORD, inv_sync, 8);
+
+    // Build same packet as Test A but complement the whitened output
+    uint8_t raw[32];
+    memset(raw, 0, sizeof(raw));
+    raw[0] = 0x1D; raw[1] = 0xAA; raw[2] = 0x6A; raw[3] = 0x00;
+    raw[4] = 0x0A; raw[5] = 0x01; raw[6] = 0x03;
+    raw[7] = 0x4F; raw[8] = 0xCA; raw[9] = 0x30;
+    raw[10] = 0x4F; raw[11] = 0xCA; raw[12] = 0x30;
+    raw[13] = 0x4F; raw[14] = 0xCA; raw[15] = 0x30;
+    raw[16] = 0x01; raw[17] = 0x41; raw[18] = 0x32; raw[19] = 0x38;
+    raw[20] = 0x00; raw[21] = 0x04;
+    uint16_t code = (0x0000 - (0xAA * 0x708F)) & 0xFFFF;
+    raw[22] = (code >> 8) & 0xFF; raw[23] = code & 0xFF;
+    raw[24] = 0x00;
+    uint16_t crc = cc1101_crc16(raw, 30);
+    raw[30] = static_cast<uint8_t>(crc >> 8);
+    raw[31] = static_cast<uint8_t>(crc & 0xFF);
+    this->whiten_fix_(raw, 32);
+
+    // Complement all bytes (inverted deviation fix)
+    for (int i = 0; i < 32; ++i) raw[i] = ~raw[i];
+
+    for (int i = 0; i < 3; ++i)
+      tx_test("E:INVERTED_DEV", raw, 32, 0x10, 0x00);
+
+    // Restore original sync word
+    uint8_t orig_sync[8] = {0xD3, 0x91, 0xD3, 0x91, 0x00, 0x00, 0x00, 0x00};
+    this->write_register_(sx1262::REG_SYNCWORD, orig_sync, 8);
+  }
+
+  ESP_LOGW(TAG, "TX TEST: all done — check CC1101 for received packets");
+
+  // Restore RX config
+  this->restore_rx_packet_params_();
   this->set_dio_irq_for_rx_();
   this->set_rx_();
   this->wait_busy_();
+#endif  // TX diagnostic
 
   return true;
 }
@@ -232,8 +404,7 @@ bool Sx1262Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
   }
   memcpy(tx_buf, pkt_buf, raw_total);
 
-  // CC1101 CRC-16 over length byte + data bytes (per CC1101 datasheet section 15.2.3:
-  // "In variable-length mode, the CRC is calculated over the length byte and the payload")
+  // CC1101 CRC-16 over length byte + data bytes (per CC1101 datasheet section 15.2.3)
   uint16_t crc = cc1101_crc16(tx_buf, raw_total);
   tx_buf[raw_total] = static_cast<uint8_t>(crc >> 8);      // CRC MSB first
   tx_buf[raw_total + 1] = static_cast<uint8_t>(crc & 0xFF);
@@ -245,16 +416,19 @@ bool Sx1262Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
   // IBM PN9 whiten everything (length + data + CRC)
   this->whiten_fix_(tx_buf, tx_total);
 
-  // Re-apply PA config before TX (some boards lose PA settings between RX/TX transitions)
+  // Re-apply PA config + errata fixes before TX (RadioLib does this on every TX)
   this->set_pa_config_();
+  this->fix_pa_clamping_();
   uint8_t tx_params[2] = {static_cast<uint8_t>(this->pa_power_), sx1262::PA_RAMP_200US};
   this->write_opcode_(sx1262::SET_TX_PARAMS, tx_params, 2);
+  this->fix_sensitivity_();
 
-  // Fixed-length TX: send all bytes (length + data + CRC).
+  // Hardware sync word (16 bits from register 0x06C0 = D3 91).
+  // SX1262 generates: [preamble] [D3 91] [buffer data]
   uint8_t pkt_params[9] = {
-      0x00, 0x20,  // Preamble: 32 bits
+      0x00, 0x60,  // Preamble: 96 bits (12 bytes, matches CC1101)
       0x00,        // Preamble detector: OFF
-      0x10,        // Sync word: 16 bits
+      0x20,        // Sync word: 32 bits (D3 91 D3 91 — CC1101 SYNC_MODE=011 doubles it)
       0x00,        // No address filtering
       0x00,        // Fixed length
       static_cast<uint8_t>(tx_total),
@@ -263,8 +437,16 @@ bool Sx1262Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
   };
   this->write_opcode_(sx1262::SET_PACKET_PARAMS, pkt_params, 9);
 
+  // Reset buffer base address (safety — RadioLib does this before every TX)
+  uint8_t buf_addr[2] = {0x00, 0x00};
+  this->write_opcode_(sx1262::SET_BUFFER_BASE_ADDRESS, buf_addr, 2);
+
   this->write_fifo_(0x00, tx_buf, tx_total);
 
+  // Clear ALL IRQ flags in the SX1262 register AND the atomic flag.
+  // Without this, stale IRQ bits (e.g., RX_DONE) can keep DIO1 high,
+  // preventing the rising edge that signals TX_DONE. (RadioLib does this.)
+  this->clear_irq_status_();
   if (this->irq_flag_) {
     this->irq_flag_->store(false, std::memory_order_release);
   }
@@ -278,6 +460,23 @@ bool Sx1262Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
 
   uint8_t timeout[3] = {0x00, 0x00, 0x00};
   this->write_opcode_(sx1262::SET_TX, timeout, 3);
+
+  // Diagnostic: verify chip entered TX mode and log PA clamp register
+  this->wait_busy_();
+  this->enable();
+  uint8_t tx_status = this->transfer_byte(sx1262::GET_STATUS);
+  this->transfer_byte(0x00);
+  this->disable();
+  uint8_t tx_chip_mode = (tx_status >> 4) & 0x07;
+  uint8_t tx_cmd_status = (tx_status >> 1) & 0x07;
+
+  uint8_t clamp_val = 0, sens_val = 0;
+  this->read_register_(sx1262::REG_TX_CLAMP_CFG, &clamp_val, 1);
+  this->read_register_(sx1262::REG_SENSITIVITY_CFG, &sens_val, 1);
+
+  ESP_LOGD(TAG, "TX start: mode=0x%x cmd=0x%x clamp=0x%02x sens=0x%02x fem=%d",
+           tx_chip_mode, tx_cmd_status, clamp_val, sens_val,
+           this->fem_pa_pin_ ? 1 : 0);
 
   this->tx_in_progress_ = true;
   this->tx_start_ms_ = millis();
@@ -397,30 +596,20 @@ size_t Sx1262Driver::read_fifo(uint8_t *buf, size_t max_len) {
     ESP_LOGD(TAG, "RX raw [%d]: %s", payload_len, hex);
   }
 
-  // With whitening OFF, the SX1262 includes the 2-byte sync word (0xD391) at the
-  // start of the buffer. Actual CC1101-whitened packet data starts at offset 2.
-  // Bytes 3+ match CC1101 whitened data perfectly. Byte 2 has a 1-bit LSB error.
-  static constexpr size_t SYNC_PREFIX = 2;
-  if (payload_len <= SYNC_PREFIX) {
-    return 0;
-  }
-
-  uint8_t *data = raw + SYNC_PREFIX;
-  size_t data_len = payload_len - SYNC_PREFIX;
+  // With 32-bit sync word (D3 91 D3 91), the SX1262 strips the full sync word.
+  // Buffer starts directly with the whitened payload (no sync prefix to skip).
+  // Previous 16-bit sync caused the second D3 91 copy to appear in the buffer.
+  uint8_t *data = raw;
+  size_t data_len = payload_len;
 
   // Apply CC1101 IBM PN9 de-whitening in software.
   this->whiten_fix_(data, data_len);
 
   // First de-whitened byte = Elero packet length.
-  // The 1-bit LSB error at the sync/data boundary flips bit 0 (e.g., 0x1D→0x1C).
-  // Correct by ORing bit 0 for known even→odd cases.
   uint8_t pkt_len = data[0];
-  if (pkt_len == 0x1C || pkt_len == 0x1A) {
-    pkt_len |= 0x01;  // 0x1C→0x1D, 0x1A→0x1B
-  }
 
   if (pkt_len < 0x1B || pkt_len > 0x1E) {
-    ESP_LOGD(TAG, "bad length 0x%02x after de-whiten (raw[2]=0x%02x)", data[0], raw[SYNC_PREFIX]);
+    ESP_LOGD(TAG, "bad length 0x%02x after de-whiten (raw[0]=0x%02x)", data[0], raw[0]);
     return 0;
   }
 
@@ -470,9 +659,9 @@ RadioHealth Sx1262Driver::check_health() {
   uint16_t irq_status = (static_cast<uint16_t>(irq_buf[0]) << 8) | irq_buf[1];
   bool irq_flag = this->irq_flag_ && this->irq_flag_->load(std::memory_order_relaxed);
 
-  // Read device errors
+  // Read device errors (GET_DEVICE_ERRORS = 0x17, not CLR = 0x07)
   uint8_t err_buf[2] = {};
-  this->read_opcode_(sx1262::CLR_DEVICE_ERRORS, err_buf, 2);
+  this->read_opcode_(sx1262::GET_DEVICE_ERRORS, err_buf, 2);
   uint16_t dev_errors = (static_cast<uint16_t>(err_buf[0]) << 8) | err_buf[1];
   if (dev_errors != 0) {
     uint8_t clear[2] = {0x00, 0x00};
@@ -692,10 +881,11 @@ void Sx1262Driver::configure_fsk_() {
   // CC1101 IBM PN9 de-whitening is applied in software.
   // Fixed length: 32 bytes = 2 sync + 30 data (covers all Elero packet sizes).
   // CRC OFF: Elero CRC is verified after AES decryption in decode_packet.
+  // Preamble: 96 bits (12 bytes) — matches CC1101 MDMCFG1=0x52 for consistency.
   uint8_t pkt_params[9] = {
-      0x00, 0x20,  // Preamble: 32 bits
+      0x00, 0x60,  // Preamble: 96 bits (12 bytes, matches CC1101)
       0x00,        // Preamble detector: OFF (rely on sync word only)
-      0x10,        // Sync word: 16 bits
+      0x20,        // Sync word: 32 bits (D3 91 D3 91)
       0x00,        // No address filtering
       0x00,        // Fixed length
       sx1262::RX_FIXED_LEN,
@@ -705,7 +895,11 @@ void Sx1262Driver::configure_fsk_() {
   this->write_opcode_(sx1262::SET_PACKET_PARAMS, pkt_params, 9);
 
   // ── Sync word: 0xD391 ─────────────────────────────────────────────────
-  uint8_t sync_word[8] = {0xD3, 0x91, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  // CC1101 SYNC_MODE=011 (30/32) uses a 32-bit sync word: SYNC1+SYNC0 repeated twice.
+  // The CC1101 transmits AND expects D3 91 D3 91. We must match this.
+  // (This also explains the 2-byte "sync prefix" in RX: the SX1262 16-bit sync detector
+  // matches the FIRST D3 91, capturing the SECOND copy as data in the buffer.)
+  uint8_t sync_word[8] = {0xD3, 0x91, 0xD3, 0x91, 0x00, 0x00, 0x00, 0x00};
   this->write_register_(sx1262::REG_SYNCWORD, sync_word, 8);
 }
 
@@ -753,6 +947,36 @@ void Sx1262Driver::set_dio_irq_for_tx_() {
   this->write_opcode_(sx1262::SET_DIO_IRQ_PARAMS, dio_params, 8);
 }
 
+void Sx1262Driver::clear_irq_status_() {
+  uint8_t clear_all[2] = {0xFF, 0xFF};
+  this->write_opcode_(sx1262::CLR_IRQ_STATUS, clear_all, 2);
+}
+
+void Sx1262Driver::fix_pa_clamping_() {
+  // SX1262 errata: PA clamping circuit can reduce output power at >18 dBm.
+  // RadioLib applies this in fixPaClamping() — register 0x08D8 bits [4:2].
+  // For power > 18 dBm: set bits [4:2] = 0b111 to disable clamping.
+  // For power <= 18 dBm: set bits [4:2] = 0b110 (default clamping OK).
+  uint8_t clamp_cfg = 0;
+  this->read_register_(sx1262::REG_TX_CLAMP_CFG, &clamp_cfg, 1);
+  if (this->pa_power_ > 18) {
+    clamp_cfg |= 0x1C;                      // bits [4:2] = 111
+  } else {
+    clamp_cfg = (clamp_cfg & 0xE3) | 0x18;  // bits [4:2] = 110
+  }
+  this->write_register_(sx1262::REG_TX_CLAMP_CFG, &clamp_cfg, 1);
+}
+
+void Sx1262Driver::fix_sensitivity_() {
+  // SX1262 errata section 15.1: register 0x0889 bit 2 affects modulation quality.
+  // RadioLib sets bit 2 = 1 for all modes except LoRa 500 kHz BW.
+  // For GFSK: always set bit 2 to 1 for optimal modulation.
+  uint8_t sens_cfg = 0;
+  this->read_register_(sx1262::REG_SENSITIVITY_CFG, &sens_cfg, 1);
+  sens_cfg |= 0x04;  // Set bit 2
+  this->write_register_(sx1262::REG_SENSITIVITY_CFG, &sens_cfg, 1);
+}
+
 void Sx1262Driver::whiten_fix_(uint8_t *data, size_t len) {
   // CC1101 IBM PN9 whitening/de-whitening (XOR is self-inverse).
   // Polynomial x^9 + x^5 + 1, seed 0x1FF, right-shifting LFSR.
@@ -771,10 +995,16 @@ void Sx1262Driver::whiten_fix_(uint8_t *data, size_t len) {
 }
 
 void Sx1262Driver::restore_rx_packet_params_() {
-  // Fixed length, CRC OFF, whitening OFF (must match configure_fsk_)
+  // Must match configure_fsk_() exactly: 96-bit preamble, detector OFF, fixed len, CRC/whitening OFF
   uint8_t pkt_params[9] = {
-      0x00, 0x20, 0x04, 0x10, 0x00,
-      0x00, sx1262::RX_FIXED_LEN, 0x01, 0x00,
+      0x00, 0x60,  // Preamble: 96 bits (12 bytes, matches CC1101)
+      0x00,        // Preamble detector: OFF (must match configure_fsk_)
+      0x20,        // Sync word: 32 bits (D3 91 D3 91)
+      0x00,        // No address filtering
+      0x00,        // Fixed length
+      sx1262::RX_FIXED_LEN,
+      0x01,        // CRC OFF
+      0x00,        // Whitening OFF
   };
   this->write_opcode_(sx1262::SET_PACKET_PARAMS, pkt_params, 9);
 }

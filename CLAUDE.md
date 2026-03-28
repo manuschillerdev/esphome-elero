@@ -28,11 +28,13 @@ external_components:
 | Skill | When to use |
 |-------|-------------|
 | `/elero-protocol` | **Always** when modifying CC1101 TX/RX code, packet encoding/decoding, encryption |
+| `/sx1262-driver` | **Always** when modifying SX1262 driver code, debugging TX/RX, or radio config |
 | `/modern-cpp` | **Always** when writing or reviewing C++ code |
 | `/esp32-development` | **Always** when writing C++ code (ISRs, memory, FreeRTOS, SPI) |
 
 > **IMPORTANT:** Before writing C++ code, invoke `/modern-cpp` and `/esp32-development` skills.
 > Before touching RF protocol code (elero.cpp TX/RX, packet handling), invoke `/elero-protocol`.
+> Before touching SX1262 driver code, invoke `/sx1262-driver`.
 
 ---
 

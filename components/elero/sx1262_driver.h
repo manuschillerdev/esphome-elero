@@ -61,6 +61,7 @@ constexpr uint8_t CLR_IRQ_STATUS = 0x02;
 constexpr uint8_t GET_RX_BUFFER_STATUS = 0x13;
 constexpr uint8_t GET_PACKET_STATUS = 0x14;
 constexpr uint8_t GET_RSSI_INST = 0x15;
+constexpr uint8_t GET_DEVICE_ERRORS = 0x17;
 constexpr uint8_t CLR_DEVICE_ERRORS = 0x07;
 
 // ── IRQ flags ────────────────────────────────────────────────────────────────
@@ -93,6 +94,10 @@ constexpr uint16_t REG_GFSK_FIX_3 = 0x08B8;
 constexpr uint16_t REG_GFSK_FIX_4 = 0x06AC;
 constexpr uint16_t REG_RSSI_AVG_WINDOW = 0x089B;
 
+// Errata registers (SX1261/62 datasheet chapter 15)
+constexpr uint16_t REG_TX_CLAMP_CFG = 0x08D8;       // PA clamping config (section 15.2)
+constexpr uint16_t REG_SENSITIVITY_CFG = 0x0889;     // TX modulation quality (section 15.1)
+
 // ── Elero FSK parameters ────────────────────────────────────────────────────
 // CC1101 MDMCFG4=0x7B (DRATE_E=11), MDMCFG3=0x83 (DRATE_M=131):
 // R_DATA = (256+131) * 2^11 * 26e6 / 2^28 = 76766.45 baud
@@ -118,8 +123,9 @@ constexpr uint32_t FREQ_868_95 = 0x3648A666U;
 constexpr uint8_t MAX_PACKET_SIZE = 64;  // Match CC1101_FIFO_LENGTH for compatibility
 
 // Fixed RX length: Elero packets are 28-31 bytes (length byte + 27-30 data).
-// We read a fixed 32 bytes because the SX1262 can't correctly decode the CC1101-whitened
-// length byte (IBM vs CCITT PN9 difference) in variable-length mode.
+// With 32-bit sync (D3 91 D3 91), the SX1262 strips the full sync word.
+// Buffer starts with the whitened payload. Use 32 to cover all packet sizes
+// (max: length 0x1E = 30 data + 1 length byte = 31, plus margin).
 constexpr uint8_t RX_FIXED_LEN = 32;
 
 // BUSY pin timeout
@@ -209,7 +215,10 @@ class Sx1262Driver : public RadioDriver,
   void set_pa_config_();
   void set_dio_irq_for_rx_();
   void set_dio_irq_for_tx_();
+  void clear_irq_status_();
   void restore_rx_packet_params_();
+  void fix_pa_clamping_();
+  void fix_sensitivity_();
   void whiten_fix_(uint8_t *data, size_t len);
   uint32_t freq_reg_from_cc1101_regs_() const;
 
