@@ -331,8 +331,11 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       uint32_t src_addr = parse_hex32(root, "src_address");
       uint8_t channel = parse_hex_or(root, "channel", 0);
       uint8_t raw_command = parse_hex_or(root, "command", 0);
+      uint8_t msg_type = parse_hex_or(root, "msg_type", packet::msg_type::COMMAND);
 
-      if (dst_addr == 0 || src_addr == 0) {
+      // Button broadcasts (0x44) don't need dst_address — they use channel addressing
+      bool is_broadcast = (msg_type == packet::msg_type::BUTTON);
+      if (src_addr == 0 || (!is_broadcast && dst_addr == 0)) {
         ESP_LOGW(TAG, "Raw TX missing required fields");
         return false;
       }
@@ -350,7 +353,6 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       // Unknown address → raw TX (blocking, debug only)
       uint8_t payload_1 = parse_hex_or(root, "payload_1", packet::defaults::PAYLOAD_1);
       uint8_t payload_2 = parse_hex_or(root, "payload_2", packet::defaults::PAYLOAD_2);
-      uint8_t msg_type = parse_hex_or(root, "msg_type", packet::msg_type::COMMAND);
       uint8_t type2_val = parse_hex_or(root, "type2", packet::defaults::TYPE2);
       uint8_t hop = parse_hex_or(root, "hop", packet::defaults::HOP);
 

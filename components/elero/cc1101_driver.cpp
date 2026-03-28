@@ -133,6 +133,11 @@ RadioHealth CC1101Driver::check_health() {
 
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
 
+  // Log RSSI for TX hardware test (read CC1101 RSSI register in RX mode)
+  uint8_t rssi_raw = this->read_status(CC1101_RSSI);
+  int16_t rssi_dbm = (rssi_raw >= 128) ? ((rssi_raw - 256) / 2 - 74) : (rssi_raw / 2 - 74);
+  ESP_LOGW(TAG, "health: MARCSTATE=0x%02x RSSI=%d dBm (raw=0x%02x)", marc, rssi_dbm, rssi_raw);
+
   // RX is the expected idle state
   if (marc == CC1101_MARCSTATE_RX) {
     return RadioHealth::OK;
