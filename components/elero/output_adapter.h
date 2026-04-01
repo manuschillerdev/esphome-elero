@@ -37,7 +37,8 @@ class OutputAdapter {
     virtual void on_device_removed(const Device &dev) = 0;
 
     /// A device's state changed (RF status update, command issued, timeout, etc.).
-    virtual void on_state_changed(const Device &dev) = 0;
+    /// @param changes Bitmask of state_change:: flags indicating which fields changed.
+    virtual void on_state_changed(const Device &dev, uint16_t changes) = 0;
 
     /// A device's config was updated (CRUD update, not state change).
     virtual void on_config_changed(const Device &dev) {}

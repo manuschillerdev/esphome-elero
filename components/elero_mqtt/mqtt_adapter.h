@@ -42,19 +42,19 @@ class MqttAdapter : public OutputAdapter {
 
     void on_device_added(const Device &dev) override;
     void on_device_removed(const Device &dev) override;
-    void on_state_changed(const Device &dev) override;
+    void on_state_changed(const Device &dev, uint16_t changes) override;
     void on_config_changed(const Device &dev) override;
     void on_rf_packet(const RfPacketInfo &pkt) override {}  // MQTT doesn't forward raw RF
 
  private:
     // ── Cover helpers ──
     void publish_cover_discovery_(const Device &dev);
-    void publish_cover_state_(const Device &dev);
+    void publish_cover_state_(const Device &dev, uint16_t changes);
     void subscribe_cover_commands_(const Device &dev);
 
     // ── Light helpers ──
     void publish_light_discovery_(const Device &dev);
-    void publish_light_state_(const Device &dev);
+    void publish_light_state_(const Device &dev, uint16_t changes);
     void subscribe_light_commands_(const Device &dev);
 
     // ── Remote helpers ──

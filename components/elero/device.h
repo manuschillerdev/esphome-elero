@@ -63,11 +63,36 @@ struct CoverDevice {
     cover_sm::Operation last_direction{cover_sm::Operation::OPENING};  ///< For toggle logic
     bool            tilted{false};
     CommandSource   last_command_source{CommandSource::UNKNOWN};
+
+    /// Last-published state cache. Registry diffs against this to detect changes.
+    /// Defaults guarantee non-zero diff on first publish.
+    struct Published {
+        int position_pct{-1};
+        const char *ha_state{nullptr};
+        cover_sm::Operation operation{cover_sm::Operation::IDLE};
+        const char *state_string{nullptr};
+        bool tilted{false};
+        bool is_problem{false};
+        const char *problem_type{nullptr};
+        const char *command_source{nullptr};
+        int rssi_rounded{-999};
+    } published;
 };
 
 struct LightDevice {
     light_sm::State state{light_sm::Off{}};
     CommandSource   last_command_source{CommandSource::UNKNOWN};
+
+    /// Last-published state cache. Registry diffs against this to detect changes.
+    struct Published {
+        bool is_on{false};
+        int brightness_pct{-1};
+        const char *state_string{nullptr};
+        bool is_problem{false};
+        const char *problem_type{nullptr};
+        const char *command_source{nullptr};
+        int rssi_rounded{-999};
+    } published;
 };
 
 struct RemoteDevice {
@@ -89,6 +114,7 @@ struct Device {
     DeviceLogic     logic;               ///< Type-specific state (movable)
     CommandSender   sender;              ///< TX queue (non-movable, shared by covers/lights)
     uint32_t        last_notify_ms{0};   ///< Throttle state change notifications
+    uint16_t        last_changes{0};     ///< What changed on last notify (for shell polling, set alongside last_notify_ms)
 
     [[nodiscard]] DeviceType type() const {
         static_assert(std::is_same_v<std::variant_alternative_t<0, DeviceLogic>, CoverDevice>);

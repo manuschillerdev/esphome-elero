@@ -130,7 +130,7 @@ void EleroWebServer::on_device_removed(const Device &dev) {
 // State Changed (OutputAdapter — optimistic updates)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-void EleroWebServer::on_state_changed(const Device &dev) {
+void EleroWebServer::on_state_changed(const Device &dev, uint16_t /*changes*/) {
   if (this->ws_clients_.empty() || !this->enabled_)
     return;
 
