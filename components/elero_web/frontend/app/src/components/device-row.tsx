@@ -1,5 +1,4 @@
 import { Button } from './ui/button'
-import { Badge } from './ui/badge'
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 import { InlineEdit } from './ui/inline-edit'
 import { SignalIndicator } from './signal-indicator'
@@ -7,7 +6,7 @@ import { formatTime } from './packet-table'
 import { ChevronUp, Square, ChevronDown, Shrink, Lightbulb, LightbulbOff, Settings, RotateCcw, Save, Info, Trash2 } from './icons'
 import { cn } from '@/lib/utils'
 import {
-  updateDevice, getStateLabel, getCommandLabel, isMovingState, isCommandPacket, isButtonPacket,
+  updateDevice, getStateLabel, getCommandLabel, isCommandPacket, isButtonPacket,
   rfPackets, hub, displayNames,
   type Device, type RfPacketWithTimestamp,
 } from '@/store'

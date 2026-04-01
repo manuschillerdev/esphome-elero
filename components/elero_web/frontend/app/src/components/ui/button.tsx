@@ -1,6 +1,6 @@
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
-import type { JSX } from 'preact'
+import type { ComponentProps } from 'preact'
 
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]",
@@ -30,7 +30,7 @@ const buttonVariants = cva(
   }
 )
 
-interface ButtonProps extends JSX.HTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {}
+interface ButtonProps extends Omit<ComponentProps<'button'>, 'size'>, VariantProps<typeof buttonVariants> {}
 
 function Button({ className, variant, size, ...props }: ButtonProps) {
   return (
@@ -42,3 +42,4 @@ function Button({ className, variant, size, ...props }: ButtonProps) {
 }
 
 export { Button, buttonVariants }
+export type { ButtonProps }

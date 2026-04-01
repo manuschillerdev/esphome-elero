@@ -4,25 +4,52 @@ node = "lts"
 pnpm = "latest"
 uv = "latest"
 cmake = "latest"
+gitleaks = "latest"
+"pipx:pre-commit" = "latest"
 
 [vars]
 usb_port = "/dev/cu.usbmodem2101"
 device_ip = "10.0.0.4"
 
+# --- Setup tasks (run once, idempotent) ---
+
+[tasks."setup:python"]
+description = "Install Python dependencies"
+run = "uv sync"
+
+[tasks."setup:frontend"]
+description = "Install frontend dependencies"
+run = "cd components/elero_web/frontend/app && pnpm install"
+
+[tasks."setup:hooks"]
+description = "Install git hooks"
+run = "pre-commit install"
+
 [tasks.setup]
 description = "Install all project dependencies"
-run = """
-uv sync
-cd components/elero_web/frontend/app && pnpm install
-"""
+depends = ["setup:python", "setup:frontend", "setup:hooks"]
+
+# --- Build tasks ---
+
+[tasks."frontend:build"]
+description = "Build frontend for embedding"
+depends = ["setup:frontend"]
+dir = "components/elero_web/frontend/app"
+run = "pnpm build"
+
+[tasks."frontend:dev"]
+description = "Start frontend dev server"
+dir = "components/elero_web/frontend/app"
+run = "pnpm dev"
 
 [tasks.compile]
 description = "Compile ESPHome firmware (dev config)"
-depends = ["frontend:build"]
+depends = ["setup:python", "frontend:build"]
 run = "uv run esphome compile config.dev.yaml"
 
 [tasks."compile:all"]
 description = "Compile all ESPHome test configs"
+depends = ["setup:python", "frontend:build"]
 run = """
 for cfg in tests/test.esp32-s3-ard.yaml \
            tests/test.esp32-s3-idf.yaml \
@@ -35,21 +62,40 @@ for cfg in tests/test.esp32-s3-ard.yaml \
 done
 """
 
+# --- Test & lint ---
+
 [tasks.test]
 description = "Run C++ unit tests"
-run = "cd tests/unit && cmake -B build && cmake --build build && ctest --test-dir build"
+run = "cd tests/unit && cmake -B build --fresh && cmake --build build && ctest --test-dir build"
 
 [tasks."test:xml"]
 description = "Run C++ unit tests with JUnit XML output"
-run = "cd tests/unit && cmake -B build && cmake --build build && cmake --build build --target test_xml"
+run = "cd tests/unit && cmake -B build --fresh && cmake --build build && cmake --build build --target test_xml"
+
+[tasks."lint:python"]
+description = "Lint Python files with ruff"
+depends = ["setup:python"]
+run = "uv run ruff check components/"
+
+[tasks."lint:frontend"]
+description = "Lint and typecheck frontend with oxlint + tsgolint"
+depends = ["setup:frontend"]
+dir = "components/elero_web/frontend/app"
+run = """
+pnpm lint
+pnpm typecheck
+"""
 
 [tasks.lint]
-description = "Lint Python files with ruff"
-run = "uv run ruff check components/"
+description = "Lint all code (Python + frontend)"
+depends = ["lint:python", "lint:frontend"]
 
 [tasks."lint:fix"]
 description = "Lint and auto-fix Python files"
+depends = ["setup:python"]
 run = "uv run ruff check --fix components/"
+
+# --- Flash tasks ---
 
 [tasks.erase]
 description = "Erase full flash (wipes NVS)"
@@ -57,21 +103,13 @@ run = "uvx esptool --port {{vars.usb_port}} erase_flash"
 
 [tasks.flash]
 description = "Compile and flash via USB"
+depends = ["setup:python", "frontend:build"]
 run = "uv run esphome run config.dev.yaml --device {{vars.usb_port}}"
 
 [tasks."flash:ota"]
 description = "Compile and flash via OTA"
+depends = ["setup:python", "frontend:build"]
 run = "uv run esphome run config.dev.yaml --device {{vars.device_ip}}"
-
-[tasks."frontend:dev"]
-description = "Start frontend dev server"
-dir = "components/elero_web/frontend/app"
-run = "pnpm dev"
-
-[tasks."frontend:build"]
-description = "Build frontend for embedding"
-dir = "components/elero_web/frontend/app"
-run = "pnpm build"
 
 # --- Composite tasks ---
 
@@ -94,8 +132,8 @@ depends = ["build"]
 run = "uv run esphome run config.dev.yaml --device {{vars.device_ip}}"
 
 [tasks."deploy:erase"]
-description = "Clean build cache, erase flash, then full build and flash via USB"
-depends = ["erase", "build"]
+description = "Erase flash, clean build, then compile and flash via USB"
+depends = ["erase", "setup", "frontend:build"]
 run = """
 uv run esphome clean config.dev.yaml
 uv run esphome run config.dev.yaml --device {{vars.usb_port}}

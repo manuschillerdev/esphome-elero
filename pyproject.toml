@@ -9,6 +9,7 @@ dependencies = []
 [dependency-groups]
 dev = [
     "esphome==2026.2.4",
+    "ruff>=0.11",
     # PlatformIO ESP32 build deps (pioarduino builder imports these unconditionally)
     "littlefs-python>=0.17.1",
     "fatfs-ng>=0.1.15",

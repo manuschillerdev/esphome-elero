@@ -1,5 +1,5 @@
 import { signal } from '@preact/signals'
-import type { ConfigData, HubConfig, RadioConfig, FreqConfig, HubMode, BlindConfig, LightConfig, RemoteConfig, DeviceUpsertedData, CrudEventData } from '@/generated'
+import type { ConfigData, HubConfig, RadioConfig, BlindConfig, LightConfig, RemoteConfig, DeviceUpsertedData, CrudEventData } from '@/generated'
 import type { RfPacketWithTimestamp } from '@/lib/protocol'
 
 export interface ServerConfig {

@@ -394,7 +394,7 @@ export function onStateChanged(data: StateChangedData) {
   // Build a synthetic lastStatus from the snapshot so the UI updates immediately.
   // This is the optimistic update — overridden by the next real RF packet.
   const lastStatus = {
-    ...(existing.lastStatus ?? {}),
+    ...existing.lastStatus,
     state: data.state,
     ha_state: data.ha_state,
     rssi: data.rssi,
