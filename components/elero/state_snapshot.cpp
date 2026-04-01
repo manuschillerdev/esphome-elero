@@ -51,7 +51,7 @@ LightStateSnapshot compute_light_snapshot(const Device &dev, uint32_t now) {
 // JSON SERIALIZATION — single mapping from snapshot fields to JSON keys
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#ifdef USE_JSON
+#ifdef ELERO_HAS_JSON
 void CoverStateSnapshot::to_json(JsonObject obj) const {
     obj["position"] = position;
     obj["ha_state"] = ha_state;
@@ -73,7 +73,7 @@ void LightStateSnapshot::to_json(JsonObject obj) const {
     obj["state"] = state_string;
     obj["command_source"] = command_source;
 }
-#endif  // USE_JSON
+#endif  // ELERO_HAS_JSON
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DIFF FUNCTIONS — compare snapshot against Published cache

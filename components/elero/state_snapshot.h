@@ -12,7 +12,8 @@
 #include "light_sm.h"
 #include "elero_strings.h"
 #include "device_type.h"
-#ifdef USE_JSON
+#if __has_include("esphome/components/json/json_util.h")
+#define ELERO_HAS_JSON 1
 #include "esphome/components/json/json_util.h"
 #endif
 
@@ -52,7 +53,7 @@ struct CoverStateSnapshot {
     const char *command_source;  ///< "hub"/"remote"/"unknown"
     const char *device_class;    ///< "shutter"/"blind"/"awning"/etc.
 
-#ifdef USE_JSON
+#ifdef ELERO_HAS_JSON
     /// Write snapshot fields to a JSON object. Caller adds identity/config fields.
     void to_json(JsonObject obj) const;
 #endif
@@ -71,7 +72,7 @@ struct LightStateSnapshot {
     const char *state_string;
     const char *command_source;
 
-#ifdef USE_JSON
+#ifdef ELERO_HAS_JSON
     /// Write snapshot fields to a JSON object. Caller adds identity/config fields.
     void to_json(JsonObject obj) const;
 #endif
