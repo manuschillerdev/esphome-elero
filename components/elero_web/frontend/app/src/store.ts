@@ -430,3 +430,52 @@ export function setRfFilter(rf: string) {
 export function resetFilters() {
   filters.value = DEFAULT_FILTERS
 }
+
+// ─── YAML Export ──────────────────────────────────────────────────────────────
+
+function formatDuration(ms: number): string {
+  if (ms >= 60000 && ms % 60000 === 0) return `${ms / 60000}min`
+  if (ms >= 1000 && ms % 1000 === 0) return `${ms / 1000}s`
+  return `${ms}ms`
+}
+
+function coverToYaml(d: Device): string {
+  return [
+    '  - platform: elero',
+    ...(d.name ? [`    name: "${d.name}"`] : []),
+    `    dst_address: ${d.address}`,
+    `    src_address: ${d.remote}`,
+    `    channel: ${d.channel}`,
+    ...(d.open_ms > 0 ? [`    open_duration: ${formatDuration(d.open_ms)}`] : []),
+    ...(d.close_ms > 0 ? [`    close_duration: ${formatDuration(d.close_ms)}`] : []),
+    ...(d.supports_tilt ? ['    supports_tilt: true'] : []),
+    ...(d.poll_ms > 0 ? [`    poll_interval: ${formatDuration(d.poll_ms)}`] : []),
+  ].join('\n')
+}
+
+function lightToYaml(d: Device): string {
+  return [
+    '  - platform: elero',
+    ...(d.name ? [`    name: "${d.name}"`] : []),
+    `    dst_address: ${d.address}`,
+    `    src_address: ${d.remote}`,
+    `    channel: ${d.channel}`,
+    ...(d.dim_ms > 0 ? [`    dim_duration: ${formatDuration(d.dim_ms)}`] : []),
+  ].join('\n')
+}
+
+export function exportYaml(): string {
+  const devs = [...devices.value.values()].filter(d => d.updated_at !== null)
+  const covers = devs.filter(d => d.type === 'cover')
+  const lights = devs.filter(d => d.type === 'light')
+  const sections: string[] = []
+
+  if (covers.length > 0) {
+    sections.push(['cover:', ...covers.map(coverToYaml)].join('\n'))
+  }
+  if (lights.length > 0) {
+    sections.push(['light:', ...lights.map(lightToYaml)].join('\n'))
+  }
+
+  return sections.join('\n\n') + '\n'
+}
