@@ -1,6 +1,9 @@
 {
   "name": "esphome-elero",
-  "image": "debian:bookworm-slim",
+  "build": {
+    "dockerfile": "Dockerfile",
+
+  },
   "features": {
     "ghcr.io/devcontainers/features/common-utils:2": {
       "installZsh": false,
@@ -18,7 +21,6 @@
         "anthropic.claude-code",
         "ms-python.python",
         "charliermarsh.ruff",
-        "astral-sh.uv",
         "esphome.esphome-vscode",
         "llvm-vs-code-extensions.vscode-clangd",
         "ms-vscode.cmake-tools",
@@ -26,21 +28,42 @@
         "bradlc.vscode-tailwindcss",
         "github.vscode-github-actions",
         "k--kato.intellij-idea-keybindings",
-        "ms-python.pytest-adapter"
+        "usernamehw.errorlens",
+        "jdx.mise-vscode"
       ],
-      "settings": {
-        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
-      }
+    },
+    "jetbrains": {
+      "plugins": [
+        "com.anthropic.code.plugin",
+        "PythonCore",
+        "com.koxudaxi.ruff",
+        "com.github.oxc.project.oxcintellijplugin",
+        "com.intellij.tailwindcss",
+        "com.dsoftware.ghtoolbar",
+        "com.chylex.intellij.inspectionlens",
+        "com.github.l3nz.mise-jetbrains-plugin"
+      ]
     }
   },
   "mounts": [
-    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind"
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+    "source=esphome-elero-mise,target=/home/vscode/.local/share/mise,type=volume",
+    "source=esphome-elero-uv,target=/home/vscode/.cache/uv,type=volume",
+    "source=esphome-elero-pnpm,target=/home/vscode/.local/share/pnpm/store,type=volume",
+    "source=esphome-elero-pre-commit,target=/home/vscode/.cache/pre-commit,type=volume"
   ],
   "containerEnv": {
     "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
-    "UV_CACHE_DIR": "/home/vscode/.cache/uv"
+    "UV_CACHE_DIR": "/home/vscode/.cache/uv",
+    "UV_PROJECT_ENVIRONMENT": "/workspaces/esphome-elero/.venv",
+    "CI": "true"
   },
   "containerUser": "vscode",
-  "postCreateCommand": "curl https://mise.run | sh && echo 'eval \"$(~/.local/bin/mise activate bash)\"' >> ~/.bashrc && export PATH=\"$HOME/.local/bin:$PATH\" && mise trust && mise install && mise run setup",
-  "remoteUser": "vscode"
+  "remoteUser": "vscode",
+  "initializeCommand": "docker volume create esphome-elero-mise || true; docker volume create esphome-elero-uv || true; docker volume create esphome-elero-pnpm || true; docker volume create esphome-elero-pre-commit || true",
+  "postCreateCommand": "mise trust && mise install && mise run setup",
+  "postStartCommand": "echo 'Devcontainer ready'",
+  "hostRequirements": {
+    "memory": "4gb"
+  }
 }

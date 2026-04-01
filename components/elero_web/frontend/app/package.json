@@ -10,7 +10,9 @@
     "mock": "tsx mock-server.ts",
     "generate:types": "asyncapi generate models typescript asyncapi.yaml -o src/generated --tsModelType interface --tsEnumType union --tsExportType named --tsIncludeComments --tsRawPropertyNames && ls src/generated/*.ts | grep -v index.ts | sed 's|src/generated/||;s|\\.ts$||' | awk '{print \"export type { \"$1\" } from '\\''./\"$1\"'\\''\" }' > src/generated/index.ts",
     "build": "pnpm generate:types && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "oxlint -c oxlintrc.json --type-aware --tsconfig=tsconfig.json --ignore-pattern=src/generated src/",
+    "typecheck": "oxlint -c oxlintrc.json --type-aware --type-check --tsconfig=tsconfig.json --ignore-pattern=src/generated src/"
   },
   "dependencies": {
     "@preact/compat": "^17.1.2",
@@ -23,7 +25,9 @@
     "tw-animate-css": "^1.4.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@asyncapi/cli"]
+    "onlyBuiltDependencies": [
+      "@asyncapi/cli"
+    ]
   },
   "devDependencies": {
     "@asyncapi/cli": "^6.0.0",
@@ -33,6 +37,8 @@
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@types/ws": "^8.18.1",
+    "oxlint": "^1.58.0",
+    "oxlint-tsgolint": "^0.19.0",
     "tailwindcss": "^4.2.0",
     "tsx": "^4.21.0",
     "typescript": "5.7.3",
