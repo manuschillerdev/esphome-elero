@@ -56,16 +56,6 @@ export function initWs() {
   }
 }
 
-// ─── Action → Command byte mapping ─────────────────────────────────────────
-
-const ACTION_COMMANDS: Record<string, string> = {
-  up: '0x20',
-  down: '0x40',
-  stop: '0x10',
-  tilt: '0x24',
-  check: '0x00',
-}
-
 // ─── Send helpers ───────────────────────────────────────────────────────────
 
 function send(payload: RawPayload | UpsertDevicePayload | RemoveDevicePayload) {

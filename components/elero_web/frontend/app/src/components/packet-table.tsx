@@ -30,8 +30,8 @@ export function CopyPacketBtn({ pkt }: { pkt: RfPacketWithTimestamp }) {
   const copied = useSignal(false)
 
   const onClick = () => {
-    const { received_at: _, ...rest } = pkt as Record<string, unknown>
-    navigator.clipboard.writeText(JSON.stringify(rest, null, 2))
+    const { received_at: _, ...rest } = pkt as unknown as Record<string, unknown>
+    void navigator.clipboard.writeText(JSON.stringify(rest, null, 2))
     copied.value = true
     setTimeout(() => { copied.value = false }, 1500)
   }
