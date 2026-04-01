@@ -250,29 +250,35 @@ void MqttAdapter::publish_cover_state_(const Device &dev, uint16_t changes) {
 
     uint32_t addr = dev.config.dst_address;
     const auto &pub = std::get<CoverDevice>(dev.logic).published;
+    int topics = 0;
 
     if (changes & state_change::HA_STATE) {
         ctx_.publish(DeviceType::COVER, addr, mqtt_topic::STATE, pub.ha_state, false);
+        ++topics;
     }
 
     if (changes & state_change::POSITION) {
         char pos_buf[8];
         snprintf(pos_buf, sizeof(pos_buf), "%d", pub.position_pct);
         ctx_.publish(DeviceType::COVER, addr, mqtt_topic::POSITION, pos_buf, false);
+        ++topics;
     }
 
     if (changes & state_change::RSSI) {
         char rssi_buf[12];
         snprintf(rssi_buf, sizeof(rssi_buf), "%d", pub.rssi_rounded);
         ctx_.publish(DeviceType::COVER, addr, mqtt_topic::RSSI, rssi_buf, false);
+        ++topics;
     }
 
     if (changes & state_change::STATE_STRING) {
         ctx_.publish(DeviceType::COVER, addr, mqtt_topic::DEVICE_STATE, pub.state_string, false);
+        ++topics;
     }
 
     if (changes & state_change::PROBLEM) {
         ctx_.publish(DeviceType::COVER, addr, mqtt_topic::PROBLEM, pub.is_problem ? ha_state::ON : ha_state::OFF, false);
+        ++topics;
     }
 
     if (changes & (state_change::COMMAND_SOURCE | state_change::PROBLEM | state_change::TILT)) {
@@ -283,11 +289,16 @@ void MqttAdapter::publish_cover_state_(const Device &dev, uint16_t changes) {
             root["problem_type"] = pub.problem_type;
         });
         ctx_.publish(DeviceType::COVER, addr, mqtt_topic::ATTRIBUTES, attrs, false);
+        ++topics;
     }
 
     if ((changes & state_change::TILT) && dev.config.supports_tilt != 0) {
         ctx_.publish(DeviceType::COVER, addr, mqtt_topic::TILT_STATE, pub.tilted ? "100" : "0", false);
+        ++topics;
     }
+
+    ESP_LOGV(TAG, "cover 0x%06x: %d topics (pos=%d ha=%s state=%s rssi=%d)",
+             addr, topics, pub.position_pct, pub.ha_state, pub.state_string, pub.rssi_rounded);
 }
 
 void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
@@ -442,6 +453,9 @@ void MqttAdapter::publish_light_state_(const Device &dev, uint16_t changes) {
         });
         ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::ATTRIBUTES, attrs, false);
     }
+
+    ESP_LOGV(TAG, "light 0x%06x: on=%d bri=%d state=%s rssi=%d",
+             addr, pub.is_on, pub.brightness_pct, pub.state_string, pub.rssi_rounded);
 }
 
 void MqttAdapter::subscribe_light_commands_(const Device &dev) {

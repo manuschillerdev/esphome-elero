@@ -79,6 +79,36 @@ void LightStateSnapshot::to_json(JsonObject obj) const {
 // DIFF FUNCTIONS — compare snapshot against Published cache
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const char *state_change_str(uint16_t changes) {
+    if (changes == state_change::ALL) return "ALL";
+
+    static char buf[96];
+    buf[0] = '\0';
+    size_t pos = 0;
+
+    auto append = [&](const char *name) {
+        if (pos > 0 && pos < sizeof(buf) - 1) buf[pos++] = '|';
+        size_t len = strlen(name);
+        if (pos + len < sizeof(buf) - 1) {
+            memcpy(buf + pos, name, len);
+            pos += len;
+        }
+        buf[pos] = '\0';
+    };
+
+    if (changes & state_change::POSITION)       append("POS");
+    if (changes & state_change::HA_STATE)        append("HA");
+    if (changes & state_change::OPERATION)       append("OP");
+    if (changes & state_change::TILT)            append("TILT");
+    if (changes & state_change::PROBLEM)         append("PROB");
+    if (changes & state_change::RSSI)            append("RSSI");
+    if (changes & state_change::STATE_STRING)    append("STATE");
+    if (changes & state_change::COMMAND_SOURCE)  append("CMD");
+    if (changes & state_change::BRIGHTNESS)      append("BRI");
+
+    return buf;
+}
+
 uint16_t diff_and_update_cover(const CoverStateSnapshot &snap, CoverDevice::Published &pub) {
     // Pointer comparison is intentional — all state/problem/command strings are
     // compile-time string literals returned by pure functions (pointer identity = value identity).

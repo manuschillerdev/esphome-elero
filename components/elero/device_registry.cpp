@@ -597,7 +597,13 @@ void DeviceRegistry::notify_state_changed_(Device &dev, uint32_t now) {
         changes = state_change::ALL;
     }
 
-    if (changes == 0) return;
+    if (changes == 0) {
+        ESP_LOGVV(TAG, "0x%06x: notify suppressed (no changes)", dev.config.dst_address);
+        return;
+    }
+
+    ESP_LOGD(TAG, "0x%06x: publish [%s] (0x%04x)",
+             dev.config.dst_address, state_change_str(changes), changes);
 
     dev.last_changes = changes;
     dev.last_notify_ms = now;

@@ -129,6 +129,10 @@ LightStateSnapshot compute_light_snapshot(const Device &dev, uint32_t now);
 // DIFF FUNCTIONS — compare snapshot against Published cache, return change flags
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Format a changes bitmask as a human-readable string for logging.
+/// Returns a static buffer — not thread-safe, intended for ESP_LOG* macros.
+const char *state_change_str(uint16_t changes);
+
 /// Compare cover snapshot against Published cache. Returns bitmask of changed fields.
 /// Updates cache for changed fields.
 uint16_t diff_and_update_cover(const CoverStateSnapshot &snap, CoverDevice::Published &pub);
