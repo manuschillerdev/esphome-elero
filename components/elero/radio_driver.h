@@ -111,6 +111,11 @@ class RadioDriver {
   /// Used by the UI to derive signal strength thresholds.
   virtual int rx_sensitivity_dbm() const = 0;
 
+  /// Whether the IRQ pin fires on rising edge (true) or falling edge (false).
+  /// CC1101 GDO0 goes LOW at end-of-packet → falling edge.
+  /// SX1262 DIO1 goes HIGH on IRQ → rising edge.
+  virtual bool irq_rising_edge() const { return false; }  // CC1101 default
+
  protected:
   std::atomic<bool> *irq_flag_{nullptr};
 };
