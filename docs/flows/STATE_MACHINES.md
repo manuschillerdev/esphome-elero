@@ -248,7 +248,8 @@ flowchart TD
               dispatch_status_() to FSM, notify_state_changed_()
             - command (0x6A, not echo): track_remote_()"]
             DP3 --> DP4["Log dispatch_us + queue_transit_us
-            Update stats counters"]
+            Update stats counters
+            (adapters only called if snapshot diff != 0)"]
         end
 
         DISPATCH --> RX1
@@ -472,7 +473,8 @@ sequenceDiagram
         FSM->>FSM: state transition (variant swap)
         Reg->>Reg: poll.on_rf_received(now)
         Reg->>Reg: tilt state tracking
-        Reg->>Adapt: notify_state_changed_(dev)
+        Note over Reg: notify_state_changed_(dev, now):<br/>compute snapshot → diff vs Published cache<br/>→ if changes == 0: skip (no adapter calls)<br/>→ else: update cache, set last_changes
+        Reg->>Adapt: on_state_changed(dev, changes) -- only if diff != 0
     else command packet (0x6A) + not echo
         Reg->>Reg: track_remote_() -- auto-discover RemoteDevice
     end
@@ -538,8 +540,9 @@ flowchart TD
     -> request_tx() -> tx_queue"]
 
     CMD_Q --> NOTIFY{"5. state changed?"}
-    NOTIFY -->|Yes| PUB["notify_state_changed_()
-    -> all OutputAdapters"]
+    NOTIFY -->|Yes| PUB["notify_state_changed_(dev, now)
+    compute snapshot → diff Published
+    → if changes: on_state_changed(dev, changes)"]
     NOTIFY -->|Moving + throttle elapsed| PUB
     NOTIFY -->|No| NEXT[next device]
 
@@ -552,7 +555,8 @@ flowchart TD
     LDIM -->|No| LCMD
     LRELEASE --> LCMD["3. sender.process_queue()"]
     LCMD --> LNOTIFY{"4. state changed?"}
-    LNOTIFY -->|Yes| LPUB["notify_state_changed_()"]
+    LNOTIFY -->|Yes| LPUB["notify_state_changed_(dev, now)
+    snapshot → diff → on_state_changed"]
     LNOTIFY -->|No| NEXT
     LPUB --> NEXT
 

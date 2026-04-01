@@ -1,0 +1,43 @@
+# ESPHome compile test: hub only (no covers, lights, or web)
+# Verifies core component compiles without any platform sub-components
+substitutions:
+  spi_clk: GPIO18
+  spi_mosi: GPIO23
+  spi_miso: GPIO19
+  spi_cs: GPIO5
+  gdo0_pin: GPIO26
+
+esphome:
+  name: test-esp32-hub-only
+  friendly_name: Test ESP32 Hub Only
+  platformio_options:
+    build_unflags: -std=gnu++11
+    build_flags:
+      - -std=gnu++2a
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test-network"
+  password: ""
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+spi:
+  clk_pin: ${spi_clk}
+  mosi_pin: ${spi_mosi}
+  miso_pin: ${spi_miso}
+
+elero:
+  cs_pin: ${spi_cs}
+  gdo0_pin: ${gdo0_pin}
+  auto_stats: false

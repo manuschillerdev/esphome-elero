@@ -39,7 +39,7 @@ class MatterAdapter : public OutputAdapter {
              dev.config.dst_address);
   }
 
-  void on_state_changed(const Device &dev) override {
+  void on_state_changed(const Device &dev, uint16_t /*changes*/) override {
     // Would update Matter attribute values from device state
   }
 

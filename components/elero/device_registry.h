@@ -159,7 +159,7 @@ class DeviceRegistry {
     size_t slot_index_(const Device &dev) const;
     void notify_added_(const Device &dev);
     void notify_removed_(const Device &dev);
-    void notify_state_changed_(const Device &dev);
+    void notify_state_changed_(Device &dev, uint32_t now);
     void notify_config_changed_(const Device &dev);
     void notify_rf_packet_(const RfPacketInfo &pkt);
 
@@ -170,7 +170,8 @@ class DeviceRegistry {
     void loop_light_(Device &dev, LightDevice &light, uint32_t now);
 
     /// Handle an RF status packet for a specific device.
-    void dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now);
+    /// Only notifies adapters when state actually changed (FSM, tilt, or raw state byte).
+    void dispatch_status_(Device &dev, uint8_t state_byte, uint8_t prev_state, uint32_t now);
 
     /// Track a remote control from an observed RF command packet.
     void track_remote_(const RfPacketInfo &pkt, uint32_t now);

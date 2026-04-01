@@ -51,6 +51,7 @@ LightStateSnapshot compute_light_snapshot(const Device &dev, uint32_t now) {
 // JSON SERIALIZATION — single mapping from snapshot fields to JSON keys
 // ═══════════════════════════════════════════════════════════════════════════════
 
+#ifdef ELERO_HAS_JSON
 void CoverStateSnapshot::to_json(JsonObject obj) const {
     obj["position"] = position;
     obj["ha_state"] = ha_state;
@@ -71,6 +72,117 @@ void LightStateSnapshot::to_json(JsonObject obj) const {
     obj["rssi"] = round_rssi(rssi);
     obj["state"] = state_string;
     obj["command_source"] = command_source;
+}
+#endif  // ELERO_HAS_JSON
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DIFF FUNCTIONS — compare snapshot against Published cache
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const char *state_change_str(uint16_t changes) {
+    if (changes == state_change::ALL) return "ALL";
+
+    static char buf[96];
+    buf[0] = '\0';
+    size_t pos = 0;
+
+    auto append = [&](const char *name) {
+        if (pos > 0 && pos < sizeof(buf) - 1) buf[pos++] = '|';
+        size_t len = strlen(name);
+        if (pos + len < sizeof(buf) - 1) {
+            memcpy(buf + pos, name, len);
+            pos += len;
+        }
+        buf[pos] = '\0';
+    };
+
+    if (changes & state_change::POSITION)       append("POS");
+    if (changes & state_change::HA_STATE)        append("HA");
+    if (changes & state_change::OPERATION)       append("OP");
+    if (changes & state_change::TILT)            append("TILT");
+    if (changes & state_change::PROBLEM)         append("PROB");
+    if (changes & state_change::RSSI)            append("RSSI");
+    if (changes & state_change::STATE_STRING)    append("STATE");
+    if (changes & state_change::COMMAND_SOURCE)  append("CMD");
+    if (changes & state_change::BRIGHTNESS)      append("BRI");
+
+    return buf;
+}
+
+uint16_t diff_and_update_cover(const CoverStateSnapshot &snap, CoverDevice::Published &pub) {
+    // Pointer comparison is intentional — all state/problem/command strings are
+    // compile-time string literals returned by pure functions (pointer identity = value identity).
+    uint16_t changes = 0;
+
+    int pos_pct = static_cast<int>(snap.position * PERCENT_SCALE);
+    if (pub.position_pct != pos_pct) {
+        changes |= state_change::POSITION;
+        pub.position_pct = pos_pct;
+    }
+    if (pub.ha_state != snap.ha_state) {
+        changes |= state_change::HA_STATE;
+        pub.ha_state = snap.ha_state;
+    }
+    if (pub.operation != snap.operation) {
+        changes |= state_change::OPERATION;
+        pub.operation = snap.operation;
+    }
+    if (pub.state_string != snap.state_string) {
+        changes |= state_change::STATE_STRING;
+        pub.state_string = snap.state_string;
+    }
+    if (pub.tilted != snap.tilted) {
+        changes |= state_change::TILT;
+        pub.tilted = snap.tilted;
+    }
+    if (pub.is_problem != snap.is_problem || pub.problem_type != snap.problem_type) {
+        changes |= state_change::PROBLEM;
+        pub.is_problem = snap.is_problem;
+        pub.problem_type = snap.problem_type;
+    }
+    int rssi_int = static_cast<int>(round_rssi(snap.rssi));
+    if (pub.rssi_rounded != rssi_int) {
+        changes |= state_change::RSSI;
+        pub.rssi_rounded = rssi_int;
+    }
+    if (pub.command_source != snap.command_source) {
+        changes |= state_change::COMMAND_SOURCE;
+        pub.command_source = snap.command_source;
+    }
+
+    return changes;
+}
+
+uint16_t diff_and_update_light(const LightStateSnapshot &snap, LightDevice::Published &pub) {
+    // Pointer comparison — see comment in diff_and_update_cover.
+    uint16_t changes = 0;
+
+    int brightness_pct = static_cast<int>(snap.brightness * PERCENT_SCALE);
+    if (pub.is_on != snap.is_on || pub.brightness_pct != brightness_pct) {
+        changes |= state_change::BRIGHTNESS;
+        pub.is_on = snap.is_on;
+        pub.brightness_pct = brightness_pct;
+    }
+    if (pub.state_string != snap.state_string) {
+        changes |= state_change::STATE_STRING;
+        pub.state_string = snap.state_string;
+    }
+    if (pub.is_problem != snap.is_problem || pub.problem_type != snap.problem_type) {
+        changes |= state_change::PROBLEM;
+        pub.is_problem = snap.is_problem;
+        pub.problem_type = snap.problem_type;
+    }
+    int rssi_int = static_cast<int>(round_rssi(snap.rssi));
+    if (pub.rssi_rounded != rssi_int) {
+        changes |= state_change::RSSI;
+        pub.rssi_rounded = rssi_int;
+    }
+    if (pub.command_source != snap.command_source) {
+        changes |= state_change::COMMAND_SOURCE;
+        pub.command_source = snap.command_source;
+    }
+
+    return changes;
 }
 
 }  // namespace elero

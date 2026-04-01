@@ -22,7 +22,8 @@
 #include "../device.h"
 #include "../device_registry.h"
 #include "../cover_sm.h"
-#include "../state_snapshot.h"
+#include "../state_snapshot.h"  // state_change:: flags
+#include "../elero_strings.h"   // PERCENT_SCALE
 #include "../elero_packet.h"
 
 namespace esphome {
@@ -81,7 +82,7 @@ class EspCoverShell : public cover::Cover, public Component {
     if (!device_ || !device_->active) return;
     // Publish when registry signals a state change (notify timestamp updated)
     if (device_->last_notify_ms > last_published_ms_) {
-      sync_and_publish_();
+      sync_and_publish_(device_->last_changes);
       last_published_ms_ = device_->last_notify_ms;
     }
   }
@@ -106,7 +107,7 @@ class EspCoverShell : public cover::Cover, public Component {
 
     if (call.get_stop()) {
       registry_->command_cover(*device_, packet::command::STOP);
-      sync_and_publish_();
+      sync_and_publish_(device_->last_changes);
       return;
     }
 
@@ -120,13 +121,13 @@ class EspCoverShell : public cover::Cover, public Component {
         uint8_t cmd = (target >= cover_sm::POSITION_OPEN) ? packet::command::UP : packet::command::DOWN;
         registry_->command_cover(*device_, cmd);
       }
-      sync_and_publish_();
+      sync_and_publish_(device_->last_changes);
       return;
     }
 
     if (call.get_tilt().has_value()) {
       registry_->command_cover_tilt(*device_);
-      sync_and_publish_();
+      sync_and_publish_(device_->last_changes);
       return;
     }
 
@@ -142,39 +143,47 @@ class EspCoverShell : public cover::Cover, public Component {
         cmd = (pos <= cover_sm::POSITION_CLOSED || was_closing) ? packet::command::UP : packet::command::DOWN;
       }
       registry_->command_cover(*device_, cmd);
-      sync_and_publish_();
+      sync_and_publish_(device_->last_changes);
     }
   }
 
  private:
-  void sync_and_publish_() {
+  void sync_and_publish_(uint16_t changes) {
     if (!device_ || !device_->is_cover()) return;
-    auto snap = compute_cover_snapshot(*device_, millis());
+    const auto &pub = std::get<CoverDevice>(device_->logic).published;
 
-    this->position = snap.position;
-    if (device_->config.supports_tilt != 0) {
-      this->tilt = snap.tilted ? cover_sm::POSITION_OPEN : cover_sm::POSITION_CLOSED;
+    if (changes & (state_change::POSITION | state_change::HA_STATE |
+                   state_change::OPERATION | state_change::TILT)) {
+      this->position = static_cast<float>(pub.position_pct) / PERCENT_SCALE;
+      if (device_->config.supports_tilt != 0) {
+        this->tilt = pub.tilted ? cover_sm::POSITION_OPEN : cover_sm::POSITION_CLOSED;
+      }
+      switch (pub.operation) {
+        case cover_sm::Operation::IDLE:
+          this->current_operation = cover::COVER_OPERATION_IDLE; break;
+        case cover_sm::Operation::OPENING:
+          this->current_operation = cover::COVER_OPERATION_OPENING; break;
+        case cover_sm::Operation::CLOSING:
+          this->current_operation = cover::COVER_OPERATION_CLOSING; break;
+      }
+      this->publish_state();
     }
-    switch (snap.operation) {
-      case cover_sm::Operation::IDLE:
-        this->current_operation = cover::COVER_OPERATION_IDLE; break;
-      case cover_sm::Operation::OPENING:
-        this->current_operation = cover::COVER_OPERATION_OPENING; break;
-      case cover_sm::Operation::CLOSING:
-        this->current_operation = cover::COVER_OPERATION_CLOSING; break;
-    }
-    this->publish_state();
 
 #ifdef USE_SENSOR
-    if (rssi_sensor_ != nullptr) rssi_sensor_->publish_state(snap.rssi);
+    if ((changes & state_change::RSSI) && rssi_sensor_ != nullptr)
+      rssi_sensor_->publish_state(static_cast<float>(pub.rssi_rounded));
 #endif
 #ifdef USE_TEXT_SENSOR
-    if (status_sensor_ != nullptr) status_sensor_->publish_state(snap.state_string);
-    if (command_source_sensor_ != nullptr) command_source_sensor_->publish_state(snap.command_source);
-    if (problem_type_sensor_ != nullptr) problem_type_sensor_->publish_state(snap.problem_type);
+    if ((changes & state_change::STATE_STRING) && status_sensor_ != nullptr)
+      status_sensor_->publish_state(pub.state_string);
+    if ((changes & state_change::COMMAND_SOURCE) && command_source_sensor_ != nullptr)
+      command_source_sensor_->publish_state(pub.command_source);
+    if ((changes & state_change::PROBLEM) && problem_type_sensor_ != nullptr)
+      problem_type_sensor_->publish_state(pub.problem_type);
 #endif
 #ifdef USE_BINARY_SENSOR
-    if (problem_sensor_ != nullptr) problem_sensor_->publish_state(snap.is_problem);
+    if ((changes & state_change::PROBLEM) && problem_sensor_ != nullptr)
+      problem_sensor_->publish_state(pub.is_problem);
 #endif
   }
 

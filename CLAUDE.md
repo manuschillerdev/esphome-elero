@@ -78,20 +78,26 @@ All modes use the same `Device` struct and `DeviceRegistry` — only output adap
 
 **DeviceRegistry is the single source of truth.** All adapters (native shell, MQTT, WebSocket) route commands through `DeviceRegistry::command_cover()` / `command_light()` — no duplicated FSM logic.
 
-### Observer Pattern
+### Observer Pattern + Centralized Publish Decisions
+
+The registry owns **all** publish decisions. It computes snapshots, diffs against a per-device `Published` cache, and only notifies adapters when something actually changed — passing a `uint16_t changes` bitmask so adapters know exactly which fields to publish.
 
 ```cpp
 class OutputAdapter {
  public:
-  virtual void setup() {}
-  virtual void loop() {}
-  virtual void on_device_added(const Device &dev) {}
-  virtual void on_device_removed(uint32_t address, DeviceType type) {}
-  virtual void on_state_changed(const Device &dev) {}
+  virtual void setup(DeviceRegistry &registry) = 0;
+  virtual void loop() = 0;
+  virtual void on_device_added(const Device &dev) = 0;
+  virtual void on_device_removed(const Device &dev) = 0;
+  virtual void on_state_changed(const Device &dev, uint16_t changes) = 0;
   virtual void on_config_changed(const Device &dev) {}
   virtual void on_rf_packet(const RfPacketInfo &pkt) {}
 };
 ```
+
+**Change flags** (`state_change::` namespace): `POSITION`, `HA_STATE`, `OPERATION`, `TILT`, `PROBLEM`, `RSSI`, `STATE_STRING`, `COMMAND_SOURCE`, `BRIGHTNESS`, `ALL`.
+
+Adapters are pure formatters — they read `dev.published` fields and format for their wire protocol. Zero adapter-side caching or snapshot computation.
 
 ---
 

@@ -16,7 +16,8 @@
 #include "../device.h"
 #include "../device_registry.h"
 #include "../light_sm.h"
-#include "../state_snapshot.h"
+#include "../state_snapshot.h"  // state_change:: flags
+#include "../elero_strings.h"   // PERCENT_SCALE
 #include "../elero_packet.h"
 
 namespace esphome {
@@ -65,7 +66,7 @@ class EspLightShell : public light::LightOutput, public Component {
   void loop() override {
     if (!device_ || !device_->active) return;
     if (device_->last_notify_ms > last_published_ms_) {
-      sync_and_publish_();
+      sync_and_publish_(device_->last_changes);
       last_published_ms_ = device_->last_notify_ms;
     }
   }
@@ -99,26 +100,29 @@ class EspLightShell : public light::LightOutput, public Component {
   }
 
  private:
-  void sync_and_publish_() {
+  void sync_and_publish_(uint16_t changes) {
     if (!device_ || !device_->is_light() || !light_state_) return;
+    const auto &pub = std::get<LightDevice>(device_->logic).published;
 
-    auto snap = compute_light_snapshot(*device_, millis());
-
-    ignore_write_state_ = true;
-    auto call = light_state_->make_call();
-    call.set_state(snap.is_on);
-    auto ctx = light_context(device_->config);
-    if (snap.is_on && light_sm::supports_brightness(ctx)) {
-      call.set_brightness(snap.brightness);
+    if (changes & state_change::BRIGHTNESS) {
+      ignore_write_state_ = true;
+      auto call = light_state_->make_call();
+      call.set_state(pub.is_on);
+      auto ctx = light_context(device_->config);
+      if (pub.is_on && light_sm::supports_brightness(ctx)) {
+        call.set_brightness(static_cast<float>(pub.brightness_pct) / PERCENT_SCALE);
+      }
+      call.perform();
+      ignore_write_state_ = false;
     }
-    call.perform();
-    ignore_write_state_ = false;
 
 #ifdef USE_SENSOR
-    if (rssi_sensor_ != nullptr) rssi_sensor_->publish_state(snap.rssi);
+    if ((changes & state_change::RSSI) && rssi_sensor_ != nullptr)
+      rssi_sensor_->publish_state(static_cast<float>(pub.rssi_rounded));
 #endif
 #ifdef USE_TEXT_SENSOR
-    if (status_sensor_ != nullptr) status_sensor_->publish_state(snap.state_string);
+    if ((changes & state_change::STATE_STRING) && status_sensor_ != nullptr)
+      status_sensor_->publish_state(pub.state_string);
 #endif
   }
 
