@@ -75,7 +75,7 @@ run = "cd tests/unit && cmake -B build --fresh && cmake --build build && cmake -
 [tasks."lint:python"]
 description = "Lint Python files with ruff"
 depends = ["setup:python"]
-run = "uv run ruff check components/"
+run = "uv run ruff check ."
 
 [tasks."lint:frontend"]
 description = "Lint and typecheck frontend with oxlint + tsgolint"
@@ -93,7 +93,7 @@ depends = ["lint:python", "lint:frontend"]
 [tasks."lint:fix"]
 description = "Lint and auto-fix Python files"
 depends = ["setup:python"]
-run = "uv run ruff check --fix components/"
+run = "uv run ruff check --fix ."
 
 # --- Flash tasks ---
 
