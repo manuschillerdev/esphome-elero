@@ -256,6 +256,12 @@ TEST_F(DeviceRegistryTest, SlotExhaustion_ReturnsNull) {
     EXPECT_EQ(registry_.register_device(make_cover_config(0xFFFFFF)), nullptr);
 }
 
+TEST_F(DeviceRegistryTest, RegisterDevice_RejectsWhenNvsEnabled) {
+    registry_.set_nvs_enabled(true);
+    EXPECT_EQ(registry_.register_device(make_cover_config(0xA831E5)), nullptr);
+    EXPECT_EQ(registry_.count_active(), 0u);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMMAND DISPATCH — Cover
 // These test the centralized command entry points that ALL adapters call.
@@ -426,8 +432,8 @@ TEST_F(DeviceRegistryTest, RfStatus_NotifiesEvenWhenFsmUnchanged) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 TEST_F(DeviceRegistryTest, RfCommand_EchoFiltered) {
-    registry_.set_nvs_enabled(true);
     add_cover(0xA831E5);
+    registry_.set_nvs_enabled(true);
     adapter_.clear();
 
     // Echo = our own TX bounced back. Must not trigger remote discovery.
@@ -437,8 +443,8 @@ TEST_F(DeviceRegistryTest, RfCommand_EchoFiltered) {
 }
 
 TEST_F(DeviceRegistryTest, RfCommand_DiscoversRemoteEphemerally) {
-    registry_.set_nvs_enabled(true);
     add_cover(0xA831E5);
+    registry_.set_nvs_enabled(true);
     adapter_.clear();
 
     auto rf = make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP, /*echo=*/false);
@@ -462,8 +468,8 @@ TEST_F(DeviceRegistryTest, RfCommand_NativeMode_NoDiscovery) {
 }
 
 TEST_F(DeviceRegistryTest, RfCommand_UpdatesExistingRemote) {
-    registry_.set_nvs_enabled(true);
     add_cover(0xA831E5);
+    registry_.set_nvs_enabled(true);
 
     // First packet discovers remote
     registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP, false),

@@ -10,10 +10,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Build frontend header (needed by ESPHome compile tests)
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: components/elero_web/frontend/app/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: components/elero_web/frontend/app
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: components/elero_web/frontend/app
+        run: pnpm build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elero_web_ui
+          path: components/elero_web/elero_web_ui.h
+          retention-days: 1
+
   # ESPHome compile tests for each platform
   esphome-compile:
     name: ESPHome Compile (${{ matrix.test }})
     runs-on: ubuntu-latest
+    needs: build-frontend
     container: ghcr.io/esphome/esphome:2026.2.2
     strategy:
       fail-fast: false
@@ -27,6 +59,11 @@ jobs:
           - test.esp32-nvs
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: elero_web_ui
+          path: components/elero_web/
 
       - name: Compile ${{ matrix.test }}
         run: esphome compile tests/${{ matrix.test }}.yaml

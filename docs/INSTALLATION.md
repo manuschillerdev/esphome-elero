@@ -1,49 +1,49 @@
-# Installationsanleitung: Elero ESPHome Component
+# Installation Guide: Elero ESPHome Component
 
-Diese Anleitung führt dich Schritt für Schritt durch die komplette Einrichtung der Elero-Komponente, vom Zusammenbau der Hardware bis zur fertigen Home-Assistant-Integration.
-
----
-
-## Inhaltsverzeichnis
-
-1. [Benötigte Teile](#1-benötigte-teile)
-2. [Hardware zusammenbauen](#2-hardware-zusammenbauen)
-3. [ESPHome installieren](#3-esphome-installieren)
-4. [Ersteinrichtung: Frequenz testen](#4-ersteinrichtung-frequenz-testen)
-5. [Blind-Adressen herausfinden](#5-blind-adressen-herausfinden)
-6. [Endgültige Konfiguration](#6-endgültige-konfiguration)
-7. [In Home Assistant einbinden](#7-in-home-assistant-einbinden)
-8. [Mehrere Rollläden hinzufügen](#8-mehrere-rollläden-hinzufügen)
+This guide walks you through the complete setup of the Elero component step by step, from assembling the hardware to a fully working Home Assistant integration.
 
 ---
 
-## 1. Benötigte Teile
+## Table of Contents
 
-### Einkaufsliste
+1. [Required Parts](#1-required-parts)
+2. [Hardware Assembly](#2-hardware-assembly)
+3. [Installing ESPHome](#3-installing-esphome)
+4. [Initial Setup: Testing the Frequency](#4-initial-setup-testing-the-frequency)
+5. [Finding Blind Addresses](#5-finding-blind-addresses)
+6. [Final Configuration](#6-final-configuration)
+7. [Adding to Home Assistant](#7-adding-to-home-assistant)
+8. [Adding Multiple Blinds](#8-adding-multiple-blinds)
 
-| Teil | Beschreibung | Ungefährer Preis |
+---
+
+## 1. Required Parts
+
+### Shopping List
+
+| Part | Description | Approximate Price |
 |---|---|---|
-| ESP32 Board | z.B. D1 Mini ESP32, ESP32-DevKit | ~5-10 EUR |
-| CC1101 Modul | 868 MHz empfohlen für Europa | ~3-5 EUR |
-| Dupont-Kabel | 7 Stück Female-Female | ~2 EUR |
-| USB-Kabel | Micro-USB oder USB-C (je nach Board) | vorhanden |
-| Elero Fernbedienung | z.B. TempoTel 2 (bereits vorhanden) | - |
+| ESP32 Board | e.g. D1 Mini ESP32, ESP32-DevKit | ~5-10 EUR |
+| CC1101 Module | 868 MHz recommended for Europe | ~3-5 EUR |
+| Dupont Wires | 7x female-to-female | ~2 EUR |
+| USB Cable | Micro-USB or USB-C (depending on board) | usually on hand |
+| Elero Remote Control | e.g. TempoTel 2 (already owned) | - |
 
-> **Tipp:** 868 MHz CC1101-Module haben deutlich bessere Reichweite als 433 MHz. Falls möglich, verwende 868 MHz.
+> **Tip:** 868 MHz CC1101 modules have significantly better range than 433 MHz. Use 868 MHz if possible.
 
-### Werkzeug
+### Tools
 
-- Computer mit USB-Anschluss
-- Python 3.9+ installiert
-- Internetzugang
+- Computer with a USB port
+- Python 3.9+ installed
+- Internet access
 
 ---
 
-## 2. Hardware zusammenbauen
+## 2. Hardware Assembly
 
-### Schritt 2.1: CC1101 an ESP32 anschließen
+### Step 2.1: Connect CC1101 to ESP32
 
-Verbinde die Pins wie folgt mit Dupont-Kabeln:
+Connect the pins as follows using Dupont wires:
 
 ```
 CC1101          ESP32 (Standard-Pinout)
@@ -57,49 +57,49 @@ CSN  ──────>    GPIO5
 GDO0 ──────>    GPIO26
 ```
 
-> **WARNUNG:** CC1101 arbeitet mit **3.3V**. Niemals an 5V anschließen!
+> **WARNING:** The CC1101 operates at **3.3V**. Never connect it to 5V!
 
-### Schritt 2.2: Verkabelung prüfen
+### Step 2.2: Verify Wiring
 
-Prüfe alle Verbindungen nochmals:
-- Keine losen Kabel
-- Keine Kurzschlüsse zwischen benachbarten Pins
-- VCC an 3.3V (nicht 5V!)
+Double-check all connections:
+- No loose wires
+- No short circuits between adjacent pins
+- VCC connected to 3.3V (not 5V!)
 
-### Schritt 2.3: ESP32 an PC anschließen
+### Step 2.3: Connect ESP32 to PC
 
-Verbinde den ESP32 per USB mit deinem Computer. Der Treiber sollte automatisch installiert werden.
+Connect the ESP32 to your computer via USB. The driver should install automatically.
 
 ---
 
-## 3. ESPHome installieren
+## 3. Installing ESPHome
 
 ### Option A: ESPHome Dashboard (Home Assistant Add-on)
 
-1. In Home Assistant: **Einstellungen > Add-ons > Add-on Store**
-2. Suche nach "ESPHome"
-3. Installieren und starten
-4. Öffne das ESPHome Dashboard
+1. In Home Assistant: **Settings > Add-ons > Add-on Store**
+2. Search for "ESPHome"
+3. Install and start
+4. Open the ESPHome Dashboard
 
-### Option B: ESPHome CLI (Kommandozeile)
+### Option B: ESPHome CLI (Command Line)
 
 ```bash
-# Python und pip müssen installiert sein
+# Python and pip must be installed
 pip install esphome
 
-# Prüfen ob es funktioniert
+# Verify it works
 esphome version
 ```
 
 ---
 
-## 4. Ersteinrichtung: Frequenz testen
+## 4. Initial Setup: Testing the Frequency
 
-Bevor du die Rollladen-Steuerung konfigurierst, musst du sicherstellen, dass die CC1101-Kommunikation funktioniert.
+Before configuring the blind controls, you need to make sure the CC1101 communication is working.
 
-### Schritt 4.1: Basis-Konfiguration erstellen
+### Step 4.1: Create the Base Configuration
 
-Erstelle die Datei `elero-blinds.yaml`:
+Create the file `elero-blinds.yaml`:
 
 ```yaml
 esphome:
@@ -110,8 +110,8 @@ esp32:
   board: esp32dev
 
 wifi:
-  ssid: "DEIN_WLAN_NAME"
-  password: "DEIN_WLAN_PASSWORT"
+  ssid: "YOUR_WIFI_NAME"
+  password: "YOUR_WIFI_PASSWORD"
 
   ap:
     ssid: "Elero-Fallback"
@@ -122,103 +122,103 @@ logger:
 
 api:
   encryption:
-    key: "GeneriereDiesenSchlüsselPerESPHomeDashboard"
+    key: "GenerateThisKeyViaESPHomeDashboard"
 
 ota:
   - platform: esphome
-    password: "DeinOTAPasswort"
+    password: "YourOTAPassword"
 
-# Externe Elero-Komponente
+# External Elero component
 external_components:
   - source: github://pfriedrich84/esphome-elero
 
-# SPI-Bus
+# SPI bus
 spi:
   clk_pin: GPIO18
   mosi_pin: GPIO23
   miso_pin: GPIO19
 
-# Elero Hub - Standardfrequenz
+# Elero Hub - default frequency
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
 
-# Web UI für Geräteerkennung
+# Web UI for device discovery
 web_server_base:
   port: 80
 
 elero_web:
 ```
 
-### Schritt 4.2: Erstmalig flashen
+### Step 4.2: Flash for the First Time
 
-**Per CLI:**
+**Via CLI:**
 ```bash
-# Erstmaliges Flashen über USB
+# Initial flash over USB
 esphome run elero-blinds.yaml
 ```
 
-**Per Dashboard:**
-1. Neue Konfiguration anlegen
-2. YAML einfügen
-3. "Install" klicken > "Plug into this computer"
+**Via Dashboard:**
+1. Create a new configuration
+2. Paste the YAML
+3. Click "Install" > "Plug into this computer"
 
-### Schritt 4.3: Frequenz testen
+### Step 4.3: Test the Frequency
 
-1. Öffne den ESPHome-Log:
+1. Open the ESPHome log:
    ```bash
    esphome logs elero-blinds.yaml
    ```
-2. Drücke eine Taste auf deiner Elero-Fernbedienung
-3. **Wenn im Log Pakete erscheinen** (Zeilen mit `rcv'd: len=...`): Die Frequenz stimmt!
-4. **Wenn NICHTS passiert**: Die Frequenz muss angepasst werden.
+2. Press a button on your Elero remote control
+3. **If packets appear in the log** (lines containing `rcv'd: len=...`): The frequency is correct!
+4. **If NOTHING happens**: The frequency needs to be adjusted.
 
-### Schritt 4.4: Frequenz anpassen (falls nötig)
+### Step 4.4: Adjust the Frequency (if needed)
 
-Ändere die Frequenz-Register in der Konfiguration:
+Change the frequency registers in your configuration:
 
 ```yaml
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
-  freq0: 0xc0    # Häufige Alternative statt 0x7a
+  freq0: 0xc0    # Common alternative instead of 0x7a
   freq1: 0x71
   freq2: 0x21
 ```
 
-Flashe erneut und teste. Gängige Kombinationen:
+Flash again and test. Common combinations:
 
-| Konfiguration | freq0 | freq1 | freq2 |
+| Configuration | freq0 | freq1 | freq2 |
 |---|---|---|---|
 | Standard 868 MHz | `0x7a` | `0x71` | `0x21` |
 | Alternative 868 MHz | `0xc0` | `0x71` | `0x21` |
 
-> **Tipp:** Probiere `0xc0` zuerst, das ist die häufigste Alternative.
+> **Tip:** Try `0xc0` first -- it is the most common alternative.
 
 ---
 
-## 5. Blind-Adressen herausfinden
+## 5. Finding Blind Addresses
 
-Öffne die Web-UI unter `http://<device-ip>/elero`:
+Open the web UI at `http://<device-ip>/elero`:
 
-1. Betätige deine physische Elero-Fernbedienung (Hoch/Runter/Stopp)
-2. Die Web-UI zeigt alle empfangenen RF-Pakete in Echtzeit
-3. Adressen, die nicht in der Konfiguration sind, werden als "Discovered" markiert
-4. Kopiere die angezeigten Werte in deine Konfiguration
+1. Operate your physical Elero remote control (Up/Down/Stop)
+2. The web UI shows all received RF packets in real time
+3. Addresses not already in the configuration are marked as "Discovered"
+4. Copy the displayed values into your configuration
 
-Die wichtigsten Felder aus den RF-Paketen:
+The key fields from the RF packets:
 
-| Feld | YAML-Parameter | Beschreibung |
-|------|----------------|--------------|
-| `src` | `remote_address` | Adresse der Fernbedienung |
-| `dst` | `blind_address` | Adresse des Rollladens |
-| `ch` | `channel` | Funkkanal |
+| Field | YAML Parameter | Description |
+|-------|----------------|-------------|
+| `src` | `remote_address` | Address of the remote control |
+| `dst` | `blind_address` | Address of the blind |
+| `ch` | `channel` | RF channel |
 
 ---
 
-## 6. Endgültige Konfiguration
+## 6. Final Configuration
 
-Füge die ermittelten Werte in die Konfiguration ein:
+Insert the discovered values into your configuration:
 
 ```yaml
 esphome:
@@ -237,7 +237,7 @@ wifi:
     password: !secret ap_password
 
 logger:
-  level: INFO    # DEBUG nur bei Problemen
+  level: INFO    # Use DEBUG only when troubleshooting
 
 api:
   encryption:
@@ -258,23 +258,23 @@ spi:
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
-  freq0: 0xc0     # Anpassen falls nötig
+  freq0: 0xc0     # Adjust if needed
   freq1: 0x71
   freq2: 0x21
 
-# ── Rollläden ──
+# ── Blinds ──
 cover:
   - platform: elero
     name: "Schlafzimmer"
     blind_address: 0xa831e5
     channel: 4
     remote_address: 0xf0d008
-    open_duration: 25s        # Für Positionssteuerung (optional)
-    close_duration: 22s       # Für Positionssteuerung (optional)
+    open_duration: 25s        # For position tracking (optional)
+    close_duration: 22s       # For position tracking (optional)
     poll_interval: 5min
 
-# Diagnose-Sensoren (RSSI, Status, Problem etc.) werden automatisch erstellt
-# durch auto_sensors: true (Standard) im Cover-/Light-Block.
+# Diagnostic sensors (RSSI, status, problem, etc.) are created automatically
+# by auto_sensors: true (the default) in each cover/light block.
 
 # ── Web UI ──
 web_server_base:
@@ -283,7 +283,7 @@ web_server_base:
 elero_web:
 ```
 
-Flashe die endgültige Konfiguration:
+Flash the final configuration:
 
 ```bash
 esphome run elero-blinds.yaml
@@ -291,38 +291,38 @@ esphome run elero-blinds.yaml
 
 ---
 
-## 7. In Home Assistant einbinden
+## 7. Adding to Home Assistant
 
-### Automatische Erkennung
+### Automatic Discovery
 
-Falls `api:` konfiguriert ist, wird das Gerät automatisch in Home Assistant entdeckt:
+If `api:` is configured, the device will be discovered automatically in Home Assistant:
 
-1. **Einstellungen > Geräte & Dienste**
-2. Das ESPHome-Gerät sollte unter "Entdeckt" erscheinen
-3. "Konfigurieren" klicken
+1. **Settings > Devices & Services**
+2. The ESPHome device should appear under "Discovered"
+3. Click "Configure"
 
-### Manuelle Einbindung
+### Manual Setup
 
-Falls das Gerät nicht automatisch gefunden wird:
+If the device is not found automatically:
 
-1. **Einstellungen > Geräte & Dienste > Integration hinzufügen**
-2. "ESPHome" suchen
-3. IP-Adresse des ESP32 eingeben (steht im Log)
-4. API-Schlüssel eingeben
+1. **Settings > Devices & Services > Add Integration**
+2. Search for "ESPHome"
+3. Enter the IP address of the ESP32 (shown in the log)
+4. Enter the API key
 
-### Entities prüfen
+### Verify Entities
 
-Nach der Einbindung stehen folgende Entities zur Verfügung:
+After adding the device, the following entities are available:
 
-- `cover.schlafzimmer` - Rollladen-Steuerung
-- `sensor.schlafzimmer_rssi` - Signalstärke
-- `text_sensor.schlafzimmer_status` - Status-Text
+- `cover.schlafzimmer` - Blind control
+- `sensor.schlafzimmer_rssi` - Signal strength
+- `text_sensor.schlafzimmer_status` - Status text
 
 ---
 
-## 8. Mehrere Rollläden hinzufügen
+## 8. Adding Multiple Blinds
 
-Für jeden zusätzlichen Rollladen einen weiteren Cover-Eintrag hinzufügen:
+Add another cover entry for each additional blind:
 
 ```yaml
 cover:
@@ -350,16 +350,16 @@ cover:
     open_duration: 30s
     close_duration: 27s
 
-# Diagnose-Sensoren (RSSI, Status, Problem etc.) werden automatisch von den
-# Cover-/Light-Blöcken erstellt (auto_sensors: true ist Standard).
+# Diagnostic sensors (RSSI, status, problem, etc.) are created automatically
+# by the cover/light blocks (auto_sensors: true is the default).
 ```
 
-> **Hinweis:** Die Komponente staggert die Polling-Abfragen automatisch (5 Sekunden Versatz pro Rollladen), um Kollisionen auf dem Funkkanal zu vermeiden.
+> **Note:** The component automatically staggers polling requests (5-second offset per blind) to avoid collisions on the RF channel.
 
 ---
 
-## Nächste Schritte
+## Next Steps
 
-- [Konfigurationsreferenz](CONFIGURATION.md) - Alle Parameter im Detail
-- [Beispielkonfigurationen](examples/) - Vorlagen für verschiedene Szenarien
-- [README](../README.md) - Übersicht und Fehlerbehebung
+- [Configuration Reference](CONFIGURATION.md) - All parameters in detail
+- [Example Configurations](examples/) - Templates for various scenarios
+- [README](../README.md) - Overview and troubleshooting

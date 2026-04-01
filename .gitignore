@@ -30,3 +30,6 @@ components/elero_web/frontend/app/dist/
 # Mongoose (downloaded at build time by elero_web component)
 components/elero_web/mongoose.c
 components/elero_web/mongoose.h
+
+# Frontend build artifact (downloaded from GitHub release at build time)
+components/elero_web/elero_web_ui.h

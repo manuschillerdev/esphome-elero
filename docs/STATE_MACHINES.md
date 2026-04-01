@@ -8,27 +8,36 @@ This document describes the state machines in esphome-elero. Each state, transit
 
 | State Machine | Location | States | Purpose |
 |---------------|----------|--------|---------|
-| Hub TX | `elero.cpp` | 8 | Low-level CC1101 RF transmission |
+| Hub TX | `cc1101_driver.h` / `cc1101_driver.cpp` | 4 | Low-level CC1101 RF transmission |
 | CommandSender | `command_sender.h` | 3 | Command queuing, retries, packet sequencing |
 
 ---
 
 ## 1. Hub TX State Machine
 
-Manages the CC1101 transceiver during packet transmission. Non-blocking, driven by `loop()`.
+Manages the CC1101 transceiver during packet transmission. Runs entirely on Core 0 in the RF task. The `poll_tx()` method (line 76 of `cc1101_driver.cpp`) is the entry point, called by the RF task loop each iteration. It delegates to `handle_tx_state_(millis())`.
 
 ### States
 
 | State | Value | Description |
 |-------|-------|-------------|
 | `IDLE` | 0 | Not transmitting, radio in RX mode |
-| `GOTO_IDLE` | 1 | Sent SIDLE strobe, waiting for MARCSTATE_IDLE |
-| `FLUSH_TX` | 2 | Sent SFTX strobe, brief settling time |
-| `LOAD_FIFO` | 3 | Loading packet into TX FIFO |
-| `TRIGGER_TX` | 4 | Sent STX strobe, waiting for MARCSTATE_TX |
-| `WAIT_TX_DONE` | 5 | TX in progress, waiting for GDO0 interrupt |
-| `VERIFY_DONE` | 6 | Polling TXBYTES (up to 3 retries) |
-| `RETURN_RX` | 7 | Returning to RX mode |
+| `PREPARE` | 1 | Synchronous pre-TX sequence: SIDLE -> poll IDLE -> SFTX -> load FIFO -> STX -> poll TX (~1ms) |
+| `WAIT_TX` | 2 | Waiting for GDO0 interrupt or MARCSTATE==IDLE/RX fallback (50ms timeout) |
+| `RECOVER` | 3 | Flush FIFOs -> check MARCSTATE -> reset+init if stuck -> verify radio alive |
+
+### TxContext
+
+```cpp
+struct TxContext {
+  TxState state{TxState::IDLE};
+  uint32_t state_enter_time{0};
+
+  static constexpr uint32_t STATE_TIMEOUT_MS = 50;
+};
+```
+
+Two fields only: current state and the time it was entered. No defer count, no backoff tracking.
 
 ### State Diagram
 
@@ -37,124 +46,89 @@ stateDiagram-v2
     [*] --> IDLE
 
     %% ─── IDLE ───────────────────────────────────────────────────────────────────
-    IDLE --> GOTO_IDLE: request_tx()\n1. build_tx_packet_()\n2. write_cmd(SIDLE)\n3. tx_owner_ = client
+    IDLE --> PREPARE: load_and_transmit()\n1. copy packet to tx_buf_\n2. state = PREPARE\n3. tx_pending_success_ = false
 
-    %% ─── GOTO_IDLE ──────────────────────────────────────────────────────────────
-    GOTO_IDLE --> GOTO_IDLE: now < backoff_until\n(defer backoff active)
-    GOTO_IDLE --> FLUSH_TX: MARCSTATE == IDLE\nwrite_cmd(SFTX)
-    GOTO_IDLE --> GOTO_IDLE: MARCSTATE == RX\n[defer_tx_: defer_count++, backoff if >3]
-    GOTO_IDLE --> IDLE: defer_count >= 10\n[abort_tx_]
-    GOTO_IDLE --> IDLE: timeout > 50ms\n[abort_tx_]
+    %% ─── PREPARE (synchronous ~1ms) ─────────────────────────────────────────────
+    PREPARE --> WAIT_TX: SIDLE ok → SFTX → write FIFO ok\n→ clear irq_flag_ → STX\n→ MARCSTATE == TX (poll 20×50μs)
+    PREPARE --> RECOVER: SIDLE failed (MARCSTATE != IDLE after 20 polls)
+    PREPARE --> RECOVER: write_burst(TXFIFO) failed
+    PREPARE --> RECOVER: STX failed (MARCSTATE != TX after 20 polls)
 
-    %% ─── FLUSH_TX ───────────────────────────────────────────────────────────────
-    FLUSH_TX --> LOAD_FIFO: elapsed >= 1ms\nwrite_burst(TXFIFO, packet)
-    FLUSH_TX --> IDLE: timeout > 50ms\n[abort_tx_]
-    FLUSH_TX --> IDLE: write_burst fails\n[abort_tx_]
+    %% ─── WAIT_TX ────────────────────────────────────────────────────────────────
+    WAIT_TX --> IDLE: irq_flag_ == true + TXBYTES == 0\n[flush_and_rx(), tx_pending_success_ = true]
+    WAIT_TX --> IDLE: irq_flag_ == true + TXBYTES == 0 after 100μs grace\n[flush_and_rx(), tx_pending_success_ = true]
+    WAIT_TX --> IDLE: MARCSTATE == IDLE or RX + TXBYTES == 0\n[flush_and_rx(), tx_pending_success_ = true]
+    WAIT_TX --> RECOVER: irq_flag_ == true + TXBYTES != 0 after grace
+    WAIT_TX --> RECOVER: timeout > 50ms
 
-    %% ─── LOAD_FIFO ──────────────────────────────────────────────────────────────
-    LOAD_FIFO --> WAIT_TX_DONE: MARCSTATE == TX\n(within 100μs poll)
-    LOAD_FIFO --> TRIGGER_TX: transitional state\n(FSTXON, CALIBRATE)
-    LOAD_FIFO --> GOTO_IDLE: MARCSTATE == RX\n[defer_tx_]
-    LOAD_FIFO --> IDLE: write_cmd(STX) fails\n[abort_tx_]
-
-    %% ─── TRIGGER_TX ─────────────────────────────────────────────────────────────
-    TRIGGER_TX --> WAIT_TX_DONE: MARCSTATE == TX
-    TRIGGER_TX --> GOTO_IDLE: MARCSTATE == RX\n[defer_tx_]
-    TRIGGER_TX --> IDLE: TXFIFO_UFLOW (0x16)\n[abort_tx_]
-    TRIGGER_TX --> IDLE: RXFIFO_OFLOW (0x11)\n[abort_tx_]
-    TRIGGER_TX --> IDLE: timeout > 50ms\n[abort_tx_]
-
-    %% ─── WAIT_TX_DONE ───────────────────────────────────────────────────────────
-    WAIT_TX_DONE --> VERIFY_DONE: received_ == true\n(GDO0 interrupt)
-    WAIT_TX_DONE --> IDLE: timeout > 50ms\n[abort_tx_]
-
-    %% ─── VERIFY_DONE ────────────────────────────────────────────────────────────
-    VERIFY_DONE --> RETURN_RX: TXBYTES == 0\n(poll up to 3× with 100μs delay)
-    VERIFY_DONE --> IDLE: TXBYTES != 0 after retries\nlog MARCSTATE for diagnostics\n[abort_tx_]
-
-    %% ─── RETURN_RX ──────────────────────────────────────────────────────────────
-    RETURN_RX --> IDLE: [flush_and_rx]\ntx_pending_success_ = true\nnotify_tx_owner_(true)
+    %% ─── RECOVER ────────────────────────────────────────────────────────────────
+    RECOVER --> IDLE: recover_radio_()\n[tx_pending_success_ = false]
 ```
 
 ### State Transition Table
 
 | Current State | Event/Condition | Next State | Action | Error Handling |
 |---------------|-----------------|------------|--------|----------------|
-| `IDLE` | `request_tx()` called | `GOTO_IDLE` | Send SIDLE strobe, record owner | If SIDLE fails: abort, stay IDLE |
-| `GOTO_IDLE` | `now < backoff_until` | `GOTO_IDLE` | Wait (defer backoff active) | - |
-| `GOTO_IDLE` | `defer_count >= 10` | `IDLE` | Log "channel busy" | `abort_tx_()` |
-| `GOTO_IDLE` | MARCSTATE == IDLE | `FLUSH_TX` | Send SFTX strobe | - |
-| `GOTO_IDLE` | MARCSTATE == RX | `GOTO_IDLE` | `defer_tx_()`: increment defer, apply backoff if >3 | - |
-| `GOTO_IDLE` | elapsed > 50ms | `IDLE` | Log error | `abort_tx_()` |
-| `FLUSH_TX` | elapsed > 50ms | `IDLE` | Log error | `abort_tx_()` |
-| `FLUSH_TX` | elapsed >= 1ms | `LOAD_FIFO` | Write packet to TXFIFO | If write_burst fails: `abort_tx_()` |
-| `LOAD_FIFO` | MARCSTATE == TX (poll) | `WAIT_TX_DONE` | - | - |
-| `LOAD_FIFO` | MARCSTATE == RX | `GOTO_IDLE` | `defer_tx_()` | - |
-| `LOAD_FIFO` | transitional state | `TRIGGER_TX` | Continue via state machine | - |
-| `TRIGGER_TX` | MARCSTATE == TX | `WAIT_TX_DONE` | - | - |
-| `TRIGGER_TX` | MARCSTATE == RX | `GOTO_IDLE` | `defer_tx_()` | - |
-| `TRIGGER_TX` | MARCSTATE == TXFIFO_UFLOW | `IDLE` | Log "TX FIFO underflow" | `abort_tx_()` |
-| `TRIGGER_TX` | MARCSTATE == RXFIFO_OFLOW | `IDLE` | Log "RX FIFO overflow" | `abort_tx_()` |
-| `TRIGGER_TX` | elapsed > 50ms | `IDLE` | Log timeout with MARCSTATE | `abort_tx_()` |
-| `WAIT_TX_DONE` | received_ == true (GDO0) | `VERIFY_DONE` | - | - |
-| `WAIT_TX_DONE` | elapsed > 50ms | `IDLE` | Log timeout | `abort_tx_()` |
-| `VERIFY_DONE` | TXBYTES == 0 (poll 3×100μs) | `RETURN_RX` | - | - |
-| `VERIFY_DONE` | TXBYTES != 0 after retries | `IDLE` | Log MARCSTATE + TXBYTES | `abort_tx_()` |
-| `RETURN_RX` | (immediate) | `IDLE` | `flush_and_rx()`, notify owner(true) | - |
+| `IDLE` | `load_and_transmit()` called | `PREPARE` | Copy packet to tx_buf_, set tx_pending_success_ = false | If already transmitting: return false, stay IDLE |
+| `PREPARE` | MARCSTATE == IDLE (within 20 polls) | (continues) | Flush TX FIFO (SFTX), 100us settle | - |
+| `PREPARE` | MARCSTATE != IDLE after 20 polls | `RECOVER` | Log warning with MARCSTATE | - |
+| `PREPARE` | FIFO write succeeds | (continues) | Clear irq_flag_, send STX strobe | - |
+| `PREPARE` | FIFO write fails | `RECOVER` | Log "FIFO write failed" | - |
+| `PREPARE` | MARCSTATE == TX (within 20 polls) | `WAIT_TX` | Record state_enter_time | - |
+| `PREPARE` | MARCSTATE != TX after 20 polls | `RECOVER` | Log "STX failed" with MARCSTATE | - |
+| `WAIT_TX` | irq_flag_ == true + TXBYTES == 0 | `IDLE` | flush_and_rx(), tx_pending_success_ = true | - |
+| `WAIT_TX` | irq_flag_ == true + TXBYTES > 0 | (grace) | 100us delay, re-check TXBYTES | - |
+| `WAIT_TX` | TXBYTES == 0 after grace | `IDLE` | flush_and_rx(), tx_pending_success_ = true | - |
+| `WAIT_TX` | TXBYTES != 0 after grace | `RECOVER` | Log "FIFO not empty after TX interrupt" | - |
+| `WAIT_TX` | MARCSTATE == IDLE or RX + TXBYTES == 0 | `IDLE` | flush_and_rx(), tx_pending_success_ = true | GDO0 missed fallback |
+| `WAIT_TX` | elapsed > 50ms | `RECOVER` | Log "TX timeout in WAIT_TX" | - |
+| `RECOVER` | (immediate) | `IDLE` | recover_radio_(), tx_pending_success_ = false | See recovery section |
 
-### Defer Mechanism (`defer_tx_`)
+### Error Recovery: `recover_radio_()`
 
-Called when MARCSTATE == RX during TX setup (radio received a packet instead of transmitting).
-
-```cpp
-void defer_tx_(uint32_t now) {
-  defer_count++;
-
-  if (defer_count > DEFER_BACKOFF_THRESHOLD) {  // 3
-    // Random backoff: scale with defer count (exponential-ish)
-    uint32_t backoff_ms = (random % BACKOFF_MAX_MS) + 1;  // 1-50ms
-    backoff_ms *= (defer_count - DEFER_BACKOFF_THRESHOLD);
-    backoff_ms = min(backoff_ms, 150);  // Cap at 150ms
-    backoff_until = now + backoff_ms;
-  }
-
-  write_cmd(SIDLE);
-  state = GOTO_IDLE;
-}
-```
-
-### Error Recovery: `abort_tx_()`
-
-Called on any error condition. Performs:
-1. Log warning with current state and MARCSTATE
-2. **Zombie state detection**: If MARCSTATE == 0x00 or 0x1F:
-   - Retry read 2× to filter transient SPI noise
-   - If confirmed: rate-limited chip reset (max 1 per 10s)
-3. Set `tx_ctx_.state = IDLE`
-4. Reset `tx_ctx_` (defer_count, backoff_until)
+Called from the RECOVER state. Performs:
+1. Increment `stat_tx_recover_` counter
+2. Call `flush_and_rx()` (flush FIFOs, enter RX mode)
+3. Read MARCSTATE — if not RX:
+   - `reset()` + `init_registers()` (full chip reinit)
+   - Verify radio alive by reading VERSION register
+   - If VERSION == 0x00 or 0xFF: log error (radio dead)
+4. Set `tx_ctx_.state = IDLE`
 5. Set `tx_pending_success_ = false`
-6. Call `flush_and_rx()` (flush FIFOs, enter RX mode)
-7. Call `notify_tx_owner_(false)` (callback to CommandSender)
+
+No rate limiting on chip resets. No retry counters. If flush fails, reset happens immediately.
 
 ### FIFO Recovery: `flush_and_rx()`
 
 Called to return radio to clean RX state. Performs:
-1. **Rescue valid RX data** (if RXBYTES > 0 and no overflow):
-   - Read FIFO, process packet via `interpret_msg()`
-2. Force IDLE: `write_cmd(SIDLE)`
-3. **Bounded wait for IDLE** (max 50ms, log on timeout)
-4. **Clear `received_` flag** (safe: no GDO0 edges in IDLE)
-5. Flush RX FIFO: `write_cmd(SFRX)`
-6. Flush TX FIFO: `write_cmd(SFTX)`
-7. Enable RX: `write_cmd(SRX)`
+1. Force IDLE: `write_cmd(SIDLE)`
+2. 100us delay (settling)
+3. Clear `irq_flag_` (safe: no GDO0 edges in IDLE)
+4. Flush RX FIFO: `write_cmd(SFRX)`
+5. Flush TX FIFO: `write_cmd(SFTX)`
+6. Enable RX: `write_cmd(SRX)`
+7. Verify MARCSTATE == RX — warn if not (but caller `recover_radio_()` handles escalation)
+
+No RX data rescue. No bounded wait for IDLE. Simplified to a fixed sequence.
+
+### `poll_tx()` Return Values
+
+The RF task calls `poll_tx()` each iteration after `load_and_transmit()`:
+
+| Return | Meaning | Hub Action |
+|--------|---------|------------|
+| `TxPollResult::PENDING` | TX still in progress | Continue polling |
+| `TxPollResult::SUCCESS` | TX completed, FIFO empty | Post `TxResult{client, true}` to tx_done_queue |
+| `TxPollResult::FAILED` | TX failed or recovered | Post `TxResult{client, false}` to tx_done_queue |
+
+### `abort_tx()`
+
+Thin public wrapper that calls `recover_radio_()`. Used by the hub when processing REINIT_FREQ requests to cancel any in-progress TX.
 
 ### Constants
 
 ```cpp
-static constexpr uint32_t STATE_TIMEOUT_MS = 50;        // Per-state timeout
-static constexpr uint8_t DEFER_BACKOFF_THRESHOLD = 3;   // Defers before backoff
-static constexpr uint8_t DEFER_MAX = 10;                // Abort after N defers
-static constexpr uint32_t BACKOFF_MAX_MS = 50;          // Max single backoff
+static constexpr uint32_t STATE_TIMEOUT_MS = 50;  // Per-state timeout (WAIT_TX)
 ```
 
 ### MARCSTATE Values
@@ -162,10 +136,13 @@ static constexpr uint32_t BACKOFF_MAX_MS = 50;          // Max single backoff
 | Value | Name | Meaning |
 |-------|------|---------|
 | 0x01 | IDLE | Ready for commands |
-| 0x08 | CALIBRATE | Frequency calibration |
+| 0x03-0x0C | (various) | Transient calibration/settling states |
 | 0x0D | RX | Receiving packet |
+| 0x0E | RX_END | End of received packet |
+| 0x0F | RX_RST | RX FIFO reset |
 | 0x12 | FSTXON | Fast TX ready |
 | 0x13 | TX | Transmitting |
+| 0x14 | TX_END | End of transmitted packet |
 | 0x11 | RXFIFO_OFLOW | RX FIFO overflow |
 | 0x16 | TXFIFO_UFLOW | TX FIFO underflow |
 | 0x00 | SLEEP | Sleep mode (suspicious during active TX) |
@@ -175,14 +152,14 @@ static constexpr uint32_t BACKOFF_MAX_MS = 50;          // Max single backoff
 
 ## 2. CommandSender State Machine
 
-Manages command queuing, multi-packet transmission, and retry logic. One instance per cover/light.
+Manages command queuing, multi-packet transmission, and retry logic. One instance per device (embedded in the `Device` struct via `CommandSender sender`).
 
 ### States
 
 | State | Value | Description |
 |-------|-------|-------------|
 | `IDLE` | 0 | No pending commands |
-| `WAIT_DELAY` | 1 | Waiting for inter-packet delay (50ms base, exponential on retry) |
+| `WAIT_DELAY` | 1 | Waiting for inter-packet delay (10ms base, exponential on retry) |
 | `TX_PENDING` | 2 | Waiting for hub TX completion callback |
 
 ### State Diagram
@@ -202,16 +179,16 @@ stateDiagram-v2
 
     %% ─── TX_PENDING ─────────────────────────────────────────────────────────────
     %% Success paths
-    TX_PENDING --> WAIT_DELAY: on_tx_complete(true) && packets < 2
-    TX_PENDING --> IDLE: on_tx_complete(true) && packets == 2 && queue empty
-    TX_PENDING --> WAIT_DELAY: on_tx_complete(true) && packets == 2 && queue not empty
+    TX_PENDING --> WAIT_DELAY: on_tx_complete(true) && packets < 3
+    TX_PENDING --> IDLE: on_tx_complete(true) && packets == 3 && queue empty
+    TX_PENDING --> WAIT_DELAY: on_tx_complete(true) && packets == 3 && queue not empty
 
     %% Failure paths with exponential backoff
-    TX_PENDING --> WAIT_DELAY: on_tx_complete(false) && retries < 3\nbackoff: 50ms << retries (cap 400ms)
+    TX_PENDING --> WAIT_DELAY: on_tx_complete(false) && retries < 3\nbackoff: 10ms << retries (cap 400ms)
     TX_PENDING --> IDLE: on_tx_complete(false) && retries >= 3\ndrop command
 
     %% Timeout paths with exponential backoff
-    TX_PENDING --> WAIT_DELAY: timeout > 500ms && retries < 3\nbackoff: 50ms << retries (cap 400ms)
+    TX_PENDING --> WAIT_DELAY: timeout > 500ms && retries < 3\nbackoff: 10ms << retries (cap 400ms)
     TX_PENDING --> IDLE: timeout > 500ms && retries >= 3\ndrop command
 
     %% Cancellation
@@ -228,49 +205,54 @@ stateDiagram-v2
 | `WAIT_DELAY` | queue empty | `IDLE` | Clear cancelled_ flag |
 | `WAIT_DELAY` | delay elapsed && `request_tx()` succeeds | `TX_PENDING` | Record tx_start_time_ |
 | `WAIT_DELAY` | delay elapsed && `request_tx()` fails | `WAIT_DELAY` | Radio busy, retry next loop |
-| `TX_PENDING` | `on_tx_complete(true)` && send_packets < 2 | `WAIT_DELAY` | Increment send_packets_ |
-| `TX_PENDING` | `on_tx_complete(true)` && send_packets == 2 | → `advance_queue_()` | Reset counters, pop queue |
+| `TX_PENDING` | `on_tx_complete(true)` && send_packets < 3 | `WAIT_DELAY` | Increment send_packets_ |
+| `TX_PENDING` | `on_tx_complete(true)` && send_packets == 3 | -> `advance_queue_()` | Reset counters, pop queue |
 | `TX_PENDING` | `on_tx_complete(false)` && retries < 3 | `WAIT_DELAY` | Increment retries, **exponential backoff** |
-| `TX_PENDING` | `on_tx_complete(false)` && retries >= 3 | → `advance_queue_()` | Log error, drop command |
+| `TX_PENDING` | `on_tx_complete(false)` && retries >= 3 | -> `advance_queue_()` | Log error, drop command |
 | `TX_PENDING` | cancelled_ == true | `IDLE` | Clear cancelled_, reset counters |
 | `TX_PENDING` | timeout (500ms) && retries < 3 | `WAIT_DELAY` | Increment retries, **exponential backoff** |
-| `TX_PENDING` | timeout (500ms) && retries >= 3 | → `advance_queue_()` | Log error, drop command |
+| `TX_PENDING` | timeout (500ms) && retries >= 3 | -> `advance_queue_()` | Log error, drop command |
 | `TX_PENDING` | stale callback (state != TX_PENDING) | (ignored) | Return immediately |
 
 ### Command Collapsing (`enqueue`)
 
-Duplicate consecutive commands are collapsed to prevent queue saturation from button mashing:
+Duplicate consecutive commands (same `cmd` AND `type`) are collapsed to prevent queue saturation from button mashing:
 
 ```cpp
-// packets defaults to SEND_PACKETS (2). Movement polls use 1 for less TX load.
-bool enqueue(uint8_t cmd_byte, uint8_t packets = SEND_PACKETS) {
-  // Collapse duplicate consecutive commands
-  if (!command_queue_.empty() && command_queue_.back().cmd == cmd_byte) {
-    return true;  // Already queued, skip duplicate
+[[nodiscard]] bool enqueue(uint8_t cmd_byte,
+                           uint8_t packets = packet::button::PACKETS,   // 3
+                           uint8_t type = packet::msg_type::BUTTON) {   // 0x44
+  // Collapse consecutive duplicates (same cmd AND type)
+  if (!command_queue_.empty() &&
+      command_queue_.back().cmd == cmd_byte &&
+      command_queue_.back().type == type) {
+    return true;
   }
-  if (command_queue_.size() >= MAX_COMMAND_QUEUE) {
+  if (command_queue_.size() >= packet::limits::MAX_COMMAND_QUEUE) {
     return false;
   }
-  command_queue_.push({cmd_byte, packets});
+  command_queue_.push({cmd_byte, packets, type});
   // ...
 }
 ```
 
+The `type` parameter controls which packet builder the hub uses: `0x44` (BUTTON) for press/release dimming, `0x6a` (COMMAND) for targeted commands. This also affects `type2` and `hop` fields set in `process_queue()`.
+
 ### Exponential Backoff on Retry
 
-On TX failure or timeout, delay scales exponentially:
+On TX failure or timeout, delay scales exponentially from the 10ms base:
 
 ```cpp
-// backoff = 50ms << retries, capped at 400ms
-// Retry 1: 100ms
-// Retry 2: 200ms
-// Retry 3: 400ms
+// backoff = 10ms << retries, capped at 400ms
+// Retry 1: 20ms
+// Retry 2: 40ms
+// Retry 3: 80ms
 uint8_t shift = (send_retries_ < 4) ? send_retries_ : 3;
-uint32_t backoff_ms = DELAY_SEND_PACKETS << shift;
-if (backoff_ms > 400) backoff_ms = 400;
+uint32_t backoff_ms = packet::button::INTER_PACKET_MS << shift;  // 10 << shift
+if (backoff_ms > packet::timing::MAX_BACKOFF_MS) backoff_ms = packet::timing::MAX_BACKOFF_MS;  // 400
 ```
 
-This improves 868MHz duty cycle compliance under persistent interference.
+The backoff is applied by adjusting `last_tx_time_` forward: `last_tx_time_ = now + backoff_ms - INTER_PACKET_MS`, so the standard inter-packet delay check in WAIT_DELAY naturally enforces the full backoff period.
 
 ### `advance_queue_()` Helper
 
@@ -278,7 +260,7 @@ Called when a command completes (success or max retries). Performs:
 1. Pop command from queue (if not empty)
 2. Reset `send_packets_ = 0`
 3. Reset `send_retries_ = 0`
-4. Increment message counter (wraps 255 → 1)
+4. Increment message counter (wraps 255 -> 1, skips 0)
 5. Set state to `IDLE` if queue empty, else `WAIT_DELAY`
 
 ### `clear_queue()` Operation
@@ -287,18 +269,25 @@ Called to cancel all pending commands (e.g., STOP supersedes movement):
 1. Clear queue
 2. Reset `send_packets_ = 0`
 3. Reset `send_retries_ = 0`
-4. If state == `TX_PENDING`: set `cancelled_ = true` (TX in flight, can't abort)
-5. Else: set state = `IDLE`
+4. Reset `last_tx_time_ = 0`
+5. If state == `TX_PENDING`: set `cancelled_ = true` (TX in flight, can't abort from Core 1)
+6. Else: set state = `IDLE`
 
 ### Constants
 
 ```cpp
-static constexpr uint32_t TX_PENDING_TIMEOUT_MS = 500;  // Watchdog for hub callback
-static constexpr uint8_t SEND_PACKETS = 2;              // Packets per command
-static constexpr uint8_t SEND_RETRIES = 3;              // Max retry attempts
-static constexpr uint32_t DELAY_SEND_PACKETS = 50;      // Base inter-packet delay (ms)
-static constexpr uint8_t MAX_COMMAND_QUEUE = 10;        // Queue overflow protection
+// From command_sender.h — references packet constants in elero_packet.h
+TX_PENDING_TIMEOUT_MS = packet::timing::TX_PENDING_TIMEOUT  // 500ms — watchdog for hub callback
+
+// From elero_packet.h — actual values used by CommandSender
+packet::button::PACKETS = 3            // Packets per button command (enqueue default)
+packet::button::INTER_PACKET_MS = 10   // Inter-packet delay (ms), base for backoff
+packet::limits::SEND_RETRIES = 3       // Max retry attempts
+packet::limits::MAX_COMMAND_QUEUE = 10  // Queue overflow protection
+packet::timing::MAX_BACKOFF_MS = 400    // Max single backoff delay (ms)
 ```
+
+**Note:** The constants `packet::limits::SEND_PACKETS = 2` and `packet::timing::DELAY_SEND_PACKETS = 50` exist in `elero_packet.h` but are NOT used by CommandSender's active code path. CommandSender defaults to `packet::button::PACKETS = 3` and uses `packet::button::INTER_PACKET_MS = 10` for both the inter-packet delay check and the backoff base.
 
 ---
 
@@ -308,15 +297,15 @@ static constexpr uint8_t MAX_COMMAND_QUEUE = 10;        // Queue overflow protec
 
 | Edge Case | Handling | Recovery |
 |-----------|----------|----------|
-| TX requested while busy | `request_tx()` returns false | CommandSender retries |
-| GDO0 interrupt never fires | 50ms timeout in WAIT_TX_DONE | `abort_tx_()` |
-| TXFIFO underflow | Explicit MARCSTATE check | `abort_tx_()` |
-| RXFIFO overflow during TX | Explicit MARCSTATE check | `abort_tx_()` |
-| SPI write failure | Return value checked | `abort_tx_()` |
-| Radio in RX during TX setup | Defer mechanism (up to 10×) | Backoff + retry |
-| Zombie state (MARCSTATE 0x00/0x1F) | Retry read + rate-limited reset | Chip reinit |
-| TXBYTES not empty after GDO0 | Poll 3× with 100μs delay | `abort_tx_()` |
-| `flush_and_rx` wait_idle timeout | Bounded 50ms wait | Continue best-effort |
+| TX requested while busy | `load_and_transmit()` returns false | CommandSender retries next loop |
+| GDO0 interrupt never fires | MARCSTATE polling fallback in WAIT_TX | If MARCSTATE==IDLE/RX + TXBYTES==0: success |
+| GDO0 fired but FIFO not empty | 100us grace period, re-check | If still not empty: RECOVER |
+| SIDLE timeout (20 polls) | PREPARE -> RECOVER | recover_radio_() |
+| STX did not reach TX state | PREPARE -> RECOVER | recover_radio_() |
+| FIFO write failure | PREPARE -> RECOVER | recover_radio_() |
+| 50ms timeout in WAIT_TX | WAIT_TX -> RECOVER | recover_radio_() |
+| Radio not in RX after flush | recover_radio_() escalates | Full reset() + init_registers() |
+| SPI dead (VERSION 0x00/0xFF) | Logged after reset attempt | No further escalation |
 
 ### CommandSender Edge Cases
 
@@ -337,45 +326,58 @@ static constexpr uint8_t MAX_COMMAND_QUEUE = 10;        // Queue overflow protec
 
 ## 4. Sequence: Normal Command Flow
 
+Shows a single command (e.g., CMD_UP) transmitted as 3 packets with 10ms inter-packet delay.
+
 ```
-CommandSender                    Hub (Elero)                    CC1101
+CommandSender                    Hub (Elero)                    CC1101 Driver
      |                              |                              |
      |-- enqueue(CMD_UP) ---------> |                              |
      |   state = WAIT_DELAY         |                              |
      |                              |                              |
      |-- process_queue() ---------> |                              |
-     |   (50ms elapsed)             |                              |
+     |   (10ms elapsed)             |                              |
      |-- request_tx() ------------> |                              |
-     |   state = TX_PENDING         |-- SIDLE ------------------> |
-     |                              |   state = GOTO_IDLE          |
-     |                              |<-- MARCSTATE_IDLE ---------- |
-     |                              |-- SFTX -------------------> |
-     |                              |   state = FLUSH_TX           |
-     |                              |   (1ms settling)             |
-     |                              |-- write TXFIFO -----------> |
-     |                              |   state = LOAD_FIFO          |
-     |                              |-- SIDLE + STX ------------> |
-     |                              |   (poll 20×5μs)              |
-     |                              |<-- MARCSTATE_TX ------------ |
-     |                              |   state = WAIT_TX_DONE       |
+     |   state = TX_PENDING         |-- load_and_transmit() -----> |
+     |                              |   (copies packet to tx_buf_)  |
      |                              |                              |
-     |                              |<-- GDO0 interrupt ---------- |
-     |                              |   state = VERIFY_DONE        |
-     |                              |<-- TXBYTES == 0 (poll 3×) -- |
-     |                              |   state = RETURN_RX          |
-     |                              |-- flush_and_rx() ----------> |
-     |                              |   SIDLE, wait, clear flag    |
-     |                              |   SFRX, SFTX, SRX            |
+     |                              |-- poll_tx() --------------> |
+     |                              |   state = PREPARE            |
+     |                              |                              |
+     |                              |   SIDLE → poll 20×50μs      |
+     |                              |<-- MARCSTATE_IDLE ---------- |
+     |                              |   SFTX → 100μs settle       |
+     |                              |   write TXFIFO              |
+     |                              |   clear irq_flag_ → STX    |
+     |                              |   poll 20×50μs              |
+     |                              |<-- MARCSTATE_TX ------------ |
+     |                              |   state = WAIT_TX            |
+     |                              |                              |
+     |                              |-- poll_tx() --------------> |
+     |                              |<-- irq_flag_ == true ------- |
+     |                              |   TXBYTES == 0               |
+     |                              |   flush_and_rx()             |
      |                              |   state = IDLE               |
+     |                              |   tx_pending_success_ = true |
+     |                              |                              |
+     |                              |<-- poll_tx() returns SUCCESS |
+     |                              |-- post TxResult{true} -----> tx_done_queue
+     |                              |                              |
      |<-- on_tx_complete(true) ---- |                              |
      |   send_packets = 1           |                              |
      |   state = WAIT_DELAY         |                              |
      |                              |                              |
-     |   ... (repeat for packet 2) ...                             |
+     |   ... (10ms delay, repeat for packet 2) ...                 |
      |                              |                              |
      |<-- on_tx_complete(true) ---- |                              |
      |   send_packets = 2           |                              |
+     |   state = WAIT_DELAY         |                              |
+     |                              |                              |
+     |   ... (10ms delay, repeat for packet 3) ...                 |
+     |                              |                              |
+     |<-- on_tx_complete(true) ---- |                              |
+     |   send_packets = 3           |                              |
      |   advance_queue_()           |                              |
+     |   counter++                  |                              |
      |   state = IDLE               |                              |
 ```
 
@@ -388,23 +390,23 @@ CommandSender                    Hub (Elero)                    CC1101
 | Test Name | States Covered | Transitions Tested |
 |-----------|----------------|-------------------|
 | `InitialState` | IDLE | - |
-| `EnqueueTransitionsToWaitDelay` | IDLE → WAIT_DELAY | enqueue |
+| `EnqueueTransitionsToWaitDelay` | IDLE -> WAIT_DELAY | enqueue |
 | `EnqueueRejectsWhenFull` | WAIT_DELAY | queue overflow |
 | `CollapsesDuplicateCommands` | IDLE/WAIT_DELAY | duplicate collapse |
 | `WaitsForDelayBeforeTx` | WAIT_DELAY | delay not elapsed |
-| `SendsMultiplePacketsPerCommand` | WAIT_DELAY → TX_PENDING → WAIT_DELAY | full command cycle |
-| `RetriesOnFailure` | TX_PENDING → WAIT_DELAY | failure retry |
-| `ExponentialBackoffOnRetry` | TX_PENDING → WAIT_DELAY | backoff timing |
-| `DropsCommandAfterMaxRetries` | TX_PENDING → IDLE | max retries |
+| `SendsMultiplePacketsPerCommand` | WAIT_DELAY -> TX_PENDING -> WAIT_DELAY | full command cycle |
+| `RetriesOnFailure` | TX_PENDING -> WAIT_DELAY | failure retry |
+| `ExponentialBackoffOnRetry` | TX_PENDING -> WAIT_DELAY | backoff timing |
+| `DropsCommandAfterMaxRetries` | TX_PENDING -> IDLE | max retries |
 | `ClearQueueWhileIdle` | IDLE | clear_queue |
-| `ClearQueueDuringTx` | TX_PENDING → IDLE | cancel + callback |
-| `ClearQueueDuringTx_FailureIgnored` | TX_PENDING → IDLE | cancel + failure |
-| `ClearQueueDuringTx_TimeoutRecovery` | TX_PENDING → WAIT_DELAY → IDLE | cancel + timeout + empty queue |
+| `ClearQueueDuringTx` | TX_PENDING -> IDLE | cancel + callback |
+| `ClearQueueDuringTx_FailureIgnored` | TX_PENDING -> IDLE | cancel + failure |
+| `ClearQueueDuringTx_TimeoutRecovery` | TX_PENDING -> WAIT_DELAY -> IDLE | cancel + timeout + empty queue |
 | `RetriesWhenRadioBusy` | WAIT_DELAY | request_tx fails |
-| `TimeoutInTxPending_TriggersRetry` | TX_PENDING → WAIT_DELAY | timeout watchdog |
-| `TimeoutInTxPending_DropsAfterMaxRetries` | TX_PENDING → IDLE | timeout + max retries |
-| `NoTimeoutIfCallbackArrives` | TX_PENDING → WAIT_DELAY | normal callback |
-| `StaleCallbackAfterTimeoutIsIgnored` | TX_PENDING → WAIT_DELAY | stale callback guard |
+| `TimeoutInTxPending_TriggersRetry` | TX_PENDING -> WAIT_DELAY | timeout watchdog |
+| `TimeoutInTxPending_DropsAfterMaxRetries` | TX_PENDING -> IDLE | timeout + max retries |
+| `NoTimeoutIfCallbackArrives` | TX_PENDING -> WAIT_DELAY | normal callback |
+| `StaleCallbackAfterTimeoutIsIgnored` | TX_PENDING -> WAIT_DELAY | stale callback guard |
 | `ProcessesMultipleCommandsInOrder` | full cycle | queue ordering |
 | `CounterIncrementsAfterCommand` | full cycle | counter logic |
 | `CounterWrapsFrom255To1` | full cycle | counter wrap |
@@ -413,7 +415,7 @@ CommandSender                    Hub (Elero)                    CC1101
 
 ### Hub TX Tests
 
-Tested via integration (firmware compile + manual hardware test). Unit testing requires CC1101 hardware abstraction.
+Tested via integration (firmware compile + manual hardware test). The `RadioDriver` interface (`radio_driver.h`) enables future unit testing via a mock driver.
 
 ---
 
@@ -421,16 +423,19 @@ Tested via integration (firmware compile + manual hardware test). Unit testing r
 
 | Component | File | Description |
 |-----------|------|-------------|
-| TxState enum | `elero.h:36-45` | TX state machine states |
-| TxContext struct | `elero.h:47-62` | TX context with defer/backoff |
-| handle_tx_state_() | `elero.cpp` | TX state machine driver |
-| defer_tx_() | `elero.cpp` | Defer with exponential backoff |
-| abort_tx_() | `elero.cpp` | Error recovery with zombie detection |
-| flush_and_rx() | `elero.cpp` | FIFO recovery with bounded wait |
-| request_tx() | `elero.cpp` | TX request API |
-| CommandSender::State | `command_sender.h:36-40` | Sender states |
-| CommandSender::process_queue() | `command_sender.h` | Main loop driver |
-| CommandSender::on_tx_complete() | `command_sender.h` | Callback with backoff |
-| CommandSender::enqueue() | `command_sender.h` | Queue with duplicate collapse |
-| CommandSender::advance_queue_() | `command_sender.h` | Queue advancement |
-| CommandSender::clear_queue() | `command_sender.h` | Cancellation |
+| TxState enum | `cc1101_driver.h:38-43` | 4-state TX state machine |
+| TxContext struct | `cc1101_driver.h:45-50` | TX context (state + enter time) |
+| RadioDriver interface | `radio_driver.h` | Abstract driver interface (TxPollResult, RadioHealth) |
+| load_and_transmit() | `cc1101_driver.cpp:56-74` | TX request, packet copy, start PREPARE |
+| poll_tx() | `cc1101_driver.cpp:76-87` | Entry point: calls handle_tx_state_() |
+| handle_tx_state_() | `cc1101_driver.cpp:252-383` | TX state machine driver (PREPARE/WAIT_TX/RECOVER) |
+| recover_radio_() | `cc1101_driver.cpp:385-411` | Error recovery (flush, reset, verify) |
+| abort_tx() | `cc1101_driver.cpp:89-91` | Public wrapper for recover_radio_() |
+| flush_and_rx() | `cc1101_driver.cpp:415-440` | FIFO recovery (SIDLE, flush, SRX) |
+| CommandSender::State | `command_sender.h:24-28` | Sender states (IDLE/WAIT_DELAY/TX_PENDING) |
+| CommandSender::process_queue() | `command_sender.h:35-98` | Main loop driver |
+| CommandSender::on_tx_complete() | `command_sender.h:100-149` | Callback with backoff |
+| CommandSender::enqueue() | `command_sender.h:160-179` | Queue with duplicate collapse |
+| CommandSender::advance_queue_() | `command_sender.h:208-216` | Queue advancement |
+| CommandSender::clear_queue() | `command_sender.h:181-192` | Cancellation |
+| CommandSender::calculate_backoff_ms_() | `command_sender.h:202-206` | Exponential backoff (10ms base) |

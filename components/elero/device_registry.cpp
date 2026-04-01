@@ -73,6 +73,14 @@ void DeviceRegistry::setup_adapters() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 Device *DeviceRegistry::register_device(const NvsDeviceConfig &config) {
+    if (nvs_enabled_) {
+        ESP_LOGW(TAG, "Ignoring YAML-defined %s '%s' at 0x%06x — NVS mode is active, "
+                       "devices are managed at runtime via the web UI or MQTT. "
+                       "Remove cover/light blocks from YAML or disable elero_mqtt/elero_nvs.",
+                 device_type_str(config.type), config.name, config.dst_address);
+        return nullptr;
+    }
+
     Device *existing = find(config.dst_address, config.type);
     if (existing) {
         update_device_config(*existing, config);
