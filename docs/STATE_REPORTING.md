@@ -22,7 +22,7 @@ How device state flows from RF packets through the firmware to Home Assistant en
 
 **`auto_sensors` (default `true`)** automatically creates all diagnostic sensors alongside each cover entity. Set `auto_sensors: false` to disable.
 
-**Implementation note:** RSSI, Status, and Problem sensors are published via the hub's address-keyed sensor maps (direct path from `interpret_msg()` using `is_problem_state()` from `state_snapshot.h`). Command Source and Problem Type are published from `EspCoverShell::sync_and_publish_()` using snapshot data. Both paths derive from the same underlying `Device` state.
+**Implementation note:** RSSI, Status, and Problem sensors are published via the hub's address-keyed sensor maps (direct path from `dispatch_packet()` using `is_problem_state()` from `state_snapshot.h`). Command Source and Problem Type are published from `EspCoverShell::sync_and_publish_()` using snapshot data. Both paths derive from the same underlying `Device` state.
 
 ### Light
 
@@ -155,22 +155,28 @@ CC1101 (868 MHz transceiver)
   │
   │  GDO0 interrupt (packet received)
   ▼
-Elero::interrupt()
+Elero::interrupt()                         ← ISR (any core)
   │  Sets atomic flag: received_ = true
+  │  vTaskNotifyGiveFromISR → wakes RF task
   ▼
-Elero::loop()                              ← ESPHome main loop
-  │  Checks received_ flag
-  │  Reads FIFO from CC1101 over SPI
+rf_task_func_ (Core 0)                    ← Dedicated FreeRTOS task
+  │  Wakes on notification
+  │  Drains FIFO from CC1101 over SPI
+  │  Decode + AES-128 decrypt + CRC check
+  │  Posts RfPacketInfo to rx_queue
   ▼
-Elero::interpret_msg()                     ← Decode + decrypt
+Elero::loop() (Core 1)                    ← ESPHome main loop
+  │  Drains rx_queue (non-blocking)
+  ▼
+Elero::dispatch_packet(pkt)                ← Core 1, no SPI
   │
-  │  Builds RfPacketInfo (src, dst, channel, type, state, command, rssi, raw)
+  │  RfPacketInfo (src, dst, channel, type, state, command, rssi, raw)
   │
   ├──────────────────────────────────┐
   │                                  │
   │  Registry dispatch               │  Direct sensor publish (native mode)
   ▼                                  ▼
-DeviceRegistry::on_rf_packet()       Elero::interpret_msg() (continued)
+DeviceRegistry::on_rf_packet()       Elero::dispatch_packet() (continued)
   │                                    │
   │  1. notify_rf_packet_(pkt)         ├─ rssi_sensor->publish_state(rssi)
   │     → all adapters get raw RF      ├─ text_sensor->publish_state(state_string)
@@ -235,7 +241,7 @@ snapshot()         snapshot()            │
 
 3. **No lateral adapter coupling.** Each adapter reads `Device` independently. MqttAdapter doesn't know about EspCoverShell. EleroWebServer doesn't know about MqttAdapter.
 
-4. **Two publish paths for native mode.** RSSI, text_sensor, and problem binary_sensor are published directly from `interpret_msg()` via address-keyed sensor maps on the hub — these call `is_problem_state()` from `state_snapshot.h` (single derivation point). Cover position/operation + command_source/problem_type go through the registry → shell → snapshot path.
+4. **Two publish paths for native mode.** RSSI, text_sensor, and problem binary_sensor are published directly from `dispatch_packet()` via address-keyed sensor maps on the hub — these call `is_problem_state()` from `state_snapshot.h` (single derivation point). Cover position/operation + command_source/problem_type go through the registry → shell → snapshot path.
 
 5. **MQTT topics are centralized.** Topic suffixes (`mqtt_topic::STATE`, etc.), HA discovery component types (`ha_discovery::COVER`, etc.), and topic construction (`MqttContext::topic()`, `object_id()`, `publish()`) are defined once in `mqtt_context.h`. Zero string concatenation at adapter call sites.
 
@@ -246,9 +252,10 @@ snapshot()         snapshot()            │
 | Event | Latency |
 |-------|---------|
 | RF packet → interrupt | <1 ms (hardware) |
-| interrupt → loop() pickup | ≤1 ESPHome loop tick (~16 ms) |
-| interpret_msg → sensor publish | synchronous (same loop tick) |
-| interpret_msg → registry dispatch | synchronous |
+| interrupt → RF task pickup | <1 ms (Core 0 dedicated task) |
+| RF task → dispatch_packet | queue transit, typically <1 loop tick |
+| dispatch_packet → sensor publish | synchronous (same loop tick) |
+| dispatch_packet → registry dispatch | synchronous |
 | registry → adapter notification | synchronous |
 | adapter → HA publish | synchronous (native) or async (MQTT) |
 | Movement position updates | throttled to 1/sec (`PUBLISH_THROTTLE_MS`) |

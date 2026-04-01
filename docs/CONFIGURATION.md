@@ -260,6 +260,8 @@ Die Web-UI kommuniziert über WebSocket (`/elero/ws`) für Echtzeit-Updates. Sie
 | `config` | Geräte-Konfiguration beim Verbindungsaufbau |
 | `rf` | Dekodierte RF-Pakete in Echtzeit |
 | `log` | ESPHome Log-Einträge mit `elero.*` Tags |
+| `device_upserted` | NVS-Modi: Gerät wurde erstellt oder aktualisiert (Adresse, Typ) |
+| `device_removed` | NVS-Modi: Gerät wurde entfernt (Adresse) |
 
 **Client → Server Messages:**
 
@@ -267,6 +269,8 @@ Die Web-UI kommuniziert über WebSocket (`/elero/ws`) für Echtzeit-Updates. Sie
 |---|---|
 | `cmd` | Befehl an Rollladen/Licht: `{"type":"cmd", "address":"0xADDRESS", "action":"up"}` |
 | `raw` | Raw RF-Paket für Tests: `{"type":"raw", "dst_address":"0x...", "src_address":"0x...", "channel":5, ...}` |
+| `upsert_device` | NVS-Modi: Gerät erstellen oder aktualisieren (NvsDeviceConfig-Felder) |
+| `remove_device` | NVS-Modi: Gerät entfernen nach `dst_address` + `device_type` |
 
 **Warum Mongoose?**
 
@@ -295,6 +299,52 @@ switch:
 **Voraussetzungen:**
 - `elero_web` muss in der Konfiguration vorhanden sein
 - Dieser Switch ist optional; wenn nicht vorhanden, ist die Web-UI immer aktiv
+
+---
+
+## MQTT-Modus: `elero_mqtt`
+
+Die `elero_mqtt`-Komponente ermöglicht die Geräteverwaltung zur Laufzeit über NVS-Persistierung und MQTT Home Assistant Discovery. Sie erfordert die ESPHome-Komponente `mqtt:`.
+
+```yaml
+mqtt:
+  broker: 192.168.1.100
+
+elero_mqtt:
+  topic_prefix: elero
+  discovery_prefix: homeassistant
+  device_name: "Elero Gateway"
+```
+
+| Parameter | Typ | Pflicht | Standard | Beschreibung |
+|---|---|---|---|---|
+| `topic_prefix` | String | Nein | `elero` | MQTT-Topic-Präfix für alle Geräte-Topics |
+| `discovery_prefix` | String | Nein | `homeassistant` | Home Assistant MQTT-Discovery-Präfix |
+| `device_name` | String | Nein | `Elero Gateway` | Gerätename in Home Assistant |
+
+**Wichtige Hinweise:**
+- Wenn `elero_mqtt` vorhanden ist, sollten **keine** Cover oder Lights in der YAML definiert werden — Geräte werden zur Laufzeit über die Web-UI oder MQTT-API hinzugefügt.
+- Geräte werden im NVS gespeichert (einheitlicher 48-Slot-Pool).
+- Die Komponente `mqtt:` muss in der ESPHome-Konfiguration vorhanden sein.
+- Fernbedienungen werden automatisch aus beobachteten RF-Befehlspaketen erkannt.
+
+---
+
+## Native+NVS-Modus: `elero_nvs`
+
+Die `elero_nvs`-Komponente ermöglicht die Geräteverwaltung zur Laufzeit über NVS-Persistierung mit der nativen ESPHome-API (kein MQTT-Broker erforderlich).
+
+```yaml
+elero_nvs:
+```
+
+**Keine Konfigurationsparameter** — das bloße Einbinden der Komponente aktiviert die NVS-Persistierung.
+
+**Wichtige Hinweise:**
+- Geräte werden über die Web-UI-CRUD-API hinzugefügt und im NVS gespeichert.
+- Beim Start werden aktive Geräte aus dem NVS wiederhergestellt und über die native ESPHome-API registriert.
+- CRUD-Operationen nach dem Start schreiben in den NVS, neue Entitäten erscheinen jedoch erst nach einem Neustart (ESPHome-Einschränkung: Entitäten können nach der initialen Verbindung nicht nachträglich registriert werden).
+- Kein MQTT-Broker erforderlich — verwendet die eingebaute native ESPHome-API.
 
 ---
 
