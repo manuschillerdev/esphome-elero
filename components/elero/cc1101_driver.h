@@ -108,6 +108,11 @@ class CC1101Driver : public RadioDriver,
   uint8_t read_status_reliable_(uint8_t addr);
   void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
 
+  // ── Boot diagnostics ────────────────────────────────────────────────────────
+
+  void diagnose_spi_failure_(uint8_t partnum, uint8_t version);
+  bool verify_spi_write_();
+
   // ── Radio control ──────────────────────────────────────────────────────────
 
   void flush_and_rx();

@@ -31,13 +31,21 @@ bool CC1101Driver::init() {
   delay(5);
 
   // Verify CC1101 is responding — known versions: 0x04, 0x14, 0x82 (per RadioLib)
+  uint8_t partnum = this->read_status(CC1101_PARTNUM);
   uint8_t version = this->read_status(CC1101_VERSION);
   if (version == packet::cc1101_status::VERSION_NOT_CONNECTED_LOW ||
       version == packet::cc1101_status::VERSION_NOT_CONNECTED_HIGH) {
-    ESP_LOGE(TAG, "CC1101 not found (VERSION=0x%02x). Check SPI wiring and CS pin.", version);
+    // Run SPI diagnostics to help users identify wiring issues
+    this->diagnose_spi_failure_(partnum, version);
     return false;
   }
-  ESP_LOGI(TAG, "CC1101 version: 0x%02x", version);
+  ESP_LOGI(TAG, "CC1101 detected: PARTNUM=0x%02x VERSION=0x%02x", partnum, version);
+
+  // Verify SPI write path with a known-good register
+  if (!this->verify_spi_write_()) {
+    ESP_LOGE(TAG, "SPI write verification failed — check MOSI wiring");
+    return false;
+  }
 
   this->init_registers();
   return true;
@@ -194,6 +202,37 @@ void CC1101Driver::dump_config() {
   ESP_LOGCONFIG(TAG, "  Radio: CC1101");
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x",
                 this->freq2_, this->freq1_, this->freq0_);
+}
+
+// ─── Boot Diagnostics ────────────────────────────────────────────────────
+
+void CC1101Driver::diagnose_spi_failure_(uint8_t partnum, uint8_t version) {
+  if (partnum == 0x00 && version == 0x00) {
+    ESP_LOGE(TAG, "SPI reads all zeros — MISO stuck low or chip not powered");
+    ESP_LOGE(TAG, "  Check: VCC connected? MISO wired correctly? CS reaching chip?");
+  } else if (partnum == 0xFF && version == 0xFF) {
+    ESP_LOGE(TAG, "SPI reads all ones — MISO stuck high or chip not connected");
+    ESP_LOGE(TAG, "  Check: CC1101 module powered? SPI wiring intact?");
+  } else {
+    ESP_LOGE(TAG, "CC1101 not responding (PARTNUM=0x%02x VERSION=0x%02x)", partnum, version);
+    ESP_LOGE(TAG, "  Expected PARTNUM=0x00, VERSION=0x04 or 0x14");
+  }
+}
+
+bool CC1101Driver::verify_spi_write_() {
+  // Write test patterns to FSCTRL1 (0x0B) and read back.
+  // FSCTRL1 is safe to overwrite — init_registers() sets it to 0x08 immediately after.
+  static constexpr uint8_t patterns[] = {0xAA, 0x55};
+  for (uint8_t pattern : patterns) {
+    (void) this->write_reg(CC1101_FSCTRL1, pattern);
+    bool ok = false;
+    uint8_t readback = this->read_reg(CC1101_FSCTRL1, &ok);
+    if (!ok || readback != pattern) {
+      ESP_LOGE(TAG, "SPI write check failed: wrote 0x%02x to FSCTRL1, read back 0x%02x", pattern, readback);
+      return false;
+    }
+  }
+  return true;
 }
 
 // ─── Register Initialization ──────────────────────────────────────────────
