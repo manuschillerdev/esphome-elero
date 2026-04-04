@@ -63,7 +63,7 @@ elero_web:
 external_components:
   - source:
       type: local
-      path: components
+      path: ../components
 
 # Heltec WiFi LoRa 32 V4 pin mapping:
 #   SPI (onboard SX1262):
