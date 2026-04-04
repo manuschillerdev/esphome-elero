@@ -7,6 +7,7 @@
 
 #pragma once
 
+#ifdef USE_COVER
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/components/cover/cover.h"
@@ -19,12 +20,12 @@
 #ifdef USE_BINARY_SENSOR
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #endif
-#include "../device.h"
-#include "../device_registry.h"
-#include "../cover_sm.h"
-#include "../state_snapshot.h"  // state_change:: flags
-#include "../elero_strings.h"   // PERCENT_SCALE
-#include "../elero_packet.h"
+#include "device.h"
+#include "device_registry.h"
+#include "cover_sm.h"
+#include "state_snapshot.h"  // state_change:: flags
+#include "elero_strings.h"   // PERCENT_SCALE
+#include "elero_packet.h"
 
 namespace esphome {
 namespace elero {
@@ -62,7 +63,6 @@ class EspCoverShell : public cover::Cover, public Component {
 
   void set_open_duration(uint32_t v) { cfg_.open_duration_ms = v; }
   void set_close_duration(uint32_t v) { cfg_.close_duration_ms = v; }
-  void set_poll_interval(uint32_t v) { cfg_.poll_interval_ms = v; }
 
   // ── ESPHome Component lifecycle ────────────────────────────
   void setup() override {
@@ -80,6 +80,11 @@ class EspCoverShell : public cover::Cover, public Component {
 
   void loop() override {
     if (!device_ || !device_->active) return;
+    // Initial publish: ensure HA doesn't show "Unknown" after boot
+    if (!initial_published_) {
+      initial_published_ = true;
+      sync_and_publish_(state_change::ALL);
+    }
     // Publish when registry signals a state change (notify timestamp updated)
     if (device_->last_notify_ms > last_published_ms_) {
       sync_and_publish_(device_->last_changes);
@@ -97,7 +102,7 @@ class EspCoverShell : public cover::Cover, public Component {
     traits.set_supports_tilt(cfg.supports_tilt != 0);
     traits.set_supports_stop(true);
     traits.set_supports_toggle(true);
-    traits.set_is_assumed_state(false);
+    traits.set_is_assumed_state(true);
     return traits;
   }
 
@@ -192,6 +197,7 @@ class EspCoverShell : public cover::Cover, public Component {
   Device *device_{nullptr};
   uint32_t last_published_ms_{0};
   int slot_index_{-1};  ///< -1 = native mode (use cfg_), >=0 = NVS mode (bind to registry slot)
+  bool initial_published_{false};
 
 #ifdef USE_SENSOR
   sensor::Sensor *rssi_sensor_{nullptr};
@@ -208,3 +214,5 @@ class EspCoverShell : public cover::Cover, public Component {
 
 }  // namespace elero
 }  // namespace esphome
+
+#endif  // USE_COVER

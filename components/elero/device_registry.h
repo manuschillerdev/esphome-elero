@@ -33,6 +33,10 @@ class DeviceRegistry {
     void set_nvs_enabled(bool en) { nvs_enabled_ = en; }
     [[nodiscard]] bool is_nvs_enabled() const { return nvs_enabled_; }
 
+    /// Set/get hub operating mode (for web UI mode reporting).
+    void set_hub_mode(HubMode m) { mode_ = m; }
+    [[nodiscard]] HubMode hub_mode() const { return mode_; }
+
     /// Initialize NVS preference handles.
     void init_preferences();
 
@@ -99,6 +103,11 @@ class DeviceRegistry {
     /// Process a decoded RF packet. Updates device state machines, notifies adapters.
     void on_rf_packet(const RfPacketInfo &pkt, uint32_t now);
 
+    /// Reset all Published caches and re-notify adapters through the normal
+    /// snapshot→diff→update pipeline. Use when an adapter's downstream (e.g. MQTT
+    /// broker) has lost state and needs a full republish.
+    void force_republish_all();
+
     // ═════════════════════════════════════════════════════════════════════════
     // ITERATION
     // ═════════════════════════════════════════════════════════════════════════
@@ -149,6 +158,7 @@ class DeviceRegistry {
     std::vector<OutputAdapter *> adapters_;
     Elero *hub_{nullptr};
     bool nvs_enabled_{false};
+    HubMode mode_{HubMode::NATIVE};
 
     // NVS preference handles (one per slot)
     ESPPreferenceObject prefs_[MAX_DEVICES]{};
@@ -170,8 +180,8 @@ class DeviceRegistry {
     void loop_light_(Device &dev, LightDevice &light, uint32_t now);
 
     /// Handle an RF status packet for a specific device.
-    /// Only notifies adapters when state actually changed (FSM, tilt, or raw state byte).
-    void dispatch_status_(Device &dev, uint8_t state_byte, uint8_t prev_state, uint32_t now);
+    /// Always runs through snapshot→diff→publish; the diff handles dedup.
+    void dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now);
 
     /// Track a remote control from an observed RF command packet.
     void track_remote_(const RfPacketInfo &pkt, uint32_t now);

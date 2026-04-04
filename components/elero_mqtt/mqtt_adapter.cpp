@@ -174,13 +174,15 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
         root["unique_id"] = oid;
         root["command_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::SET);
         root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::STATE);
-        root["position_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::POSITION);
         root["payload_open"] = action::OPEN;
         root["payload_close"] = action::CLOSE;
         root["payload_stop"] = action::STOP;
-        root["position_open"] = 100;
-        root["position_closed"] = 0;
-        if (dev.config.open_duration_ms > 0 && dev.config.close_duration_ms > 0) {
+        root["optimistic"] = true;  // All buttons always enabled (blind has no reliable position feedback)
+        bool has_position = dev.config.open_duration_ms > 0 && dev.config.close_duration_ms > 0;
+        if (has_position) {
+            root["position_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::POSITION);
+            root["position_open"] = 100;
+            root["position_closed"] = 0;
             root["set_position_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::SET_POSITION);
         }
         root["device_class"] = ha_cover_class_str(static_cast<HaCoverClass>(dev.config.ha_device_class));
@@ -257,7 +259,8 @@ void MqttAdapter::publish_cover_state_(const Device &dev, uint16_t changes) {
         ++topics;
     }
 
-    if (changes & state_change::POSITION) {
+    if ((changes & state_change::POSITION) &&
+        dev.config.open_duration_ms > 0 && dev.config.close_duration_ms > 0) {
         char pos_buf[8];
         snprintf(pos_buf, sizeof(pos_buf), "%d", pub.position_pct);
         ctx_.publish(DeviceType::COVER, addr, mqtt_topic::POSITION, pos_buf, false);
@@ -702,25 +705,24 @@ void MqttAdapter::collect_expected_topics_(std::vector<std::string> &out) const 
 void MqttAdapter::republish_all_() {
     if (registry_ == nullptr) return;
 
+    // Re-publish discovery configs and re-subscribe to command topics (MQTT-specific)
     registry_->for_each_active([this](Device &dev) {
         if (!dev.config.is_enabled()) return;
 
-        // Reset Published cache — broker has no state after reconnect
         if (dev.is_cover()) {
-            std::get<CoverDevice>(dev.logic).published = {};
             publish_cover_discovery_(dev);
             subscribe_cover_commands_(dev);
         } else if (dev.is_light()) {
-            std::get<LightDevice>(dev.logic).published = {};
             publish_light_discovery_(dev);
             subscribe_light_commands_(dev);
         } else if (dev.is_remote()) {
             publish_remote_discovery_(dev);
         }
-
-        // Force-publish all state (ALL flag bypasses diff)
-        on_state_changed(dev, state_change::ALL);
     });
+
+    // Force full state republish through the registry's snapshot→diff→notify pipeline.
+    // The registry resets Published caches, recomputes snapshots, and notifies all adapters.
+    registry_->force_republish_all();
 
     ESP_LOGI(TAG, "Republished all discoveries after reconnect");
 }

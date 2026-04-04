@@ -153,7 +153,6 @@ uv run esphome compile tests/test.esp32-nvs.yaml        # Native+NVS mode
 - **SPI conflicts**: The CC1101 CS pin must not be shared with any other SPI device.
 - **`web_server:` vs `web_server_base:`**: Use `web_server_base:` (auto-loaded by `elero_web`) to serve only `/elero`. Adding `web_server:` re-enables the default ESPHome entity UI.
 - **Position tracking**: Leave `open_duration` and `close_duration` at `0s` if you only need open/close — incorrect durations cause wrong position estimates.
-- **Poll interval `never`**: For blinds that reliably push state updates (avoids unnecessary RF traffic). Internally maps to `uint32_t` max.
 
 ---
 

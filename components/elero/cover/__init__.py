@@ -29,7 +29,6 @@ CONF_COMMAND_DOWN = "command_down"
 CONF_COMMAND_STOP = "command_stop"
 CONF_COMMAND_CHECK = "command_check"
 CONF_COMMAND_TILT = "command_tilt"
-CONF_POLL_INTERVAL = "poll_interval"
 CONF_SUPPORTS_TILT = "supports_tilt"
 CONF_AUTO_SENSORS = "auto_sensors"
 CONF_RSSI_SENSOR = "rssi_sensor"
@@ -61,12 +60,6 @@ _PROBLEM_TYPE_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
     icon="mdi:alert-circle-outline",
 )
 
-
-
-def poll_interval(value):
-    if value == "never":
-        return 4294967295  # uint32_t max
-    return cv.positive_time_period_milliseconds(value)
 
 
 def _validate_duration_consistency(config):
@@ -116,7 +109,6 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_DST_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
             cv.Required(CONF_CHANNEL): cv.int_range(min=0, max=255),
             cv.Required(CONF_SRC_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
-            cv.Optional(CONF_POLL_INTERVAL, default="5min"): poll_interval,
             cv.Optional(CONF_OPEN_DURATION, default="0s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_CLOSE_DURATION, default="0s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_PAYLOAD_1, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
@@ -168,7 +160,6 @@ async def to_code(config):
     cg.add(var.set_type(config[CONF_TYPE]))
     cg.add(var.set_type2(config[CONF_TYPE2]))
     cg.add(var.set_hop(config[CONF_HOP]))
-    cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
     cg.add(var.set_supports_tilt(config[CONF_SUPPORTS_TILT]))
 
     # Device class for HA — values must match HaCoverClass enum in device_type.h

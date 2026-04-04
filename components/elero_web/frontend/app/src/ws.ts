@@ -1,4 +1,4 @@
-import type { RawPayload, UpsertDevicePayload, RemoveDevicePayload, DeviceAction, StateChangedData } from '@/generated'
+import type { CmdPayload, RawPayload, UpsertDevicePayload, RemoveDevicePayload, RestartPayload, DeviceAction, StateChangedData } from '@/generated'
 import {
   setConnected, setDevices, addRfPacket,
   onDeviceUpserted, onDeviceRemoved, onStateChanged,
@@ -58,7 +58,7 @@ export function initWs() {
 
 // ─── Send helpers ───────────────────────────────────────────────────────────
 
-function send(payload: RawPayload | UpsertDevicePayload | RemoveDevicePayload) {
+function send(payload: CmdPayload | RawPayload | UpsertDevicePayload | RemoveDevicePayload | RestartPayload) {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(payload))
   }
@@ -72,9 +72,7 @@ export function sendDeviceCommand(
   device: Pick<Device, 'address'>,
   action: DeviceAction,
 ) {
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'cmd', address: device.address, action }))
-  }
+  send({ type: 'cmd', address: device.address, action })
 }
 
 export function sendUpsertDevice(device: Device) {
@@ -88,7 +86,6 @@ export function sendUpsertDevice(device: Device) {
     enabled: device.enabled,
     open_duration_ms: device.open_ms,
     close_duration_ms: device.close_ms,
-    poll_interval_ms: device.poll_ms,
     supports_tilt: device.supports_tilt,
     dim_duration_ms: device.dim_ms,
   }
@@ -97,6 +94,10 @@ export function sendUpsertDevice(device: Device) {
 
 export function sendRemoveDevice(address: string, device_type: RemoveDevicePayload['device_type']) {
   send({ type: 'remove_device', dst_address: address, device_type })
+}
+
+export function sendRestart() {
+  send({ type: 'restart' })
 }
 
 export function sendCheckAll() {

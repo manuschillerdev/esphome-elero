@@ -325,6 +325,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 
     if (type == "upsert_device") { this->handle_upsert_device_(c, root); return true; }
     if (type == "remove_device") { this->handle_remove_device_(c, root); return true; }
+    if (type == "restart") { App.safe_reboot(); return true; }
 
     if (type == "raw") {
       uint32_t dst_addr = parse_hex32(root, "dst_address");
@@ -407,7 +408,7 @@ std::string EleroWebServer::build_config_json() {
     JsonObject hub = root["hub"].to<JsonObject>();
     hub["device"] = App.get_name();
     hub["version"] = this->parent_->get_version();
-    hub["mode"] = has_nvs ? "mqtt" : "native";
+    hub["mode"] = registry ? hub_mode_str(registry->hub_mode()) : "native";
     hub["crud"] = has_nvs;
 
     // radio — RF hardware configuration and capabilities
@@ -437,7 +438,6 @@ std::string EleroWebServer::build_config_json() {
         obj["remote"] = hex_str(dev.config.src_address);
         obj["open_ms"] = dev.config.open_duration_ms;
         obj["close_ms"] = dev.config.close_duration_ms;
-        obj["poll_ms"] = dev.config.poll_interval_ms;
         obj["supports_tilt"] = dev.config.supports_tilt != 0;
         obj["enabled"] = dev.config.is_enabled();
         obj["updated_at"] = dev.config.updated_at;
@@ -522,7 +522,6 @@ std::string EleroWebServer::build_device_upserted_json_(const Device &dev) {
     if (dev.config.is_cover()) {
       root["open_ms"] = dev.config.open_duration_ms;
       root["close_ms"] = dev.config.close_duration_ms;
-      root["poll_ms"] = dev.config.poll_interval_ms;
       root["supports_tilt"] = dev.config.supports_tilt != 0;
     }
     if (dev.config.is_light()) {
@@ -586,7 +585,6 @@ bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &conf
     // Timing
     if (root["open_duration_ms"].is<uint32_t>()) config.open_duration_ms = root["open_duration_ms"].as<uint32_t>();
     if (root["close_duration_ms"].is<uint32_t>()) config.close_duration_ms = root["close_duration_ms"].as<uint32_t>();
-    if (root["poll_interval_ms"].is<uint32_t>()) config.poll_interval_ms = root["poll_interval_ms"].as<uint32_t>();
 
     if (config.is_cover()) {
       config.supports_tilt = (root["supports_tilt"] | false) ? 1 : 0;

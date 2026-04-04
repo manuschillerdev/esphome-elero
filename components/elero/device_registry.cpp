@@ -42,16 +42,25 @@ void DeviceRegistry::restore_all() {
         }
     }
 
-    // Notify adapters of all restored devices + initial state publish
+    // Notify adapters (discovery configs, subscriptions) and queue one CHECK
+    // per cover to get real state from each blind. STATUS responses drive
+    // state through the normal dispatch_status_ → notify_state_changed_ pipeline.
     uint32_t now = millis();
+    uint32_t cover_idx = 0;
     for (auto &dev : slots_) {
         if (dev.active) {
             notify_added_(dev);
-            notify_state_changed_(dev, now);
+            if (dev.is_cover()) {
+                (void) dev.sender.enqueue(packet::command::CHECK,
+                                          packet::button::PACKETS,
+                                          packet::msg_type::COMMAND);
+                auto &cover = std::get<CoverDevice>(dev.logic);
+                cover.poll.offset_ms = cover_idx * packet::timing::POLL_OFFSET_SPACING;
+                cover.poll.on_poll_sent(now);
+                ++cover_idx;
+            }
         }
     }
-
-    assign_poll_stagger_();
 
     ESP_LOGI(TAG, "Restored %zu devices from NVS (%zu covers, %zu lights, %zu remotes)",
              restored,
@@ -317,11 +326,10 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
         // Status packets: src is the blind/light reporting status
         Device *dev = find(pkt.src);
         if (dev && dev->active) {
-            uint8_t prev_state = dev->rf.last_state_raw;
             dev->rf.last_seen_ms = now;
             dev->rf.last_rssi = pkt.rssi;
             dev->rf.last_state_raw = pkt.state;
-            dispatch_status_(*dev, pkt.state, prev_state, now);
+            dispatch_status_(*dev, pkt.state, now);
         }
     } else if (packet::is_command_packet(pkt.type) && !pkt.echo) {
         // Remote commands are passive — we only auto-discover the remote.
@@ -330,18 +338,14 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
     }
 }
 
-void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint8_t prev_state, uint32_t now) {
-    bool changed = (state_byte != prev_state);
-
+void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now) {
     std::visit(overloaded{
         [&](CoverDevice &cover) {
             auto ctx = cover_context(dev.config);
-            auto old_idx = cover.state.index();
             cover.state = cover_sm::on_rf_status(cover.state, state_byte, now, ctx);
             cover.poll.on_rf_received(now);
 
             // Track tilt state from RF
-            bool was_tilted = cover.tilted;
             if (state_byte == packet::state::TILT ||
                 state_byte == packet::state::TOP_TILT ||
                 state_byte == packet::state::BOTTOM_TILT) {
@@ -354,25 +358,18 @@ void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint8_t p
                        state_byte == packet::state::START_MOVING_DOWN) {
                 cover.tilted = false;
             }
-
-            changed |= (cover.state.index() != old_idx) || (cover.tilted != was_tilted);
         },
         [&](LightDevice &light) {
             auto ctx = light_context(dev.config);
-            auto old_idx = light.state.index();
             light.state = light_sm::on_rf_status(light.state, state_byte, now, ctx);
-            changed |= (light.state.index() != old_idx);
         },
         [](RemoteDevice &) {},
     }, dev.logic);
 
-    // Only notify when something meaningful changed — FSM state type, tilt,
-    // or raw state byte. Unchanged RF packets (same state repeated) are
-    // suppressed. Position updates during movement are handled by the
-    // 1000ms throttle in loop_cover_.
-    if (changed) {
-        notify_state_changed_(dev, now);
-    }
+    // Always run through the snapshot→diff→publish pipeline on STATUS.
+    // The diff handles dedup: if nothing changed (same RSSI, same state),
+    // changes=0 and adapters aren't notified. No premature gating here.
+    notify_state_changed_(dev, now);
 }
 
 
@@ -616,6 +613,26 @@ void DeviceRegistry::notify_config_changed_(const Device &dev) {
 
 void DeviceRegistry::notify_rf_packet_(const RfPacketInfo &pkt) {
     for (auto *a : adapters_) a->on_rf_packet(pkt);
+}
+
+void DeviceRegistry::force_republish_all() {
+    uint32_t now = millis();
+    for (auto &dev : slots_) {
+        if (!dev.active) continue;
+        // Skip devices we've never heard from via RF — their FSM state is
+        // just the default (Idle{POSITION_CLOSED}), not reality. The boot
+        // CHECK poll will query them and real STATUS responses will publish.
+        if (dev.rf.last_seen_ms == 0) continue;
+
+        // Reset Published to sentinel defaults — the next diff will see everything
+        // as changed, recompute valid values, and notify adapters with ALL fields.
+        if (dev.is_cover()) {
+            std::get<CoverDevice>(dev.logic).published = {};
+        } else if (dev.is_light()) {
+            std::get<LightDevice>(dev.logic).published = {};
+        }
+        notify_state_changed_(dev, now);
+    }
 }
 
 void DeviceRegistry::assign_poll_stagger_() {

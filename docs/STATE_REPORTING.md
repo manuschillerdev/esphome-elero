@@ -278,7 +278,7 @@ dev.published      dev.published      from dev.published
 | registry → adapter notification | synchronous |
 | adapter → HA publish | synchronous (native) or async (MQTT) |
 | Movement position updates | throttled to 1/sec (`PUBLISH_THROTTLE_MS`) |
-| Poll interval (idle) | configurable, default 5 min |
+| Poll interval (idle) | 5 min (`DEFAULT_POLL_INTERVAL_MS`) |
 | Poll interval (moving) | 2 sec (`POLL_INTERVAL_MOVING`) |
 
 ---

@@ -42,10 +42,27 @@ description = "Start frontend dev server"
 dir = "components/elero_web/frontend/app"
 run = "pnpm dev"
 
-[tasks.compile]
-description = "Compile ESPHome firmware (dev config)"
+# --- Compile tasks ---
+
+[tasks."compile:lilygo-mqtt"]
+description = "Compile lilygo-mqtt firmware"
 depends = ["setup:python", "frontend:build"]
-run = "uv run esphome compile config.dev.yaml"
+run = "uv run esphome compile configs/config.lilygo-mqtt.yaml"
+
+[tasks."compile:lilygo-api"]
+description = "Compile lilygo-api firmware"
+depends = ["setup:python", "frontend:build"]
+run = "uv run esphome compile configs/config.lilygo-api.yaml"
+
+[tasks."compile:lilygo-api-nvs"]
+description = "Compile lilygo-api-nvs firmware"
+depends = ["setup:python", "frontend:build"]
+run = "uv run esphome compile configs/config.lilygo-api-nvs.yaml"
+
+[tasks."compile:heltec-mqtt"]
+description = "Compile heltec-mqtt firmware"
+depends = ["setup:python", "frontend:build"]
+run = "uv run esphome compile configs/config.heltec-mqtt.yaml"
 
 [tasks."compile:all"]
 description = "Compile all ESPHome test configs"
@@ -96,45 +113,76 @@ depends = ["setup:python"]
 run = "uv run ruff check --fix ."
 
 # --- Flash tasks ---
+# Default target: lilygo-mqtt via USB
 
 [tasks.erase]
 description = "Erase full flash (wipes NVS)"
 run = "uvx esptool --port {{vars.usb_port}} erase_flash"
 
-[tasks.flash]
-description = "Compile and flash via USB"
+[tasks."flash:lilygo-mqtt"]
+description = "Flash lilygo-mqtt via USB"
 depends = ["setup:python", "frontend:build"]
-run = "uv run esphome run config.dev.yaml --device {{vars.usb_port}}"
+run = "uv run esphome run configs/config.lilygo-mqtt.yaml --device {{vars.usb_port}}"
 
-[tasks."flash:ota"]
-description = "Compile and flash via OTA"
+[tasks."flash:lilygo-mqtt:ota"]
+description = "Flash lilygo-mqtt via OTA"
 depends = ["setup:python", "frontend:build"]
-run = "uv run esphome run config.dev.yaml --device {{vars.device_ip}}"
+run = "uv run esphome run configs/config.lilygo-mqtt.yaml --device {{vars.device_ip}}"
+
+[tasks."flash:lilygo-api"]
+description = "Flash lilygo-api via USB"
+depends = ["setup:python", "frontend:build"]
+run = "uv run esphome run configs/config.lilygo-api.yaml --device {{vars.usb_port}}"
+
+[tasks."flash:lilygo-api:ota"]
+description = "Flash lilygo-api via OTA"
+depends = ["setup:python", "frontend:build"]
+run = "uv run esphome run configs/config.lilygo-api.yaml --device {{vars.device_ip}}"
+
+[tasks."flash:lilygo-api-nvs"]
+description = "Flash lilygo-api-nvs via USB"
+depends = ["setup:python", "frontend:build"]
+run = "uv run esphome run configs/config.lilygo-api-nvs.yaml --device {{vars.usb_port}}"
+
+[tasks."flash:lilygo-api-nvs:ota"]
+description = "Flash lilygo-api-nvs via OTA"
+depends = ["setup:python", "frontend:build"]
+run = "uv run esphome run configs/config.lilygo-api-nvs.yaml --device {{vars.device_ip}}"
+
+[tasks."flash:heltec-mqtt"]
+description = "Flash heltec-mqtt via USB"
+depends = ["setup:python", "frontend:build"]
+run = "uv run esphome run configs/config.heltec-mqtt.yaml --device {{vars.usb_port}}"
+
+[tasks."flash:heltec-mqtt:ota"]
+description = "Flash heltec-mqtt via OTA"
+depends = ["setup:python", "frontend:build"]
+run = "uv run esphome run configs/config.heltec-mqtt.yaml --device {{vars.device_ip}}"
 
 # --- Composite tasks ---
 
 [tasks.build]
 description = "Full build: install deps, build frontend, compile firmware"
-depends = ["setup", "compile"]
+depends = ["setup", "compile:lilygo-mqtt"]
 
 [tasks.all]
 description = "Full build + lint + unit tests"
-depends = ["setup", "lint", "test", "compile"]
+depends = ["setup", "lint", "test", "compile:lilygo-mqtt"]
 
-[tasks.deploy]
-description = "Full build from scratch, then flash via USB"
+[tasks."deploy:lilygo-mqtt"]
+description = "Full build, then flash lilygo-mqtt via USB"
 depends = ["build"]
-run = "uv run esphome run config.dev.yaml --device {{vars.usb_port}}"
+run = "uv run esphome run configs/config.lilygo-mqtt.yaml --device {{vars.usb_port}}"
 
-[tasks."deploy:ota"]
-description = "Full build from scratch, then flash via OTA"
+[tasks."deploy:lilygo-mqtt:ota"]
+description = "Full build, then flash lilygo-mqtt via OTA"
 depends = ["build"]
-run = "uv run esphome run config.dev.yaml --device {{vars.device_ip}}"
+run = "uv run esphome run configs/config.lilygo-mqtt.yaml --device {{vars.device_ip}}"
 
-[tasks."deploy:erase"]
-description = "Erase flash, clean build, then compile and flash via USB"
+[tasks."deploy:lilygo-mqtt:erase"]
+description = "Erase flash, clean build, then compile and flash lilygo-mqtt via USB"
 depends = ["erase", "setup", "frontend:build"]
 run = """
-uv run esphome clean config.dev.yaml
-uv run esphome run config.dev.yaml --device {{vars.usb_port}}
+uv run esphome clean configs/config.lilygo-mqtt.yaml
+uv run esphome run configs/config.lilygo-mqtt.yaml --device {{vars.usb_port}}
 """

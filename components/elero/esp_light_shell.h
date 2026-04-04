@@ -3,6 +3,7 @@
 
 #pragma once
 
+#ifdef USE_LIGHT
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/components/light/light_output.h"
@@ -13,12 +14,12 @@
 #ifdef USE_TEXT_SENSOR
 #include "esphome/components/text_sensor/text_sensor.h"
 #endif
-#include "../device.h"
-#include "../device_registry.h"
-#include "../light_sm.h"
-#include "../state_snapshot.h"  // state_change:: flags
-#include "../elero_strings.h"   // PERCENT_SCALE
-#include "../elero_packet.h"
+#include "device.h"
+#include "device_registry.h"
+#include "light_sm.h"
+#include "state_snapshot.h"  // state_change:: flags
+#include "elero_strings.h"   // PERCENT_SCALE
+#include "elero_packet.h"
 
 namespace esphome {
 namespace elero {
@@ -65,6 +66,8 @@ class EspLightShell : public light::LightOutput, public Component {
 
   void loop() override {
     if (!device_ || !device_->active) return;
+    // No initial_published_ needed here — ESPHome LightState defaults to "off",
+    // which is a valid state. Covers need it because cover::Cover starts as "Unknown".
     if (device_->last_notify_ms > last_published_ms_) {
       sync_and_publish_(device_->last_changes);
       last_published_ms_ = device_->last_notify_ms;
@@ -144,3 +147,5 @@ class EspLightShell : public light::LightOutput, public Component {
 
 }  // namespace elero
 }  // namespace esphome
+
+#endif  // USE_LIGHT

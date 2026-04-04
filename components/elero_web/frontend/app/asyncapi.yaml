@@ -74,6 +74,8 @@ channels:
         $ref: "#/components/messages/upsertDeviceMessage"
       removeDeviceMessage:
         $ref: "#/components/messages/removeDeviceMessage"
+      restartMessage:
+        $ref: "#/components/messages/restartMessage"
 
 operations:
   receiveConfig:
@@ -172,6 +174,17 @@ operations:
     messages:
       - $ref: "#/channels/eleroWs/messages/removeDeviceMessage"
 
+  sendRestart:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Restart the ESP32 device
+    description: |
+      Triggers a safe reboot of the ESP32. Used in `native_nvs` mode to apply
+      NVS config changes (added/removed devices) to the ESPHome native API.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/restartMessage"
+
 components:
   messages:
     configEvent:
@@ -253,6 +266,14 @@ components:
       contentType: application/json
       payload:
         $ref: "#/components/schemas/RemoveDevicePayload"
+
+    restartMessage:
+      name: restart
+      title: Restart Message
+      summary: Trigger a safe reboot of the ESP32
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RestartPayload"
 
   schemas:
     # ── Server → Client Envelopes ──
@@ -895,10 +916,6 @@ components:
           type: integer
           description: Full close duration in milliseconds (cover only, 0 = position tracking disabled)
           examples: [23000]
-        poll_interval_ms:
-          type: integer
-          description: Status poll interval in milliseconds (cover only)
-          examples: [300000]
         dim_duration_ms:
           type: integer
           description: Dim duration in milliseconds (light only, 0 = on/off only)
@@ -925,6 +942,16 @@ components:
           examples: ["0xa831e5"]
         device_type:
           $ref: "#/components/schemas/DeviceType"
+
+    RestartPayload:
+      type: object
+      additionalProperties: false
+      required: [type]
+      description: Trigger a safe reboot of the ESP32.
+      properties:
+        type:
+          type: string
+          const: restart
 
     # ── Shared Enums ──
 

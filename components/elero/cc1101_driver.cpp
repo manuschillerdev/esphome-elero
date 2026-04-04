@@ -41,7 +41,7 @@ bool CC1101Driver::init() {
   }
   ESP_LOGI(TAG, "CC1101 detected: PARTNUM=0x%02x VERSION=0x%02x", partnum, version);
 
-  // Verify SPI write path with a known-good register
+  // Verify SPI write path — catches MOSI wiring issues where reads work but writes don't
   if (!this->verify_spi_write_()) {
     ESP_LOGE(TAG, "SPI write verification failed — check MOSI wiring");
     return false;
@@ -220,17 +220,17 @@ void CC1101Driver::diagnose_spi_failure_(uint8_t partnum, uint8_t version) {
 }
 
 bool CC1101Driver::verify_spi_write_() {
-  // Write test patterns to FSCTRL1 (0x0B) and read back.
-  // FSCTRL1 is safe to overwrite — init_registers() sets it to 0x08 immediately after.
-  static constexpr uint8_t patterns[] = {0xAA, 0x55};
-  for (uint8_t pattern : patterns) {
-    (void) this->write_reg(CC1101_FSCTRL1, pattern);
-    bool ok = false;
-    uint8_t readback = this->read_reg(CC1101_FSCTRL1, &ok);
-    if (!ok || readback != pattern) {
-      ESP_LOGE(TAG, "SPI write check failed: wrote 0x%02x to FSCTRL1, read back 0x%02x", pattern, readback);
-      return false;
-    }
+  // Write the operational value to FSCTRL1 and read it back.
+  // 0x08 uses only bits [4:0] — the writable portion of FSCTRL1.
+  // This doubles as early initialization — init_registers() writes the same value.
+  static constexpr uint8_t FSCTRL1_VALUE = 0x08;
+  (void) this->write_reg(CC1101_FSCTRL1, FSCTRL1_VALUE);
+  bool ok = false;
+  uint8_t readback = this->read_reg(CC1101_FSCTRL1, &ok);
+  if (!ok || readback != FSCTRL1_VALUE) {
+    ESP_LOGE(TAG, "SPI write check failed: wrote 0x%02x to FSCTRL1, read back 0x%02x",
+             FSCTRL1_VALUE, readback);
+    return false;
   }
   return true;
 }

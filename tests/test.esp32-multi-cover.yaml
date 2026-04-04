@@ -66,8 +66,7 @@ cover:
     dst_address: 0xca5307
     channel: 6
     src_address: 0xf0d008
-    name: "Cover No Poll"
+    name: "Cover Awning"
     open_duration: 30s
     close_duration: 28s
-    poll_interval: never
     device_class: awning

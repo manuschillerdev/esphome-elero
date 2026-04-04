@@ -49,7 +49,6 @@ cover:
     src_address: 0xf0d008
     open_duration: 25s
     close_duration: 22s
-    poll_interval: 5min
     supports_tilt: false
     payload_1: 0x00
     payload_2: 0x04
@@ -78,7 +77,6 @@ cover:
 |---|---|---|---|
 | `open_duration` | Duration | `0s` | Travel time to fully open. Required for time-based position tracking. If set, `close_duration` must also be set. |
 | `close_duration` | Duration | `0s` | Travel time to fully close. Required for time-based position tracking. If set, `open_duration` must also be set. |
-| `poll_interval` | Duration / `never` | `5min` | Interval for status queries. `never` disables polling. |
 | `supports_tilt` | Boolean | `false` | Enables tilt support (e.g. for venetian blinds). |
 | `auto_sensors` | Boolean | `true` | Automatically creates RSSI and status sensors for this blind. Set to `false` to configure them manually. |
 

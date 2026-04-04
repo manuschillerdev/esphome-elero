@@ -155,7 +155,6 @@ static NvsDeviceConfig make_cover_config(uint32_t addr, const char *name = "Test
     cfg.channel = 4;
     cfg.open_duration_ms = 10000;
     cfg.close_duration_ms = 10000;
-    cfg.poll_interval_ms = 300000;
     strncpy(cfg.name, name, NVS_NAME_MAX - 1);
     return cfg;
 }
@@ -312,10 +311,11 @@ TEST_F(DeviceRegistryTest, CoverDown_TracksLastDirection) {
 
 TEST_F(DeviceRegistryTest, SetPosition_IntermediateTarget) {
     auto *dev = add_cover();
-    registry_.set_cover_position(*dev, 0.5f);
+    // Use 0.75 (not 0.5) — boot position is Idle{0.5}, so set_position(0.5) would be a no-op
+    registry_.set_cover_position(*dev, 0.75f);
 
     auto &cover = std::get<CoverDevice>(dev->logic);
-    EXPECT_FLOAT_EQ(cover.target_position, 0.5f);
+    EXPECT_FLOAT_EQ(cover.target_position, 0.75f);
     EXPECT_TRUE(std::holds_alternative<cover_sm::Opening>(cover.state));
 }
 
@@ -417,19 +417,29 @@ TEST_F(DeviceRegistryTest, RfStatus_TiltSetAndClearedByMovement) {
     EXPECT_FALSE(std::get<CoverDevice>(dev->logic).tilted);
 }
 
-TEST_F(DeviceRegistryTest, RfStatus_SuppressesDuplicateStateBytes) {
-    // When the same state byte arrives twice, no adapter notification (dedup).
-    // RSSI is still updated on the device, but no publish triggered.
-    // Position updates during movement come from the 1000ms loop throttle instead.
+TEST_F(DeviceRegistryTest, RfStatus_DuplicateStateByte_StillPublishesRssiChange) {
+    // Same state byte but different RSSI → snapshot diff catches the RSSI change.
+    // No premature gating in dispatch_status_; the diff handles dedup.
     auto *dev = add_cover();
     registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP), mock_time_.millis());
     adapter_.clear();
 
     registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP, -40.0f), mock_time_.millis());
 
-    EXPECT_EQ(adapter_.state_changed.size(), 0u);
-    // RSSI is still updated in rf_meta even without notify
+    // RSSI changed → adapter should be notified
+    EXPECT_GE(adapter_.state_changed.size(), 1u);
     EXPECT_FLOAT_EQ(dev->rf.last_rssi, -40.0f);
+}
+
+TEST_F(DeviceRegistryTest, RfStatus_IdenticalPacket_Suppressed) {
+    // Truly identical packet (same state, same RSSI) → diff sees no changes → suppressed.
+    add_cover();
+    registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP, -50.0f), mock_time_.millis());
+    adapter_.clear();
+
+    registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP, -50.0f), mock_time_.millis());
+
+    EXPECT_EQ(adapter_.state_changed.size(), 0u);
 }
 
 TEST_F(DeviceRegistryTest, RfStatus_NotifiesOnDifferentStateByte) {
