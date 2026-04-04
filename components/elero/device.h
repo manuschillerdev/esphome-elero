@@ -57,7 +57,7 @@ inline constexpr const char *command_source_str(CommandSource src) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 struct CoverDevice {
-    cover_sm::State state{cover_sm::Idle{cover_sm::POSITION_CLOSED}};
+    cover_sm::State state{cover_sm::Idle{}}; ///< Default Idle{0.5} = unknown at boot
     PollTimer       poll;
     float           target_position{cover_sm::NO_TARGET};  ///< NO_TARGET = no target, 0..1 = intermediate target
     cover_sm::Operation last_direction{cover_sm::Operation::OPENING};  ///< For toggle logic
@@ -179,7 +179,7 @@ inline void init_device(Device &dev, const NvsDeviceConfig &cfg) {
         case DeviceType::COVER: {
             dev.logic = CoverDevice{};
             auto &cover = std::get<CoverDevice>(dev.logic);
-            cover.poll.interval_ms = cfg.poll_interval_ms;
+            cover.poll.interval_ms = packet::timing::DEFAULT_POLL_INTERVAL_MS;
             configure_sender(dev.sender, cfg);
             break;
         }
@@ -208,9 +208,7 @@ inline void update_device_config(Device &dev, const NvsDeviceConfig &cfg) {
     dev.config = cfg;
     configure_sender(dev.sender, cfg);
 
-    if (auto *cover = std::get_if<CoverDevice>(&dev.logic)) {
-        cover->poll.interval_ms = cfg.poll_interval_ms;
-    }
+    // poll interval is hardcoded (DEFAULT_POLL_INTERVAL_MS), no config update needed
 }
 
 }  // namespace esphome::elero

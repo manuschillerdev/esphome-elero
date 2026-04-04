@@ -51,7 +51,7 @@ struct NvsDeviceConfig {
   // Timing (16 bytes)
   uint32_t open_duration_ms{0};
   uint32_t close_duration_ms{0};
-  uint32_t poll_interval_ms{packet::timing::DEFAULT_POLL_INTERVAL_MS};  ///< 5 minutes default
+  uint32_t poll_interval_ms_reserved{0};  ///< DEPRECATED: kept for NVS struct layout compat, ignored at runtime
   uint32_t dim_duration_ms{0};        ///< Light: 0 = on/off only, >0 = brightness control
 
   // Metadata (4 bytes)

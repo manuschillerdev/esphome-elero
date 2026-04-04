@@ -43,7 +43,7 @@ constexpr uint16_t ALL            = 0xFFFF;   ///< Force-publish everything (rec
 
 struct CoverStateSnapshot {
     float position;              ///< 0.0–1.0
-    const char *ha_state;        ///< "open"/"closed"/"opening"/"closing"/"stopped"
+    const char *ha_state;        ///< "open"/"closed"/"opening"/"closing"
     cover_sm::Operation operation;  ///< IDLE/OPENING/CLOSING
     bool tilted;
     bool is_problem;
@@ -102,18 +102,26 @@ inline constexpr const char *problem_type_str(uint8_t raw_state) {
     return nullptr;
 }
 
-/// Map cover operation + position to HA state string.
-/// HA expects: "open", "closed", "opening", "closing", "stopped"
-inline constexpr const char *ha_cover_state_str(cover_sm::Operation op, float position) {
+/// Map FSM operation + RF state byte to HA state string.
+/// HA covers only have 4 real states: open, closed, opening, closing.
+/// "stopped" is converted by HA to open/closed, so we use "open" as default
+/// for any non-endpoint idle state (intermediate, stopped, unknown).
+/// FSM operation drives movement states (optimistic updates from commands).
+/// RF state byte drives idle states (ground truth from blind).
+///
+/// NOTE: Stopping state is handled in compute_cover_snapshot() — the FSM
+/// reports Stopping as IDLE, but we override to "open" there to prevent
+/// stale raw_state (from before movement) from showing "closed".
+inline constexpr const char *ha_cover_state_str(cover_sm::Operation op, uint8_t raw_state) {
     switch (op) {
         case cover_sm::Operation::OPENING: return "opening";
         case cover_sm::Operation::CLOSING: return "closing";
         case cover_sm::Operation::IDLE:
-            if (position >= cover_sm::POSITION_OPEN) return "open";
-            if (position <= cover_sm::POSITION_CLOSED) return "closed";
-            return "stopped";
+            if (raw_state == packet::state::BOTTOM ||
+                raw_state == packet::state::BOTTOM_TILT) return "closed";
+            return "open";
     }
-    return "stopped";
+    return "open";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

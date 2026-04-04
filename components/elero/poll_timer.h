@@ -1,9 +1,9 @@
 /// @file poll_timer.h
 /// @brief Simple poll timing logic for cover status queries.
 ///
-/// Matches the old CoverCore::should_poll / mark_polled behavior exactly:
+/// Matches the old CoverCore::should_poll / mark_polled behavior:
 /// - Boolean `awaiting_response` cleared on RF response, not by timeout
-/// - Timeout expiry forces a re-poll (blind didn't respond)
+/// - Timeout clears awaiting flag, falls through to normal interval check
 /// - Staggered offset for first poll per cover
 /// - Fast polling while moving (2s)
 
@@ -30,9 +30,10 @@ struct PollTimer {
             if ((now - last_command_ms) < packet::timing::RESPONSE_WAIT_MS) {
                 return false;  // stay in RX, don't poll yet
             }
-            // Timeout expired — blind didn't respond. Force a re-poll.
+            // Timeout expired — blind didn't respond. Clear flag and fall
+            // through to normal interval check (don't force immediate re-poll,
+            // that causes TX storms when multiple covers time out together).
             awaiting_response = false;
-            return true;
         }
 
         // Immediate poll overrides interval
@@ -45,8 +46,8 @@ struct PollTimer {
             ? packet::timing::POLL_INTERVAL_MOVING
             : interval_ms;
 
-        // Never poll if interval is 0 or max uint32 ("never")
-        if (effective_interval == 0 || effective_interval == UINT32_MAX) {
+        // Guard: 0 means misconfigured (e.g. stale NVS) — don't poll
+        if (effective_interval == 0) {
             return false;
         }
 
