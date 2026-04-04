@@ -509,14 +509,11 @@ flowchart TD
 
     TICK --> POLL{"2. should_poll?
     (PollTimer)"}
-    POLL -->|Yes, moving| POLL_FAST["enqueue CHECK
+    POLL -->|Yes| POLL_CHECK["enqueue CHECK
     (1 pkt, 0x6a)"]
-    POLL -->|Yes, idle| POLL_FULL["enqueue CHECK
-    (3 pkts, 0x6a)"]
     POLL -->|No| POS_CHECK
 
-    POLL_FAST --> POS_CHECK
-    POLL_FULL --> POS_CHECK
+    POLL_CHECK --> POS_CHECK
 
     POS_CHECK{"3. position tracking?
     moving + has target?"}
@@ -654,7 +651,8 @@ The GDO0 interrupt handler (`Elero::interrupt`) is minimal and runs in IRAM:
 | Condition | Poll Behavior |
 |-----------|--------------|
 | **Moving** | 1 RF packet per CHECK, 2s interval (reduce TX time during movement) |
-| **Idle** | 3 RF packets per CHECK, 5min interval (reliable delivery when blind may be asleep) |
+| **Idle** | 1 RF packet per CHECK, 5min interval (blind is mains-powered, always listening; retry via next poll) |
+| **Post-stop** | 1 RF packet CHECK after Stopping→Idle cooldown (verify actual resting position) |
 
 Blinds only respond to received packets during movement -- they do not broadcast unsolicited status updates. The PollTimer uses a boolean `awaiting_response` flag (not time-based).
 

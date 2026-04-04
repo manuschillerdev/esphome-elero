@@ -160,57 +160,8 @@ TEST_F(PollTimerTest, RfReceivedResetsLastPollMs) {
     EXPECT_TRUE(fast_timer.should_poll(15501, false));
 }
 
-TEST_F(PollTimerTest, RfReceivedClearsImmediatePoll) {
-    fast_timer.request_immediate_poll();
-    EXPECT_TRUE(fast_timer.immediate_poll);
-
-    fast_timer.on_rf_received(5000);
-    EXPECT_FALSE(fast_timer.immediate_poll);
-}
-
 // =============================================================================
-// 7. IMMEDIATE POLL
-// =============================================================================
-
-TEST_F(PollTimerTest, ImmediatePollReturnsTrueOnNextCheck) {
-    fast_timer.on_poll_sent(1000);
-    fast_timer.on_rf_received(1500);
-
-    fast_timer.request_immediate_poll();
-    // Even though interval hasn't elapsed, should_poll returns true
-    EXPECT_TRUE(fast_timer.should_poll(2000, false));
-}
-
-TEST_F(PollTimerTest, ImmediatePollSetsFlag) {
-    fast_timer.request_immediate_poll();
-    EXPECT_TRUE(fast_timer.immediate_poll);
-}
-
-// =============================================================================
-// 8. IMMEDIATE POLL DEBOUNCE
-// =============================================================================
-
-TEST_F(PollTimerTest, ImmediatePollIgnoredWhileAwaitingResponse) {
-    fast_timer.on_command_sent(10000);
-    EXPECT_TRUE(fast_timer.awaiting_response);
-
-    fast_timer.request_immediate_poll();
-    // Should be ignored — immediate_poll stays false
-    EXPECT_FALSE(fast_timer.immediate_poll);
-}
-
-TEST_F(PollTimerTest, ImmediatePollWorksAfterResponseReceived) {
-    fast_timer.on_command_sent(10000);
-    fast_timer.on_rf_received(10500);
-    EXPECT_FALSE(fast_timer.awaiting_response);
-
-    fast_timer.request_immediate_poll();
-    EXPECT_TRUE(fast_timer.immediate_poll);
-    EXPECT_TRUE(fast_timer.should_poll(11000, false));
-}
-
-// =============================================================================
-// 9. STAGGER OFFSET
+// 7. STAGGER OFFSET
 // =============================================================================
 
 TEST_F(PollTimerTest, FirstPollRespectsStaggerOffset) {
@@ -251,16 +202,8 @@ TEST_F(PollTimerTest, OnPollSentSetsLastCommandMs) {
     EXPECT_EQ(fast_timer.last_command_ms, 5000u);
 }
 
-TEST_F(PollTimerTest, OnPollSentClearsImmediatePoll) {
-    fast_timer.request_immediate_poll();
-    EXPECT_TRUE(fast_timer.immediate_poll);
-
-    fast_timer.on_poll_sent(5000);
-    EXPECT_FALSE(fast_timer.immediate_poll);
-}
-
 // =============================================================================
-// 11. TIMEOUT -> RE-POLL -> ON_POLL_SENT CYCLE
+// 9. TIMEOUT -> RE-POLL -> ON_POLL_SENT CYCLE
 // =============================================================================
 
 TEST_F(PollTimerTest, TimeoutClearsAwaitingButDoesNotForceRepoll) {
@@ -343,7 +286,6 @@ TEST_F(PollTimerTest, DefaultTimerValues) {
     EXPECT_EQ(t.last_poll_ms, 0u);
     EXPECT_EQ(t.last_command_ms, 0u);
     EXPECT_FALSE(t.awaiting_response);
-    EXPECT_FALSE(t.immediate_poll);
 }
 
 TEST_F(PollTimerTest, FreshTimerFirstPollAtTimeZero) {

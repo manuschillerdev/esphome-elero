@@ -52,7 +52,7 @@ void DeviceRegistry::restore_all() {
             notify_added_(dev);
             if (dev.is_cover()) {
                 (void) dev.sender.enqueue(packet::command::CHECK,
-                                          packet::button::PACKETS,
+                                          packet::limits::CHECK_PACKETS,
                                           packet::msg_type::COMMAND);
                 auto &cover = std::get<CoverDevice>(dev.logic);
                 cover.poll.offset_ms = cover_idx * packet::timing::POLL_OFFSET_SPACING;
@@ -200,14 +200,14 @@ void DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte, CommandSource 
     if (cmd_byte == packet::command::STOP) {
         dev.sender.clear_queue();
         (void) dev.sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::COMMAND);
-        (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+        (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
         cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
         cover.target_position = cover_sm::NO_TARGET;
     } else {
         if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
         if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
         (void) dev.sender.enqueue(cmd_byte);
-        (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+        (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
         cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
         cover.poll.on_command_sent(now);
     }
@@ -238,7 +238,7 @@ void DeviceRegistry::set_cover_position(Device &dev, float target, CommandSource
         cover.target_position = target;
     }
     (void) dev.sender.enqueue(cmd);
-    (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+    (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
     cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
     if (cmd == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
     if (cmd == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
@@ -256,7 +256,7 @@ void DeviceRegistry::command_cover_tilt(Device &dev, CommandSource src) {
     cover.last_command_source = src;
 
     (void) dev.sender.enqueue(packet::command::TILT);
-    (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+    (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
     cover.state = cover_sm::on_command(cover.state, packet::command::TILT, now, ctx);
     cover.poll.on_command_sent(now);
 
@@ -444,21 +444,27 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
     auto ctx = cover_context(dev.config);
 
     // 1. Tick — check movement timeout and post-stop cooldown
+    bool was_stopping = std::holds_alternative<cover_sm::Stopping>(cover.state);
     auto old_idx = cover.state.index();
     cover.state = cover_sm::on_tick(cover.state, now, ctx);
     bool state_type_changed = (cover.state.index() != old_idx);
 
-    // 2. Poll if due
+    // 2. Poll if due — single packet suffices (blind is mains-powered, always
+    //    listening). If missed, retry via normal poll interval.
     bool moving = cover_sm::is_moving(cover.state);
     if (cover.poll.should_poll(now, moving)) {
-        // Single packet for movement polls (blind responds to each packet,
-        // if missed we retry in 2s). Full 3 packets for idle polls (less frequent).
-        uint8_t packets = moving ? 1 : packet::button::PACKETS;
-        (void) dev.sender.enqueue(packet::command::CHECK, packets, packet::msg_type::COMMAND);
+        (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
         cover.poll.on_poll_sent(now);
     }
 
-    // 3. Intermediate position stop — if cover has position tracking and
+    // 3. Post-stop verification — after Stopping cooldown expires, verify the
+    //    blind's actual resting position (frozen estimate may drift).
+    if (state_type_changed && was_stopping && std::holds_alternative<cover_sm::Idle>(cover.state)) {
+        (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
+        cover.poll.on_poll_sent(now);
+    }
+
+    // 4. Intermediate position stop — if cover has position tracking and
     //    has reached its target position, stop it.
     if (moving && cover_sm::has_position_tracking(ctx) && cover.target_position >= cover_sm::POSITION_CLOSED) {
         float pos = cover_sm::position(cover.state, now, ctx);
@@ -472,19 +478,19 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
         if (at_target && cover.target_position > cover_sm::POSITION_CLOSED && cover.target_position < cover_sm::POSITION_OPEN) {
             dev.sender.clear_queue();
             (void) dev.sender.enqueue(packet::command::STOP, packet::button::PACKETS, packet::msg_type::COMMAND);
-            (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+            (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
             cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
             state_type_changed = true;
             cover.target_position = cover_sm::NO_TARGET;  // Clear target
         }
     }
 
-    // 4. Process command queue
+    // 5. Process command queue
     if (hub_) {
         dev.sender.process_queue(now, hub_, "elero.cover");
     }
 
-    // 5. Notify state changes
+    // 6. Notify state changes
     if (state_type_changed) {
         notify_state_changed_(dev, now);
     } else if (moving &&

@@ -20,7 +20,6 @@ struct PollTimer {
     uint32_t last_poll_ms{0};
     uint32_t last_command_ms{0};        ///< When we last sent a command/CHECK
     bool     awaiting_response{false};  ///< Waiting for blind to respond
-    bool     immediate_poll{false};     ///< Poll ASAP on next check
 
     /// Check if it's time to poll.
     /// Mirrors old CoverCore::should_poll() exactly.
@@ -34,11 +33,6 @@ struct PollTimer {
             // through to normal interval check (don't force immediate re-poll,
             // that causes TX storms when multiple covers time out together).
             awaiting_response = false;
-        }
-
-        // Immediate poll overrides interval
-        if (immediate_poll) {
-            return true;
         }
 
         // Choose interval based on movement state
@@ -65,7 +59,6 @@ struct PollTimer {
         last_poll_ms = now;
         last_command_ms = now;
         awaiting_response = true;
-        immediate_poll = false;
     }
 
     /// Mark that a user command was just sent (suppresses polls briefly).
@@ -79,16 +72,6 @@ struct PollTimer {
     void on_rf_received(uint32_t now) {
         last_poll_ms = now;
         awaiting_response = false;
-        immediate_poll = false;
-    }
-
-    /// Request an immediate poll on next check.
-    /// Debounced: ignored if already awaiting a response.
-    void request_immediate_poll() {
-        if (awaiting_response) {
-            return;  // Already waiting for a response, skip
-        }
-        immediate_poll = true;
     }
 };
 
