@@ -323,7 +323,7 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
     return next
   }
 
-  if ((t === msg_type.COMMAND || t === msg_type.COMMAND_ALT) && !pkt.echo) {
+  if (t === msg_type.COMMAND || t === msg_type.COMMAND_ALT) {
     if (!devs.has(pkt.dst)) mut().set(pkt.dst, makeDevice({ address: pkt.dst, type: 'cover', remote: pkt.src, channel: pkt.channel }))
     if (!(next ?? devs).has(pkt.src)) mut().set(pkt.src, makeDevice({ address: pkt.src, type: 'remote' }))
   } else if (t === msg_type.STATUS || t === msg_type.STATUS_ALT) {

@@ -68,10 +68,6 @@ interface RfData {
    */
   'state': string;
   /**
-   * True if this command packet matches a recent TX from this gateway (mesh echo)
-   */
-  'echo': boolean;
-  /**
    * Rolling counter value from packet (0-255)
    * @example 42
    */

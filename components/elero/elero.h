@@ -46,7 +46,6 @@ struct RfPacketInfo {
   uint8_t type2;          ///< Secondary type byte
   uint8_t command;        ///< Command byte (for command packets)
   uint8_t state;          ///< State byte (for status packets)
-  bool echo;              ///< true if this command packet matches a recent TX (mesh echo)
   uint8_t cnt;            ///< Rolling counter value from packet
   float rssi;
   uint8_t lqi;            ///< Link Quality Indicator (0-127)
@@ -159,8 +158,6 @@ class Elero : public Component {
   // ─── Protocol-level methods (stay on Elero — not hardware) ─────────────────
   [[nodiscard]] optional<RfPacketInfo> decode_packet(const uint8_t *buf, size_t buf_len);
   void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
-  void record_tx_(uint8_t counter);     // Record TX counter for echo detection
-  bool is_own_echo_(uint8_t counter) const;  // Check if RX counter matches a recent TX
   void decode_fifo_packets_(size_t fifo_count);  // Parse multiple packets from FIFO buffer
 
   // ─── RF task entry point ───────────────────────────────────────────────────
@@ -175,11 +172,6 @@ class Elero : public Component {
   TxClient *tx_owner_{nullptr};        ///< Current TX owner (for completion callback)
   uint8_t msg_rx_[CC1101_FIFO_LENGTH]; ///< RX FIFO buffer (RF task only)
   uint8_t msg_tx_[CC1101_FIFO_LENGTH]; ///< TX packet buffer (RF task only)
-
-  // TX echo detection: ring buffer of recently sent counter values (RF task only)
-  static constexpr size_t TX_HISTORY_SIZE = 16;
-  uint8_t tx_history_[TX_HISTORY_SIZE]{};
-  uint8_t tx_history_idx_{0};
 
   // ─── Atomic state (written by RF task, read by main loop) ──────────────────
   std::atomic<uint8_t> freq0_{defaults::FREQ0};

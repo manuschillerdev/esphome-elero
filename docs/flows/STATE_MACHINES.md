@@ -141,9 +141,7 @@ flowchart TD
     DEQUEUE -->|TX request| BUILD["build_tx_packet_(cmd)
     select 0x44 button or 0x6a command builder
     AES-128 encrypt, write to msg_tx_[]"]
-    BUILD --> RECORD["record_tx_(counter)
-    push to 16-entry echo ring"]
-    RECORD --> START["driver_->load_and_transmit()
+    BUILD --> START["driver_->load_and_transmit()
     tx_owner_ = client
     tx_in_progress = true"]
     START --> RX_CHECK
@@ -187,7 +185,6 @@ flowchart TD
         D4 --> D5["for each packet in buffer:
         decode_packet() per frame
         parse_packet, AES decrypt, CRC
-        is_own_echo_ check
         stamp decoded_at_us"]
         D5 --> D6["xQueueSend(rx_queue, &pkt)
         or drop + warn if full"]
@@ -246,7 +243,7 @@ flowchart TD
             - notify_rf_packet_() to all adapters
             - status (0xCA/0xC9): find device, update rf_meta,
               dispatch_status_() to FSM, notify_state_changed_()
-            - command (0x6A, not echo): track_remote_()"]
+            - command (0x6A): track_remote_()"]
             DP3 --> DP4["Log dispatch_us + queue_transit_us
             Update stats counters
             (adapters only called if snapshot diff != 0)"]
@@ -348,8 +345,6 @@ sequenceDiagram
     RF->>TXQ: xQueueReceive
     TXQ->>RF: RfTaskRequest (copy)
     RF->>RF: build_tx_packet_(cmd)<br/>select builder: 0x44 button vs 0x6a command<br/>AES-128 encrypt
-    RF->>RF: record_tx_(counter) -- echo detection ring
-
     RF->>Driver: load_and_transmit(msg_tx_)
     Driver->>HW: SIDLE -> SFTX -> write FIFO -> STX
     HW-->>RF: GDO0 interrupt (TX complete)
@@ -451,7 +446,7 @@ sequenceDiagram
         RF->>HW: driver_->recover() -- reset radio
     else valid data
         RF->>HW: read_buf(RXFIFO, fifo_count)<br/>single SPI burst read
-        RF->>RF: decode_fifo_packets_(count):<br/>for each packet in buffer:<br/>parse_packet() + AES-128 decrypt<br/>+ CRC check + echo detection<br/>+ stamp decoded_at_us
+        RF->>RF: decode_fifo_packets_(count):<br/>for each packet in buffer:<br/>parse_packet() + AES-128 decrypt<br/>+ CRC check<br/>+ stamp decoded_at_us
         RF->>RXQ: xQueueSend(RfPacketInfo) per packet
     end
 
@@ -475,7 +470,7 @@ sequenceDiagram
         Reg->>Reg: tilt state tracking
         Note over Reg: notify_state_changed_(dev, now):<br/>compute snapshot → diff vs Published cache<br/>→ if changes == 0: skip (no adapter calls)<br/>→ else: update cache, set last_changes
         Reg->>Adapt: on_state_changed(dev, changes) -- only if diff != 0
-    else command packet (0x6A) + not echo
+    else command packet (0x6A)
         Reg->>Reg: track_remote_() -- auto-discover RemoteDevice
     end
 
@@ -491,10 +486,6 @@ sequenceDiagram
 | `0x69` | Remote -> Blind | Command with 1-byte addressing |
 | `0xCA` | Blind -> Remote | Status response with 3-byte addressing |
 | `0xC9` | Blind -> Remote | Status response with 1-byte addressing |
-
-### Echo Detection
-
-When transmitting, the RF task records each TX counter value in a 16-entry ring buffer (`record_tx_`). When decoding received command packets, `is_own_echo_()` checks if the counter matches any recent TX -- if so, the packet is marked `echo: true` and the registry ignores it for remote tracking.
 
 ---
 

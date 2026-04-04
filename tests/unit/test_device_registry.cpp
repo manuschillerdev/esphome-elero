@@ -178,19 +178,16 @@ static RfPacketInfo make_status_pkt(uint32_t src, uint8_t state_byte, float rssi
     pkt.type = pkt::msg_type::STATUS;
     pkt.state = state_byte;
     pkt.rssi = rssi;
-    pkt.echo = false;
     return pkt;
 }
 
-static RfPacketInfo make_command_pkt(uint32_t src, uint32_t dst, uint8_t cmd,
-                                      bool echo = false) {
+static RfPacketInfo make_command_pkt(uint32_t src, uint32_t dst, uint8_t cmd) {
     RfPacketInfo pkt{};
     pkt.timestamp_ms = esphome::millis();
     pkt.src = src;
     pkt.dst = dst;
     pkt.type = pkt::msg_type::COMMAND;
     pkt.command = cmd;
-    pkt.echo = echo;
     pkt.channel = 4;
     pkt.rssi = -55.0f;
     return pkt;
@@ -457,24 +454,12 @@ TEST_F(DeviceRegistryTest, RfStatus_NotifiesOnDifferentStateByte) {
 // RF DISPATCH — Echo filtering and remote auto-discovery
 // ═══════════════════════════════════════════════════════════════════════════════
 
-TEST_F(DeviceRegistryTest, RfCommand_EchoFiltered) {
-    // add_cover BEFORE set_nvs_enabled — register_device rejects when NVS active.
-    add_cover(0xA831E5);
-    registry_.set_nvs_enabled(true);
-    adapter_.clear();
-
-    // Echo = our own TX bounced back. Must not trigger remote discovery.
-    auto rf = make_command_pkt(0xF0D008, 0xA831E5, pkt::command::UP, /*echo=*/true);
-    registry_.on_rf_packet(rf, mock_time_.millis());
-    EXPECT_EQ(adapter_.added.size(), 0u);
-}
-
 TEST_F(DeviceRegistryTest, RfCommand_DiscoversRemoteEphemerally) {
     add_cover(0xA831E5);
     registry_.set_nvs_enabled(true);
     adapter_.clear();
 
-    auto rf = make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP, /*echo=*/false);
+    auto rf = make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP);
     registry_.on_rf_packet(rf, mock_time_.millis());
 
     ASSERT_EQ(adapter_.added.size(), 1u);
@@ -489,7 +474,7 @@ TEST_F(DeviceRegistryTest, RfCommand_NativeMode_NoDiscovery) {
     add_cover(0xA831E5);
     adapter_.clear();
 
-    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP, false),
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP),
                            mock_time_.millis());
     EXPECT_EQ(registry_.find(0xBBBBBB, DeviceType::REMOTE), nullptr);
 }
@@ -499,12 +484,12 @@ TEST_F(DeviceRegistryTest, RfCommand_UpdatesExistingRemote) {
     registry_.set_nvs_enabled(true);
 
     // First packet discovers remote
-    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP, false),
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP),
                            mock_time_.millis());
     adapter_.clear();
 
     // Second packet updates it — must NOT create a duplicate (would fill 48 slots)
-    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::DOWN, false),
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::DOWN),
                            mock_time_.millis());
 
     EXPECT_EQ(adapter_.added.size(), 0u);

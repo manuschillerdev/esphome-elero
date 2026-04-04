@@ -564,7 +564,7 @@ components:
     RfData:
       type: object
       additionalProperties: false
-      required: [t, src, dst, channel, type, type2, command, state, echo, cnt, rssi, hop, raw]
+      required: [t, src, dst, channel, type, type2, command, state, cnt, rssi, hop, raw]
       properties:
         t:
           type: integer
@@ -628,9 +628,6 @@ components:
             - `0x0f` — bottom + tilted / light off
             - `0x10` — light on
           examples: ["0x01"]
-        echo:
-          type: boolean
-          description: True if this command packet matches a recent TX from this gateway (mesh echo)
         cnt:
           type: integer
           description: Rolling counter value from packet (0-255)
