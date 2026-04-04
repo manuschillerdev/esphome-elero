@@ -126,7 +126,6 @@ export interface Device {
   name: string
   open_ms: number
   close_ms: number
-  poll_ms: number
   supports_tilt: boolean
   dim_ms: number
   lastStatus: RfPacketWithTimestamp | null
@@ -157,6 +156,9 @@ export const radio = signal<RadioConfig>({
 export const devices = signal<Map<string, Device>>(new Map())
 
 export const rfPackets = signal<RfPacketWithTimestamp[]>([])
+
+/// True when NVS config has changed and a reboot is needed to apply in HA (native_nvs mode)
+export const rebootNeeded = signal(false)
 
 export type StatusFilter = 'all' | 'saved' | 'unsaved'
 export type DeviceTypeFilter = 'all' | 'covers' | 'lights'
@@ -232,7 +234,6 @@ function makeDevice(partial: Partial<Device> & { address: string; type: DeviceTy
     name: '',
     open_ms: 0,
     close_ms: 0,
-    poll_ms: 0,
     supports_tilt: false,
     dim_ms: 0,
     lastStatus: null,
@@ -244,7 +245,7 @@ function blindToDevice(b: BlindConfig): Device {
   return makeDevice({
     address: b.address, type: 'cover', updated_at: b.updated_at || null, enabled: b.enabled,
     name: b.name, channel: b.channel, remote: b.remote,
-    open_ms: b.open_ms, close_ms: b.close_ms, poll_ms: b.poll_ms, supports_tilt: b.supports_tilt,
+    open_ms: b.open_ms, close_ms: b.close_ms, supports_tilt: b.supports_tilt,
     lastStatus: b.state && b.state !== '0x00'
       ? { state: b.state, rssi: b.rssi } as RfPacketWithTimestamp
       : null,
@@ -371,7 +372,6 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
     remote: data.remote ?? '',
     open_ms: data.open_ms ?? 0,
     close_ms: data.close_ms ?? 0,
-    poll_ms: data.poll_ms ?? 0,
     supports_tilt: data.supports_tilt ?? false,
     dim_ms: data.dim_ms ?? 0,
     lastStatus: existing?.lastStatus ?? null,
@@ -383,6 +383,10 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
   }
 
   devices.value = next
+
+  if (hub.value.mode === 'native_nvs') {
+    rebootNeeded.value = true
+  }
 }
 
 export function onStateChanged(data: StateChangedData) {
@@ -409,6 +413,10 @@ export function onDeviceRemoved({ address }: CrudEventData) {
   const next = new Map(devices.value)
   next.delete(address)
   devices.value = next
+
+  if (hub.value.mode === 'native_nvs') {
+    rebootNeeded.value = true
+  }
 }
 
 export function setActiveTab(tab: ActiveTab) {
@@ -449,7 +457,6 @@ function coverToYaml(d: Device): string {
     ...(d.open_ms > 0 ? [`    open_duration: ${formatDuration(d.open_ms)}`] : []),
     ...(d.close_ms > 0 ? [`    close_duration: ${formatDuration(d.close_ms)}`] : []),
     ...(d.supports_tilt ? ['    supports_tilt: true'] : []),
-    ...(d.poll_ms > 0 ? [`    poll_interval: ${formatDuration(d.poll_ms)}`] : []),
   ].join('\n')
 }
 

@@ -1,5 +1,6 @@
 import { RemoteGroup } from './remote-group'
-import { deviceGroups, filters as filtersSignal } from '@/store'
+import { deviceGroups, filters as filtersSignal, hub, rebootNeeded } from '@/store'
+import { sendRestart } from '@/ws'
 
 function EmptyState({ title, description }: { title: string; description: string }) {
   return (
@@ -16,6 +17,19 @@ export function DeviceGrid() {
 
   return (
     <div className="flex flex-col gap-4">
+      {rebootNeeded.value && hub.value.mode === 'native_nvs' && (
+        <div className="flex items-center justify-between rounded-xl border border-orange-300 bg-orange-50 px-4 py-3 text-sm dark:border-orange-700 dark:bg-orange-950">
+          <span className="text-orange-800 dark:text-orange-200">
+            Reboot required for changes to take effect in Home Assistant
+          </span>
+          <button
+            className="rounded-md bg-orange-600 px-3 py-1 text-xs font-medium text-white hover:bg-orange-700"
+            onClick={() => sendRestart()}
+          >
+            Reboot now
+          </button>
+        </div>
+      )}
       {groups.map((group) => (
         <RemoteGroup key={group.remote.address} group={group} />
       ))}

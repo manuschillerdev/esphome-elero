@@ -271,8 +271,9 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
                   type="number"
                   value={+(device.open_ms / 1000).toFixed(1)}
                   onInput={(e) => {
-                    const v = parseFloat((e.target as HTMLInputElement).value)
-                    if (!isNaN(v)) updateDevice(device.address, { open_ms: Math.round(v * 1000) })
+                    const raw = (e.target as HTMLInputElement).value
+                    const v = raw === '' ? 0 : parseFloat(raw)
+                    if (!isNaN(v)) updateDevice(device.address, { open_ms: Math.round(Math.max(0, v) * 1000) })
                   }}
                   min={0} max={300} step={0.1}
                   className={inputClass}
@@ -285,8 +286,9 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
                   type="number"
                   value={+(device.close_ms / 1000).toFixed(1)}
                   onInput={(e) => {
-                    const v = parseFloat((e.target as HTMLInputElement).value)
-                    if (!isNaN(v)) updateDevice(device.address, { close_ms: Math.round(v * 1000) })
+                    const raw = (e.target as HTMLInputElement).value
+                    const v = raw === '' ? 0 : parseFloat(raw)
+                    if (!isNaN(v)) updateDevice(device.address, { close_ms: Math.round(Math.max(0, v) * 1000) })
                   }}
                   min={0} max={300} step={0.1}
                   className={inputClass}
