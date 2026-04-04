@@ -160,6 +160,7 @@ constexpr uint32_t RESPONSE_WAIT_MS = 2000;        ///< Wait for blind response 
 namespace limits {
 constexpr uint8_t SEND_RETRIES = 3;           ///< Max TX retry attempts
 constexpr uint8_t SEND_PACKETS = 2;           ///< Packets sent per command
+constexpr uint8_t CHECK_PACKETS = 1;          ///< Single CHECK suffices — blind is listening, retry via poll interval
 constexpr uint8_t MAX_COMMAND_QUEUE = 10;     ///< Max commands per blind
 constexpr uint8_t COUNTER_MAX = 255;          ///< Counter wrap-around value
 }  // namespace limits
