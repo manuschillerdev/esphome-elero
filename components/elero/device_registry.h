@@ -96,6 +96,10 @@ class DeviceRegistry {
     /// Set a light's target brightness (0.0–1.0). Determines dim direction, starts dimming.
     void set_light_brightness(Device &dev, float brightness, CommandSource src = CommandSource::HUB);
 
+    /// Request an immediate status CHECK for any device (cover or light).
+    /// Enqueues a single CHECK packet — blind responds with current state.
+    void request_check(Device &dev);
+
     // ═════════════════════════════════════════════════════════════════════════
     // RF DISPATCH
     // ═════════════════════════════════════════════════════════════════════════

@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, cover, sensor, text_sensor
+from esphome.components import binary_sensor, button, cover, sensor, text_sensor
 from esphome.const import (
     CONF_CHANNEL,
     CONF_CLOSE_DURATION,
@@ -15,7 +15,7 @@ from .. import CONF_ELERO_ID, elero, elero_ns
 
 DEPENDENCIES = ["elero"]
 CODEOWNERS = ["@andyboeh"]
-AUTO_LOAD = ["binary_sensor", "sensor", "text_sensor"]
+AUTO_LOAD = ["binary_sensor", "button", "sensor", "text_sensor"]
 
 CONF_DST_ADDRESS = "dst_address"
 CONF_SRC_ADDRESS = "src_address"
@@ -37,9 +37,11 @@ CONF_PROBLEM_SENSOR = "problem_sensor"
 CONF_COMMAND_SOURCE_SENSOR = "command_source_sensor"
 CONF_PROBLEM_TYPE_SENSOR = "problem_type_sensor"
 CONF_DEVICE_CLASS = "device_class"
+CONF_REFRESH_BUTTON = "refresh_button"
 
 # New architecture: EspCoverShell replaces EleroCover
 EspCoverShell = elero_ns.class_("EspCoverShell", cover.Cover, cg.Component)
+RefreshButton = elero_ns.class_("RefreshButton", button.Button)
 
 _RSSI_SENSOR_SCHEMA = sensor.sensor_schema(
     unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
@@ -59,7 +61,11 @@ _PROBLEM_TYPE_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
     entity_category="diagnostic",
     icon="mdi:alert-circle-outline",
 )
-
+_REFRESH_BUTTON_SCHEMA = button.button_schema(
+    RefreshButton,
+    entity_category="diagnostic",
+    icon="mdi:refresh",
+)
 
 
 def _validate_duration_consistency(config):
@@ -98,6 +104,8 @@ def _auto_sensor_validator(config):
         result[CONF_COMMAND_SOURCE_SENSOR] = _COMMAND_SOURCE_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Command Source"})
     if CONF_PROBLEM_TYPE_SENSOR not in result:
         result[CONF_PROBLEM_TYPE_SENSOR] = _PROBLEM_TYPE_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Problem Type"})
+    if CONF_REFRESH_BUTTON not in result:
+        result[CONF_REFRESH_BUTTON] = _REFRESH_BUTTON_SCHEMA({CONF_NAME: f"{cover_name} Refresh"})
     return result
 
 
@@ -132,6 +140,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_PROBLEM_SENSOR): _PROBLEM_SENSOR_SCHEMA,
             cv.Optional(CONF_COMMAND_SOURCE_SENSOR): _COMMAND_SOURCE_SENSOR_SCHEMA,
             cv.Optional(CONF_PROBLEM_TYPE_SENSOR): _PROBLEM_TYPE_SENSOR_SCHEMA,
+            cv.Optional(CONF_REFRESH_BUTTON): _REFRESH_BUTTON_SCHEMA,
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -190,5 +199,6 @@ async def to_code(config):
         pt_var = await text_sensor.new_text_sensor(config[CONF_PROBLEM_TYPE_SENSOR])
         cg.add(var.set_problem_type_sensor(pt_var))
 
-
-
+    if CONF_REFRESH_BUTTON in config:
+        btn_var = await button.new_button(config[CONF_REFRESH_BUTTON])
+        cg.add(var.set_refresh_button(btn_var))
