@@ -101,7 +101,7 @@ void CC1101Driver::abort_tx() {
 
 bool CC1101Driver::has_data() {
   if (this->mode_ != RadioMode::RX) return false;
-  return this->irq_flag_ != nullptr && this->irq_flag_->load(std::memory_order_acquire);
+  return this->rx_ready_ != nullptr && this->rx_ready_->load(std::memory_order_acquire);
 }
 
 size_t CC1101Driver::read_fifo(uint8_t *buf, size_t max_len) {
@@ -335,9 +335,9 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
         return;
       }
 
-      // 5. Clear IRQ flag so we can detect TX-end interrupt
-      if (this->irq_flag_) {
-        this->irq_flag_->store(false, std::memory_order_release);
+      // 5. Clear TX-done flag so we can detect TX-end interrupt
+      if (this->tx_done_) {
+        this->tx_done_->store(false, std::memory_order_release);
       }
 
       // 6. Trigger TX
@@ -364,7 +364,7 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
 
     case TxState::WAIT_TX: {
       // Interrupt-driven with MARCSTATE polling fallback
-      bool irq_fired = this->irq_flag_ && this->irq_flag_->load(std::memory_order_acquire);
+      bool irq_fired = this->tx_done_ && this->tx_done_->load(std::memory_order_acquire);
       if (irq_fired) {
         // GDO0 interrupt fired — TX likely complete, verify FIFO empty
         esp_rom_delay_us(50);
@@ -460,9 +460,9 @@ void CC1101Driver::flush_and_rx() {
   (void) this->write_cmd(CC1101_SIDLE);
   esp_rom_delay_us(100);
 
-  // 2. Clear atomic flag (safe — radio is idle, no new interrupts)
-  if (this->irq_flag_) {
-    this->irq_flag_->store(false, std::memory_order_release);
+  // 2. Clear RX flag (safe — radio is idle, no new interrupts)
+  if (this->rx_ready_) {
+    this->rx_ready_->store(false, std::memory_order_release);
   }
 
   // 3. Flush both FIFOs

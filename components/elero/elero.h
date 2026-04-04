@@ -166,7 +166,8 @@ class Elero : public Component {
 #endif
 
   // ─── ISR-shared state ──────────────────────────────────────────────────────
-  std::atomic<bool> received_{false};   ///< Set by ISR, consumed by RF task via driver
+  std::atomic<bool> rx_ready_{false};   ///< ISR→RF task: RX packet available
+  std::atomic<bool> tx_done_{false};    ///< ISR→RF task: TX transmission complete
 
   // ─── RF task-exclusive state (never accessed from main loop after setup) ───
   TxClient *tx_owner_{nullptr};        ///< Current TX owner (for completion callback)

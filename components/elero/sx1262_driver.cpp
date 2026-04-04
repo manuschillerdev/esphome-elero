@@ -198,7 +198,7 @@ bool Sx1262Driver::init() {
 
     uint32_t t0 = millis();
     while (millis() - t0 < 50) {
-      if (this->irq_flag_ && this->irq_flag_->exchange(false)) break;
+      if (this->tx_done_ && this->tx_done_->exchange(false)) break;
       delay(1);
     }
     if (this->fem_pa_pin_) this->fem_pa_pin_->digital_write(false);
@@ -430,8 +430,8 @@ bool Sx1262Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
   // Without this, stale IRQ bits (e.g., RX_DONE) can keep DIO1 high,
   // preventing the rising edge that signals TX_DONE. (RadioLib does this.)
   this->clear_irq_status_();
-  if (this->irq_flag_) {
-    this->irq_flag_->store(false, std::memory_order_release);
+  if (this->tx_done_) {
+    this->tx_done_->store(false, std::memory_order_release);
   }
 
   this->set_dio_irq_for_tx_();
@@ -464,6 +464,7 @@ bool Sx1262Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
   this->tx_in_progress_ = true;
   this->tx_start_ms_ = millis();
   this->tx_pending_success_ = false;
+  this->mode_ = RadioMode::TX;
 
   return true;
 }
@@ -474,7 +475,7 @@ TxPollResult Sx1262Driver::poll_tx() {
   }
 
   // Check DIO1 interrupt (TX_DONE)
-  bool irq_fired = this->irq_flag_ && this->irq_flag_->load(std::memory_order_acquire);
+  bool irq_fired = this->tx_done_ && this->tx_done_->load(std::memory_order_acquire);
   if (irq_fired) {
     // Read and clear IRQ status
     uint8_t irq_buf[2] = {};
@@ -540,7 +541,8 @@ void Sx1262Driver::abort_tx() {
 }
 
 bool Sx1262Driver::has_data() {
-  return this->irq_flag_ != nullptr && this->irq_flag_->load(std::memory_order_acquire);
+  if (this->mode_ != RadioMode::RX) return false;
+  return this->rx_ready_ != nullptr && this->rx_ready_->load(std::memory_order_acquire);
 }
 
 size_t Sx1262Driver::read_fifo(uint8_t *buf, size_t max_len) {
@@ -640,7 +642,8 @@ RadioHealth Sx1262Driver::check_health() {
   uint8_t irq_buf[2] = {};
   this->read_opcode_(sx1262::GET_IRQ_STATUS, irq_buf, 2);
   uint16_t irq_status = (static_cast<uint16_t>(irq_buf[0]) << 8) | irq_buf[1];
-  bool irq_flag = this->irq_flag_ && this->irq_flag_->load(std::memory_order_relaxed);
+  bool irq_flag = (this->rx_ready_ && this->rx_ready_->load(std::memory_order_relaxed)) ||
+                  (this->tx_done_ && this->tx_done_->load(std::memory_order_relaxed));
 
   // Read device errors (GET_DEVICE_ERRORS = 0x17, not CLR = 0x07)
   uint8_t err_buf[2] = {};
@@ -676,8 +679,11 @@ void Sx1262Driver::recover() {
 
   // Clear any pending IRQ
   this->clear_irq_status_();
-  if (this->irq_flag_) {
-    this->irq_flag_->store(false, std::memory_order_release);
+  if (this->rx_ready_) {
+    this->rx_ready_->store(false, std::memory_order_release);
+  }
+  if (this->tx_done_) {
+    this->tx_done_->store(false, std::memory_order_release);
   }
 
   this->restore_rx_packet_params_();
@@ -825,6 +831,7 @@ void Sx1262Driver::set_rx_() {
   // Continuous RX (timeout = 0xFFFFFF)
   uint8_t timeout[3] = {0xFF, 0xFF, 0xFF};
   this->write_opcode_(sx1262::SET_RX, timeout, 3);
+  this->mode_ = RadioMode::RX;
 }
 
 void Sx1262Driver::set_tx_() {

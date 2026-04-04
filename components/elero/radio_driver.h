@@ -39,7 +39,7 @@ enum class RadioHealth : uint8_t {
 /// Abstract radio driver interface.
 ///
 /// All methods are called from the RF task (Core 0) only, except where noted.
-/// The ISR flag is shared with the hub's ISR via set_irq_flag().
+/// ISR flags (rx_ready, tx_done) are shared with the hub's ISR via set_irq_flags().
 class RadioDriver {
  public:
   virtual ~RadioDriver() = default;
@@ -57,9 +57,13 @@ class RadioDriver {
 
   // ── IRQ flag ───────────────────────────────────────────────────────────────
 
-  /// Pass the ISR atomic flag so the driver can read/clear it in poll_tx/has_data.
+  /// Pass ISR flags for RX and TX completion. The ISR routes to the correct
+  /// flag based on mode() — rx_ready when in RX, tx_done when in TX.
   /// Called once during setup, before init().
-  void set_irq_flag(std::atomic<bool> *flag) { irq_flag_ = flag; }
+  void set_irq_flags(std::atomic<bool> *rx_ready, std::atomic<bool> *tx_done) {
+    rx_ready_ = rx_ready;
+    tx_done_ = tx_done;
+  }
 
   /// Current half-duplex mode. RX when idle, TX during transmission.
   [[nodiscard]] RadioMode mode() const { return mode_; }
@@ -128,7 +132,8 @@ class RadioDriver {
 
  protected:
   RadioMode mode_{RadioMode::RX};
-  std::atomic<bool> *irq_flag_{nullptr};
+  std::atomic<bool> *rx_ready_{nullptr};  ///< ISR sets when RX packet available
+  std::atomic<bool> *tx_done_{nullptr};   ///< ISR sets when TX transmission complete
 };
 
 }  // namespace elero
