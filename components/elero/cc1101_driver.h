@@ -116,6 +116,7 @@ class CC1101Driver : public RadioDriver,
   // ── Radio control ──────────────────────────────────────────────────────────
 
   void flush_and_rx();
+  void finalize_tx_success_();
   void init_registers();
   void handle_tx_state_(uint32_t now);
   void recover_radio_();

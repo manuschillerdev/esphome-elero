@@ -371,9 +371,7 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
         uint8_t txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
         if (txbytes == 0) {
           ESP_LOGV(TAG, "TX successful");
-          this->flush_and_rx();
-          this->tx_pending_success_ = true;
-          this->tx_ctx_.state = TxState::IDLE;
+          this->finalize_tx_success_();
           return;
         }
         // Grace window — GDO0 may fire slightly before FIFO fully drains
@@ -381,9 +379,7 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
         txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
         if (txbytes == 0) {
           ESP_LOGV(TAG, "TX successful (after grace)");
-          this->flush_and_rx();
-          this->tx_pending_success_ = true;
-          this->tx_ctx_.state = TxState::IDLE;
+          this->finalize_tx_success_();
           return;
         }
         ESP_LOGE(TAG, "FIFO not empty after TX interrupt, txbytes=%u", txbytes);
@@ -398,9 +394,7 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
         uint8_t txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
         if (txbytes == 0) {
           ESP_LOGV(TAG, "TX successful (MARCSTATE fallback)");
-          this->flush_and_rx();
-          this->tx_pending_success_ = true;
-          this->tx_ctx_.state = TxState::IDLE;
+          this->finalize_tx_success_();
           return;
         }
       }
@@ -421,6 +415,25 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
     case TxState::IDLE:
       break;
   }
+}
+
+void CC1101Driver::finalize_tx_success_() {
+  // MCSM1=0x3F auto-returns to RX after TX. Trust the hardware for the
+  // state transition, but verify RXBYTES is clean — a stale FIFO would
+  // mean the first RX read returns garbage. If RXBYTES != 0, flush.
+  uint8_t rxbytes = this->read_status_reliable_(CC1101_RXBYTES);
+  if (rxbytes & packet::cc1101_status::RXBYTES_OVERFLOW_BIT) {
+    ESP_LOGW(TAG, "RX FIFO overflow after TX, flushing");
+    this->flush_and_rx();
+  } else if ((rxbytes & packet::cc1101_status::BYTE_COUNT_MASK) > 0) {
+    ESP_LOGV(TAG, "RX FIFO has %d stale bytes after TX, flushing",
+             rxbytes & packet::cc1101_status::BYTE_COUNT_MASK);
+    (void) this->write_cmd(CC1101_SFRX);
+  }
+
+  this->mode_ = RadioMode::RX;
+  this->tx_pending_success_ = true;
+  this->tx_ctx_.state = TxState::IDLE;
 }
 
 void CC1101Driver::recover_radio_() {
