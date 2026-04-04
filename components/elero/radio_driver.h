@@ -14,6 +14,13 @@
 namespace esphome {
 namespace elero {
 
+/// Current radio mode — tracks the half-duplex state.
+/// Callers can assert mode before RX/TX operations.
+enum class RadioMode : uint8_t {
+  RX,  ///< Radio is receiving (default idle state)
+  TX,  ///< Radio is transmitting (FIFO loaded, TX in progress)
+};
+
 /// Result of polling the TX state machine.
 enum class TxPollResult : uint8_t {
   PENDING,  ///< TX still in progress
@@ -53,6 +60,9 @@ class RadioDriver {
   /// Pass the ISR atomic flag so the driver can read/clear it in poll_tx/has_data.
   /// Called once during setup, before init().
   void set_irq_flag(std::atomic<bool> *flag) { irq_flag_ = flag; }
+
+  /// Current half-duplex mode. RX when idle, TX during transmission.
+  [[nodiscard]] RadioMode mode() const { return mode_; }
 
   // ── TX (called from RF task only) ──────────────────────────────────────────
 
@@ -117,6 +127,7 @@ class RadioDriver {
   virtual bool irq_rising_edge() const { return false; }  // CC1101 default
 
  protected:
+  RadioMode mode_{RadioMode::RX};
   std::atomic<bool> *irq_flag_{nullptr};
 };
 

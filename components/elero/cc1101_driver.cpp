@@ -77,6 +77,7 @@ bool CC1101Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
   this->tx_ctx_.state = TxState::PREPARE;
   this->tx_ctx_.state_enter_time = millis();
   this->tx_pending_success_ = false;
+  this->mode_ = RadioMode::TX;
 
   return true;
 }
@@ -99,6 +100,7 @@ void CC1101Driver::abort_tx() {
 }
 
 bool CC1101Driver::has_data() {
+  if (this->mode_ != RadioMode::RX) return false;
   return this->irq_flag_ != nullptr && this->irq_flag_->load(std::memory_order_acquire);
 }
 
@@ -469,6 +471,7 @@ void CC1101Driver::flush_and_rx() {
 
   // 4. Re-enable RX
   (void) this->write_cmd(CC1101_SRX);
+  this->mode_ = RadioMode::RX;
 
   // 5. Verify radio entered RX — caller (recover_radio_) handles escalation
   //    Calibration states are transient (~700us) — only warn on truly stuck states.
