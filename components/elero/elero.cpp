@@ -170,7 +170,7 @@ void Elero::setup() {
 
   // Clear any IRQs that fired during init() before the ISR was attached.
   // For SX1262: DIO1 goes HIGH on preamble detection during init → rising edge missed.
-  this->received_.store(false);
+  this->received_.store(false, std::memory_order_release);
   this->driver_->recover();  // Clears hardware IRQ flags + re-enters RX
 
   // New architecture: device registry lifecycle
@@ -188,7 +188,7 @@ void Elero::setup() {
 #ifdef USE_ESP32
   // ─── Create FreeRTOS queues and spawn RF task on Core 0 ────────────────────
   this->rx_queue_handle_ = xQueueCreate(16, sizeof(RfPacketInfo));
-  this->tx_queue_handle_ = xQueueCreate(4, sizeof(RfTaskRequest));
+  this->tx_queue_handle_ = xQueueCreate(8, sizeof(RfTaskRequest));
   this->tx_done_queue_handle_ = xQueueCreate(4, sizeof(TxResult));
 
   if (this->rx_queue_handle_ == nullptr ||
@@ -255,7 +255,7 @@ void Elero::rf_task_func_(void *arg) {
               xQueueSend(self->tx_done_queue_handle_, &r, 0);
               tx_in_progress = false;
             }
-            self->received_.store(false);
+            self->received_.store(false, std::memory_order_release);
             self->freq2_.store(req.freq.f2);
             self->freq1_.store(req.freq.f1);
             self->freq0_.store(req.freq.f0);
@@ -296,7 +296,7 @@ void Elero::rf_task_func_(void *arg) {
     // 3. Drain FIFO if GDO0 interrupt fired
     if (self->driver_->has_data()) {
       // Clear IRQ flag
-      self->received_.exchange(false);
+      self->received_.store(false, std::memory_order_release);
       // Read FIFO bytes from driver
       size_t count = self->driver_->read_fifo(self->msg_rx_, sizeof(self->msg_rx_));
       if (count > 0) {
