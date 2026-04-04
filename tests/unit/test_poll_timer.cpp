@@ -19,12 +19,6 @@ class PollTimerTest : public ::testing::Test {
  protected:
     PollTimer timer{};
 
-    /// Timer with "never poll" interval (0)
-    PollTimer never_timer{.interval_ms = 0};
-
-    /// Timer with "never poll" interval (UINT32_MAX)
-    PollTimer max_timer{.interval_ms = UINT32_MAX};
-
     /// Timer with short interval for easier testing
     PollTimer fast_timer{.interval_ms = 5000};
 
@@ -92,42 +86,7 @@ TEST_F(PollTimerTest, MovingIntervalIs2Seconds) {
 }
 
 // =============================================================================
-// 3. INTERVAL_MS == 0 MEANS NEVER POLL
-// =============================================================================
-
-TEST_F(PollTimerTest, ZeroIntervalNeverPolls) {
-    EXPECT_FALSE(never_timer.should_poll(0, false));
-    EXPECT_FALSE(never_timer.should_poll(1000, false));
-    EXPECT_FALSE(never_timer.should_poll(1000000, false));
-    EXPECT_FALSE(never_timer.should_poll(UINT32_MAX, false));
-}
-
-TEST_F(PollTimerTest, ZeroIntervalNeverPollsEvenWhenMoving) {
-    // When moving, effective_interval = POLL_INTERVAL_MOVING (not 0), so it WILL poll
-    // This verifies moving overrides the zero interval
-    EXPECT_TRUE(never_timer.should_poll(timing::POLL_INTERVAL_MOVING + 1, true));
-}
-
-// =============================================================================
-// 4. INTERVAL_MS == UINT32_MAX MEANS NEVER POLL
-// =============================================================================
-
-TEST_F(PollTimerTest, MaxIntervalNeverPolls) {
-    EXPECT_FALSE(max_timer.should_poll(0, false));
-    EXPECT_FALSE(max_timer.should_poll(1000, false));
-    EXPECT_FALSE(max_timer.should_poll(1000000, false));
-}
-
-TEST_F(PollTimerTest, MaxIntervalNeverPollsAfterLongTime) {
-    max_timer.on_poll_sent(1000);
-    max_timer.on_rf_received(1500);
-
-    // Even after a very long time, UINT32_MAX interval should never trigger
-    EXPECT_FALSE(max_timer.should_poll(100000000, false));
-}
-
-// =============================================================================
-// 5. RESPONSE WAIT (awaiting_response)
+// 3. RESPONSE WAIT (awaiting_response)
 // =============================================================================
 
 TEST_F(PollTimerTest, AfterCommandSentShouldNotPollDuringResponseWait) {
@@ -304,8 +263,8 @@ TEST_F(PollTimerTest, OnPollSentClearsImmediatePoll) {
 // 11. TIMEOUT -> RE-POLL -> ON_POLL_SENT CYCLE
 // =============================================================================
 
-TEST_F(PollTimerTest, FullPollWaitTimeoutRepollCycle) {
-    // Step 1: Send initial poll
+TEST_F(PollTimerTest, TimeoutClearsAwaitingButDoesNotForceRepoll) {
+    // Step 1: Send initial poll (fast_timer.interval_ms = 5000)
     fast_timer.on_poll_sent(1000);
     EXPECT_TRUE(fast_timer.awaiting_response);
 
@@ -313,21 +272,14 @@ TEST_F(PollTimerTest, FullPollWaitTimeoutRepollCycle) {
     EXPECT_FALSE(fast_timer.should_poll(2000, false));
     EXPECT_FALSE(fast_timer.should_poll(2999, false));
 
-    // Step 3: Timeout at 1000 + 2000 = 3000, forces re-poll
-    EXPECT_TRUE(fast_timer.should_poll(3000, false));
-    // awaiting_response is now false (timeout cleared it)
+    // Step 3: Timeout at 1000 + 2000 = 3000 — clears awaiting but does NOT
+    // force immediate re-poll (that caused TX storms). Falls through to
+    // interval check: (3000 - 1000) = 2000 < 5000 → false.
+    EXPECT_FALSE(fast_timer.should_poll(3000, false));
     EXPECT_FALSE(fast_timer.awaiting_response);
 
-    // Step 4: Re-poll sent
-    fast_timer.on_poll_sent(3000);
-    EXPECT_TRUE(fast_timer.awaiting_response);
-
-    // Step 5: Still in response wait for second poll
-    EXPECT_FALSE(fast_timer.should_poll(4000, false));
-
-    // Step 6: Second timeout at 3000 + 2000 = 5000
-    EXPECT_TRUE(fast_timer.should_poll(5000, false));
-    EXPECT_FALSE(fast_timer.awaiting_response);
+    // Step 4: Normal interval eventually fires (1000 + 5000 = 6000)
+    EXPECT_TRUE(fast_timer.should_poll(6000, false));
 }
 
 // =============================================================================

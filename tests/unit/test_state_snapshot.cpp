@@ -73,12 +73,12 @@ TEST(CoverSnapshot, IdleClosedPositionReportsClosed) {
     EXPECT_STREQ(snap.ha_state, "closed");
 }
 
-TEST(CoverSnapshot, IdleIntermediatePositionReportsStopped) {
+TEST(CoverSnapshot, IdleIntermediatePositionReportsOpen) {
     auto dev = make_cover_device(0.5f, pkt::state::INTERMEDIATE);
     auto snap = elero::compute_cover_snapshot(dev, 5000);
 
     EXPECT_FLOAT_EQ(snap.position, 0.5f);
-    EXPECT_STREQ(snap.ha_state, "stopped");
+    EXPECT_STREQ(snap.ha_state, "open");
 }
 
 TEST(CoverSnapshot, OpeningReportsOpening) {
@@ -103,6 +103,28 @@ TEST(CoverSnapshot, ClosingReportsClosing) {
     EXPECT_STREQ(snap.ha_state, "closing");
     EXPECT_EQ(snap.operation, sm::Operation::CLOSING);
     EXPECT_FLOAT_EQ(snap.position, 0.5f);
+}
+
+// Stopping with stale raw_state: user hit STOP before RF responded,
+// so last_state_raw still says TOP/BOTTOM from before movement started.
+// ha_state must be "open" (not "closed" from stale BOTTOM).
+TEST(CoverSnapshot, StoppingWithStaleTopRawReportsOpen) {
+    auto dev = make_cover_device(sm::POSITION_OPEN, pkt::state::TOP);
+    auto &cover = std::get<elero::CoverDevice>(dev.logic);
+    cover.state = sm::Stopping{0.8f, 5000};
+
+    auto snap = elero::compute_cover_snapshot(dev, 6000);
+    EXPECT_STREQ(snap.ha_state, "open");
+    EXPECT_EQ(snap.operation, sm::Operation::IDLE);
+}
+
+TEST(CoverSnapshot, StoppingWithStaleBottomRawReportsOpen) {
+    auto dev = make_cover_device(sm::POSITION_CLOSED, pkt::state::BOTTOM);
+    auto &cover = std::get<elero::CoverDevice>(dev.logic);
+    cover.state = sm::Stopping{0.2f, 5000};
+
+    auto snap = elero::compute_cover_snapshot(dev, 6000);
+    EXPECT_STREQ(snap.ha_state, "open");
 }
 
 TEST(CoverSnapshot, ProblemStateDetected) {
@@ -242,24 +264,32 @@ TEST(LightSnapshot, RssiPassthrough) {
 // SHARED HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-TEST(HaCoverState, OpenAtFullPosition) {
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, sm::POSITION_OPEN), "open");
+// FSM IDLE + RF state byte → HA state
+TEST(HaCoverState, IdleTopIsOpen) {
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::TOP), "open");
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::TOP_TILT), "open");
 }
 
-TEST(HaCoverState, ClosedAtZeroPosition) {
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, sm::POSITION_CLOSED), "closed");
+TEST(HaCoverState, IdleBottomIsClosed) {
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::BOTTOM), "closed");
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::BOTTOM_TILT), "closed");
 }
 
-TEST(HaCoverState, StoppedAtIntermediate) {
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, 0.5f), "stopped");
+TEST(HaCoverState, IdleNonEndpointIsOpen) {
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::STOPPED), "open");
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::INTERMEDIATE), "open");
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::UNKNOWN), "open");
 }
 
-TEST(HaCoverState, OpeningDuringMovement) {
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::OPENING, 0.3f), "opening");
+// FSM OPENING/CLOSING → HA state (optimistic, regardless of raw state)
+TEST(HaCoverState, FsmOpeningIsOpening) {
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::OPENING, pkt::state::STOPPED), "opening");
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::OPENING, pkt::state::MOVING_UP), "opening");
 }
 
-TEST(HaCoverState, ClosingDuringMovement) {
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::CLOSING, 0.7f), "closing");
+TEST(HaCoverState, FsmClosingIsClosing) {
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::CLOSING, pkt::state::STOPPED), "closing");
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::CLOSING, pkt::state::MOVING_DOWN), "closing");
 }
 
 TEST(ProblemState, BlockingIsProblem) {

@@ -271,7 +271,6 @@ cover:
     remote_address: 0xf0d008
     open_duration: 25s        # For position tracking (optional)
     close_duration: 22s       # For position tracking (optional)
-    poll_interval: 5min
 
 # Diagnostic sensors (RSSI, status, problem, etc.) are created automatically
 # by auto_sensors: true (the default) in each cover/light block.
