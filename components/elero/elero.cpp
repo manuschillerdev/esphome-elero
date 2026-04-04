@@ -237,7 +237,6 @@ void Elero::rf_task_func_(void *arg) {
         switch (req.type) {
           case RfTaskRequest::Type::TX:
             self->build_tx_packet_(req.cmd);
-            self->record_tx_(req.cmd.counter);
             if (self->driver_->load_and_transmit(self->msg_tx_, self->msg_tx_[0] + 1)) {
               self->tx_owner_ = req.client;
               tx_in_progress = true;
@@ -359,20 +358,6 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 #endif
 }
 
-void Elero::record_tx_(uint8_t counter) {
-  this->tx_history_[this->tx_history_idx_] = counter;
-  this->tx_history_idx_ = (this->tx_history_idx_ + 1) % TX_HISTORY_SIZE;
-}
-
-bool Elero::is_own_echo_(uint8_t counter) const {
-  for (size_t i = 0; i < TX_HISTORY_SIZE; i++) {
-    if (this->tx_history_[i] == counter) {
-      return true;
-    }
-  }
-  return false;
-}
-
 void Elero::build_tx_packet_(const EleroCommand &cmd) {
   if (cmd.type == packet::msg_type::BUTTON) {
     packet::ButtonTxParams params;
@@ -459,7 +444,6 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
   bool is_btn = is_button_packet(r.type);
   uint8_t command = (is_cmd || is_btn) ? r.payload[payload_offset::COMMAND] : 0;
   uint8_t state = is_status_pkt ? r.payload[payload_offset::STATE] : 0;
-  bool echo = is_cmd && this->is_own_echo_(r.counter);
 
   // Build RfPacketInfo
   RfPacketInfo pkt{};
@@ -471,7 +455,6 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
   pkt.type2 = r.type2;
   pkt.command = command;
   pkt.state = state;
-  pkt.echo = echo;
   pkt.cnt = r.counter;
   pkt.rssi = r.rssi;
   pkt.lqi = r.lqi;
@@ -531,12 +514,11 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
              pkt.rssi, pkt.lqi, pkt.crc_ok ? "true" : "false");
   } else if (is_cmd) {
     ESP_LOGD(TAG_RF,
-             "{\"ts_ms\":%lu,\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"echo\":%s,"
+             "{\"ts_ms\":%lu,\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\","
              "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\","
              "\"rssi\":%.1f,\"lqi\":%d,\"crc_ok\":%s}",
              (unsigned long) pkt.timestamp_ms, blind_buf, elero_command_to_string(pkt.command),
-             pkt.echo ? "true" : "false",
              pkt.raw_len - PACKET_TOTAL_OVERHEAD, pkt.cnt, pkt.type, pkt.type2, pkt.hop,
              pkt.channel, pkt.src, pkt.dst, pkt.command,
              pkt.rssi, pkt.lqi, pkt.crc_ok ? "true" : "false");

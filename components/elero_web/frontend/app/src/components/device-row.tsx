@@ -251,7 +251,6 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
   const commandPackets = deduplicatePackets(
     packets.filter((pkt) =>
       (isCommandPacket(pkt) || isButtonPacket(pkt)) &&
-      !pkt.echo &&
       pkt.src === device.remote &&
       (pkt.dst === device.address || pkt.channel === device.channel)
     )

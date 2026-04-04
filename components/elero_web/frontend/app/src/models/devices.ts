@@ -142,7 +142,7 @@ export function createDeviceModel(uiModel: UiModel, hubModel: HubModel) {
     for (const pkt of hubModel.packets.value) {
       const t = pkt.type?.toLowerCase()
 
-      if ((t === msg_type.COMMAND || t === msg_type.COMMAND_ALT) && !pkt.echo) {
+      if (t === msg_type.COMMAND || t === msg_type.COMMAND_ALT) {
         const cmd = pkt.command?.toLowerCase()
         if (cmd && DISCOVERY_COMMANDS.has(cmd)) {
           if (!discovered.has(pkt.dst)) {
