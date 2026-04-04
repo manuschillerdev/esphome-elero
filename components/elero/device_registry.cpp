@@ -197,6 +197,11 @@ void DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte, CommandSource 
     uint32_t now = millis();
     cover.last_command_source = src;
 
+    if (cmd_byte == packet::command::CHECK) {
+        request_check(dev);
+        return;
+    }
+
     if (cmd_byte == packet::command::STOP) {
         dev.sender.clear_queue();
         (void) dev.sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::COMMAND);
@@ -271,6 +276,11 @@ void DeviceRegistry::command_light(Device &dev, uint8_t cmd_byte, CommandSource 
     uint32_t now = millis();
     light.last_command_source = src;
 
+    if (cmd_byte == packet::command::CHECK) {
+        request_check(dev);
+        return;
+    }
+
     if (cmd_byte == packet::command::DOWN) {
         light.state = light_sm::on_turn_off(light.state);
         dev.sender.clear_queue();
@@ -312,6 +322,15 @@ void DeviceRegistry::set_light_brightness(Device &dev, float brightness, Command
     }
 
     notify_state_changed_(dev, now);
+}
+
+void DeviceRegistry::request_check(Device &dev) {
+    if (!dev.active) return;
+    (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
+    if (dev.is_cover()) {
+        auto &cover = std::get<CoverDevice>(dev.logic);
+        cover.poll.on_poll_sent(millis());
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

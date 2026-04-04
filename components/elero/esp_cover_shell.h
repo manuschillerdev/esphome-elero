@@ -26,6 +26,9 @@
 #include "state_snapshot.h"  // state_change:: flags
 #include "elero_strings.h"   // PERCENT_SCALE
 #include "elero_packet.h"
+#ifdef USE_BUTTON
+#include "refresh_button.h"
+#endif
 
 namespace esphome {
 namespace elero {
@@ -60,6 +63,9 @@ class EspCoverShell : public cover::Cover, public Component {
 #ifdef USE_BINARY_SENSOR
   void set_problem_sensor(binary_sensor::BinarySensor *s) { problem_sensor_ = s; }
 #endif
+#ifdef USE_BUTTON
+  void set_refresh_button(RefreshButton *b) { refresh_button_ = b; }
+#endif
 
   void set_open_duration(uint32_t v) { cfg_.open_duration_ms = v; }
   void set_close_duration(uint32_t v) { cfg_.close_duration_ms = v; }
@@ -76,6 +82,12 @@ class EspCoverShell : public cover::Cover, public Component {
       cfg_.set_name(this->get_name().c_str());
       device_ = registry_->register_device(cfg_);
     }
+#ifdef USE_BUTTON
+    if (refresh_button_ && device_) {
+      refresh_button_->set_device(device_);
+      refresh_button_->set_registry(registry_);
+    }
+#endif
   }
 
   void loop() override {
@@ -209,6 +221,9 @@ class EspCoverShell : public cover::Cover, public Component {
 #endif
 #ifdef USE_BINARY_SENSOR
   binary_sensor::BinarySensor *problem_sensor_{nullptr};
+#endif
+#ifdef USE_BUTTON
+  RefreshButton *refresh_button_{nullptr};
 #endif
 };
 

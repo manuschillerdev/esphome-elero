@@ -20,6 +20,9 @@
 #include "state_snapshot.h"  // state_change:: flags
 #include "elero_strings.h"   // PERCENT_SCALE
 #include "elero_packet.h"
+#ifdef USE_BUTTON
+#include "refresh_button.h"
+#endif
 
 namespace esphome {
 namespace elero {
@@ -50,6 +53,9 @@ class EspLightShell : public light::LightOutput, public Component {
 #ifdef USE_TEXT_SENSOR
   void set_status_sensor(text_sensor::TextSensor *s) { status_sensor_ = s; }
 #endif
+#ifdef USE_BUTTON
+  void set_refresh_button(RefreshButton *b) { refresh_button_ = b; }
+#endif
 
   // ── ESPHome Component lifecycle ────────────────────────────
   void setup() override {
@@ -62,6 +68,12 @@ class EspLightShell : public light::LightOutput, public Component {
       cfg_.type = DeviceType::LIGHT;
       device_ = registry_->register_device(cfg_);
     }
+#ifdef USE_BUTTON
+    if (refresh_button_ && device_) {
+      refresh_button_->set_device(device_);
+      refresh_button_->set_registry(registry_);
+    }
+#endif
   }
 
   void loop() override {
@@ -142,6 +154,9 @@ class EspLightShell : public light::LightOutput, public Component {
 #endif
 #ifdef USE_TEXT_SENSOR
   text_sensor::TextSensor *status_sensor_{nullptr};
+#endif
+#ifdef USE_BUTTON
+  RefreshButton *refresh_button_{nullptr};
 #endif
 };
 

@@ -303,6 +303,46 @@ TEST_F(DeviceRegistryTest, CoverDown_TracksLastDirection) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// COMMAND DISPATCH — Request Check
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_F(DeviceRegistryTest, RequestCheck_EnqueuesSingleCheck) {
+    auto *dev = add_cover();
+    registry_.request_check(*dev);
+
+    EXPECT_EQ(dev->sender.queue_size(), 1u);
+    auto &cover = std::get<CoverDevice>(dev->logic);
+    EXPECT_TRUE(cover.poll.awaiting_response);
+}
+
+TEST_F(DeviceRegistryTest, RequestCheck_InactiveDeviceIsNoOp) {
+    auto *dev = add_cover();
+    dev->active = false;
+    registry_.request_check(*dev);
+
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+}
+
+TEST_F(DeviceRegistryTest, CoverCommand_CheckDelegatesToRequestCheck) {
+    auto *dev = add_cover();
+    registry_.command_cover(*dev, pkt::command::CHECK);
+
+    // Should produce exactly 1 CHECK (via request_check), not 2
+    EXPECT_EQ(dev->sender.queue_size(), 1u);
+    auto &cover = std::get<CoverDevice>(dev->logic);
+    EXPECT_TRUE(cover.poll.awaiting_response);
+    // FSM should be unchanged (CHECK is not a movement command)
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Idle>(cover.state));
+}
+
+TEST_F(DeviceRegistryTest, LightCommand_CheckDelegatesToRequestCheck) {
+    auto *dev = add_light();
+    registry_.command_light(*dev, pkt::command::CHECK);
+
+    EXPECT_EQ(dev->sender.queue_size(), 1u);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // COMMAND DISPATCH — Set Position
 // ═══════════════════════════════════════════════════════════════════════════════
 

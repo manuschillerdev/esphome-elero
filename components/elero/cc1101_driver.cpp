@@ -335,7 +335,7 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
 
       // 5. Clear IRQ flag so we can detect TX-end interrupt
       if (this->irq_flag_) {
-        this->irq_flag_->store(false);
+        this->irq_flag_->store(false, std::memory_order_release);
       }
 
       // 6. Trigger TX
@@ -362,7 +362,7 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
 
     case TxState::WAIT_TX: {
       // Interrupt-driven with MARCSTATE polling fallback
-      bool irq_fired = this->irq_flag_ && this->irq_flag_->load();
+      bool irq_fired = this->irq_flag_ && this->irq_flag_->load(std::memory_order_acquire);
       if (irq_fired) {
         // GDO0 interrupt fired — TX likely complete, verify FIFO empty
         esp_rom_delay_us(50);
@@ -582,10 +582,11 @@ uint8_t CC1101Driver::read_status_reliable_(uint8_t addr) {
   // CC1101 errata: RXBYTES and TXBYTES can return incorrect values on a single read.
   // Workaround (per RadioLib): read twice until both values match.
   uint8_t a, b;
+  int tries = 0;
   do {
     a = this->read_status(addr);
     b = this->read_status(addr);
-  } while (a != b);
+  } while (a != b && ++tries < 10);
   return a;
 }
 
