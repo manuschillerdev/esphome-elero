@@ -113,10 +113,11 @@ constexpr uint32_t ELERO_FDEV = 36602;  // ~34.9 kHz
 // CC1101 uses 232 kHz (→ 234.3 kHz on SX1262). Tighter BW improves SNR but must
 // stay above Carson minimum. GFSK BT=0.5 concentrates spectral energy, so 156 kHz works.
 // Values from SX1262 datasheet Table 13-38 / RadioLib SX126x.h:
-constexpr uint8_t BW_FSK_117300 = 0x0B;  // 117.3 kHz — below Carson, too narrow
-constexpr uint8_t BW_FSK_156200 = 0x1A;  // 156.2 kHz — just above Carson, best SNR
-constexpr uint8_t BW_FSK_187200 = 0x12;  // 187.2 kHz — comfortable margin
-constexpr uint8_t BW_FSK_234300 = 0x0A;  // 234.3 kHz — matches CC1101, safe default
+//   0x0B = 117.3 kHz (below Carson, too narrow)
+//   0x1A = 156.2 kHz (just above Carson, best SNR) ← selected
+//   0x12 = 187.2 kHz (comfortable margin)
+//   0x0A = 234.3 kHz (matches CC1101, safe default)
+constexpr uint8_t BW_FSK_156200 = 0x1A;
 
 // Frequency: (freq_hz << 25) / F_XTAL
 // 868.35 MHz: (868350000 * 2^25) / 32000000 = 910163149 = 0x364633CD
