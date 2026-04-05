@@ -736,7 +736,8 @@ void Sx1262Driver::recover() {
     ESP_LOGE(TAG, "recover: RST reset (%d/%d in window, mode=0x%x)",
              this->resets_in_window_, RESETS_BEFORE_FAILED, chip_mode);
     this->reset();
-    this->init();
+    this->init();  // init() ends in set_rx_() which sets mode_ = RX
+    this->RadioDriver::mode_ = RadioMode::RX;  // explicit — don't depend on init() internals
 
     // ── Level 3: Mark failed — radio is unrecoverable ─────────────────────
     if (this->resets_in_window_ >= RESETS_BEFORE_FAILED) {
