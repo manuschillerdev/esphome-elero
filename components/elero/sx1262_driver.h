@@ -197,17 +197,20 @@ class Sx1262Driver : public RadioDriver,
  private:
   // ── SPI primitives ─────────────────────────────────────────────────────────
 
-  void wait_busy_();
-  void write_opcode_(uint8_t opcode, const uint8_t *data, size_t len);
-  void read_opcode_(uint8_t opcode, uint8_t *data, size_t len);
-  void write_register_(uint16_t addr, const uint8_t *data, size_t len);
-  void read_register_(uint16_t addr, uint8_t *data, size_t len);
-  void write_fifo_(uint8_t offset, const uint8_t *data, size_t len);
-  void read_fifo_(uint8_t offset, uint8_t *data, size_t len);
+  /// Wait for BUSY pin to go LOW. Returns false on timeout (chip unresponsive).
+  [[nodiscard]] bool wait_busy_();
+  bool write_opcode_(uint8_t opcode, const uint8_t *data, size_t len);
+  bool read_opcode_(uint8_t opcode, uint8_t *data, size_t len);
+  bool write_register_(uint16_t addr, const uint8_t *data, size_t len);
+  bool read_register_(uint16_t addr, uint8_t *data, size_t len);
+  bool write_fifo_(uint8_t offset, const uint8_t *data, size_t len);
+  bool read_fifo_(uint8_t offset, uint8_t *data, size_t len);
 
   // ── Radio control ──────────────────────────────────────────────────────────
 
-  void set_standby_(uint8_t mode = sx1262::STDBY_RC);
+  /// Read chip_mode from GetStatus. Returns 0xFF on SPI failure.
+  uint8_t read_chip_mode_();
+  [[nodiscard]] bool set_standby_(uint8_t mode = sx1262::STDBY_RC);
   void set_rx_();
   void set_tx_();
   void configure_fsk_();
@@ -251,6 +254,15 @@ class Sx1262Driver : public RadioDriver,
   // ── Health check state ─────────────────────────────────────────────────────
 
   uint32_t last_radio_check_ms_{0};
+
+  // ── Escalating recovery ───────────────────────────────────────────────────
+
+  static constexpr uint32_t RECOVERY_WINDOW_MS = 60000;    ///< 60s observation window
+  static constexpr uint8_t RECOVERIES_BEFORE_RESET = 3;    ///< Soft recoveries before RST pin reset
+  static constexpr uint8_t RESETS_BEFORE_FAILED = 3;       ///< RST resets before marking failed
+  uint32_t recovery_window_start_ms_{0};
+  uint8_t recoveries_in_window_{0};
+  uint8_t resets_in_window_{0};
 
   // ── Stats (atomic — incremented on Core 0, read from Core 1) ───────────────
 

@@ -77,6 +77,7 @@ bool CC1101Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
   this->tx_ctx_.state = TxState::PREPARE;
   this->tx_ctx_.state_enter_time = millis();
   this->tx_pending_success_ = false;
+  this->RadioDriver::mode_ = RadioMode::TX;
 
   return true;
 }
@@ -99,7 +100,8 @@ void CC1101Driver::abort_tx() {
 }
 
 bool CC1101Driver::has_data() {
-  return this->irq_flag_ != nullptr && this->irq_flag_->load(std::memory_order_acquire);
+  if (this->RadioDriver::mode_ != RadioMode::RX) return false;
+  return this->rx_ready_ != nullptr && this->rx_ready_->load(std::memory_order_acquire);
 }
 
 size_t CC1101Driver::read_fifo(uint8_t *buf, size_t max_len) {
@@ -333,9 +335,9 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
         return;
       }
 
-      // 5. Clear IRQ flag so we can detect TX-end interrupt
-      if (this->irq_flag_) {
-        this->irq_flag_->store(false, std::memory_order_release);
+      // 5. Clear TX-done flag so we can detect TX-end interrupt
+      if (this->tx_done_) {
+        this->tx_done_->store(false, std::memory_order_release);
       }
 
       // 6. Trigger TX
@@ -362,16 +364,14 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
 
     case TxState::WAIT_TX: {
       // Interrupt-driven with MARCSTATE polling fallback
-      bool irq_fired = this->irq_flag_ && this->irq_flag_->load(std::memory_order_acquire);
+      bool irq_fired = this->tx_done_ && this->tx_done_->load(std::memory_order_acquire);
       if (irq_fired) {
         // GDO0 interrupt fired — TX likely complete, verify FIFO empty
         esp_rom_delay_us(50);
         uint8_t txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
         if (txbytes == 0) {
           ESP_LOGV(TAG, "TX successful");
-          this->flush_and_rx();
-          this->tx_pending_success_ = true;
-          this->tx_ctx_.state = TxState::IDLE;
+          this->finalize_tx_success_();
           return;
         }
         // Grace window — GDO0 may fire slightly before FIFO fully drains
@@ -379,9 +379,7 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
         txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
         if (txbytes == 0) {
           ESP_LOGV(TAG, "TX successful (after grace)");
-          this->flush_and_rx();
-          this->tx_pending_success_ = true;
-          this->tx_ctx_.state = TxState::IDLE;
+          this->finalize_tx_success_();
           return;
         }
         ESP_LOGE(TAG, "FIFO not empty after TX interrupt, txbytes=%u", txbytes);
@@ -396,9 +394,7 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
         uint8_t txbytes = this->read_status_reliable_(CC1101_TXBYTES) & packet::cc1101_status::BYTE_COUNT_MASK;
         if (txbytes == 0) {
           ESP_LOGV(TAG, "TX successful (MARCSTATE fallback)");
-          this->flush_and_rx();
-          this->tx_pending_success_ = true;
-          this->tx_ctx_.state = TxState::IDLE;
+          this->finalize_tx_success_();
           return;
         }
       }
@@ -421,30 +417,65 @@ void CC1101Driver::handle_tx_state_(uint32_t now) {
   }
 }
 
+void CC1101Driver::finalize_tx_success_() {
+  // MCSM1=0x3F auto-returns to RX after TX. Trust the hardware for the
+  // state transition, but verify RXBYTES is clean — a stale FIFO would
+  // mean the first RX read returns garbage. If RXBYTES != 0, flush.
+  uint8_t rxbytes = this->read_status_reliable_(CC1101_RXBYTES);
+  if (rxbytes & packet::cc1101_status::RXBYTES_OVERFLOW_BIT) {
+    ESP_LOGW(TAG, "RX FIFO overflow after TX, flushing");
+    this->flush_and_rx();
+  } else if ((rxbytes & packet::cc1101_status::BYTE_COUNT_MASK) > 0) {
+    ESP_LOGV(TAG, "RX FIFO has %d stale bytes after TX, flushing",
+             rxbytes & packet::cc1101_status::BYTE_COUNT_MASK);
+    (void) this->write_cmd(CC1101_SFRX);
+  }
+
+  this->RadioDriver::mode_ = RadioMode::RX;
+  this->tx_pending_success_ = true;
+  this->tx_ctx_.state = TxState::IDLE;
+}
+
 void CC1101Driver::recover_radio_() {
-  ESP_LOGW(TAG, "recover_radio_: flushing and checking radio state");
   this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
 
-  // 1. Flush FIFOs and return to RX
+  // Track recovery frequency for escalation
+  uint32_t now = millis();
+  if (now - this->recovery_window_start_ms_ > RECOVERY_WINDOW_MS) {
+    // New window — reset counters
+    this->recovery_window_start_ms_ = now;
+    this->recoveries_in_window_ = 0;
+    this->resets_in_window_ = 0;
+  }
+  ++this->recoveries_in_window_;
+
+  // Level 1: Flush FIFOs and return to RX
+  ESP_LOGW(TAG, "recover: flush (%d/%d in window)", this->recoveries_in_window_, RECOVERIES_BEFORE_RESET);
   this->flush_and_rx();
 
-  // 2. Check if radio recovered
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-  if (marc != CC1101_MARCSTATE_RX) {
-    // Radio didn't recover — full reset + init
-    ESP_LOGE(TAG, "Radio not in RX after flush (MARCSTATE=0x%02x), resetting chip", marc);
+  if (marc == CC1101_MARCSTATE_RX || marcstate_is_transient(marc)) {
+    // Recovered — done
+    this->tx_ctx_.state = TxState::IDLE;
+    this->tx_pending_success_ = false;
+    return;
+  }
+
+  // Level 2: Full chip reset (escalate after repeated flushes)
+  if (this->recoveries_in_window_ >= RECOVERIES_BEFORE_RESET) {
+    ++this->resets_in_window_;
+    ESP_LOGE(TAG, "recover: reset (%d/%d in window, MARCSTATE=0x%02x)",
+             this->resets_in_window_, RESETS_BEFORE_FAILED, marc);
     this->reset();
     this->init_registers();
 
-    // Verify radio came back — read VERSION register to confirm SPI alive
-    uint8_t version = this->read_status(CC1101_VERSION);
-    if (version == packet::cc1101_status::VERSION_NOT_CONNECTED_LOW ||
-        version == packet::cc1101_status::VERSION_NOT_CONNECTED_HIGH) {
-      ESP_LOGE(TAG, "Radio failed to recover after reset (VERSION=0x%02x)", version);
+    // Level 3: Mark failed if resets keep happening
+    if (this->resets_in_window_ >= RESETS_BEFORE_FAILED) {
+      ESP_LOGE(TAG, "recover: radio unrecoverable after %d resets, marking failed", this->resets_in_window_);
+      this->failed_ = true;
     }
   }
 
-  // 3. Return to IDLE state with failure
   this->tx_ctx_.state = TxState::IDLE;
   this->tx_pending_success_ = false;
 }
@@ -458,9 +489,9 @@ void CC1101Driver::flush_and_rx() {
   (void) this->write_cmd(CC1101_SIDLE);
   esp_rom_delay_us(100);
 
-  // 2. Clear atomic flag (safe — radio is idle, no new interrupts)
-  if (this->irq_flag_) {
-    this->irq_flag_->store(false, std::memory_order_release);
+  // 2. Clear RX flag (safe — radio is idle, no new interrupts)
+  if (this->rx_ready_) {
+    this->rx_ready_->store(false, std::memory_order_release);
   }
 
   // 3. Flush both FIFOs
@@ -469,6 +500,7 @@ void CC1101Driver::flush_and_rx() {
 
   // 4. Re-enable RX
   (void) this->write_cmd(CC1101_SRX);
+  this->RadioDriver::mode_ = RadioMode::RX;
 
   // 5. Verify radio entered RX — caller (recover_radio_) handles escalation
   //    Calibration states are transient (~700us) — only warn on truly stuck states.

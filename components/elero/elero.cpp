@@ -117,10 +117,15 @@ void Elero::decode_fifo_packets_(size_t fifo_count) {
 #endif
 }
 
-// ─── ISR: dual signal — atomic flag + task notification ──────────────────────
+// ─── ISR: route IRQ to correct flag based on radio mode ─────────────────────
 void IRAM_ATTR Elero::interrupt(Elero *arg) {
-  // Set atomic flag for TX state machine's WAIT_TX check
-  arg->received_.store(true, std::memory_order_release);
+  // GDO0/DIO1 fires for both RX (packet received) and TX (transmission complete).
+  // Route to the correct flag based on current half-duplex mode.
+  if (arg->driver_ && arg->driver_->mode() == RadioMode::TX) {
+    arg->tx_done_.store(true, std::memory_order_release);
+  } else {
+    arg->rx_ready_.store(true, std::memory_order_release);
+  }
 
 #ifdef USE_ESP32
   // Wake RF task immediately (bypasses 1ms sleep)
@@ -154,8 +159,8 @@ void Elero::setup() {
     return;
   }
 
-  // Pass ISR flag to driver and initialize
-  this->driver_->set_irq_flag(&this->received_);
+  // Pass ISR flags to driver and initialize
+  this->driver_->set_irq_flags(&this->rx_ready_, &this->tx_done_);
   if (!this->driver_->init()) {
     ESP_LOGE(TAG, "Radio driver initialization failed");
     this->mark_failed();
@@ -170,7 +175,8 @@ void Elero::setup() {
 
   // Clear any IRQs that fired during init() before the ISR was attached.
   // For SX1262: DIO1 goes HIGH on preamble detection during init → rising edge missed.
-  this->received_.store(false, std::memory_order_release);
+  this->rx_ready_.store(false, std::memory_order_release);
+  this->tx_done_.store(false, std::memory_order_release);
   this->driver_->recover();  // Clears hardware IRQ flags + re-enters RX
 
   // New architecture: device registry lifecycle
@@ -228,6 +234,15 @@ void Elero::rf_task_func_(void *arg) {
   bool tx_in_progress = false;
 
   for (;;) {
+    // If driver signaled unrecoverable failure, stop all radio operations.
+    // Only feed watchdog and yield — the hub's loop() will see failed() and
+    // can mark_failed() on the ESPHome component.
+    if (self->driver_->failed()) {
+      esp_task_wdt_reset();
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+      continue;
+    }
+
     uint32_t now = millis();
 
     // 1. Process TX requests from main loop (only when radio is idle)
@@ -255,7 +270,8 @@ void Elero::rf_task_func_(void *arg) {
               xQueueSend(self->tx_done_queue_handle_, &r, 0);
               tx_in_progress = false;
             }
-            self->received_.store(false, std::memory_order_release);
+            self->rx_ready_.store(false, std::memory_order_release);
+            self->tx_done_.store(false, std::memory_order_release);
             self->freq2_.store(req.freq.f2);
             self->freq1_.store(req.freq.f1);
             self->freq0_.store(req.freq.f0);
@@ -293,10 +309,10 @@ void Elero::rf_task_func_(void *arg) {
       }
     }
 
-    // 3. Drain FIFO if GDO0 interrupt fired
+    // 3. Drain FIFO if GDO0 interrupt fired (RX mode only — has_data guards this)
     if (self->driver_->has_data()) {
-      // Clear IRQ flag
-      self->received_.store(false, std::memory_order_release);
+      // Clear RX flag
+      self->rx_ready_.store(false, std::memory_order_release);
       // Read FIFO bytes from driver
       size_t count = self->driver_->read_fifo(self->msg_rx_, sizeof(self->msg_rx_));
       if (count > 0) {
