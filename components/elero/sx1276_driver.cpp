@@ -291,15 +291,29 @@ RadioHealth Sx1276Driver::check_health() {
     return RadioHealth::FIFO_OVERFLOW;
   }
 
-  // Should be in RX mode
+  // RX with PLL locked — healthy
   if (current_mode == sx1276::MODE_RX) {
+    if (!(irq1 & sx1276::IRQ1_PLL_LOCK)) {
+      // PLL lost lock while in RX — radio is deaf. Temperature swings or
+      // XOSC drift can cause this transiently. Recovery will re-enter RX
+      // which re-acquires PLL.
+      ESP_LOGW(TAG, "Radio watchdog: PLL lock lost in RX mode");
+      this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
+      return RadioHealth::STUCK;
+    }
     return RadioHealth::OK;
   }
   if (current_mode == sx1276::MODE_TX) {
     return RadioHealth::OK;  // Transient
   }
 
-  // Stuck in standby, sleep, or FS
+  // FS_TX (0x02) / FS_RX (0x04) — PLL is acquiring lock, transient
+  if (current_mode == sx1276::MODE_FS_TX || current_mode == sx1276::MODE_FS_RX) {
+    ESP_LOGD(TAG, "health: FS mode 0x%02x (PLL locking), treating as transient", current_mode);
+    return RadioHealth::OK;
+  }
+
+  // Stuck in standby or sleep — needs recovery
   ESP_LOGW(TAG, "Radio watchdog: mode=0x%02x, expected RX (0x%02x)", current_mode, sx1276::MODE_RX);
   this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
   return RadioHealth::STUCK;
