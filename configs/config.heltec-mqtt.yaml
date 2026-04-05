@@ -87,9 +87,12 @@ elero:
   irq_pin: GPIO14      # DIO1
   busy_pin: GPIO13
   rst_pin: GPIO12
-  rf_switch: true       # Heltec V4 uses DIO2 for RF switch control
+  rf_switch: true       # Heltec V4 uses DIO2 for RF switch control (GC1109 CTX pin)
   tcxo_voltage: 1.8     # Heltec V4 uses TCXO on DIO3 at 1.8V
-  # No FEM PA on default V4 variant (USE_NONE_PA) — GPIO46 not needed
+  # GC1109 FEM control (V4.2) — must be powered BEFORE SX1262 calibration
+  fem_power_pin: GPIO7  # FEM LDO power supply
+  fem_enable_pin: GPIO2 # FEM chip enable (CSD)
+  fem_pa_pin: GPIO46    # FEM PA mode (CPS: HIGH=full PA, LOW=bypass/LNA)
 
 # MQTT mode — devices managed via NVS, no YAML covers/lights
 elero_mqtt:

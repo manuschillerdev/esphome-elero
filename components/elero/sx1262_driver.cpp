@@ -23,10 +23,22 @@ bool Sx1262Driver::init() {
     this->busy_pin_->setup();
   }
 
-  // Setup FEM PA pin (Heltec V4: GPIO46 controls external PA enable)
+  // ── Power up FEM before SX1262 reset/calibration ──────────────────────────
+  // The GC1109/KCT8103L FEM must be powered and enabled BEFORE the SX1262
+  // calibrates, so it sees the correct antenna impedance during image cal.
+  // Heltec V4.2 GC1109: GPIO7=power, GPIO2=CSD(enable), GPIO46=CPS(PA mode)
+  if (this->fem_power_pin_) {
+    this->fem_power_pin_->setup();
+    this->fem_power_pin_->digital_write(true);   // Power FEM LDO
+  }
+  if (this->fem_enable_pin_) {
+    this->fem_enable_pin_->setup();
+    this->fem_enable_pin_->digital_write(true);   // Enable FEM chip (CSD=1)
+    delay(1);  // Heltec reference: 1ms settle after CSD enable
+  }
   if (this->fem_pa_pin_) {
     this->fem_pa_pin_->setup();
-    this->fem_pa_pin_->digital_write(false);  // Start in RX mode (PA off)
+    this->fem_pa_pin_->digital_write(false);  // Start in RX/LNA mode (CPS=0)
   }
 
   // Hardware reset via RST pin
@@ -883,6 +895,11 @@ bool Sx1262Driver::set_standby_(uint8_t mode) {
 }
 
 void Sx1262Driver::set_rx_() {
+  // Re-apply boosted RX gain — this register resets to power-saving (0x94) on any
+  // STDBY transition (SX1262 datasheet §9.6). Without this, sensitivity degrades ~3 dB.
+  uint8_t rx_gain = 0x96;
+  this->write_register_(sx1262::REG_RX_GAIN, &rx_gain, 1);
+
   // Continuous RX (timeout = 0xFFFFFF)
   uint8_t timeout[3] = {0xFF, 0xFF, 0xFF};
   this->write_opcode_(sx1262::SET_RX, timeout, 3);
@@ -906,7 +923,7 @@ void Sx1262Driver::configure_fsk_() {
       static_cast<uint8_t>((br >> 8) & 0xFF),
       static_cast<uint8_t>(br & 0xFF),
       0x09,                     // Gaussian BT=0.5 (GFSK, matches CC1101 MOD_FORMAT=GFSK)
-      sx1262::BW_FSK_234300,    // RX bandwidth 234.3 kHz (matches CC1101's 232 kHz)
+      sx1262::BW_FSK_156200,    // RX bandwidth 156.2 kHz (just above Carson's 147 kHz, ~1.8 dB better SNR)
       static_cast<uint8_t>((fdev >> 16) & 0xFF),
       static_cast<uint8_t>((fdev >> 8) & 0xFF),
       static_cast<uint8_t>(fdev & 0xFF),
