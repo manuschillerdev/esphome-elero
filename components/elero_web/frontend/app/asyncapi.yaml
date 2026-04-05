@@ -737,9 +737,7 @@ components:
           format: float
           description: Cover position (0.0 = closed, 1.0 = open). Cover only.
         ha_state:
-          type: string
-          enum: [open, closed, opening, closing, stopped]
-          description: HA-compatible cover state. Cover only.
+          $ref: "#/components/schemas/HaCoverState"
         tilted:
           type: boolean
           description: Whether the cover is tilted. Cover only.
@@ -760,9 +758,7 @@ components:
           type: boolean
           description: Whether the device is in a problem state (blocking, overheated, timeout)
         problem_type:
-          type: string
-          enum: [none, blocking, overheated, timeout]
-          description: Problem classification or "none"
+          $ref: "#/components/schemas/ProblemType"
         rssi:
           type: number
           format: float
@@ -771,9 +767,7 @@ components:
         state:
           $ref: "#/components/schemas/RfStateName"
         command_source:
-          type: string
-          enum: [unknown, hub, remote]
-          description: Who issued the last command
+          $ref: "#/components/schemas/CommandSource"
         last_seen:
           type: integer
           description: Timestamp (millis()) of last RF packet from this device
@@ -951,6 +945,21 @@ components:
           const: restart
 
     # ── Shared Enums ──
+
+    HaCoverState:
+      type: string
+      enum: [open, closed, opening, closing, stopped]
+      description: HA-compatible cover state. Cover only.
+
+    ProblemType:
+      type: string
+      enum: [none, blocking, overheated, timeout]
+      description: Problem classification or "none"
+
+    CommandSource:
+      type: string
+      enum: [unknown, hub, remote]
+      description: Who issued the last command
 
     HubMode:
       type: string

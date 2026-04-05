@@ -1,8 +1,8 @@
 import {DeviceType} from './DeviceType';
-import {AnonymousSchema_72} from './AnonymousSchema_72';
-import {AnonymousSchema_78} from './AnonymousSchema_78';
+import {HaCoverState} from './HaCoverState';
+import {ProblemType} from './ProblemType';
 import {RfStateName} from './RfStateName';
-import {AnonymousSchema_80} from './AnonymousSchema_80';
+import {CommandSource} from './CommandSource';
 /**
  * Snapshot of a device's derived state at the moment of change.
  * Sent on user commands (optimistic), RF status responses (confirmed),
@@ -27,7 +27,7 @@ interface StateChangedData {
   /**
    * HA-compatible cover state. Cover only.
    */
-  'ha_state'?: AnonymousSchema_72;
+  'ha_state'?: HaCoverState;
   /**
    * Whether the cover is tilted. Cover only.
    */
@@ -52,7 +52,7 @@ interface StateChangedData {
   /**
    * Problem classification or "none"
    */
-  'problem_type'?: AnonymousSchema_78;
+  'problem_type'?: ProblemType;
   /**
    * Last RSSI in dBm
    * @example -65.5
@@ -71,7 +71,7 @@ interface StateChangedData {
   /**
    * Who issued the last command
    */
-  'command_source'?: AnonymousSchema_80;
+  'command_source'?: CommandSource;
   /**
    * Timestamp (millis()) of last RF packet from this device
    * @example 1234567

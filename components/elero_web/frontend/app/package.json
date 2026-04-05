@@ -8,7 +8,7 @@
     "dev:mock": "tsx mock-server.ts & vite",
     "dev:device": "DEVICE_IP=${DEVICE_IP:-192.168.1.100} vite",
     "mock": "tsx mock-server.ts",
-    "generate:types": "asyncapi generate models typescript asyncapi.yaml -o src/generated --tsModelType interface --tsEnumType union --tsExportType named --tsIncludeComments --tsRawPropertyNames && ls src/generated/*.ts | grep -v index.ts | sed 's|src/generated/||;s|\\.ts$||' | awk '{print \"export type { \"$1\" } from '\\''./\"$1\"'\\''\" }' > src/generated/index.ts",
+    "generate:types": "rm -rf src/generated && asyncapi generate models typescript asyncapi.yaml -o src/generated --tsModelType interface --tsEnumType union --tsExportType named --tsIncludeComments --tsRawPropertyNames && ls src/generated/*.ts | grep -v index.ts | sed 's|src/generated/||;s|\\.ts$||' | awk '{print \"export type { \"$1\" } from '\\''./\"$1\"'\\''\" }' > src/generated/index.ts",
     "build": "pnpm generate:types && vite build",
     "preview": "vite preview",
     "lint": "oxlint -c oxlintrc.json --type-aware --tsconfig=tsconfig.json --ignore-pattern=src/generated src/",
