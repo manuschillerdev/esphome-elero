@@ -6,26 +6,75 @@ Complete reference for all configurable parameters.
 
 ## Hub: `elero`
 
-The central hub controls SPI communication with the CC1101 radio module.
+The central hub controls SPI communication with the radio module. Three radios are supported:
+
+| Radio | Chip | Interface | Status |
+|---|---|---|---|
+| `cc1101` | TI CC1101 | Register-based SPI | Stable (default) |
+| `sx1262` | Semtech SX1262 | Command-based SPI | Experimental |
+| `sx1276` | Semtech SX1276/77/78 | Register-based SPI | Experimental |
+
+### Common Parameters
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `radio` | String | No | `cc1101` | Radio driver: `cc1101`, `sx1262`, or `sx1276` |
+| `cs_pin` | GPIO pin | Yes | - | SPI chip select pin |
+| `irq_pin` | GPIO pin (input) | Yes | - | Interrupt pin (GDO0 for CC1101, DIO1 for SX1262, DIO0 for SX1276) |
+| `gdo0_pin` | GPIO pin (input) | - | - | Deprecated alias for `irq_pin` (CC1101 backward compatibility) |
+| `freq0` | Hex (0x00-0xFF) | No | `0x7a` | CC1101-format frequency register FREQ0 |
+| `freq1` | Hex (0x00-0xFF) | No | `0x71` | CC1101-format frequency register FREQ1 |
+| `freq2` | Hex (0x00-0xFF) | No | `0x21` | CC1101-format frequency register FREQ2 |
+
+> The hub extends the ESPHome SPI configuration. `spi:` must be configured separately with `clk_pin`, `mosi_pin`, and `miso_pin`.
+
+### CC1101 Configuration
 
 ```yaml
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
-  freq0: 0x7a
-  freq1: 0x71
-  freq2: 0x21
 ```
+
+No additional parameters required. The CC1101 is the default radio.
+
+### SX1262 Configuration
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `cs_pin` | GPIO pin | Yes | - | SPI chip select pin for the CC1101 |
-| `gdo0_pin` | GPIO pin (input) | Yes | - | CC1101 GDO0 interrupt pin |
-| `freq0` | Hex (0x00-0xFF) | No | `0x7a` | CC1101 frequency register FREQ0 |
-| `freq1` | Hex (0x00-0xFF) | No | `0x71` | CC1101 frequency register FREQ1 |
-| `freq2` | Hex (0x00-0xFF) | No | `0x21` | CC1101 frequency register FREQ2 |
+| `busy_pin` | GPIO pin (input) | Yes | - | SX1262 BUSY pin |
+| `rst_pin` | GPIO pin (output) | Yes | - | SX1262 reset pin |
+| `fem_pa_pin` | GPIO pin (output) | No | - | External PA enable pin (e.g. Heltec V4 GPIO46) |
+| `rf_switch` | Boolean | No | `false` | Use DIO2 as RF switch control |
+| `pa_power` | Integer (-3 to 22) | No | `22` | TX output power in dBm |
+| `tcxo_voltage` | Float (1.6-3.3) | No | - | TCXO voltage via DIO3 (omit if using crystal) |
 
-> The hub extends the ESPHome SPI configuration. `spi:` must be configured separately with `clk_pin`, `mosi_pin`, and `miso_pin`.
+```yaml
+elero:
+  radio: sx1262
+  cs_pin: GPIO8
+  irq_pin: GPIO14      # DIO1
+  busy_pin: GPIO13
+  rst_pin: GPIO12
+  rf_switch: true
+  tcxo_voltage: 1.8
+```
+
+### SX1276 Configuration
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `rst_pin` | GPIO pin (output) | Yes | - | SX1276 reset pin |
+| `pa_power` | Integer (-1 to 20) | No | `17` | TX output power in dBm |
+
+```yaml
+elero:
+  radio: sx1276
+  cs_pin: GPIO18
+  irq_pin: GPIO26      # DIO0
+  rst_pin: GPIO23
+  pa_power: 17
+```
 
 ### Frequency Variants
 

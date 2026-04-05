@@ -1,0 +1,71 @@
+# ESPHome compile test: ESP32 + SX1276 (LILYGO LoRa32 V2.1-1.6 / T3 V1.6)
+# Pin mapping for LILYGO LoRa32 V2.1-1.6 with SX1276 868 MHz
+substitutions:
+  spi_clk: GPIO5
+  spi_mosi: GPIO27
+  spi_miso: GPIO19
+  spi_cs: GPIO18
+
+esphome:
+  name: test-esp32-sx1276
+  friendly_name: Test ESP32 SX1276
+  platformio_options:
+    build_unflags: -std=gnu++11
+    build_flags:
+      - -std=gnu++2a
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test"
+  password: "test1234"
+  ap:
+    ssid: "Fallback"
+    password: "test1234"
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+spi:
+  clk_pin: ${spi_clk}
+  mosi_pin: ${spi_mosi}
+  miso_pin: ${spi_miso}
+
+elero:
+  radio: sx1276
+  cs_pin: ${spi_cs}
+  irq_pin: GPIO26     # DIO0
+  rst_pin: GPIO23      # RST
+  pa_power: 17
+  freq0: 0x7a
+  freq1: 0x71
+  freq2: 0x21
+
+cover:
+  - platform: elero
+    dst_address: 0xa831e5
+    channel: 4
+    src_address: 0xf0d008
+    name: "Test Cover"
+    open_duration: 25s
+    close_duration: 22s
+    supports_tilt: true
+
+light:
+  - platform: elero
+    dst_address: 0xc41a2b
+    channel: 6
+    src_address: 0xf0d008
+    name: "Test Light"
+    dim_duration: 5s
+
+elero_web:
+  port: 80
