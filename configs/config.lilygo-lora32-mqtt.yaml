@@ -1,0 +1,71 @@
+esphome:
+  name: "lilygo-lora32"
+  platformio_options:
+    build_unflags: -std=gnu++11
+    build_flags:
+      - -std=gnu++2a
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+  manual_ip:
+    static_ip: !secret static_ip_lora32
+    gateway: !secret gateway
+    subnet: !secret subnet
+
+logger:
+  level: DEBUG
+
+ota:
+  platform: esphome
+
+mqtt:
+  broker: !secret mqtt_broker
+  port: 1883
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+
+substitutions:
+  friendly_name: "LilyGo LoRa32 Elero"
+
+elero_web:
+  port: 80
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+# LILYGO LoRa32 V2.1-1.6 (T3 V1.6) pin mapping:
+#   SPI (onboard SX1276):
+#     SCK:  GPIO5
+#     MOSI: GPIO27
+#     MISO: GPIO19
+#     CS:   GPIO18
+#   SX1276 control:
+#     RST:  GPIO23
+#     DIO0: GPIO26 (IRQ)
+
+spi:
+  clk_pin: GPIO5
+  mosi_pin: GPIO27
+  miso_pin: GPIO19
+
+elero:
+  radio: sx1276
+  cs_pin: GPIO18
+  irq_pin: GPIO26      # DIO0
+  rst_pin: GPIO23
+  pa_power: 17          # +17 dBm (PA_BOOST)
+
+# MQTT mode — devices managed via NVS, no YAML covers/lights
+elero_mqtt:
+  topic_prefix: elero
+  discovery_prefix: homeassistant
+  device_name: "Elero Gateway"
