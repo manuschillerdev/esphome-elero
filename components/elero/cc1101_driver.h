@@ -139,6 +139,15 @@ class CC1101Driver : public RadioDriver,
 
   uint32_t last_radio_check_ms_{0};
 
+  // ── Recovery escalation ────────────────────────────────────────────────────
+  // Tracks recovery frequency to escalate: flush → reset → mark_failed.
+  static constexpr uint32_t RECOVERY_WINDOW_MS = 60000;    ///< Window for counting recoveries
+  static constexpr uint8_t RECOVERIES_BEFORE_RESET = 3;    ///< Flush attempts before full reset
+  static constexpr uint8_t RESETS_BEFORE_FAILED = 3;       ///< Resets before marking component failed
+  uint32_t recovery_window_start_ms_{0};
+  uint8_t recoveries_in_window_{0};
+  uint8_t resets_in_window_{0};
+
   // ── Stats (atomic — incremented on Core 0, read from Core 1) ───────────────
 
   std::atomic<uint32_t> stat_fifo_overflows_{0};

@@ -68,6 +68,9 @@ class RadioDriver {
   /// Current half-duplex mode. RX when idle, TX during transmission.
   [[nodiscard]] RadioMode mode() const { return mode_; }
 
+  /// True if the radio has exhausted recovery attempts and is permanently failed.
+  [[nodiscard]] bool failed() const { return failed_; }
+
   // ── TX (called from RF task only) ──────────────────────────────────────────
 
   /// Load packet into FIFO and start transmission.
@@ -132,6 +135,7 @@ class RadioDriver {
 
  protected:
   RadioMode mode_{RadioMode::RX};
+  bool failed_{false};                    ///< Set when recovery is exhausted
   std::atomic<bool> *rx_ready_{nullptr};  ///< ISR sets when RX packet available
   std::atomic<bool> *tx_done_{nullptr};   ///< ISR sets when TX transmission complete
 };

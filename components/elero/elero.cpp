@@ -234,6 +234,15 @@ void Elero::rf_task_func_(void *arg) {
   bool tx_in_progress = false;
 
   for (;;) {
+    // If driver signaled unrecoverable failure, stop all radio operations.
+    // Only feed watchdog and yield — the hub's loop() will see failed() and
+    // can mark_failed() on the ESPHome component.
+    if (self->driver_->failed()) {
+      esp_task_wdt_reset();
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+      continue;
+    }
+
     uint32_t now = millis();
 
     // 1. Process TX requests from main loop (only when radio is idle)

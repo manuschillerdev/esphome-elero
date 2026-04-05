@@ -437,29 +437,45 @@ void CC1101Driver::finalize_tx_success_() {
 }
 
 void CC1101Driver::recover_radio_() {
-  ESP_LOGW(TAG, "recover_radio_: flushing and checking radio state");
   this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
 
-  // 1. Flush FIFOs and return to RX
+  // Track recovery frequency for escalation
+  uint32_t now = millis();
+  if (now - this->recovery_window_start_ms_ > RECOVERY_WINDOW_MS) {
+    // New window — reset counters
+    this->recovery_window_start_ms_ = now;
+    this->recoveries_in_window_ = 0;
+    this->resets_in_window_ = 0;
+  }
+  ++this->recoveries_in_window_;
+
+  // Level 1: Flush FIFOs and return to RX
+  ESP_LOGW(TAG, "recover: flush (%d/%d in window)", this->recoveries_in_window_, RECOVERIES_BEFORE_RESET);
   this->flush_and_rx();
 
-  // 2. Check if radio recovered
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-  if (marc != CC1101_MARCSTATE_RX) {
-    // Radio didn't recover — full reset + init
-    ESP_LOGE(TAG, "Radio not in RX after flush (MARCSTATE=0x%02x), resetting chip", marc);
+  if (marc == CC1101_MARCSTATE_RX || marcstate_is_transient(marc)) {
+    // Recovered — done
+    this->tx_ctx_.state = TxState::IDLE;
+    this->tx_pending_success_ = false;
+    return;
+  }
+
+  // Level 2: Full chip reset (escalate after repeated flushes)
+  if (this->recoveries_in_window_ >= RECOVERIES_BEFORE_RESET) {
+    ++this->resets_in_window_;
+    ESP_LOGE(TAG, "recover: reset (%d/%d in window, MARCSTATE=0x%02x)",
+             this->resets_in_window_, RESETS_BEFORE_FAILED, marc);
     this->reset();
     this->init_registers();
 
-    // Verify radio came back — read VERSION register to confirm SPI alive
-    uint8_t version = this->read_status(CC1101_VERSION);
-    if (version == packet::cc1101_status::VERSION_NOT_CONNECTED_LOW ||
-        version == packet::cc1101_status::VERSION_NOT_CONNECTED_HIGH) {
-      ESP_LOGE(TAG, "Radio failed to recover after reset (VERSION=0x%02x)", version);
+    // Level 3: Mark failed if resets keep happening
+    if (this->resets_in_window_ >= RESETS_BEFORE_FAILED) {
+      ESP_LOGE(TAG, "recover: radio unrecoverable after %d resets, marking failed", this->resets_in_window_);
+      this->failed_ = true;
     }
   }
 
-  // 3. Return to IDLE state with failure
   this->tx_ctx_.state = TxState::IDLE;
   this->tx_pending_success_ = false;
 }
