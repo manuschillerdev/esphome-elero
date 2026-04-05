@@ -62,6 +62,10 @@ def _validate_sx1276_pins(config):
         if CONF_RST_PIN not in config:
             raise cv.Invalid(f"'{CONF_RST_PIN}' is required for SX1276 radio")
         pa = config.get(CONF_PA_POWER, 17)
+        if pa < -1:
+            raise cv.Invalid(
+                f"SX1276 RFO supports min -1 dBm (got {pa})."
+            )
         if pa > 20:
             raise cv.Invalid(
                 f"SX1276 supports max +20 dBm (got {pa}). "
@@ -91,6 +95,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FEM_PA_PIN): pins.gpio_output_pin_schema,
             # SX1262-specific options
             cv.Optional(CONF_RF_SWITCH, default=False): cv.boolean,
+            # Schema max=22 for SX1262; SX1276 validator narrows to max=20
             cv.Optional(CONF_PA_POWER): cv.int_range(min=-3, max=22),
             cv.Optional(CONF_TCXO_VOLTAGE): cv.float_range(min=1.6, max=3.3),
         }

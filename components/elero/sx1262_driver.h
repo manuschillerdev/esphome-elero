@@ -165,11 +165,6 @@ class Sx1262Driver : public RadioDriver,
   int rx_sensitivity_dbm() const override { return -117; }
   bool irq_rising_edge() const override { return true; }
 
-  // ── SPI setup (called from hub's setup, before init) ───────────────────────
-
-  /// Must be called once from Component::setup() to initialize the SPI bus.
-  void setup_spi() { this->spi_setup(); }
-
   // ── Configuration setters ──────────────────────────────────────────────────
 
   void set_freq0(uint8_t f) { freq0_ = f; }

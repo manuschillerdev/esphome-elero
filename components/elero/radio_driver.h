@@ -46,9 +46,9 @@ class RadioDriver {
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
-  /// Initialize the radio hardware (register writes, enter RX).
-  /// Called from setup() on Core 1 (before RF task starts) and from
-  /// set_frequency_regs() on Core 0.
+  /// Initialize the radio hardware (SPI bus, register writes, enter RX).
+  /// Called from setup() on Core 1 (before RF task starts).
+  /// Also called from recover() on Core 0 — spi_setup() is idempotent.
   /// @return true if initialization succeeded
   virtual bool init() = 0;
 

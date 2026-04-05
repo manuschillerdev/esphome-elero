@@ -164,13 +164,7 @@ TxPollResult Sx1276Driver::poll_tx() {
                millis() - this->tx_start_ms_);
       this->tx_in_progress_ = false;
       this->tx_pending_success_ = true;
-
-      // Restore RX configuration
-      this->RadioDriver::mode_ = RadioMode::RX;
-      this->write_reg_(sx1276::REG_PAYLOAD_LENGTH, sx1276::RX_FIXED_LEN);
-      this->set_dio_for_rx_();
-      this->flush_fifo_();
-      this->set_rx_();
+      this->restore_rx_();
       return TxPollResult::SUCCESS;
     }
   }
@@ -181,12 +175,7 @@ TxPollResult Sx1276Driver::poll_tx() {
     ESP_LOGD(TAG, "TX done (poll fallback) irq2=0x%02x", irq2);
     this->tx_in_progress_ = false;
     this->tx_pending_success_ = true;
-
-    this->RadioDriver::mode_ = RadioMode::RX;
-    this->write_reg_(sx1276::REG_PAYLOAD_LENGTH, sx1276::RX_FIXED_LEN);
-    this->set_dio_for_rx_();
-    this->flush_fifo_();
-    this->set_rx_();
+    this->restore_rx_();
     return TxPollResult::SUCCESS;
   }
 
@@ -196,14 +185,8 @@ TxPollResult Sx1276Driver::poll_tx() {
     this->tx_in_progress_ = false;
     this->tx_pending_success_ = false;
     this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
-
-    // Recover: standby -> restore RX params -> re-enter RX
-    this->RadioDriver::mode_ = RadioMode::RX;
     this->set_standby_();
-    this->write_reg_(sx1276::REG_PAYLOAD_LENGTH, sx1276::RX_FIXED_LEN);
-    this->set_dio_for_rx_();
-    this->flush_fifo_();
-    this->set_rx_();
+    this->restore_rx_();
     return TxPollResult::FAILED;
   }
 
@@ -216,15 +199,12 @@ void Sx1276Driver::abort_tx() {
     this->tx_pending_success_ = false;
     this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
   }
-  this->RadioDriver::mode_ = RadioMode::RX;
   this->set_standby_();
-  this->write_reg_(sx1276::REG_PAYLOAD_LENGTH, sx1276::RX_FIXED_LEN);
-  this->set_dio_for_rx_();
-  this->flush_fifo_();
-  this->set_rx_();
+  this->restore_rx_();
 }
 
 bool Sx1276Driver::has_data() {
+  if (this->RadioDriver::mode_ != RadioMode::RX) return false;
   return this->rx_ready_ != nullptr && this->rx_ready_->load(std::memory_order_acquire);
 }
 
@@ -277,11 +257,12 @@ size_t Sx1276Driver::read_fifo(uint8_t *buf, size_t max_len) {
 
   // Read RSSI (available while in RX or immediately after PayloadReady)
   uint8_t rssi_raw = this->read_reg_(sx1276::REG_RSSI_VALUE);
-  // SX1276 RSSI: rssi_dbm = -rssi_raw / 2 (for HF port, >862 MHz)
-  // CC1101 format expected by hub: see cc1101_driver.cpp
-  // Convert: rssi_raw/2 maps to CC1101-style encoding
-  int rssi_dbm_x2 = -static_cast<int>(rssi_raw);  // already in -dBm*2 format
-  int cc1101_rssi = rssi_dbm_x2 + 148;
+  // SX1276:  rssi_dbm = -rssi_raw / 2  (HF port, >862 MHz)
+  // CC1101:  rssi_dbm = cc1101_byte / 2 - 74   (if cc1101_byte < 128)
+  //          rssi_dbm = (cc1101_byte - 256) / 2 - 74  (if cc1101_byte >= 128)
+  // Equating: cc1101_byte = -rssi_raw + 148
+  // Example:  rssi_raw=200 → -100 dBm → cc1101_byte=-52 → +256=204 → (204-256)/2-74=-100 dBm ✓
+  int cc1101_rssi = -static_cast<int>(rssi_raw) + 148;
   if (cc1101_rssi < 0) cc1101_rssi += 256;
   buf[1 + pkt_len] = static_cast<uint8_t>(cc1101_rssi);
   buf[1 + pkt_len + 1] = 0x80;  // LQI=0, CRC_OK=1
@@ -336,13 +317,8 @@ void Sx1276Driver::recover() {
     this->tx_done_->store(false, std::memory_order_release);
   }
 
-  // Flush FIFO (clears overrun flag)
-  this->flush_fifo_();
-
-  // Restore RX config
-  this->write_reg_(sx1276::REG_PAYLOAD_LENGTH, sx1276::RX_FIXED_LEN);
-  this->set_dio_for_rx_();
-  this->set_rx_();
+  // Restore RX config (also flushes FIFO, clearing overrun flag)
+  this->restore_rx_();
 
   // Verify recovery
   uint8_t irq1 = this->read_reg_(sx1276::REG_IRQ_FLAGS1);
@@ -363,9 +339,7 @@ void Sx1276Driver::set_frequency_regs(uint8_t f2, uint8_t f1, uint8_t f0) {
 
   this->set_standby_();
   this->set_frequency_();
-  this->set_dio_for_rx_();
-  this->flush_fifo_();
-  this->set_rx_();
+  this->restore_rx_();
   ESP_LOGI(TAG, "SX1276 re-initialised: freq2=0x%02x freq1=0x%02x freq0=0x%02x", f2, f1, f0);
 }
 
@@ -542,10 +516,9 @@ void Sx1276Driver::set_pa_config_() {
     this->write_reg_(sx1276::REG_OCP, 0x2B);
   }
 
-  // PA ramp: 40us (0x09), no modulation shaping for now
-  // Bit 6-5: modulation shaping = 00 (no shaping) for pure 2-FSK
-  // To match CC1101's Gaussian BT=1.0, use 01 (BT=1.0). Let's use BT=0.5 (10) to match SX1262.
-  this->write_reg_(sx1276::REG_PA_RAMP, 0x49);  // bits[6:5]=10 (BT=0.5 Gaussian), ramp=40us
+  // PA ramp: 40us, Gaussian BT=1.0 to match CC1101 MDMCFG2 MOD_FORMAT
+  // Bits [6:5]: 00=no shaping, 01=BT=1.0, 10=BT=0.5, 11=BT=0.3
+  this->write_reg_(sx1276::REG_PA_RAMP, 0x29);  // bits[6:5]=01 (BT=1.0 Gaussian), ramp=40us
 }
 
 void Sx1276Driver::set_dio_for_rx_() {
@@ -570,6 +543,14 @@ void Sx1276Driver::set_dio_for_tx_() {
 void Sx1276Driver::flush_fifo_() {
   // Write 1 to FifoOverrun bit to clear FIFO (this also clears any overrun condition)
   this->write_reg_(sx1276::REG_IRQ_FLAGS2, sx1276::IRQ2_FIFO_OVERRUN);
+}
+
+void Sx1276Driver::restore_rx_() {
+  this->RadioDriver::mode_ = RadioMode::RX;
+  this->write_reg_(sx1276::REG_PAYLOAD_LENGTH, sx1276::RX_FIXED_LEN);
+  this->set_dio_for_rx_();
+  this->flush_fifo_();
+  this->set_rx_();
 }
 
 uint32_t Sx1276Driver::freq_reg_from_cc1101_regs_() const {

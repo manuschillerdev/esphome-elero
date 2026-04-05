@@ -177,9 +177,8 @@ constexpr uint8_t ELERO_FDEV_MSB = 0x02;
 constexpr uint8_t ELERO_FDEV_LSB = 0x3C;
 
 // RX bandwidth: must be >= 2*fdev + bitrate = 2*34912 + 76800 = 146.6 kHz
-// Use Mant=20 (01), Exp=2 → 32e6 / (20 * 2^(2+2)) = 32e6 / 320 = 100 kHz SSB = 200 kHz DSB
-// This covers the 146.6 kHz requirement with margin.
-constexpr uint8_t ELERO_RX_BW = 0x0B;   // Mant=16(00), Exp=3 → 32M/(16*32) = 62.5kHz SSB = 125kHz DSB
+// Mant=20 (01), Exp=2 → 32e6 / (20 * 2^(2+2)) = 32e6 / 320 = 100 kHz SSB = 200 kHz DSB
+constexpr uint8_t ELERO_RX_BW = 0x12;   // Mant=20(01), Exp=2 → 100kHz SSB = 200kHz DSB
 
 // AFC bandwidth — wider than RX for initial acquisition
 constexpr uint8_t ELERO_AFC_BW = 0x0A;  // Mant=16(00), Exp=2 → 32M/(16*16) = 125kHz SSB = 250kHz DSB
@@ -229,11 +228,6 @@ class Sx1276Driver : public RadioDriver,
   int rx_sensitivity_dbm() const override { return -117; }
   bool irq_rising_edge() const override { return true; }  // DIO0 goes HIGH on PayloadReady/PacketSent
 
-  // ── SPI setup (called from hub's setup, before init) ───────────────────────
-
-  /// Must be called once from Component::setup() to initialize the SPI bus.
-  void setup_spi() { this->spi_setup(); }
-
   // ── Configuration setters ──────────────────────────────────────────────────
 
   void set_freq0(uint8_t f) { freq0_ = f; }
@@ -277,6 +271,7 @@ class Sx1276Driver : public RadioDriver,
   void set_dio_for_rx_();
   void set_dio_for_tx_();
   void flush_fifo_();
+  void restore_rx_();
 
   // ── Frequency conversion ───────────────────────────────────────────────────
 
