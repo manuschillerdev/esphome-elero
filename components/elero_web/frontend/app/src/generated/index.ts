@@ -1,6 +1,8 @@
 export type { AnonymousSchema_71 } from './AnonymousSchema_71'
+export type { AnonymousSchema_72 } from './AnonymousSchema_72'
 export type { AnonymousSchema_73 } from './AnonymousSchema_73'
 export type { AnonymousSchema_77 } from './AnonymousSchema_77'
+export type { AnonymousSchema_78 } from './AnonymousSchema_78'
 export type { AnonymousSchema_79 } from './AnonymousSchema_79'
 export type { AnonymousSchema_80 } from './AnonymousSchema_80'
 export type { AnonymousSchema_81 } from './AnonymousSchema_81'
