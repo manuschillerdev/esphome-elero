@@ -9,7 +9,7 @@ The Heltec V4 has gone through several hardware revisions with different Front-E
 | Version | FEM Chip | PA Pin (CPS/CTX) | Notes |
 |---------|----------|------------------|-------|
 | V4.2 | GC1109 | GPIO46 | Most common variant |
-| V4.3.1+ | KCT8103L | GPIO5 | GPIO46 freed for user apps |
+| V4.3.1+ | KCT8103L | GPIO5 | GPIO46 freed for user apps (untested — config derived from datasheet) |
 
 All versions share:
 - **GPIO7**: FEM LDO power supply

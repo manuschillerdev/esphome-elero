@@ -30,15 +30,18 @@ bool Sx1262Driver::init() {
   if (this->fem_power_pin_) {
     this->fem_power_pin_->setup();
     this->fem_power_pin_->digital_write(true);   // Power FEM LDO
+    ESP_LOGD(TAG, "FEM power pin set HIGH");
   }
   if (this->fem_enable_pin_) {
     this->fem_enable_pin_->setup();
     this->fem_enable_pin_->digital_write(true);   // Enable FEM chip (CSD=1)
+    ESP_LOGD(TAG, "FEM enable pin set HIGH");
     delay(1);  // Heltec reference: 1ms settle after CSD enable
   }
   if (this->fem_pa_pin_) {
     this->fem_pa_pin_->setup();
     this->fem_pa_pin_->digital_write(false);  // Start in RX/LNA mode (CPS=0)
+    ESP_LOGD(TAG, "FEM PA pin set LOW (RX/LNA mode)");
   }
 
   // Hardware reset via RST pin
