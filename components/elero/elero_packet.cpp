@@ -172,9 +172,7 @@ size_t build_button_packet(const ButtonTxParams& params, uint8_t* out_buf) {
   out_buf[pkt_offset::HOP] = params.hop;
   out_buf[pkt_offset::SYS] = TX_SYS_ADDR;
 
-  // Channel: special case — channel 1 maps to 0x11
-  uint8_t ch = (params.channel == 1) ? 0x11 : params.channel;
-  out_buf[pkt_offset::CHANNEL] = ch;
+  out_buf[pkt_offset::CHANNEL] = params.channel;
 
   // Addresses (all same for direct button press)
   write_addr(&out_buf[pkt_offset::SRC_ADDR], params.src_addr);
@@ -183,7 +181,7 @@ size_t build_button_packet(const ButtonTxParams& params, uint8_t* out_buf) {
 
   // Destination count + channel-based destination (not address)
   out_buf[pkt_offset::NUM_DESTS] = TX_DEST_COUNT;
-  out_buf[btn_offset::CHANNEL_DEST] = ch;
+  out_buf[btn_offset::CHANNEL_DEST] = params.channel;
   out_buf[btn_offset::ZERO_BYTE] = 0x00;
   out_buf[btn_offset::FIXED_03] = 0x03;
 

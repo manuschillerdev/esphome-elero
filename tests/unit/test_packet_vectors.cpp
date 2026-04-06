@@ -537,16 +537,16 @@ TEST(ButtonPacketBuilding, BuildButtonPacket_ChannelDest) {
   EXPECT_EQ(buf[btn_offset::FIXED_03], 0x03);
 }
 
-TEST(ButtonPacketBuilding, BuildButtonPacket_Channel1MapsTo0x11) {
-  // Channel 1 has a special mapping to 0x11 in button packets
+TEST(ButtonPacketBuilding, BuildButtonPacket_Channel1PassedThrough) {
+  // Channel 1 is sent as-is (no remapping) — matches physical remote behavior
   ButtonTxParams params;
   params.channel = 1;
 
   uint8_t buf[28] = {0};
   build_button_packet(params, buf);
 
-  EXPECT_EQ(buf[pkt_offset::CHANNEL], 0x11);
-  EXPECT_EQ(buf[btn_offset::CHANNEL_DEST], 0x11);
+  EXPECT_EQ(buf[pkt_offset::CHANNEL], 0x01);
+  EXPECT_EQ(buf[btn_offset::CHANNEL_DEST], 0x01);
 }
 
 TEST(ButtonPacketBuilding, BuildButtonPacket_PayloadRoundtrip) {
