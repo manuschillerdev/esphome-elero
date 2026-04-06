@@ -37,6 +37,8 @@ CONF_RF_SWITCH = "rf_switch"
 CONF_PA_POWER = "pa_power"
 CONF_TCXO_VOLTAGE = "tcxo_voltage"
 CONF_FEM_PA_PIN = "fem_pa_pin"
+CONF_FEM_POWER_PIN = "fem_power_pin"
+CONF_FEM_ENABLE_PIN = "fem_enable_pin"
 
 
 def _validate_irq_pin(config):
@@ -93,6 +95,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BUSY_PIN): pins.gpio_input_pin_schema,
             cv.Optional(CONF_RST_PIN): pins.gpio_output_pin_schema,
             cv.Optional(CONF_FEM_PA_PIN): pins.gpio_output_pin_schema,
+            cv.Optional(CONF_FEM_POWER_PIN): pins.gpio_output_pin_schema,
+            cv.Optional(CONF_FEM_ENABLE_PIN): pins.gpio_output_pin_schema,
             # SX1262-specific options
             cv.Optional(CONF_RF_SWITCH, default=False): cv.boolean,
             # Schema max=22 for SX1262; SX1276 validator narrows to max=20
@@ -130,7 +134,13 @@ async def to_code(config):
         rst_pin = await cg.gpio_pin_expression(config[CONF_RST_PIN])
         cg.add(driver.set_rst_pin(rst_pin))
 
-        # FEM PA pin (optional — Heltec V4 uses GPIO46 for external PA enable)
+        # FEM pins (optional — Heltec V4 GC1109/KCT8103L FEM control)
+        if CONF_FEM_POWER_PIN in config:
+            pin = await cg.gpio_pin_expression(config[CONF_FEM_POWER_PIN])
+            cg.add(driver.set_fem_power_pin(pin))
+        if CONF_FEM_ENABLE_PIN in config:
+            pin = await cg.gpio_pin_expression(config[CONF_FEM_ENABLE_PIN])
+            cg.add(driver.set_fem_enable_pin(pin))
         if CONF_FEM_PA_PIN in config:
             fem_pa_pin = await cg.gpio_pin_expression(config[CONF_FEM_PA_PIN])
             cg.add(driver.set_fem_pa_pin(fem_pa_pin))

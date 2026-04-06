@@ -109,9 +109,15 @@ constexpr uint32_t ELERO_BITRATE = 13337;  // 0x003419
 // SX1262: (34912 * 2^25) / 32000000 ≈ 36602 = 0x008EEA
 constexpr uint32_t ELERO_FDEV = 36602;  // ~34.9 kHz
 
-// RX bandwidth: must be >= 2*deviation + bitrate = 2*34912 + 76766 = 146.6 kHz
-// CC1101 uses 232 kHz. SX1262: use 234.3 kHz to match
-constexpr uint8_t BW_FSK_234300 = 0x0A;
+// RX bandwidth: Carson's rule gives 2*deviation + bitrate = 2*34912 + 76766 = 146.6 kHz
+// CC1101 uses 232 kHz (→ 234.3 kHz on SX1262). Tighter BW improves SNR but must
+// stay above Carson minimum. GFSK BT=0.5 concentrates spectral energy, so 156 kHz works.
+// Values from SX1262 datasheet Table 13-38 / RadioLib SX126x.h:
+//   0x0B = 117.3 kHz (below Carson, too narrow)
+//   0x1A = 156.2 kHz (just above Carson, best SNR) ← selected
+//   0x12 = 187.2 kHz (comfortable margin)
+//   0x0A = 234.3 kHz (matches CC1101, safe default)
+constexpr uint8_t BW_FSK_156200 = 0x1A;
 
 // Frequency: (freq_hz << 25) / F_XTAL
 // 868.35 MHz: (868350000 * 2^25) / 32000000 = 910163149 = 0x364633CD
@@ -176,6 +182,8 @@ class Sx1262Driver : public RadioDriver,
   void set_busy_pin(InternalGPIOPin *pin) { busy_pin_ = pin; }
   void set_rst_pin(InternalGPIOPin *pin) { rst_pin_ = pin; }
   void set_fem_pa_pin(InternalGPIOPin *pin) { fem_pa_pin_ = pin; }
+  void set_fem_power_pin(InternalGPIOPin *pin) { fem_power_pin_ = pin; }
+  void set_fem_enable_pin(InternalGPIOPin *pin) { fem_enable_pin_ = pin; }
 
   // ── SX1262-specific option setters ─────────────────────────────────────────
 
@@ -238,7 +246,9 @@ class Sx1262Driver : public RadioDriver,
 
   InternalGPIOPin *busy_pin_{nullptr};
   InternalGPIOPin *rst_pin_{nullptr};
-  InternalGPIOPin *fem_pa_pin_{nullptr};  ///< FEM PA enable pin (Heltec V4: GPIO46)
+  InternalGPIOPin *fem_pa_pin_{nullptr};    ///< FEM PA mode (GC1109 CPS: GPIO46, KCT8103L CTX: GPIO5)
+  InternalGPIOPin *fem_power_pin_{nullptr}; ///< FEM LDO power (Heltec V4: GPIO7)
+  InternalGPIOPin *fem_enable_pin_{nullptr};///< FEM chip enable (GC1109 CSD: GPIO2)
 
   // ── Options ────────────────────────────────────────────────────────────────
 
