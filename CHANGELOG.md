@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1](https://github.com/manuschillerdev/esphome-elero/compare/v0.10.0...v0.10.1) (2026-04-06)
+
+
+### Features
+
+* add refresh button + request_check for covers and lights ([3a8d5a9](https://github.com/manuschillerdev/esphome-elero/commit/3a8d5a9111e25b2416cc461bd1ac6a640ebae773))
+* add SPI boot diagnostics for CC1101 wiring issues ([2efae3c](https://github.com/manuschillerdev/esphome-elero/commit/2efae3cffefe6b42878259eb99a5b73af913ee3a))
+* add state publishing debug logging ([511150e](https://github.com/manuschillerdev/esphome-elero/commit/511150eda2b2cd84ba7be0428862038094ddda7c))
+* add SX1276 radio driver for LILYGO LoRa32 boards ([b0db61c](https://github.com/manuschillerdev/esphome-elero/commit/b0db61c8f40ea40d07e31a6c9d7ccb573c5ea453))
+* add SX1276 radio driver for LILYGO LoRa32 boards ([ae8bc8a](https://github.com/manuschillerdev/esphome-elero/commit/ae8bc8a4dba514a25e50fc42b23c04bcfa9417b7))
+* export & build system ([d4e3538](https://github.com/manuschillerdev/esphome-elero/commit/d4e3538a505d3d49146d8e44a759191c49289160))
+* native API + NVS mode with dynamic entity creation at boot ([fd1fe0d](https://github.com/manuschillerdev/esphome-elero/commit/fd1fe0df4f4b5740f892a2945aed30a8905160c1))
+* **web:** add Export YAML button for saved NVS devices ([7e8bbf2](https://github.com/manuschillerdev/esphome-elero/commit/7e8bbf2e7c2fbc58b03a1c5d609e7d1e9bd7a517))
+
+
+### Bug Fixes
+
+* add FEM init logging and clarify V4.3.1 untested status ([82fe094](https://github.com/manuschillerdev/esphome-elero/commit/82fe09448b987173e5d267bb67f89fd32dbef66c))
+* add PLL/XOSC sensitivity handling to SX1276 check_health ([ac3da13](https://github.com/manuschillerdev/esphome-elero/commit/ac3da13f334a8e87f0cec72ff6fff228fdc7e404))
+* add RX guard to SX1276 has_data, remove dead setup_spi, validate PA floor ([e62a3dd](https://github.com/manuschillerdev/esphome-elero/commit/e62a3dd3a05d1d7f186be4cdb6e168aaa7cb304b))
+* address review comments ([4e51d34](https://github.com/manuschillerdev/esphome-elero/commit/4e51d34bd8b1cb4d8936e9bc17eaa3097700f5ba))
+* frontend buildstep ([579f678](https://github.com/manuschillerdev/esphome-elero/commit/579f678d69aa1b79a8522bfd87b0f33a1207322a))
+* harden CC1101 driver — bound SPI retry, normalize atomics, bump TX queue ([435c622](https://github.com/manuschillerdev/esphome-elero/commit/435c622c3399a4d929234efb4d8f33b0f0cf8d0d))
+* ignore YAML-defined devices when NVS mode is active ([71e45fd](https://github.com/manuschillerdev/esphome-elero/commit/71e45fdf7abee487dd25c3fbe82f56566dc842e0))
+* minimize TX — reduce CHECK packets to 1, remove dead immediate_poll ([8029d9c](https://github.com/manuschillerdev/esphome-elero/commit/8029d9cf67876188cf4c1543c7aa12403a344582))
+* minimize TX — reduce CHECK packets to 1, remove dead immediate_poll ([268ba37](https://github.com/manuschillerdev/esphome-elero/commit/268ba37487d20e88ae09d69fcbd873d8700eb15b))
+* mise tasks ([d4e1311](https://github.com/manuschillerdev/esphome-elero/commit/d4e131150d4ca3ad93c3d5783abd54ab9a71fd2c))
+* mise tasks ([001dd68](https://github.com/manuschillerdev/esphome-elero/commit/001dd68e90c57079ffd3201448d561551912b13d))
+* power GC1109 FEM before SX1262 calibration (Heltec V4) ([520c4fb](https://github.com/manuschillerdev/esphome-elero/commit/520c4fb4f715e12a69f2fc995ecb877c832c05e9))
+* radio hardening ([86cdf41](https://github.com/manuschillerdev/esphome-elero/commit/86cdf41ff58c1f3bb8f6f7e775d7fb41120cc548))
+* remove bogus channel 1 → 0x11 remapping in button packets ([df24e11](https://github.com/manuschillerdev/esphome-elero/commit/df24e114b39f269b66e848b49814a368fd5dacf4))
+* remove echo detection — solves non-existent problem, risks false suppression ([22375d3](https://github.com/manuschillerdev/esphome-elero/commit/22375d39934964345a5a1cfd3868392356d6bd9b)), closes [#15](https://github.com/manuschillerdev/esphome-elero/issues/15)
+* remove echo detection — solves non-existent problem, risks false… ([38a47db](https://github.com/manuschillerdev/esphome-elero/commit/38a47db0192013b0c5ea16d45b0a3fee11dcc62e))
+* simplify state reporting — use RF state byte, fix dedup, remove poll_interval ([ced968e](https://github.com/manuschillerdev/esphome-elero/commit/ced968e2fac652b3c6de928dbda5cafb280664c4))
+* SPI write verification uses operational value, bump counter on TX cancel ([df1c8d0](https://github.com/manuschillerdev/esphome-elero/commit/df1c8d00ebaf807c741086355f1a70eb60e43860))
+* use __has_include guard for json dependency in state_snapshot ([447f56a](https://github.com/manuschillerdev/esphome-elero/commit/447f56afdd4f8b77e93fa7bae571138ce47b1b57))
+
+
+### Refactoring
+
+* add RadioMode to enforce half-duplex contract ([5374d86](https://github.com/manuschillerdev/esphome-elero/commit/5374d86827b8e89b470af8d92693d752386ac7f6))
+* centralize publish decisions in registry via Published cach… ([b31a08d](https://github.com/manuschillerdev/esphome-elero/commit/b31a08d1375902b470f802afdcaeff91b1ae123a))
+* centralize publish decisions in registry via Published cache + change flags ([7c0781b](https://github.com/manuschillerdev/esphome-elero/commit/7c0781bf7689e389fb47098ccf0389c8c1ee498f))
+* escalating recovery — flush → reset → mark failed ([553543b](https://github.com/manuschillerdev/esphome-elero/commit/553543bd0c26cb00576d5eb2e3237d5f0aa1e67f))
+* split IRQ flag into rx_ready + tx_done ([8114e77](https://github.com/manuschillerdev/esphome-elero/commit/8114e77af29a9f890393a24e32b51c310eac86f0))
+* trust MCSM1 auto-return to RX after TX, verify FIFO clean ([0677796](https://github.com/manuschillerdev/esphome-elero/commit/0677796214c77ea1fb0c8f8f5b17a8e86b79b011))
+
+
+### Documentation
+
+* document Heltec V4 FEM variants and pin mapping ([a8111a5](https://github.com/manuschillerdev/esphome-elero/commit/a8111a5bec4df080bbd78e5de413113d3e7a3874))
+* document Heltec V4 FEM variants and pin mapping ([500203a](https://github.com/manuschillerdev/esphome-elero/commit/500203ae1f41f99d82d3bb4a2b5ea7ebf0a15e54))
+* simplify bloated docs ([ac807e4](https://github.com/manuschillerdev/esphome-elero/commit/ac807e4aa35eca2174b91539d8617c9f1ada3f97))
+* simplify bloated docs ([312efcc](https://github.com/manuschillerdev/esphome-elero/commit/312efcc6021b384ded88ba300cfec2085e34beaa))
+* slim CLAUDE.md 84%, update outdated docs to match dual-core architecture ([0c1a4d1](https://github.com/manuschillerdev/esphome-elero/commit/0c1a4d1c5c0ce398dbc575fe53b3e03d8a3c1289))
+* translate CONFIGURATION.md and INSTALLATION.md from German to English ([a061f6d](https://github.com/manuschillerdev/esphome-elero/commit/a061f6da49796e7cccb3a663618fa0b5f8cfd373))
+* update architecture docs for centralized publish decisions ([979db90](https://github.com/manuschillerdev/esphome-elero/commit/979db900f801d353fc45d134204d5a9def3598b2))
+
 ## [0.10.0](https://github.com/manuschillerdev/esphome-elero/compare/v0.9.0...v0.10.0) (2026-04-01)
 
 
