@@ -14,6 +14,13 @@
 namespace esphome {
 namespace elero {
 
+/// Current radio mode — tracks the half-duplex state.
+/// Callers can assert mode before RX/TX operations.
+enum class RadioMode : uint8_t {
+  RX,  ///< Radio is receiving (default idle state)
+  TX,  ///< Radio is transmitting (FIFO loaded, TX in progress)
+};
+
 /// Result of polling the TX state machine.
 enum class TxPollResult : uint8_t {
   PENDING,  ///< TX still in progress
@@ -32,16 +39,16 @@ enum class RadioHealth : uint8_t {
 /// Abstract radio driver interface.
 ///
 /// All methods are called from the RF task (Core 0) only, except where noted.
-/// The ISR flag is shared with the hub's ISR via set_irq_flag().
+/// ISR flags (rx_ready, tx_done) are shared with the hub's ISR via set_irq_flags().
 class RadioDriver {
  public:
   virtual ~RadioDriver() = default;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
-  /// Initialize the radio hardware (register writes, enter RX).
-  /// Called from setup() on Core 1 (before RF task starts) and from
-  /// set_frequency_regs() on Core 0.
+  /// Initialize the radio hardware (SPI bus, register writes, enter RX).
+  /// Called from setup() on Core 1 (before RF task starts).
+  /// Also called from recover() on Core 0 — spi_setup() is idempotent.
   /// @return true if initialization succeeded
   virtual bool init() = 0;
 
@@ -50,9 +57,19 @@ class RadioDriver {
 
   // ── IRQ flag ───────────────────────────────────────────────────────────────
 
-  /// Pass the ISR atomic flag so the driver can read/clear it in poll_tx/has_data.
+  /// Pass ISR flags for RX and TX completion. The ISR routes to the correct
+  /// flag based on mode() — rx_ready when in RX, tx_done when in TX.
   /// Called once during setup, before init().
-  void set_irq_flag(std::atomic<bool> *flag) { irq_flag_ = flag; }
+  void set_irq_flags(std::atomic<bool> *rx_ready, std::atomic<bool> *tx_done) {
+    rx_ready_ = rx_ready;
+    tx_done_ = tx_done;
+  }
+
+  /// Current half-duplex mode. RX when idle, TX during transmission.
+  [[nodiscard]] RadioMode mode() const { return mode_; }
+
+  /// True if the radio has exhausted recovery attempts and is permanently failed.
+  [[nodiscard]] bool failed() const { return failed_; }
 
   // ── TX (called from RF task only) ──────────────────────────────────────────
 
@@ -117,7 +134,10 @@ class RadioDriver {
   virtual bool irq_rising_edge() const { return false; }  // CC1101 default
 
  protected:
-  std::atomic<bool> *irq_flag_{nullptr};
+  RadioMode mode_{RadioMode::RX};
+  bool failed_{false};                    ///< Set when recovery is exhausted
+  std::atomic<bool> *rx_ready_{nullptr};  ///< ISR sets when RX packet available
+  std::atomic<bool> *tx_done_{nullptr};   ///< ISR sets when TX transmission complete
 };
 
 }  // namespace elero

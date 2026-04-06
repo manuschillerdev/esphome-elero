@@ -111,15 +111,22 @@ add_executable(test_device_registry
 target_compile_definitions(test_device_registry PRIVATE UNIT_TEST)
 target_link_libraries(test_device_registry GTest::gtest_main)
 
-# CC1101-compatible CRC-16 and PN9 whitening (pure functions, used by SX1262 driver)
+# CC1101-compatible CRC-16 and PN9 whitening (pure functions, used by SX1262/SX1276 drivers)
 add_executable(test_cc1101_compat
   test_cc1101_compat.cpp
 )
 target_link_libraries(test_cc1101_compat GTest::gtest_main)
 
+# Frequency register conversion: CC1101 → SX1262/SX1276 (pure math, no hardware deps)
+add_executable(test_freq_conversion
+  test_freq_conversion.cpp
+)
+target_link_libraries(test_freq_conversion GTest::gtest_main)
+
 # Discover all tests
 include(GoogleTest)
 gtest_discover_tests(test_cc1101_compat)
+gtest_discover_tests(test_freq_conversion)
 gtest_discover_tests(test_packet_vectors)
 gtest_discover_tests(test_command_sender)
 gtest_discover_tests(test_golden_vectors)
@@ -133,7 +140,7 @@ gtest_discover_tests(test_device_registry)
 
 # All test targets
 set(ALL_TEST_TARGETS
-  test_cc1101_compat
+  test_cc1101_compat test_freq_conversion
   test_packet_vectors test_command_sender test_golden_vectors
   test_encryption_vectors test_parse_roundtrip test_string_functions
   test_cover_sm test_light_sm test_poll_timer

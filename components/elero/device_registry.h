@@ -33,6 +33,10 @@ class DeviceRegistry {
     void set_nvs_enabled(bool en) { nvs_enabled_ = en; }
     [[nodiscard]] bool is_nvs_enabled() const { return nvs_enabled_; }
 
+    /// Set/get hub operating mode (for web UI mode reporting).
+    void set_hub_mode(HubMode m) { mode_ = m; }
+    [[nodiscard]] HubMode hub_mode() const { return mode_; }
+
     /// Initialize NVS preference handles.
     void init_preferences();
 
@@ -92,12 +96,21 @@ class DeviceRegistry {
     /// Set a light's target brightness (0.0–1.0). Determines dim direction, starts dimming.
     void set_light_brightness(Device &dev, float brightness, CommandSource src = CommandSource::HUB);
 
+    /// Request an immediate status CHECK for any device (cover or light).
+    /// Enqueues a single CHECK packet — blind responds with current state.
+    void request_check(Device &dev);
+
     // ═════════════════════════════════════════════════════════════════════════
     // RF DISPATCH
     // ═════════════════════════════════════════════════════════════════════════
 
     /// Process a decoded RF packet. Updates device state machines, notifies adapters.
     void on_rf_packet(const RfPacketInfo &pkt, uint32_t now);
+
+    /// Reset all Published caches and re-notify adapters through the normal
+    /// snapshot→diff→update pipeline. Use when an adapter's downstream (e.g. MQTT
+    /// broker) has lost state and needs a full republish.
+    void force_republish_all();
 
     // ═════════════════════════════════════════════════════════════════════════
     // ITERATION
@@ -149,6 +162,7 @@ class DeviceRegistry {
     std::vector<OutputAdapter *> adapters_;
     Elero *hub_{nullptr};
     bool nvs_enabled_{false};
+    HubMode mode_{HubMode::NATIVE};
 
     // NVS preference handles (one per slot)
     ESPPreferenceObject prefs_[MAX_DEVICES]{};
@@ -159,7 +173,7 @@ class DeviceRegistry {
     size_t slot_index_(const Device &dev) const;
     void notify_added_(const Device &dev);
     void notify_removed_(const Device &dev);
-    void notify_state_changed_(const Device &dev);
+    void notify_state_changed_(Device &dev, uint32_t now);
     void notify_config_changed_(const Device &dev);
     void notify_rf_packet_(const RfPacketInfo &pkt);
 
@@ -170,6 +184,7 @@ class DeviceRegistry {
     void loop_light_(Device &dev, LightDevice &light, uint32_t now);
 
     /// Handle an RF status packet for a specific device.
+    /// Always runs through snapshot→diff→publish; the diff handles dedup.
     void dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now);
 
     /// Track a remote control from an observed RF command packet.

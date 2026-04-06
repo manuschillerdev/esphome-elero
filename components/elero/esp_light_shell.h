@@ -3,6 +3,7 @@
 
 #pragma once
 
+#ifdef USE_LIGHT
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/components/light/light_output.h"
@@ -13,11 +14,15 @@
 #ifdef USE_TEXT_SENSOR
 #include "esphome/components/text_sensor/text_sensor.h"
 #endif
-#include "../device.h"
-#include "../device_registry.h"
-#include "../light_sm.h"
-#include "../state_snapshot.h"
-#include "../elero_packet.h"
+#include "device.h"
+#include "device_registry.h"
+#include "light_sm.h"
+#include "state_snapshot.h"  // state_change:: flags
+#include "elero_strings.h"   // PERCENT_SCALE
+#include "elero_packet.h"
+#ifdef USE_BUTTON
+#include "refresh_button.h"
+#endif
 
 namespace esphome {
 namespace elero {
@@ -48,6 +53,9 @@ class EspLightShell : public light::LightOutput, public Component {
 #ifdef USE_TEXT_SENSOR
   void set_status_sensor(text_sensor::TextSensor *s) { status_sensor_ = s; }
 #endif
+#ifdef USE_BUTTON
+  void set_refresh_button(RefreshButton *b) { refresh_button_ = b; }
+#endif
 
   // ── ESPHome Component lifecycle ────────────────────────────
   void setup() override {
@@ -60,12 +68,20 @@ class EspLightShell : public light::LightOutput, public Component {
       cfg_.type = DeviceType::LIGHT;
       device_ = registry_->register_device(cfg_);
     }
+#ifdef USE_BUTTON
+    if (refresh_button_ && device_) {
+      refresh_button_->set_device(device_);
+      refresh_button_->set_registry(registry_);
+    }
+#endif
   }
 
   void loop() override {
     if (!device_ || !device_->active) return;
+    // No initial_published_ needed here — ESPHome LightState defaults to "off",
+    // which is a valid state. Covers need it because cover::Cover starts as "Unknown".
     if (device_->last_notify_ms > last_published_ms_) {
-      sync_and_publish_();
+      sync_and_publish_(device_->last_changes);
       last_published_ms_ = device_->last_notify_ms;
     }
   }
@@ -99,26 +115,29 @@ class EspLightShell : public light::LightOutput, public Component {
   }
 
  private:
-  void sync_and_publish_() {
+  void sync_and_publish_(uint16_t changes) {
     if (!device_ || !device_->is_light() || !light_state_) return;
+    const auto &pub = std::get<LightDevice>(device_->logic).published;
 
-    auto snap = compute_light_snapshot(*device_, millis());
-
-    ignore_write_state_ = true;
-    auto call = light_state_->make_call();
-    call.set_state(snap.is_on);
-    auto ctx = light_context(device_->config);
-    if (snap.is_on && light_sm::supports_brightness(ctx)) {
-      call.set_brightness(snap.brightness);
+    if (changes & state_change::BRIGHTNESS) {
+      ignore_write_state_ = true;
+      auto call = light_state_->make_call();
+      call.set_state(pub.is_on);
+      auto ctx = light_context(device_->config);
+      if (pub.is_on && light_sm::supports_brightness(ctx)) {
+        call.set_brightness(static_cast<float>(pub.brightness_pct) / PERCENT_SCALE);
+      }
+      call.perform();
+      ignore_write_state_ = false;
     }
-    call.perform();
-    ignore_write_state_ = false;
 
 #ifdef USE_SENSOR
-    if (rssi_sensor_ != nullptr) rssi_sensor_->publish_state(snap.rssi);
+    if ((changes & state_change::RSSI) && rssi_sensor_ != nullptr)
+      rssi_sensor_->publish_state(static_cast<float>(pub.rssi_rounded));
 #endif
 #ifdef USE_TEXT_SENSOR
-    if (status_sensor_ != nullptr) status_sensor_->publish_state(snap.state_string);
+    if ((changes & state_change::STATE_STRING) && status_sensor_ != nullptr)
+      status_sensor_->publish_state(pub.state_string);
 #endif
   }
 
@@ -136,7 +155,12 @@ class EspLightShell : public light::LightOutput, public Component {
 #ifdef USE_TEXT_SENSOR
   text_sensor::TextSensor *status_sensor_{nullptr};
 #endif
+#ifdef USE_BUTTON
+  RefreshButton *refresh_button_{nullptr};
+#endif
 };
 
 }  // namespace elero
 }  // namespace esphome
+
+#endif  // USE_LIGHT

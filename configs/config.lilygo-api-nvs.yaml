@@ -1,0 +1,100 @@
+esphome:
+  name: "lilygo-t-embed-api-nvs"
+  platformio_options:
+    board_build.mcu: esp32s3
+    board_build.name: "LilyGO T-Embed ESP32-S3"
+    board_build.upload.flash_size: "16MB"
+    board_build.upload.maximum_size: 16777216
+    board_build.vendor: "LilyGO"
+    board_build.f_flash: 80000000L
+    board_build.arduino.memory_type: qio_opi
+  on_boot:
+    priority: 800
+    then:
+      - switch.turn_on: power_on
+      - switch.turn_on: cc1101_power_on
+      # SW1:1  SW0:0 --- 315MHz
+      # SW1:0  SW0:1 --- 868/915MHz
+      # SW1:1  SW0:1 --- 434MHz
+      - switch.turn_off: rf_sw1
+      - switch.turn_on: rf_sw0
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_VFS_SUPPORT_SELECT: "y"
+  flash_size: 16MB
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+  manual_ip:
+    static_ip: !secret static_ip_lilygo
+    gateway: !secret gateway
+    subnet: !secret subnet
+
+logger:
+  level: VERBOSE
+  logs:
+    elero: VERBOSE
+
+api:
+
+ota:
+  platform: esphome
+
+substitutions:
+  friendly_name: "LilyGO T-Embed CC1101"
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+switch:
+  - platform: gpio
+    pin:
+      number: GPIO15
+      mode:
+        output: True
+    name: "${friendly_name} CC1101 Power On"
+    id: cc1101_power_on
+    restore_mode: ALWAYS_ON
+  - platform: gpio
+    pin:
+      number: GPIO46
+      mode:
+        output: True
+    name: "${friendly_name} Power On"
+    id: power_on
+    restore_mode: ALWAYS_ON
+  # SW1:1  SW0:0 --- 315MHz
+  # SW1:0  SW0:1 --- 868/915MHz
+  # SW1:1  SW0:1 --- 434MHz
+  - platform: gpio
+    pin: GPIO47
+    id: rf_sw1
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    pin: GPIO48
+    id: rf_sw0
+    restore_mode: ALWAYS_ON
+
+spi:
+  clk_pin: GPIO11     # BOARD_SPI_SCK
+  mosi_pin: GPIO9     # BOARD_SPI_MOSI
+  miso_pin: GPIO10    # BOARD_SPI_MISO
+
+elero:
+  cs_pin: GPIO12      # BOARD_LORA_CS
+  gdo0_pin: GPIO3     # BOARD_LORA_IO0
+
+# Native API + NVS mode — devices managed via web UI, persisted in NVS
+elero_nvs:
+
+elero_web:
+  port: 80

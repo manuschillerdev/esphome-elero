@@ -289,7 +289,7 @@ void generate_msg_down(uint8_t* msg, uint8_t* remote_addr,
     msg[3]  = 0x10;                    // Header byte 1
     msg[4]  = 0x00;                    // Header byte 2
     msg[5]  = 0x01;                    // Header byte 3
-    msg[6]  = (channel == 1) ? 0x11 : channel;
+    msg[6]  = channel;                  // Channel (no remapping)
 
     // Source, backward, forward addresses (all same for direct command)
     memcpy(&msg[7],  remote_addr, 3);
@@ -297,7 +297,7 @@ void generate_msg_down(uint8_t* msg, uint8_t* remote_addr,
     memcpy(&msg[13], remote_addr, 3);
 
     msg[16] = 0x01;                    // Destination count
-    msg[17] = (channel == 1) ? 0x11 : channel;
+    msg[17] = channel;                 // Channel destination (same as msg[6])
     msg[18] = 0x00;
     msg[19] = 0x03;
 
@@ -328,7 +328,7 @@ void generate_msg_stop(uint8_t* msg, uint8_t* remote_addr,
     msg[3]  = 0x10;
     msg[4]  = 0x00;
     msg[5]  = 0x01;
-    msg[6]  = (channel == 1) ? 0x11 : channel;
+    msg[6]  = channel;                  // Channel (no remapping)
 
     memcpy(&msg[7],  remote_addr, 3);
     memcpy(&msg[10], remote_addr, 3);

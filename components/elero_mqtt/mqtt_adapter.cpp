@@ -7,7 +7,7 @@
 #include "mqtt_adapter.h"
 #include "../elero/device.h"
 #include "../elero/device_registry.h"
-#include "../elero/state_snapshot.h"
+#include "../elero/state_snapshot.h"  // state_change:: flags, Published types
 #include "../elero/elero_strings.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
@@ -85,15 +85,13 @@ void MqttAdapter::on_device_added(const Device &dev) {
     if (dev.is_cover()) {
         publish_cover_discovery_(dev);
         subscribe_cover_commands_(dev);
-        publish_cover_state_(dev);
     } else if (dev.is_light()) {
         publish_light_discovery_(dev);
         subscribe_light_commands_(dev);
-        publish_light_state_(dev);
     } else if (dev.is_remote()) {
         publish_remote_discovery_(dev);
-        publish_remote_state_(dev);
     }
+    // Initial state publish happens via notify_state_changed_ (called by registry after add)
     publish_gateway_state_();
 }
 
@@ -129,15 +127,15 @@ void MqttAdapter::remove_all_discovery_(const Device &dev) {
     ESP_LOGD(TAG, "Removed discovery for 0x%06x", addr);
 }
 
-void MqttAdapter::on_state_changed(const Device &dev) {
+void MqttAdapter::on_state_changed(const Device &dev, uint16_t changes) {
     if (!ctx_.mqtt->is_connected()) return;
     if (!dev.config.is_enabled()) return;
     if (dev.config.updated_at == 0) return;
 
     if (dev.is_cover()) {
-        publish_cover_state_(dev);
+        publish_cover_state_(dev, changes);
     } else if (dev.is_light()) {
-        publish_light_state_(dev);
+        publish_light_state_(dev, changes);
     } else if (dev.is_remote()) {
         publish_remote_state_(dev);
     }
@@ -176,13 +174,15 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
         root["unique_id"] = oid;
         root["command_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::SET);
         root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::STATE);
-        root["position_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::POSITION);
         root["payload_open"] = action::OPEN;
         root["payload_close"] = action::CLOSE;
         root["payload_stop"] = action::STOP;
-        root["position_open"] = 100;
-        root["position_closed"] = 0;
-        if (dev.config.open_duration_ms > 0 && dev.config.close_duration_ms > 0) {
+        root["optimistic"] = true;  // All buttons always enabled (blind has no reliable position feedback)
+        bool has_position = dev.config.open_duration_ms > 0 && dev.config.close_duration_ms > 0;
+        if (has_position) {
+            root["position_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::POSITION);
+            root["position_open"] = 100;
+            root["position_closed"] = 0;
             root["set_position_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::SET_POSITION);
         }
         root["device_class"] = ha_cover_class_str(static_cast<HaCoverClass>(dev.config.ha_device_class));
@@ -247,37 +247,61 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
     ESP_LOGD(TAG, "Published cover discovery for 0x%06x", addr);
 }
 
-void MqttAdapter::publish_cover_state_(const Device &dev) {
+void MqttAdapter::publish_cover_state_(const Device &dev, uint16_t changes) {
     if (!ctx_.mqtt->is_connected()) return;
 
     uint32_t addr = dev.config.dst_address;
-    auto snap = compute_cover_snapshot(dev, millis());
+    const auto &pub = std::get<CoverDevice>(dev.logic).published;
+    int topics = 0;
 
-    ctx_.publish(DeviceType::COVER, addr, mqtt_topic::STATE, snap.ha_state, false);
-
-    char pos_buf[8];
-    snprintf(pos_buf, sizeof(pos_buf), "%d", static_cast<int>(snap.position * PERCENT_SCALE));
-    ctx_.publish(DeviceType::COVER, addr, mqtt_topic::POSITION, pos_buf, false);
-
-    char rssi_buf[12];
-    snprintf(rssi_buf, sizeof(rssi_buf), "%.0f", round_rssi(snap.rssi));
-    ctx_.publish(DeviceType::COVER, addr, mqtt_topic::RSSI, rssi_buf, false);
-
-    ctx_.publish(DeviceType::COVER, addr, mqtt_topic::DEVICE_STATE, snap.state_string, false);
-    ctx_.publish(DeviceType::COVER, addr, mqtt_topic::PROBLEM, snap.is_problem ? ha_state::ON : ha_state::OFF, false);
-
-    std::string attrs = json::build_json([&](JsonObject root) {
-        root["command_source"] = snap.command_source;
-        root["tilted"] = snap.tilted;
-        root["device_class"] = snap.device_class;
-        root["problem_type"] = snap.problem_type;
-    });
-    ctx_.publish(DeviceType::COVER, addr, mqtt_topic::ATTRIBUTES, attrs, false);
-
-    if (dev.config.supports_tilt != 0) {
-        ctx_.publish(DeviceType::COVER, addr, mqtt_topic::TILT_STATE, snap.tilted ? "100" : "0", false);
+    if (changes & state_change::HA_STATE) {
+        ctx_.publish(DeviceType::COVER, addr, mqtt_topic::STATE, pub.ha_state, false);
+        ++topics;
     }
 
+    if ((changes & state_change::POSITION) &&
+        dev.config.open_duration_ms > 0 && dev.config.close_duration_ms > 0) {
+        char pos_buf[8];
+        snprintf(pos_buf, sizeof(pos_buf), "%d", pub.position_pct);
+        ctx_.publish(DeviceType::COVER, addr, mqtt_topic::POSITION, pos_buf, false);
+        ++topics;
+    }
+
+    if (changes & state_change::RSSI) {
+        char rssi_buf[12];
+        snprintf(rssi_buf, sizeof(rssi_buf), "%d", pub.rssi_rounded);
+        ctx_.publish(DeviceType::COVER, addr, mqtt_topic::RSSI, rssi_buf, false);
+        ++topics;
+    }
+
+    if (changes & state_change::STATE_STRING) {
+        ctx_.publish(DeviceType::COVER, addr, mqtt_topic::DEVICE_STATE, pub.state_string, false);
+        ++topics;
+    }
+
+    if (changes & state_change::PROBLEM) {
+        ctx_.publish(DeviceType::COVER, addr, mqtt_topic::PROBLEM, pub.is_problem ? ha_state::ON : ha_state::OFF, false);
+        ++topics;
+    }
+
+    if (changes & (state_change::COMMAND_SOURCE | state_change::PROBLEM | state_change::TILT)) {
+        std::string attrs = json::build_json([&](JsonObject root) {
+            root["command_source"] = pub.command_source;
+            root["tilted"] = pub.tilted;
+            root["device_class"] = ha_cover_class_str(static_cast<HaCoverClass>(dev.config.ha_device_class));
+            root["problem_type"] = pub.problem_type;
+        });
+        ctx_.publish(DeviceType::COVER, addr, mqtt_topic::ATTRIBUTES, attrs, false);
+        ++topics;
+    }
+
+    if ((changes & state_change::TILT) && dev.config.supports_tilt != 0) {
+        ctx_.publish(DeviceType::COVER, addr, mqtt_topic::TILT_STATE, pub.tilted ? "100" : "0", false);
+        ++topics;
+    }
+
+    ESP_LOGV(TAG, "cover 0x%06x: %d topics (pos=%d ha=%s state=%s rssi=%d)",
+             addr, topics, pub.position_pct, pub.ha_state, pub.state_string, pub.rssi_rounded);
 }
 
 void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
@@ -395,36 +419,46 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
     ESP_LOGD(TAG, "Published light discovery for 0x%06x", addr);
 }
 
-void MqttAdapter::publish_light_state_(const Device &dev) {
+void MqttAdapter::publish_light_state_(const Device &dev, uint16_t changes) {
     if (!ctx_.mqtt->is_connected()) return;
 
     uint32_t addr = dev.config.dst_address;
-    auto snap = compute_light_snapshot(dev, millis());
+    const auto &pub = std::get<LightDevice>(dev.logic).published;
 
-    std::string payload = json::build_json([&](JsonObject root) {
-        root["state"] = snap.is_on ? ha_state::ON : ha_state::OFF;
-        if (dev.config.dim_duration_ms > 0) {
-            root["brightness"] = static_cast<int>(snap.brightness * PERCENT_SCALE);
-        }
-    });
-    ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::STATE, payload, false);
+    if (changes & state_change::BRIGHTNESS) {
+        std::string payload = json::build_json([&](JsonObject root) {
+            root["state"] = pub.is_on ? ha_state::ON : ha_state::OFF;
+            if (dev.config.dim_duration_ms > 0) {
+                root["brightness"] = pub.brightness_pct;
+            }
+        });
+        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::STATE, payload, false);
+    }
 
-    char rssi_buf[12];
-    snprintf(rssi_buf, sizeof(rssi_buf), "%.0f", round_rssi(snap.rssi));
-    ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::RSSI, rssi_buf, false);
+    if (changes & state_change::RSSI) {
+        char rssi_buf[12];
+        snprintf(rssi_buf, sizeof(rssi_buf), "%d", pub.rssi_rounded);
+        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::RSSI, rssi_buf, false);
+    }
 
-    ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::DEVICE_STATE, snap.state_string, false);
+    if (changes & state_change::STATE_STRING) {
+        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::DEVICE_STATE, pub.state_string, false);
+    }
 
-    // Problem state
-    ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::PROBLEM, snap.is_problem ? ha_state::ON : ha_state::OFF, false);
+    if (changes & state_change::PROBLEM) {
+        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::PROBLEM, pub.is_problem ? ha_state::ON : ha_state::OFF, false);
+    }
 
-    // JSON attributes
-    std::string attrs = json::build_json([&](JsonObject root) {
-        root["command_source"] = snap.command_source;
-        root["problem_type"] = snap.problem_type;
-    });
-    ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::ATTRIBUTES, attrs, false);
+    if (changes & (state_change::COMMAND_SOURCE | state_change::PROBLEM)) {
+        std::string attrs = json::build_json([&](JsonObject root) {
+            root["command_source"] = pub.command_source;
+            root["problem_type"] = pub.problem_type;
+        });
+        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::ATTRIBUTES, attrs, false);
+    }
 
+    ESP_LOGV(TAG, "light 0x%06x: on=%d bri=%d state=%s rssi=%d",
+             addr, pub.is_on, pub.brightness_pct, pub.state_string, pub.rssi_rounded);
 }
 
 void MqttAdapter::subscribe_light_commands_(const Device &dev) {
@@ -671,21 +705,24 @@ void MqttAdapter::collect_expected_topics_(std::vector<std::string> &out) const 
 void MqttAdapter::republish_all_() {
     if (registry_ == nullptr) return;
 
-    registry_->for_each_active([this](const Device &dev) {
+    // Re-publish discovery configs and re-subscribe to command topics (MQTT-specific)
+    registry_->for_each_active([this](Device &dev) {
         if (!dev.config.is_enabled()) return;
+
         if (dev.is_cover()) {
             publish_cover_discovery_(dev);
             subscribe_cover_commands_(dev);
-            publish_cover_state_(dev);
         } else if (dev.is_light()) {
             publish_light_discovery_(dev);
             subscribe_light_commands_(dev);
-            publish_light_state_(dev);
         } else if (dev.is_remote()) {
             publish_remote_discovery_(dev);
-            publish_remote_state_(dev);
         }
     });
+
+    // Force full state republish through the registry's snapshot→diff→notify pipeline.
+    // The registry resets Published caches, recomputes snapshots, and notifies all adapters.
+    registry_->force_republish_all();
 
     ESP_LOGI(TAG, "Republished all discoveries after reconnect");
 }

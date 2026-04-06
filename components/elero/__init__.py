@@ -16,6 +16,7 @@ elero = elero_ns.class_("Elero", cg.Component)
 # Radio drivers
 CC1101Driver = elero_ns.class_("CC1101Driver", spi.SPIDevice)
 Sx1262Driver = elero_ns.class_("Sx1262Driver", spi.SPIDevice)
+Sx1276Driver = elero_ns.class_("Sx1276Driver", spi.SPIDevice)
 
 # New architecture: unified device registry
 DeviceRegistry = elero_ns.class_("DeviceRegistry")
@@ -36,6 +37,8 @@ CONF_RF_SWITCH = "rf_switch"
 CONF_PA_POWER = "pa_power"
 CONF_TCXO_VOLTAGE = "tcxo_voltage"
 CONF_FEM_PA_PIN = "fem_pa_pin"
+CONF_FEM_POWER_PIN = "fem_power_pin"
+CONF_FEM_ENABLE_PIN = "fem_enable_pin"
 
 
 def _validate_irq_pin(config):
@@ -55,6 +58,24 @@ def _validate_sx1262_pins(config):
     return config
 
 
+def _validate_sx1276_pins(config):
+    """SX1276 requires rst_pin and has a different PA power range."""
+    if config.get(CONF_RADIO) == "sx1276":
+        if CONF_RST_PIN not in config:
+            raise cv.Invalid(f"'{CONF_RST_PIN}' is required for SX1276 radio")
+        pa = config.get(CONF_PA_POWER, 17)
+        if pa < -1:
+            raise cv.Invalid(
+                f"SX1276 RFO supports min -1 dBm (got {pa})."
+            )
+        if pa > 20:
+            raise cv.Invalid(
+                f"SX1276 supports max +20 dBm (got {pa}). "
+                f"Use pa_power: 20 for maximum output."
+            )
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -62,7 +83,7 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(CONF_REGISTRY_ID): cv.declare_id(DeviceRegistry),
             cv.GenerateID(CONF_DRIVER_ID): cv.declare_id(CC1101Driver),
             cv.Optional(CONF_RADIO, default="cc1101"): cv.one_of(
-                "cc1101", "sx1262", lower=True
+                "cc1101", "sx1262", "sx1276", lower=True
             ),
             cv.Optional(CONF_IRQ_PIN): pins.gpio_input_pin_schema,
             cv.Optional(CONF_GDO0_PIN): pins.gpio_input_pin_schema,
@@ -74,9 +95,12 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BUSY_PIN): pins.gpio_input_pin_schema,
             cv.Optional(CONF_RST_PIN): pins.gpio_output_pin_schema,
             cv.Optional(CONF_FEM_PA_PIN): pins.gpio_output_pin_schema,
+            cv.Optional(CONF_FEM_POWER_PIN): pins.gpio_output_pin_schema,
+            cv.Optional(CONF_FEM_ENABLE_PIN): pins.gpio_output_pin_schema,
             # SX1262-specific options
             cv.Optional(CONF_RF_SWITCH, default=False): cv.boolean,
-            cv.Optional(CONF_PA_POWER, default=22): cv.int_range(min=-3, max=22),
+            # Schema max=22 for SX1262; SX1276 validator narrows to max=20
+            cv.Optional(CONF_PA_POWER): cv.int_range(min=-3, max=22),
             cv.Optional(CONF_TCXO_VOLTAGE): cv.float_range(min=1.6, max=3.3),
         }
     )
@@ -84,6 +108,7 @@ CONFIG_SCHEMA = cv.All(
     .extend(spi.spi_device_schema(cs_pin_required=True)),
     _validate_irq_pin,
     _validate_sx1262_pins,
+    _validate_sx1276_pins,
 )
 
 
@@ -109,16 +134,38 @@ async def to_code(config):
         rst_pin = await cg.gpio_pin_expression(config[CONF_RST_PIN])
         cg.add(driver.set_rst_pin(rst_pin))
 
-        # FEM PA pin (optional — Heltec V4 uses GPIO46 for external PA enable)
+        # FEM pins (optional — Heltec V4 GC1109/KCT8103L FEM control)
+        if CONF_FEM_POWER_PIN in config:
+            pin = await cg.gpio_pin_expression(config[CONF_FEM_POWER_PIN])
+            cg.add(driver.set_fem_power_pin(pin))
+        if CONF_FEM_ENABLE_PIN in config:
+            pin = await cg.gpio_pin_expression(config[CONF_FEM_ENABLE_PIN])
+            cg.add(driver.set_fem_enable_pin(pin))
         if CONF_FEM_PA_PIN in config:
             fem_pa_pin = await cg.gpio_pin_expression(config[CONF_FEM_PA_PIN])
             cg.add(driver.set_fem_pa_pin(fem_pa_pin))
 
         # SX1262-specific options
         cg.add(driver.set_rf_switch(config[CONF_RF_SWITCH]))
-        cg.add(driver.set_pa_power(config[CONF_PA_POWER]))
+        cg.add(driver.set_pa_power(config.get(CONF_PA_POWER, 22)))
         if CONF_TCXO_VOLTAGE in config:
             cg.add(driver.set_tcxo_voltage(config[CONF_TCXO_VOLTAGE]))
+    elif radio == "sx1276":
+        # Override driver_id type for SX1276
+        driver_id = config[CONF_DRIVER_ID]
+        driver_id.type = Sx1276Driver
+        driver = cg.new_Pvariable(driver_id)
+        await spi.register_spi_device(driver, config)
+        cg.add(driver.set_freq0(config[CONF_FREQ0]))
+        cg.add(driver.set_freq1(config[CONF_FREQ1]))
+        cg.add(driver.set_freq2(config[CONF_FREQ2]))
+
+        # SX1276 RST pin
+        rst_pin = await cg.gpio_pin_expression(config[CONF_RST_PIN])
+        cg.add(driver.set_rst_pin(rst_pin))
+
+        # PA power (SX1276 default: +17 dBm on PA_BOOST)
+        cg.add(driver.set_pa_power(config.get(CONF_PA_POWER, 17)))
     else:
         # CC1101 driver (default)
         driver = cg.new_Pvariable(config[CONF_DRIVER_ID])

@@ -75,6 +75,7 @@ constexpr float DATA = 0.0f;
 
 #include "elero/cover_sm.cpp"
 #include "elero/light_sm.cpp"
+#include "elero/state_snapshot.cpp"
 #include "elero/device_registry.cpp"
 
 // Stub Elero methods (device_registry.cpp includes elero.h)
@@ -118,8 +119,9 @@ struct MockAdapter : public OutputAdapter {
     void on_device_removed(const Device &dev) override {
         removed.push_back(dev.config.dst_address);
     }
-    void on_state_changed(const Device &dev) override {
+    void on_state_changed(const Device &dev, uint16_t ch) override {
         state_changed.push_back(dev.config.dst_address);
+        last_changes.push_back(ch);
     }
     void on_config_changed(const Device &dev) override {
         config_changed.push_back(dev.config.dst_address);
@@ -131,12 +133,13 @@ struct MockAdapter : public OutputAdapter {
     std::vector<uint32_t> added;
     std::vector<uint32_t> removed;
     std::vector<uint32_t> state_changed;
+    std::vector<uint16_t> last_changes;
     std::vector<uint32_t> config_changed;
     int rf_packets{0};
 
     void clear() {
         added.clear(); removed.clear(); state_changed.clear();
-        config_changed.clear(); rf_packets = 0;
+        last_changes.clear(); config_changed.clear(); rf_packets = 0;
     }
 };
 
@@ -152,7 +155,6 @@ static NvsDeviceConfig make_cover_config(uint32_t addr, const char *name = "Test
     cfg.channel = 4;
     cfg.open_duration_ms = 10000;
     cfg.close_duration_ms = 10000;
-    cfg.poll_interval_ms = 300000;
     strncpy(cfg.name, name, NVS_NAME_MAX - 1);
     return cfg;
 }
@@ -176,19 +178,16 @@ static RfPacketInfo make_status_pkt(uint32_t src, uint8_t state_byte, float rssi
     pkt.type = pkt::msg_type::STATUS;
     pkt.state = state_byte;
     pkt.rssi = rssi;
-    pkt.echo = false;
     return pkt;
 }
 
-static RfPacketInfo make_command_pkt(uint32_t src, uint32_t dst, uint8_t cmd,
-                                      bool echo = false) {
+static RfPacketInfo make_command_pkt(uint32_t src, uint32_t dst, uint8_t cmd) {
     RfPacketInfo pkt{};
     pkt.timestamp_ms = esphome::millis();
     pkt.src = src;
     pkt.dst = dst;
     pkt.type = pkt::msg_type::COMMAND;
     pkt.command = cmd;
-    pkt.echo = echo;
     pkt.channel = 4;
     pkt.rssi = -55.0f;
     return pkt;
@@ -256,6 +255,12 @@ TEST_F(DeviceRegistryTest, SlotExhaustion_ReturnsNull) {
     EXPECT_EQ(registry_.register_device(make_cover_config(0xFFFFFF)), nullptr);
 }
 
+TEST_F(DeviceRegistryTest, RegisterDevice_RejectsWhenNvsEnabled) {
+    registry_.set_nvs_enabled(true);
+    EXPECT_EQ(registry_.register_device(make_cover_config(0xA831E5)), nullptr);
+    EXPECT_EQ(registry_.count_active(), 0u);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMMAND DISPATCH — Cover
 // These test the centralized command entry points that ALL adapters call.
@@ -298,15 +303,56 @@ TEST_F(DeviceRegistryTest, CoverDown_TracksLastDirection) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// COMMAND DISPATCH — Request Check
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_F(DeviceRegistryTest, RequestCheck_EnqueuesSingleCheck) {
+    auto *dev = add_cover();
+    registry_.request_check(*dev);
+
+    EXPECT_EQ(dev->sender.queue_size(), 1u);
+    auto &cover = std::get<CoverDevice>(dev->logic);
+    EXPECT_TRUE(cover.poll.awaiting_response);
+}
+
+TEST_F(DeviceRegistryTest, RequestCheck_InactiveDeviceIsNoOp) {
+    auto *dev = add_cover();
+    dev->active = false;
+    registry_.request_check(*dev);
+
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+}
+
+TEST_F(DeviceRegistryTest, CoverCommand_CheckDelegatesToRequestCheck) {
+    auto *dev = add_cover();
+    registry_.command_cover(*dev, pkt::command::CHECK);
+
+    // Should produce exactly 1 CHECK (via request_check), not 2
+    EXPECT_EQ(dev->sender.queue_size(), 1u);
+    auto &cover = std::get<CoverDevice>(dev->logic);
+    EXPECT_TRUE(cover.poll.awaiting_response);
+    // FSM should be unchanged (CHECK is not a movement command)
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Idle>(cover.state));
+}
+
+TEST_F(DeviceRegistryTest, LightCommand_CheckDelegatesToRequestCheck) {
+    auto *dev = add_light();
+    registry_.command_light(*dev, pkt::command::CHECK);
+
+    EXPECT_EQ(dev->sender.queue_size(), 1u);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // COMMAND DISPATCH — Set Position
 // ═══════════════════════════════════════════════════════════════════════════════
 
 TEST_F(DeviceRegistryTest, SetPosition_IntermediateTarget) {
     auto *dev = add_cover();
-    registry_.set_cover_position(*dev, 0.5f);
+    // Use 0.75 (not 0.5) — boot position is Idle{0.5}, so set_position(0.5) would be a no-op
+    registry_.set_cover_position(*dev, 0.75f);
 
     auto &cover = std::get<CoverDevice>(dev->logic);
-    EXPECT_FLOAT_EQ(cover.target_position, 0.5f);
+    EXPECT_FLOAT_EQ(cover.target_position, 0.75f);
     EXPECT_TRUE(std::holds_alternative<cover_sm::Opening>(cover.state));
 }
 
@@ -408,40 +454,52 @@ TEST_F(DeviceRegistryTest, RfStatus_TiltSetAndClearedByMovement) {
     EXPECT_FALSE(std::get<CoverDevice>(dev->logic).tilted);
 }
 
-TEST_F(DeviceRegistryTest, RfStatus_NotifiesEvenWhenFsmUnchanged) {
-    // Design decision: every status packet notifies adapters (for RSSI freshness).
-    // If accidentally changed to "only on FSM change", RSSI stops updating.
+TEST_F(DeviceRegistryTest, RfStatus_DuplicateStateByte_StillPublishesRssiChange) {
+    // Same state byte but different RSSI → snapshot diff catches the RSSI change.
+    // No premature gating in dispatch_status_; the diff handles dedup.
     auto *dev = add_cover();
     registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP), mock_time_.millis());
     adapter_.clear();
 
     registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP, -40.0f), mock_time_.millis());
 
+    // RSSI changed → adapter should be notified
     EXPECT_GE(adapter_.state_changed.size(), 1u);
     EXPECT_FLOAT_EQ(dev->rf.last_rssi, -40.0f);
+}
+
+TEST_F(DeviceRegistryTest, RfStatus_IdenticalPacket_Suppressed) {
+    // Truly identical packet (same state, same RSSI) → diff sees no changes → suppressed.
+    add_cover();
+    registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP, -50.0f), mock_time_.millis());
+    adapter_.clear();
+
+    registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP, -50.0f), mock_time_.millis());
+
+    EXPECT_EQ(adapter_.state_changed.size(), 0u);
+}
+
+TEST_F(DeviceRegistryTest, RfStatus_NotifiesOnDifferentStateByte) {
+    // Different state byte = real state change, must notify adapters.
+    add_cover();
+    registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP), mock_time_.millis());
+    adapter_.clear();
+
+    registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::MOVING_DOWN), mock_time_.millis());
+
+    EXPECT_GE(adapter_.state_changed.size(), 1u);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // RF DISPATCH — Echo filtering and remote auto-discovery
 // ═══════════════════════════════════════════════════════════════════════════════
 
-TEST_F(DeviceRegistryTest, RfCommand_EchoFiltered) {
-    registry_.set_nvs_enabled(true);
-    add_cover(0xA831E5);
-    adapter_.clear();
-
-    // Echo = our own TX bounced back. Must not trigger remote discovery.
-    auto rf = make_command_pkt(0xF0D008, 0xA831E5, pkt::command::UP, /*echo=*/true);
-    registry_.on_rf_packet(rf, mock_time_.millis());
-    EXPECT_EQ(adapter_.added.size(), 0u);
-}
-
 TEST_F(DeviceRegistryTest, RfCommand_DiscoversRemoteEphemerally) {
-    registry_.set_nvs_enabled(true);
     add_cover(0xA831E5);
+    registry_.set_nvs_enabled(true);
     adapter_.clear();
 
-    auto rf = make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP, /*echo=*/false);
+    auto rf = make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP);
     registry_.on_rf_packet(rf, mock_time_.millis());
 
     ASSERT_EQ(adapter_.added.size(), 1u);
@@ -456,22 +514,22 @@ TEST_F(DeviceRegistryTest, RfCommand_NativeMode_NoDiscovery) {
     add_cover(0xA831E5);
     adapter_.clear();
 
-    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP, false),
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP),
                            mock_time_.millis());
     EXPECT_EQ(registry_.find(0xBBBBBB, DeviceType::REMOTE), nullptr);
 }
 
 TEST_F(DeviceRegistryTest, RfCommand_UpdatesExistingRemote) {
-    registry_.set_nvs_enabled(true);
     add_cover(0xA831E5);
+    registry_.set_nvs_enabled(true);
 
     // First packet discovers remote
-    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP, false),
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP),
                            mock_time_.millis());
     adapter_.clear();
 
     // Second packet updates it — must NOT create a duplicate (would fill 48 slots)
-    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::DOWN, false),
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::DOWN),
                            mock_time_.millis());
 
     EXPECT_EQ(adapter_.added.size(), 0u);
@@ -542,4 +600,168 @@ TEST_F(DeviceRegistryTest, PollStagger_AssignsIncreasingOffsets) {
 
     EXPECT_EQ(c1.poll.offset_ms, 0u);
     EXPECT_EQ(c2.poll.offset_ms, pkt::timing::POLL_OFFSET_SPACING);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DIFF FUNCTIONS — verify change detection logic
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST(DiffCoverTest, FirstDiff_DefaultPublished_ReturnsAllFlags) {
+    CoverDevice::Published pub{};  // defaults: position_pct=-1, ha_state=nullptr, etc.
+    CoverStateSnapshot snap{
+        .position = 0.0f,
+        .ha_state = "closed",
+        .operation = cover_sm::Operation::IDLE,
+        .tilted = false,
+        .is_problem = false,
+        .problem_type = "none",
+        .rssi = -50.0f,
+        .state_string = "bottom",
+        .command_source = "unknown",
+        .device_class = "shutter",
+    };
+
+    uint16_t changes = diff_and_update_cover(snap, pub);
+
+    // Every field should differ from defaults
+    EXPECT_NE(changes & state_change::POSITION, 0);
+    EXPECT_NE(changes & state_change::HA_STATE, 0);
+    EXPECT_NE(changes & state_change::STATE_STRING, 0);
+    EXPECT_NE(changes & state_change::RSSI, 0);
+    EXPECT_NE(changes & state_change::COMMAND_SOURCE, 0);
+    EXPECT_NE(changes & state_change::PROBLEM, 0);
+}
+
+TEST(DiffCoverTest, IdenticalSnapshot_ReturnsZero) {
+    CoverDevice::Published pub{};
+    CoverStateSnapshot snap{
+        .position = 0.5f,
+        .ha_state = "stopped",
+        .operation = cover_sm::Operation::IDLE,
+        .tilted = false,
+        .is_problem = false,
+        .problem_type = "none",
+        .rssi = -40.0f,
+        .state_string = "intermediate",
+        .command_source = "hub",
+        .device_class = "shutter",
+    };
+
+    // First diff populates the cache
+    diff_and_update_cover(snap, pub);
+    // Second diff with same values
+    uint16_t changes = diff_and_update_cover(snap, pub);
+
+    EXPECT_EQ(changes, 0);
+}
+
+TEST(DiffCoverTest, SingleFieldChange_ReturnsOnlyThatFlag) {
+    CoverDevice::Published pub{};
+    CoverStateSnapshot snap{
+        .position = 0.5f,
+        .ha_state = "stopped",
+        .operation = cover_sm::Operation::IDLE,
+        .tilted = false,
+        .is_problem = false,
+        .problem_type = "none",
+        .rssi = -40.0f,
+        .state_string = "intermediate",
+        .command_source = "hub",
+        .device_class = "shutter",
+    };
+
+    // Populate cache
+    diff_and_update_cover(snap, pub);
+
+    // Change only position
+    snap.position = 0.52f;
+    uint16_t changes = diff_and_update_cover(snap, pub);
+
+    EXPECT_NE(changes & state_change::POSITION, 0);
+    // No other flags should be set
+    EXPECT_EQ(changes & ~state_change::POSITION, 0);
+}
+
+TEST(DiffCoverTest, RssiRounding_SameRounded_NoFlag) {
+    CoverDevice::Published pub{};
+    CoverStateSnapshot snap{
+        .position = 0.0f,
+        .ha_state = "closed",
+        .operation = cover_sm::Operation::IDLE,
+        .tilted = false,
+        .is_problem = false,
+        .problem_type = "none",
+        .rssi = -40.3f,
+        .state_string = "bottom",
+        .command_source = "hub",
+        .device_class = "shutter",
+    };
+
+    diff_and_update_cover(snap, pub);
+
+    // Change RSSI slightly — rounds to same integer
+    snap.rssi = -40.4f;
+    uint16_t changes = diff_and_update_cover(snap, pub);
+
+    // RSSI rounds to -40 in both cases → no change
+    EXPECT_EQ(changes & state_change::RSSI, 0);
+}
+
+TEST(DiffLightTest, FirstDiff_DefaultPublished_ReturnsAllFlags) {
+    LightDevice::Published pub{};
+    LightStateSnapshot snap{
+        .is_on = false,
+        .brightness = 0.0f,
+        .is_problem = false,
+        .problem_type = "none",
+        .rssi = -50.0f,
+        .state_string = "bottom",
+        .command_source = "unknown",
+    };
+
+    uint16_t changes = diff_and_update_light(snap, pub);
+
+    EXPECT_NE(changes & state_change::RSSI, 0);
+    EXPECT_NE(changes & state_change::STATE_STRING, 0);
+    EXPECT_NE(changes & state_change::COMMAND_SOURCE, 0);
+    EXPECT_NE(changes & state_change::PROBLEM, 0);
+}
+
+TEST(DiffLightTest, IdenticalSnapshot_ReturnsZero) {
+    LightDevice::Published pub{};
+    LightStateSnapshot snap{
+        .is_on = true,
+        .brightness = 0.8f,
+        .is_problem = false,
+        .problem_type = "none",
+        .rssi = -45.0f,
+        .state_string = "on",
+        .command_source = "hub",
+    };
+
+    diff_and_update_light(snap, pub);
+    uint16_t changes = diff_and_update_light(snap, pub);
+
+    EXPECT_EQ(changes, 0);
+}
+
+TEST(DiffLightTest, BrightnessChange_ReturnsBrightnessFlag) {
+    LightDevice::Published pub{};
+    LightStateSnapshot snap{
+        .is_on = true,
+        .brightness = 0.5f,
+        .is_problem = false,
+        .problem_type = "none",
+        .rssi = -45.0f,
+        .state_string = "on",
+        .command_source = "hub",
+    };
+
+    diff_and_update_light(snap, pub);
+
+    snap.brightness = 0.7f;
+    uint16_t changes = diff_and_update_light(snap, pub);
+
+    EXPECT_NE(changes & state_change::BRIGHTNESS, 0);
+    EXPECT_EQ(changes & ~state_change::BRIGHTNESS, 0);
 }

@@ -1,0 +1,182 @@
+esphome:
+  name: "lilygo-t-embed-api"
+  platformio_options:
+    board_build.mcu: esp32s3
+    board_build.name: "LilyGO T-Embed ESP32-S3"
+    board_build.upload.flash_size: "16MB"
+    board_build.upload.maximum_size: 16777216
+    board_build.vendor: "LilyGO"
+    board_build.f_flash: 80000000L
+    board_build.arduino.memory_type: qio_opi
+  on_boot:
+    priority: 800
+    then:
+      - switch.turn_on: power_on
+      - switch.turn_on: cc1101_power_on
+      # SW1:1  SW0:0 --- 315MHz
+      # SW1:0  SW0:1 --- 868/915MHz
+      # SW1:1  SW0:1 --- 434MHz
+      - switch.turn_off: rf_sw1
+      - switch.turn_on: rf_sw0
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_VFS_SUPPORT_SELECT: "y"
+  flash_size: 16MB
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+  manual_ip:
+    static_ip: !secret static_ip_lilygo
+    gateway: !secret gateway
+    subnet: !secret subnet
+
+logger:
+  level: VERBOSE
+  logs:
+    elero: VERBOSE
+
+api:
+
+ota:
+  platform: esphome
+
+substitutions:
+  friendly_name: "LilyGO T-Embed CC1101"
+
+elero_web:
+  port: 80
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+switch:
+  - platform: gpio
+    pin:
+      number: GPIO15
+      mode:
+        output: True
+    name: "${friendly_name} CC1101 Power On"
+    id: cc1101_power_on
+    restore_mode: ALWAYS_ON
+  - platform: gpio
+    pin:
+      number: GPIO46
+      mode:
+        output: True
+    name: "${friendly_name} Power On"
+    id: power_on
+    restore_mode: ALWAYS_ON
+  # SW1:1  SW0:0 --- 315MHz
+  # SW1:0  SW0:1 --- 868/915MHz
+  # SW1:1  SW0:1 --- 434MHz
+  - platform: gpio
+    pin: GPIO47
+    id: rf_sw1
+    restore_mode: ALWAYS_OFF
+  - platform: gpio
+    pin: GPIO48
+    id: rf_sw0
+    restore_mode: ALWAYS_ON
+
+spi:
+  clk_pin: GPIO11     # BOARD_SPI_SCK
+  mosi_pin: GPIO9     # BOARD_SPI_MOSI
+  miso_pin: GPIO10    # BOARD_SPI_MISO
+
+elero:
+  cs_pin: GPIO12      # BOARD_LORA_CS
+  gdo0_pin: GPIO3     # BOARD_LORA_IO0
+
+# Native API mode — devices defined in YAML
+cover:
+  - name: "Windowbank"
+    platform: elero
+    dst_address: 0x803238
+    channel: 4
+    src_address: 0x4fca30
+    close_duration: 64s
+    open_duration: 70s
+    supports_tilt: True
+  - name: "Terrasse Fix-Glas"
+    platform: elero
+    dst_address: 0x7e3238
+    channel: 1
+    src_address: 0x4fca30
+    close_duration: 64s
+    open_duration: 70s
+    supports_tilt: True
+  - name: "Terrasse"
+    platform: elero
+    dst_address: 0x313238
+    channel: 2
+    src_address: 0x4fca30
+    close_duration: 64s
+    open_duration: 70s
+    supports_tilt: True
+  - name: "Terrasse Küche"
+    platform: elero
+    dst_address: 0x413238
+    channel: 3
+    src_address: 0x4fca30
+    close_duration: 64s
+    open_duration: 70s
+    supports_tilt: True
+  - name: "Speis"
+    platform: elero
+    dst_address: 0xe73438
+    channel: 5
+    src_address: 0x4fca30
+    supports_tilt: True
+  - name: "Gang OG"
+    platform: elero
+    dst_address: 0xcc3438
+    channel: 6
+    src_address: 0x4fca30
+    supports_tilt: True
+    open_duration: 66s
+    close_duration: 60s
+  - name: "Lichthof OG"
+    platform: elero
+    dst_address: 0x333238
+    channel: 7
+    src_address: 0x4fca30
+    close_duration: 64s
+    open_duration: 70s
+    supports_tilt: True
+  - name: "Schlafzimmer"
+    platform: elero
+    dst_address: 0x4d5748
+    channel: 33
+    src_address: 0x198c53
+    supports_tilt: True
+    open_duration: 68s
+    close_duration: 62s
+  - name: "Badezimmer"
+    platform: elero
+    dst_address: 0xe13438
+    channel: 2
+    src_address: 0x198c53
+  - name: "Zimmer Malou"
+    platform: elero
+    dst_address: 0x7f3238
+    channel: 17
+    src_address: 0x0ea753
+    supports_tilt: True
+    open_duration: 68s
+    close_duration: 62s
+  - name: "Zimmer Anouk"
+    platform: elero
+    dst_address: 0x893238
+    channel: 17
+    src_address: 0x17a753
+    supports_tilt: True
+    open_duration: 68s
+    close_duration: 62s

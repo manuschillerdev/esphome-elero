@@ -117,10 +117,15 @@ void Elero::decode_fifo_packets_(size_t fifo_count) {
 #endif
 }
 
-// ─── ISR: dual signal — atomic flag + task notification ──────────────────────
+// ─── ISR: route IRQ to correct flag based on radio mode ─────────────────────
 void IRAM_ATTR Elero::interrupt(Elero *arg) {
-  // Set atomic flag for TX state machine's WAIT_TX check
-  arg->received_.store(true, std::memory_order_release);
+  // GDO0/DIO1 fires for both RX (packet received) and TX (transmission complete).
+  // Route to the correct flag based on current half-duplex mode.
+  if (arg->driver_ && arg->driver_->mode() == RadioMode::TX) {
+    arg->tx_done_.store(true, std::memory_order_release);
+  } else {
+    arg->rx_ready_.store(true, std::memory_order_release);
+  }
 
 #ifdef USE_ESP32
   // Wake RF task immediately (bypasses 1ms sleep)
@@ -154,8 +159,8 @@ void Elero::setup() {
     return;
   }
 
-  // Pass ISR flag to driver and initialize
-  this->driver_->set_irq_flag(&this->received_);
+  // Pass ISR flags to driver and initialize
+  this->driver_->set_irq_flags(&this->rx_ready_, &this->tx_done_);
   if (!this->driver_->init()) {
     ESP_LOGE(TAG, "Radio driver initialization failed");
     this->mark_failed();
@@ -170,7 +175,8 @@ void Elero::setup() {
 
   // Clear any IRQs that fired during init() before the ISR was attached.
   // For SX1262: DIO1 goes HIGH on preamble detection during init → rising edge missed.
-  this->received_.store(false);
+  this->rx_ready_.store(false, std::memory_order_release);
+  this->tx_done_.store(false, std::memory_order_release);
   this->driver_->recover();  // Clears hardware IRQ flags + re-enters RX
 
   // New architecture: device registry lifecycle
@@ -188,7 +194,7 @@ void Elero::setup() {
 #ifdef USE_ESP32
   // ─── Create FreeRTOS queues and spawn RF task on Core 0 ────────────────────
   this->rx_queue_handle_ = xQueueCreate(16, sizeof(RfPacketInfo));
-  this->tx_queue_handle_ = xQueueCreate(4, sizeof(RfTaskRequest));
+  this->tx_queue_handle_ = xQueueCreate(8, sizeof(RfTaskRequest));
   this->tx_done_queue_handle_ = xQueueCreate(4, sizeof(TxResult));
 
   if (this->rx_queue_handle_ == nullptr ||
@@ -228,6 +234,15 @@ void Elero::rf_task_func_(void *arg) {
   bool tx_in_progress = false;
 
   for (;;) {
+    // If driver signaled unrecoverable failure, stop all radio operations.
+    // Only feed watchdog and yield — the hub's loop() will see failed() and
+    // can mark_failed() on the ESPHome component.
+    if (self->driver_->failed()) {
+      esp_task_wdt_reset();
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+      continue;
+    }
+
     uint32_t now = millis();
 
     // 1. Process TX requests from main loop (only when radio is idle)
@@ -237,7 +252,6 @@ void Elero::rf_task_func_(void *arg) {
         switch (req.type) {
           case RfTaskRequest::Type::TX:
             self->build_tx_packet_(req.cmd);
-            self->record_tx_(req.cmd.counter);
             if (self->driver_->load_and_transmit(self->msg_tx_, self->msg_tx_[0] + 1)) {
               self->tx_owner_ = req.client;
               tx_in_progress = true;
@@ -256,7 +270,8 @@ void Elero::rf_task_func_(void *arg) {
               xQueueSend(self->tx_done_queue_handle_, &r, 0);
               tx_in_progress = false;
             }
-            self->received_.store(false);
+            self->rx_ready_.store(false, std::memory_order_release);
+            self->tx_done_.store(false, std::memory_order_release);
             self->freq2_.store(req.freq.f2);
             self->freq1_.store(req.freq.f1);
             self->freq0_.store(req.freq.f0);
@@ -294,10 +309,10 @@ void Elero::rf_task_func_(void *arg) {
       }
     }
 
-    // 3. Drain FIFO if GDO0 interrupt fired
+    // 3. Drain FIFO if GDO0 interrupt fired (RX mode only — has_data guards this)
     if (self->driver_->has_data()) {
-      // Clear IRQ flag
-      self->received_.exchange(false);
+      // Clear RX flag
+      self->rx_ready_.store(false, std::memory_order_release);
       // Read FIFO bytes from driver
       size_t count = self->driver_->read_fifo(self->msg_rx_, sizeof(self->msg_rx_));
       if (count > 0) {
@@ -357,20 +372,6 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
   this->freq0_.store(freq0);
   ESP_LOGI(TAG, "Frequency change queued: freq2=0x%02x freq1=0x%02x freq0=0x%02x", freq2, freq1, freq0);
 #endif
-}
-
-void Elero::record_tx_(uint8_t counter) {
-  this->tx_history_[this->tx_history_idx_] = counter;
-  this->tx_history_idx_ = (this->tx_history_idx_ + 1) % TX_HISTORY_SIZE;
-}
-
-bool Elero::is_own_echo_(uint8_t counter) const {
-  for (size_t i = 0; i < TX_HISTORY_SIZE; i++) {
-    if (this->tx_history_[i] == counter) {
-      return true;
-    }
-  }
-  return false;
 }
 
 void Elero::build_tx_packet_(const EleroCommand &cmd) {
@@ -459,7 +460,6 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
   bool is_btn = is_button_packet(r.type);
   uint8_t command = (is_cmd || is_btn) ? r.payload[payload_offset::COMMAND] : 0;
   uint8_t state = is_status_pkt ? r.payload[payload_offset::STATE] : 0;
-  bool echo = is_cmd && this->is_own_echo_(r.counter);
 
   // Build RfPacketInfo
   RfPacketInfo pkt{};
@@ -471,7 +471,6 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
   pkt.type2 = r.type2;
   pkt.command = command;
   pkt.state = state;
-  pkt.echo = echo;
   pkt.cnt = r.counter;
   pkt.rssi = r.rssi;
   pkt.lqi = r.lqi;
@@ -531,12 +530,11 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
              pkt.rssi, pkt.lqi, pkt.crc_ok ? "true" : "false");
   } else if (is_cmd) {
     ESP_LOGD(TAG_RF,
-             "{\"ts_ms\":%lu,\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\",\"echo\":%s,"
+             "{\"ts_ms\":%lu,\"dir\":\"rx\",\"blind\":\"%s\",\"cmd_name\":\"%s\","
              "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
              "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\",\"command\":\"0x%02x\","
              "\"rssi\":%.1f,\"lqi\":%d,\"crc_ok\":%s}",
              (unsigned long) pkt.timestamp_ms, blind_buf, elero_command_to_string(pkt.command),
-             pkt.echo ? "true" : "false",
              pkt.raw_len - PACKET_TOTAL_OVERHEAD, pkt.cnt, pkt.type, pkt.type2, pkt.hop,
              pkt.channel, pkt.src, pkt.dst, pkt.command,
              pkt.rssi, pkt.lqi, pkt.crc_ok ? "true" : "false");

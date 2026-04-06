@@ -2,6 +2,7 @@
 /// @brief DeviceRegistry implementation — CRUD, NVS, RF dispatch, loop, observer notification.
 
 #include "device_registry.h"
+#include "state_snapshot.h"
 #include "elero.h"
 #include "overloaded.h"
 #include "esphome/core/log.h"
@@ -41,14 +42,25 @@ void DeviceRegistry::restore_all() {
         }
     }
 
-    // Notify adapters of all restored devices
+    // Notify adapters (discovery configs, subscriptions) and queue one CHECK
+    // per cover to get real state from each blind. STATUS responses drive
+    // state through the normal dispatch_status_ → notify_state_changed_ pipeline.
+    uint32_t now = millis();
+    uint32_t cover_idx = 0;
     for (auto &dev : slots_) {
         if (dev.active) {
             notify_added_(dev);
+            if (dev.is_cover()) {
+                (void) dev.sender.enqueue(packet::command::CHECK,
+                                          packet::limits::CHECK_PACKETS,
+                                          packet::msg_type::COMMAND);
+                auto &cover = std::get<CoverDevice>(dev.logic);
+                cover.poll.offset_ms = cover_idx * packet::timing::POLL_OFFSET_SPACING;
+                cover.poll.on_poll_sent(now);
+                ++cover_idx;
+            }
         }
     }
-
-    assign_poll_stagger_();
 
     ESP_LOGI(TAG, "Restored %zu devices from NVS (%zu covers, %zu lights, %zu remotes)",
              restored,
@@ -73,6 +85,14 @@ void DeviceRegistry::setup_adapters() {
 // ═════════════════════════════════════════════════════════════════════════════
 
 Device *DeviceRegistry::register_device(const NvsDeviceConfig &config) {
+    if (nvs_enabled_) {
+        ESP_LOGW(TAG, "Ignoring YAML-defined %s '%s' at 0x%06x — NVS mode is active, "
+                       "devices are managed at runtime via the web UI or MQTT. "
+                       "Remove cover/light blocks from YAML or disable elero_mqtt/elero_nvs.",
+                 device_type_str(config.type), config.name, config.dst_address);
+        return nullptr;
+    }
+
     Device *existing = find(config.dst_address, config.type);
     if (existing) {
         update_device_config(*existing, config);
@@ -90,6 +110,7 @@ Device *DeviceRegistry::register_device(const NvsDeviceConfig &config) {
     init_device(*slot, config);
     if (config.type == DeviceType::COVER) assign_poll_stagger_();
     notify_added_(*slot);
+    notify_state_changed_(*slot, millis());
     ESP_LOGI(TAG, "Registered %s '%s' at 0x%06x (slot %zu)",
              device_type_str(config.type), config.name,
              config.dst_address, slot_index_(*slot));
@@ -120,6 +141,7 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
     if (config.type == DeviceType::COVER) assign_poll_stagger_();
     persist(*slot);
     notify_added_(*slot);
+    notify_state_changed_(*slot, millis());
     ESP_LOGI(TAG, "Added %s '%s' at 0x%06x (slot %zu)",
              device_type_str(config.type), config.name,
              config.dst_address, slot_index_(*slot));
@@ -175,22 +197,27 @@ void DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte, CommandSource 
     uint32_t now = millis();
     cover.last_command_source = src;
 
+    if (cmd_byte == packet::command::CHECK) {
+        request_check(dev);
+        return;
+    }
+
     if (cmd_byte == packet::command::STOP) {
         dev.sender.clear_queue();
         (void) dev.sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::COMMAND);
-        (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+        (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
         cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
         cover.target_position = cover_sm::NO_TARGET;
     } else {
         if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
         if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
         (void) dev.sender.enqueue(cmd_byte);
-        (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+        (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
         cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
         cover.poll.on_command_sent(now);
     }
 
-    notify_state_changed_(dev);
+    notify_state_changed_(dev, now);
 }
 
 void DeviceRegistry::set_cover_position(Device &dev, float target, CommandSource src) {
@@ -216,13 +243,13 @@ void DeviceRegistry::set_cover_position(Device &dev, float target, CommandSource
         cover.target_position = target;
     }
     (void) dev.sender.enqueue(cmd);
-    (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+    (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
     cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
     if (cmd == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
     if (cmd == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
     cover.poll.on_command_sent(now);
 
-    notify_state_changed_(dev);
+    notify_state_changed_(dev, now);
 }
 
 void DeviceRegistry::command_cover_tilt(Device &dev, CommandSource src) {
@@ -234,11 +261,11 @@ void DeviceRegistry::command_cover_tilt(Device &dev, CommandSource src) {
     cover.last_command_source = src;
 
     (void) dev.sender.enqueue(packet::command::TILT);
-    (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+    (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
     cover.state = cover_sm::on_command(cover.state, packet::command::TILT, now, ctx);
     cover.poll.on_command_sent(now);
 
-    notify_state_changed_(dev);
+    notify_state_changed_(dev, now);
 }
 
 void DeviceRegistry::command_light(Device &dev, uint8_t cmd_byte, CommandSource src) {
@@ -248,6 +275,11 @@ void DeviceRegistry::command_light(Device &dev, uint8_t cmd_byte, CommandSource 
     auto ctx = light_context(dev.config);
     uint32_t now = millis();
     light.last_command_source = src;
+
+    if (cmd_byte == packet::command::CHECK) {
+        request_check(dev);
+        return;
+    }
 
     if (cmd_byte == packet::command::DOWN) {
         light.state = light_sm::on_turn_off(light.state);
@@ -260,7 +292,7 @@ void DeviceRegistry::command_light(Device &dev, uint8_t cmd_byte, CommandSource 
         (void) dev.sender.enqueue(cmd_byte);
     }
 
-    notify_state_changed_(dev);
+    notify_state_changed_(dev, now);
 }
 
 void DeviceRegistry::set_light_brightness(Device &dev, float brightness, CommandSource src) {
@@ -289,7 +321,16 @@ void DeviceRegistry::set_light_brightness(Device &dev, float brightness, Command
         }
     }
 
-    notify_state_changed_(dev);
+    notify_state_changed_(dev, now);
+}
+
+void DeviceRegistry::request_check(Device &dev) {
+    if (!dev.active) return;
+    (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
+    if (dev.is_cover()) {
+        auto &cover = std::get<CoverDevice>(dev.logic);
+        cover.poll.on_poll_sent(millis());
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -309,7 +350,7 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
             dev->rf.last_state_raw = pkt.state;
             dispatch_status_(*dev, pkt.state, now);
         }
-    } else if (packet::is_command_packet(pkt.type) && !pkt.echo) {
+    } else if (packet::is_command_packet(pkt.type)) {
         // Remote commands are passive — we only auto-discover the remote.
         // The blind's status response (via dispatch_status_) handles state.
         track_remote_(pkt, now);
@@ -317,17 +358,13 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
 }
 
 void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now) {
-    bool changed = false;
-
     std::visit(overloaded{
         [&](CoverDevice &cover) {
             auto ctx = cover_context(dev.config);
-            auto old_idx = cover.state.index();
             cover.state = cover_sm::on_rf_status(cover.state, state_byte, now, ctx);
             cover.poll.on_rf_received(now);
 
             // Track tilt state from RF
-            bool was_tilted = cover.tilted;
             if (state_byte == packet::state::TILT ||
                 state_byte == packet::state::TOP_TILT ||
                 state_byte == packet::state::BOTTOM_TILT) {
@@ -340,24 +377,18 @@ void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t 
                        state_byte == packet::state::START_MOVING_DOWN) {
                 cover.tilted = false;
             }
-
-            changed = (cover.state.index() != old_idx) || (cover.tilted != was_tilted);
         },
         [&](LightDevice &light) {
             auto ctx = light_context(dev.config);
-            auto old_idx = light.state.index();
             light.state = light_sm::on_rf_status(light.state, state_byte, now, ctx);
-            changed = (light.state.index() != old_idx);
         },
         [](RemoteDevice &) {},
     }, dev.logic);
 
-    // Always notify on status packets — even when FSM state doesn't change,
-    // adapters need to publish updated RSSI, last_seen, and other rf_meta.
-    notify_state_changed_(dev);
-    if (changed) {
-        dev.last_notify_ms = now;  // Prevent duplicate publish from position throttle
-    }
+    // Always run through the snapshot→diff→publish pipeline on STATUS.
+    // The diff handles dedup: if nothing changed (same RSSI, same state),
+    // changes=0 and adapters aren't notified. No premature gating here.
+    notify_state_changed_(dev, now);
 }
 
 
@@ -376,7 +407,7 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
         remote.last_channel = pkt.channel;
         // Only broadcast state for enabled remotes (disabled = unpublished)
         if (existing->config.is_enabled()) {
-            notify_state_changed_(*existing);
+            notify_state_changed_(*existing, now);
         }
         return;
     }
@@ -432,21 +463,27 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
     auto ctx = cover_context(dev.config);
 
     // 1. Tick — check movement timeout and post-stop cooldown
+    bool was_stopping = std::holds_alternative<cover_sm::Stopping>(cover.state);
     auto old_idx = cover.state.index();
     cover.state = cover_sm::on_tick(cover.state, now, ctx);
     bool state_type_changed = (cover.state.index() != old_idx);
 
-    // 2. Poll if due
+    // 2. Poll if due — single packet suffices (blind is mains-powered, always
+    //    listening). If missed, retry via normal poll interval.
     bool moving = cover_sm::is_moving(cover.state);
     if (cover.poll.should_poll(now, moving)) {
-        // Single packet for movement polls (blind responds to each packet,
-        // if missed we retry in 2s). Full 3 packets for idle polls (less frequent).
-        uint8_t packets = moving ? 1 : packet::button::PACKETS;
-        (void) dev.sender.enqueue(packet::command::CHECK, packets, packet::msg_type::COMMAND);
+        (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
         cover.poll.on_poll_sent(now);
     }
 
-    // 3. Intermediate position stop — if cover has position tracking and
+    // 3. Post-stop verification — after Stopping cooldown expires, verify the
+    //    blind's actual resting position (frozen estimate may drift).
+    if (state_type_changed && was_stopping && std::holds_alternative<cover_sm::Idle>(cover.state)) {
+        (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
+        cover.poll.on_poll_sent(now);
+    }
+
+    // 4. Intermediate position stop — if cover has position tracking and
     //    has reached its target position, stop it.
     if (moving && cover_sm::has_position_tracking(ctx) && cover.target_position >= cover_sm::POSITION_CLOSED) {
         float pos = cover_sm::position(cover.state, now, ctx);
@@ -460,27 +497,25 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
         if (at_target && cover.target_position > cover_sm::POSITION_CLOSED && cover.target_position < cover_sm::POSITION_OPEN) {
             dev.sender.clear_queue();
             (void) dev.sender.enqueue(packet::command::STOP, packet::button::PACKETS, packet::msg_type::COMMAND);
-            (void) dev.sender.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
+            (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
             cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
             state_type_changed = true;
             cover.target_position = cover_sm::NO_TARGET;  // Clear target
         }
     }
 
-    // 4. Process command queue
+    // 5. Process command queue
     if (hub_) {
         dev.sender.process_queue(now, hub_, "elero.cover");
     }
 
-    // 5. Notify state changes
+    // 6. Notify state changes
     if (state_type_changed) {
-        notify_state_changed_(dev);
-        dev.last_notify_ms = now;
+        notify_state_changed_(dev, now);
     } else if (moving &&
                (now - dev.last_notify_ms) >= packet::timing::PUBLISH_THROTTLE_MS) {
         // Throttled position updates during movement
-        notify_state_changed_(dev);
-        dev.last_notify_ms = now;
+        notify_state_changed_(dev, now);
     }
 }
 
@@ -506,12 +541,10 @@ void DeviceRegistry::loop_light_(Device &dev, LightDevice &light, uint32_t now) 
 
     // 4. Notify state changes
     if (state_type_changed) {
-        notify_state_changed_(dev);
-        dev.last_notify_ms = now;
+        notify_state_changed_(dev, now);
     } else if (light_sm::is_dimming(light.state) &&
                (now - dev.last_notify_ms) >= packet::timing::PUBLISH_THROTTLE_MS) {
-        notify_state_changed_(dev);
-        dev.last_notify_ms = now;
+        notify_state_changed_(dev, now);
     }
 }
 
@@ -572,8 +605,31 @@ void DeviceRegistry::notify_removed_(const Device &dev) {
     for (auto *a : adapters_) a->on_device_removed(dev);
 }
 
-void DeviceRegistry::notify_state_changed_(const Device &dev) {
-    for (auto *a : adapters_) a->on_state_changed(dev);
+void DeviceRegistry::notify_state_changed_(Device &dev, uint32_t now) {
+    uint16_t changes = 0;
+
+    if (dev.is_cover()) {
+        auto snap = compute_cover_snapshot(dev, now);
+        changes = diff_and_update_cover(snap, std::get<CoverDevice>(dev.logic).published);
+    } else if (dev.is_light()) {
+        auto snap = compute_light_snapshot(dev, now);
+        changes = diff_and_update_light(snap, std::get<LightDevice>(dev.logic).published);
+    } else if (dev.is_remote()) {
+        // Remotes have no Published cache — always notify
+        changes = state_change::ALL;
+    }
+
+    if (changes == 0) {
+        ESP_LOGVV(TAG, "0x%06x: notify suppressed (no changes)", dev.config.dst_address);
+        return;
+    }
+
+    ESP_LOGD(TAG, "0x%06x: publish [%s] (0x%04x)",
+             dev.config.dst_address, state_change_str(changes), changes);
+
+    dev.last_changes = changes;
+    dev.last_notify_ms = now;
+    for (auto *a : adapters_) a->on_state_changed(dev, changes);
 }
 
 void DeviceRegistry::notify_config_changed_(const Device &dev) {
@@ -582,6 +638,26 @@ void DeviceRegistry::notify_config_changed_(const Device &dev) {
 
 void DeviceRegistry::notify_rf_packet_(const RfPacketInfo &pkt) {
     for (auto *a : adapters_) a->on_rf_packet(pkt);
+}
+
+void DeviceRegistry::force_republish_all() {
+    uint32_t now = millis();
+    for (auto &dev : slots_) {
+        if (!dev.active) continue;
+        // Skip devices we've never heard from via RF — their FSM state is
+        // just the default (Idle{POSITION_CLOSED}), not reality. The boot
+        // CHECK poll will query them and real STATUS responses will publish.
+        if (dev.rf.last_seen_ms == 0) continue;
+
+        // Reset Published to sentinel defaults — the next diff will see everything
+        // as changed, recompute valid values, and notify adapters with ALL fields.
+        if (dev.is_cover()) {
+            std::get<CoverDevice>(dev.logic).published = {};
+        } else if (dev.is_light()) {
+            std::get<LightDevice>(dev.logic).published = {};
+        }
+        notify_state_changed_(dev, now);
+    }
 }
 
 void DeviceRegistry::assign_poll_stagger_() {

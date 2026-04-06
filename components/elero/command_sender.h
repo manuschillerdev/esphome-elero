@@ -185,6 +185,9 @@ class CommandSender : public TxClient {
     this->last_tx_time_ = 0;
 
     if (this->state_ == State::TX_PENDING) {
+      // Cancelled TX won't call advance_queue_, so bump the counter now
+      // to avoid the next command reusing the in-flight counter.
+      this->increase_counter_();
       this->cancelled_ = true;
     } else {
       this->state_ = State::IDLE;

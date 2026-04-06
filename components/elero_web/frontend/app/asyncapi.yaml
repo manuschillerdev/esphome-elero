@@ -74,6 +74,8 @@ channels:
         $ref: "#/components/messages/upsertDeviceMessage"
       removeDeviceMessage:
         $ref: "#/components/messages/removeDeviceMessage"
+      restartMessage:
+        $ref: "#/components/messages/restartMessage"
 
 operations:
   receiveConfig:
@@ -172,6 +174,17 @@ operations:
     messages:
       - $ref: "#/channels/eleroWs/messages/removeDeviceMessage"
 
+  sendRestart:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Restart the ESP32 device
+    description: |
+      Triggers a safe reboot of the ESP32. Used in `native_nvs` mode to apply
+      NVS config changes (added/removed devices) to the ESPHome native API.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/restartMessage"
+
 components:
   messages:
     configEvent:
@@ -253,6 +266,14 @@ components:
       contentType: application/json
       payload:
         $ref: "#/components/schemas/RemoveDevicePayload"
+
+    restartMessage:
+      name: restart
+      title: Restart Message
+      summary: Trigger a safe reboot of the ESP32
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RestartPayload"
 
   schemas:
     # ── Server → Client Envelopes ──
@@ -543,7 +564,7 @@ components:
     RfData:
       type: object
       additionalProperties: false
-      required: [t, src, dst, channel, type, type2, command, state, echo, cnt, rssi, hop, raw]
+      required: [t, src, dst, channel, type, type2, command, state, cnt, rssi, hop, raw]
       properties:
         t:
           type: integer
@@ -607,9 +628,6 @@ components:
             - `0x0f` — bottom + tilted / light off
             - `0x10` — light on
           examples: ["0x01"]
-        echo:
-          type: boolean
-          description: True if this command packet matches a recent TX from this gateway (mesh echo)
         cnt:
           type: integer
           description: Rolling counter value from packet (0-255)
@@ -719,9 +737,7 @@ components:
           format: float
           description: Cover position (0.0 = closed, 1.0 = open). Cover only.
         ha_state:
-          type: string
-          enum: [open, closed, opening, closing, stopped]
-          description: HA-compatible cover state. Cover only.
+          $ref: "#/components/schemas/HaCoverState"
         tilted:
           type: boolean
           description: Whether the cover is tilted. Cover only.
@@ -742,9 +758,7 @@ components:
           type: boolean
           description: Whether the device is in a problem state (blocking, overheated, timeout)
         problem_type:
-          type: string
-          enum: [none, blocking, overheated, timeout]
-          description: Problem classification or "none"
+          $ref: "#/components/schemas/ProblemType"
         rssi:
           type: number
           format: float
@@ -753,9 +767,7 @@ components:
         state:
           $ref: "#/components/schemas/RfStateName"
         command_source:
-          type: string
-          enum: [unknown, hub, remote]
-          description: Who issued the last command
+          $ref: "#/components/schemas/CommandSource"
         last_seen:
           type: integer
           description: Timestamp (millis()) of last RF packet from this device
@@ -895,10 +907,6 @@ components:
           type: integer
           description: Full close duration in milliseconds (cover only, 0 = position tracking disabled)
           examples: [23000]
-        poll_interval_ms:
-          type: integer
-          description: Status poll interval in milliseconds (cover only)
-          examples: [300000]
         dim_duration_ms:
           type: integer
           description: Dim duration in milliseconds (light only, 0 = on/off only)
@@ -926,7 +934,32 @@ components:
         device_type:
           $ref: "#/components/schemas/DeviceType"
 
+    RestartPayload:
+      type: object
+      additionalProperties: false
+      required: [type]
+      description: Trigger a safe reboot of the ESP32.
+      properties:
+        type:
+          type: string
+          const: restart
+
     # ── Shared Enums ──
+
+    HaCoverState:
+      type: string
+      enum: [open, closed, opening, closing, stopped]
+      description: HA-compatible cover state. Cover only.
+
+    ProblemType:
+      type: string
+      enum: [none, blocking, overheated, timeout]
+      description: Problem classification or "none"
+
+    CommandSource:
+      type: string
+      enum: [unknown, hub, remote]
+      description: Who issued the last command
 
     HubMode:
       type: string

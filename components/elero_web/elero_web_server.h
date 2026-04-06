@@ -43,7 +43,7 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
   void setup(DeviceRegistry &registry) override { registry_ = &registry; }
   void on_device_added(const Device &dev) override;
   void on_device_removed(const Device &dev) override;
-  void on_state_changed(const Device &dev) override;
+  void on_state_changed(const Device &dev, uint16_t changes) override;
   void on_config_changed(const Device &dev) override;
   void on_rf_packet(const RfPacketInfo &pkt) override;
 

@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, cover, sensor, text_sensor
+from esphome.components import binary_sensor, button, cover, sensor, text_sensor
 from esphome.const import (
     CONF_CHANNEL,
     CONF_CLOSE_DURATION,
@@ -15,7 +15,7 @@ from .. import CONF_ELERO_ID, elero, elero_ns
 
 DEPENDENCIES = ["elero"]
 CODEOWNERS = ["@andyboeh"]
-AUTO_LOAD = ["binary_sensor", "sensor", "text_sensor"]
+AUTO_LOAD = ["binary_sensor", "button", "sensor", "text_sensor"]
 
 CONF_DST_ADDRESS = "dst_address"
 CONF_SRC_ADDRESS = "src_address"
@@ -29,7 +29,6 @@ CONF_COMMAND_DOWN = "command_down"
 CONF_COMMAND_STOP = "command_stop"
 CONF_COMMAND_CHECK = "command_check"
 CONF_COMMAND_TILT = "command_tilt"
-CONF_POLL_INTERVAL = "poll_interval"
 CONF_SUPPORTS_TILT = "supports_tilt"
 CONF_AUTO_SENSORS = "auto_sensors"
 CONF_RSSI_SENSOR = "rssi_sensor"
@@ -38,9 +37,11 @@ CONF_PROBLEM_SENSOR = "problem_sensor"
 CONF_COMMAND_SOURCE_SENSOR = "command_source_sensor"
 CONF_PROBLEM_TYPE_SENSOR = "problem_type_sensor"
 CONF_DEVICE_CLASS = "device_class"
+CONF_REFRESH_BUTTON = "refresh_button"
 
 # New architecture: EspCoverShell replaces EleroCover
 EspCoverShell = elero_ns.class_("EspCoverShell", cover.Cover, cg.Component)
+RefreshButton = elero_ns.class_("RefreshButton", button.Button)
 
 _RSSI_SENSOR_SCHEMA = sensor.sensor_schema(
     unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
@@ -60,13 +61,11 @@ _PROBLEM_TYPE_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
     entity_category="diagnostic",
     icon="mdi:alert-circle-outline",
 )
-
-
-
-def poll_interval(value):
-    if value == "never":
-        return 4294967295  # uint32_t max
-    return cv.positive_time_period_milliseconds(value)
+_REFRESH_BUTTON_SCHEMA = button.button_schema(
+    RefreshButton,
+    entity_category="diagnostic",
+    icon="mdi:refresh",
+)
 
 
 def _validate_duration_consistency(config):
@@ -105,6 +104,8 @@ def _auto_sensor_validator(config):
         result[CONF_COMMAND_SOURCE_SENSOR] = _COMMAND_SOURCE_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Command Source"})
     if CONF_PROBLEM_TYPE_SENSOR not in result:
         result[CONF_PROBLEM_TYPE_SENSOR] = _PROBLEM_TYPE_SENSOR_SCHEMA({CONF_NAME: f"{cover_name} Problem Type"})
+    if CONF_REFRESH_BUTTON not in result:
+        result[CONF_REFRESH_BUTTON] = _REFRESH_BUTTON_SCHEMA({CONF_NAME: f"{cover_name} Refresh"})
     return result
 
 
@@ -116,7 +117,6 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_DST_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
             cv.Required(CONF_CHANNEL): cv.int_range(min=0, max=255),
             cv.Required(CONF_SRC_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
-            cv.Optional(CONF_POLL_INTERVAL, default="5min"): poll_interval,
             cv.Optional(CONF_OPEN_DURATION, default="0s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_CLOSE_DURATION, default="0s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_PAYLOAD_1, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
@@ -140,6 +140,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_PROBLEM_SENSOR): _PROBLEM_SENSOR_SCHEMA,
             cv.Optional(CONF_COMMAND_SOURCE_SENSOR): _COMMAND_SOURCE_SENSOR_SCHEMA,
             cv.Optional(CONF_PROBLEM_TYPE_SENSOR): _PROBLEM_TYPE_SENSOR_SCHEMA,
+            cv.Optional(CONF_REFRESH_BUTTON): _REFRESH_BUTTON_SCHEMA,
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -168,7 +169,6 @@ async def to_code(config):
     cg.add(var.set_type(config[CONF_TYPE]))
     cg.add(var.set_type2(config[CONF_TYPE2]))
     cg.add(var.set_hop(config[CONF_HOP]))
-    cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
     cg.add(var.set_supports_tilt(config[CONF_SUPPORTS_TILT]))
 
     # Device class for HA — values must match HaCoverClass enum in device_type.h
@@ -199,5 +199,6 @@ async def to_code(config):
         pt_var = await text_sensor.new_text_sensor(config[CONF_PROBLEM_TYPE_SENSOR])
         cg.add(var.set_problem_type_sensor(pt_var))
 
-
-
+    if CONF_REFRESH_BUTTON in config:
+        btn_var = await button.new_button(config[CONF_REFRESH_BUTTON])
+        cg.add(var.set_refresh_button(btn_var))

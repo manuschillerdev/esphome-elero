@@ -70,11 +70,6 @@ interface UpsertDevicePayload {
    */
   'close_duration_ms'?: number;
   /**
-   * Status poll interval in milliseconds (cover only)
-   * @example 300000
-   */
-  'poll_interval_ms'?: number;
-  /**
    * Dim duration in milliseconds (light only, 0 = on/off only)
    * @example 5000
    */

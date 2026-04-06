@@ -76,22 +76,28 @@ Responsibilities:
 
 ### Layer 4 -- Output Adapters
 
-Thin, stateless translators implementing an `OutputAdapter` interface:
+Pure formatters implementing an `OutputAdapter` interface. The registry owns all publish decisions — adapters receive a `changes` bitmask and publish only the fields that changed:
 
 ```cpp
 class OutputAdapter {
 public:
     virtual ~OutputAdapter() = default;
+    virtual void setup(DeviceRegistry &registry) = 0;
+    virtual void loop() = 0;
     virtual void on_device_added(const Device &dev) = 0;
-    virtual void on_device_removed(uint32_t address, DeviceType type) = 0;
-    virtual void on_state_changed(const Device &dev) = 0;
+    virtual void on_device_removed(const Device &dev) = 0;
+    virtual void on_state_changed(const Device &dev, uint16_t changes) = 0;
+    virtual void on_config_changed(const Device &dev) {}
+    virtual void on_rf_packet(const RfPacketInfo &pkt) {}
 };
 ```
 
+Each device stores a `Published` cache with last-published values. The registry computes snapshots, diffs against this cache via `diff_and_update_cover/light()`, and only calls `on_state_changed()` when changes != 0. The `changes` bitmask uses `state_change::` flags (POSITION, HA_STATE, RSSI, etc.).
+
 Each output mode is an adapter implementation:
-- `WebSocketAdapter` -- broadcasts state to web UI clients
+- `EleroWebServer` -- broadcasts state to web UI clients
 - `MqttAdapter` -- publishes HA discovery + state topics
-- `NativeApiAdapter` -- registers with ESPHome native API
+- `EspCoverShell` / `EspLightShell` -- ESPHome native API entities (poll `last_notify_ms`)
 - `MatterAdapter` -- future, zero changes to layers 1-3
 
 Adding a new mode = implementing the interface. No changes to device logic, no new entity classes.
@@ -101,7 +107,7 @@ Adding a new mode = implementing the interface. No changes to device logic, no n
 - **Composition over inheritance.** `Device` composes a variant, not an inheritance chain.
 - **Invalid states are unrepresentable.** `std::variant` state machines prevent illegal transitions at compile time. No boolean flag soup.
 - **Position/brightness are pure functions.** Derived from `(state, now, config)`, never stored as independent mutable fields.
-- **Output mode is an adapter concern.** Device behavior is defined once in the state machine; adapters translate to wire format.
+- **Registry decides, adapters format.** The registry computes snapshots, diffs, and decides what changed. Adapters read `dev.published` and publish only changed fields — zero adapter-side caching.
 
 ## New Files
 

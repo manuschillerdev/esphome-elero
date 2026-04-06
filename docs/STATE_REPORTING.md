@@ -22,7 +22,7 @@ How device state flows from RF packets through the firmware to Home Assistant en
 
 **`auto_sensors` (default `true`)** automatically creates all diagnostic sensors alongside each cover entity. Set `auto_sensors: false` to disable.
 
-**Implementation note:** RSSI, Status, and Problem sensors are published via the hub's address-keyed sensor maps (direct path from `interpret_msg()` using `is_problem_state()` from `state_snapshot.h`). Command Source and Problem Type are published from `EspCoverShell::sync_and_publish_()` using snapshot data. Both paths derive from the same underlying `Device` state.
+**Implementation note:** RSSI, Status, and Problem sensors are published via the hub's address-keyed sensor maps (direct path from `dispatch_packet()` using `is_problem_state()` from `state_snapshot.h`). Command Source and Problem Type are published from `EspCoverShell::sync_and_publish_()` using snapshot data. Both paths derive from the same underlying `Device` state.
 
 ### Light
 
@@ -49,7 +49,13 @@ Remotes are only auto-discovered in NVS-enabled modes (MQTT, Native+NVS). Native
 
 ## State Snapshot Layer
 
-All output adapters compute state from the same `CoverStateSnapshot` / `LightStateSnapshot` structs. Snapshots are ephemeral — computed on demand from `(Device, now)`, never cached or persisted. `problem_type` is always a valid string (`PROBLEM_TYPE_NONE` when no problem) — callers never null-check.
+Snapshots are ephemeral structs computed from `(Device, now)`. The **registry** computes them once, diffs against a per-device `Published` cache, and only notifies adapters when something actually changed — passing a `uint16_t changes` bitmask (`state_change::` flags). Adapters never compute snapshots themselves; they read pre-computed values from `dev.published`.
+
+**Published cache** lives on `CoverDevice::Published` / `LightDevice::Published` (in `device.h`). Sentinel defaults (`position_pct{-1}`, `rssi_rounded{-999}`, `ha_state{nullptr}`) guarantee a non-zero diff on the first publish after device registration.
+
+**Change flags** (`state_snapshot.h`): `POSITION`, `HA_STATE`, `OPERATION`, `TILT`, `PROBLEM`, `RSSI`, `STATE_STRING`, `COMMAND_SOURCE`, `BRIGHTNESS`, `ALL` (0xFFFF for reconnect/initial).
+
+`problem_type` is always a valid string (`PROBLEM_TYPE_NONE` when no problem) — callers never null-check.
 
 ### CoverStateSnapshot
 
@@ -155,22 +161,28 @@ CC1101 (868 MHz transceiver)
   │
   │  GDO0 interrupt (packet received)
   ▼
-Elero::interrupt()
+Elero::interrupt()                         ← ISR (any core)
   │  Sets atomic flag: received_ = true
+  │  vTaskNotifyGiveFromISR → wakes RF task
   ▼
-Elero::loop()                              ← ESPHome main loop
-  │  Checks received_ flag
-  │  Reads FIFO from CC1101 over SPI
+rf_task_func_ (Core 0)                    ← Dedicated FreeRTOS task
+  │  Wakes on notification
+  │  Drains FIFO from CC1101 over SPI
+  │  Decode + AES-128 decrypt + CRC check
+  │  Posts RfPacketInfo to rx_queue
   ▼
-Elero::interpret_msg()                     ← Decode + decrypt
+Elero::loop() (Core 1)                    ← ESPHome main loop
+  │  Drains rx_queue (non-blocking)
+  ▼
+Elero::dispatch_packet(pkt)                ← Core 1, no SPI
   │
-  │  Builds RfPacketInfo (src, dst, channel, type, state, command, rssi, raw)
+  │  RfPacketInfo (src, dst, channel, type, state, command, rssi, raw)
   │
   ├──────────────────────────────────┐
   │                                  │
   │  Registry dispatch               │  Direct sensor publish (native mode)
   ▼                                  ▼
-DeviceRegistry::on_rf_packet()       Elero::interpret_msg() (continued)
+DeviceRegistry::on_rf_packet()       Elero::dispatch_packet() (continued)
   │                                    │
   │  1. notify_rf_packet_(pkt)         ├─ rssi_sensor->publish_state(rssi)
   │     → all adapters get raw RF      ├─ text_sensor->publish_state(state_string)
@@ -190,8 +202,12 @@ DeviceRegistry::on_rf_packet()       Elero::interpret_msg() (continued)
   │     → update last_command_source
   │     → changed?
   │
-  │  5. notify_state_changed_(dev)
-  │     → all OutputAdapters
+  │  5. notify_state_changed_(dev, now)
+  │     → compute snapshot
+  │     → diff_and_update_*(snap, dev.published)
+  │     → if changes == 0: return (no adapter calls)
+  │     → set dev.last_changes + dev.last_notify_ms
+  │     → on_state_changed(dev, changes) for all adapters
   │
   ├──────────────────┬───────────────────┬────────────────────┐
   │                  │                   │                    │
@@ -200,59 +216,69 @@ EspCoverShell     MqttAdapter         EleroWebServer       (MatterAdapter)
 EspLightShell     (MQTT mode)         (all modes)          (future)
 (Native/NVS)        │                   │
   │                  │                   │
-  │ loop() detects   │ on_state_changed  │ on_rf_packet
-  │ last_notify_ms   │                   │
+  │ loop() detects   │ on_state_changed  │ on_state_changed
+  │ last_notify_ms   │ (dev, changes)    │ (dev, changes)
+  │ reads last_changes                   │
   ▼                  ▼                   ▼
-compute_*_         compute_*_          build_rf_json(pkt)
-snapshot()         snapshot()            │
-  │                  │                   ▼
-  │                  │                ws_broadcast("rf", json)
-  │                  │                  → Browser (derives state client-side)
-  │                  │
+reads              reads              build state JSON
+dev.published      dev.published      from dev.published
+  │                  │                   │
+  │ publishes only   │ publishes only    ▼
+  │ changed fields   │ changed topics  ws_broadcast("state", json)
+  │                  │                  → Browser
   ▼                  ▼
 ┌──────────────┐  ┌──────────────────────────────┐
-│ cover/light  │  │ MQTT topics:                  │
-│  .position   │  │  /state (ha_state)            │
-│  .tilt       │  │  /position                    │
-│  .operation  │  │  /rssi                        │
-│  .publish()  │  │  /blind_state or /light_state │
-│              │  │  /problem                     │
-│ text_sensors:│  │  /attributes (JSON)           │
-│  cmd_source  │  │  /tilt_state                  │
-│  problem_type│  └──────────────────────────────┘
-└──────────────┘           │
-       │                   ▼
-       ▼              Home Assistant
-  Home Assistant      (MQTT entities)
+│ cover/light  │  │ MQTT topics (only changed):   │
+│  .position   │  │  /state (if HA_STATE)         │
+│  .tilt       │  │  /position (if POSITION)      │
+│  .operation  │  │  /rssi (if RSSI)              │
+│  .publish()  │  │  /blind_state (if STATE_STR)  │
+│  (if POS|OP| │  │  /problem (if PROBLEM)        │
+│   HA|TILT)   │  │  /attributes (if CMD_SRC|...) │
+│              │  │  /tilt_state (if TILT)         │
+│ sensors:     │  └──────────────────────────────┘
+│  (if RSSI)   │           │
+│  (if STATE)  │           ▼
+│  (if PROBLEM)│      Home Assistant
+│  etc.        │      (MQTT entities)
+└──────────────┘
+       │
+       ▼
+  Home Assistant
   (native entities)
 ```
 
 ### Key design properties
 
-1. **Single snapshot computation.** All adapters call `compute_cover_snapshot()` / `compute_light_snapshot()`. State derivation logic exists in exactly one place. `problem_type` is always a valid string (`PROBLEM_TYPE_NONE` when no problem active) — no null checks at consumer sites.
+1. **Registry owns all publish decisions.** `notify_state_changed_()` computes the snapshot once, diffs it against the device's `Published` cache (`diff_and_update_cover/light`), and only calls adapters when changes != 0. Adapters never compute snapshots — they read pre-computed values from `dev.published` and use the `changes` bitmask to publish only changed fields.
 
-2. **Snapshots are ephemeral.** Computed from `(Device, now)` on demand. No caching, no persistence. After reboot, FSM starts at `Idle{POSITION_CLOSED}` and the first CHECK poll (within seconds via staggered offsets) restores real state from the blind.
+2. **Per-field change tracking.** The `uint16_t changes` bitmask (`state_change::POSITION`, `HA_STATE`, `RSSI`, etc.) tells each adapter exactly which fields changed. During a 25s cover movement: ~25 position-only ticks (1 MQTT topic each) + ~2-3 RF state changes (~7 topics each). String comparisons in the diff use pointer identity (all strings are compile-time literals).
 
-3. **No lateral adapter coupling.** Each adapter reads `Device` independently. MqttAdapter doesn't know about EspCoverShell. EleroWebServer doesn't know about MqttAdapter.
+3. **Snapshots are ephemeral, Published cache is persistent per-device.** Snapshots are computed from `(Device, now)` on demand. The `Published` cache on `CoverDevice`/`LightDevice` stores quantized last-published values (int position_pct, pointer-stable strings). After reboot, FSM starts at `Idle{POSITION_CLOSED}` and Published defaults guarantee a full initial publish.
 
-4. **Two publish paths for native mode.** RSSI, text_sensor, and problem binary_sensor are published directly from `interpret_msg()` via address-keyed sensor maps on the hub — these call `is_problem_state()` from `state_snapshot.h` (single derivation point). Cover position/operation + command_source/problem_type go through the registry → shell → snapshot path.
+4. **No lateral adapter coupling.** Each adapter reads `Device.published` independently. MqttAdapter doesn't know about EspCoverShell. EleroWebServer doesn't know about MqttAdapter.
 
-5. **MQTT topics are centralized.** Topic suffixes (`mqtt_topic::STATE`, etc.), HA discovery component types (`ha_discovery::COVER`, etc.), and topic construction (`MqttContext::topic()`, `object_id()`, `publish()`) are defined once in `mqtt_context.h`. Zero string concatenation at adapter call sites.
+5. **Two publish paths for native mode.** RSSI, text_sensor, and problem binary_sensor are published directly from `dispatch_packet()` via address-keyed sensor maps on the hub — these call `is_problem_state()` from `state_snapshot.h` (single derivation point). Cover position/operation + command_source/problem_type go through the registry → shell path, using `last_changes` bitmask for selective publish.
 
-6. **WebSocket is raw RF, not snapshots.** The web server forwards raw `RfPacketInfo` to the browser. The browser derives all state client-side. The `config` event on connect sends current device state using snapshots.
+6. **MQTT topics are centralized.** Topic suffixes (`mqtt_topic::STATE`, etc.), HA discovery component types (`ha_discovery::COVER`, etc.), and topic construction (`MqttContext::topic()`, `object_id()`, `publish()`) are defined once in `mqtt_context.h`. Zero string concatenation at adapter call sites.
+
+7. **WebSocket is raw RF, not snapshots.** The web server forwards raw `RfPacketInfo` to the browser. The browser derives all state client-side. The `config` event on connect sends current device state using snapshots.
+
+8. **MQTT reconnect forces full republish.** `republish_all_()` resets each device's `Published` cache to defaults and calls `on_state_changed(dev, state_change::ALL)`, guaranteeing all topics are republished to the fresh broker.
 
 ### Timing
 
 | Event | Latency |
 |-------|---------|
 | RF packet → interrupt | <1 ms (hardware) |
-| interrupt → loop() pickup | ≤1 ESPHome loop tick (~16 ms) |
-| interpret_msg → sensor publish | synchronous (same loop tick) |
-| interpret_msg → registry dispatch | synchronous |
+| interrupt → RF task pickup | <1 ms (Core 0 dedicated task) |
+| RF task → dispatch_packet | queue transit, typically <1 loop tick |
+| dispatch_packet → sensor publish | synchronous (same loop tick) |
+| dispatch_packet → registry dispatch | synchronous |
 | registry → adapter notification | synchronous |
 | adapter → HA publish | synchronous (native) or async (MQTT) |
 | Movement position updates | throttled to 1/sec (`PUBLISH_THROTTLE_MS`) |
-| Poll interval (idle) | configurable, default 5 min |
+| Poll interval (idle) | 5 min (`DEFAULT_POLL_INTERVAL_MS`) |
 | Poll interval (moving) | 2 sec (`POLL_INTERVAL_MOVING`) |
 
 ---
@@ -263,28 +289,28 @@ All topics are constructed via `MqttContext::topic(DeviceType, addr, mqtt_topic:
 
 ### Cover topics
 
-| Topic | Published | Content |
-|-------|-----------|---------|
-| `{prefix}/cover/{addr}/state` | Every state change | `"opening"` / `"closing"` / `"open"` / `"closed"` / `"stopped"` |
-| `{prefix}/cover/{addr}/position` | Every state change | `0`–`100` |
-| `{prefix}/cover/{addr}/rssi` | Every state change | dBm (rounded) |
-| `{prefix}/cover/{addr}/blind_state` | Every state change | Raw RF state name (`"top"`, `"moving_up"`, etc.) |
-| `{prefix}/cover/{addr}/problem` | Every state change | `"ON"` / `"OFF"` |
-| `{prefix}/cover/{addr}/attributes` | Every state change | JSON: `{last_seen, command_source, tilted, device_class, problem_type}` |
-| `{prefix}/cover/{addr}/tilt_state` | Every state change (if tilt) | `"0"` / `"100"` |
-| `{prefix}/cover/{addr}/set` | Subscribed | `"open"` / `"close"` / `"stop"` |
-| `{prefix}/cover/{addr}/tilt` | Subscribed (if tilt) | Any payload triggers tilt |
+| Topic | Published when | Change flag | Content |
+|-------|---------------|-------------|---------|
+| `{prefix}/cover/{addr}/state` | HA state changes | `HA_STATE` | `"opening"` / `"closing"` / `"open"` / `"closed"` / `"stopped"` |
+| `{prefix}/cover/{addr}/position` | Position changes (1s during movement) | `POSITION` | `0`–`100` |
+| `{prefix}/cover/{addr}/rssi` | RSSI changes | `RSSI` | dBm (integer-rounded) |
+| `{prefix}/cover/{addr}/blind_state` | RF state byte changes | `STATE_STRING` | Raw RF state name (`"top"`, `"moving_up"`, etc.) |
+| `{prefix}/cover/{addr}/problem` | Problem state changes | `PROBLEM` | `"ON"` / `"OFF"` |
+| `{prefix}/cover/{addr}/attributes` | Command source, problem, or tilt changes | `COMMAND_SOURCE\|PROBLEM\|TILT` | JSON: `{command_source, tilted, device_class, problem_type}` |
+| `{prefix}/cover/{addr}/tilt_state` | Tilt changes (if tilt supported) | `TILT` | `"0"` / `"100"` |
+| `{prefix}/cover/{addr}/set` | Subscribed | — | `"open"` / `"close"` / `"stop"` |
+| `{prefix}/cover/{addr}/tilt` | Subscribed (if tilt) | — | Any payload triggers tilt |
 
 ### Light topics
 
-| Topic | Published | Content |
-|-------|-----------|---------|
-| `{prefix}/light/{addr}/state` | Every state change | JSON: `{"state":"ON"/"OFF", "brightness": 0–100}` |
-| `{prefix}/light/{addr}/rssi` | Every state change | dBm (rounded) |
-| `{prefix}/light/{addr}/light_state` | Every state change | Raw RF state name |
-| `{prefix}/light/{addr}/problem` | Every state change | `"ON"` / `"OFF"` |
-| `{prefix}/light/{addr}/attributes` | Every state change | JSON: `{last_seen, command_source, problem_type}` |
-| `{prefix}/light/{addr}/set` | Subscribed | JSON `{"state":"ON"}` or string `"on"`/`"off"` |
+| Topic | Published when | Change flag | Content |
+|-------|---------------|-------------|---------|
+| `{prefix}/light/{addr}/state` | On/off or brightness changes | `BRIGHTNESS` | JSON: `{"state":"ON"/"OFF", "brightness": 0–100}` |
+| `{prefix}/light/{addr}/rssi` | RSSI changes | `RSSI` | dBm (integer-rounded) |
+| `{prefix}/light/{addr}/light_state` | RF state byte changes | `STATE_STRING` | Raw RF state name |
+| `{prefix}/light/{addr}/problem` | Problem state changes | `PROBLEM` | `"ON"` / `"OFF"` |
+| `{prefix}/light/{addr}/attributes` | Command source or problem changes | `COMMAND_SOURCE\|PROBLEM` | JSON: `{command_source, problem_type}` |
+| `{prefix}/light/{addr}/set` | Subscribed | — | JSON `{"state":"ON"}` or string `"on"`/`"off"` |
 
 ### Remote topics
 

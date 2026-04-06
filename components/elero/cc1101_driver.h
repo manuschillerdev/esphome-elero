@@ -77,11 +77,6 @@ class CC1101Driver : public RadioDriver,
   const char *radio_name() const override { return "cc1101"; }
   int rx_sensitivity_dbm() const override { return -104; }
 
-  // ── SPI setup (called from hub's setup, before init) ───────────────────────
-
-  /// Must be called once from Component::setup() to initialize the SPI bus.
-  void setup_spi() { this->spi_setup(); }
-
   // ── Configuration setters ──────────────────────────────────────────────────
 
   void set_freq0(uint8_t f) { freq0_ = f; }
@@ -108,9 +103,15 @@ class CC1101Driver : public RadioDriver,
   uint8_t read_status_reliable_(uint8_t addr);
   void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
 
+  // ── Boot diagnostics ────────────────────────────────────────────────────────
+
+  void diagnose_spi_failure_(uint8_t partnum, uint8_t version);
+  bool verify_spi_write_();
+
   // ── Radio control ──────────────────────────────────────────────────────────
 
   void flush_and_rx();
+  void finalize_tx_success_();
   void init_registers();
   void handle_tx_state_(uint32_t now);
   void recover_radio_();
@@ -132,6 +133,15 @@ class CC1101Driver : public RadioDriver,
   // ── Health check state ─────────────────────────────────────────────────────
 
   uint32_t last_radio_check_ms_{0};
+
+  // ── Recovery escalation ────────────────────────────────────────────────────
+  // Tracks recovery frequency to escalate: flush → reset → mark_failed.
+  static constexpr uint32_t RECOVERY_WINDOW_MS = 60000;    ///< Window for counting recoveries
+  static constexpr uint8_t RECOVERIES_BEFORE_RESET = 3;    ///< Flush attempts before full reset
+  static constexpr uint8_t RESETS_BEFORE_FAILED = 3;       ///< Resets before marking component failed
+  uint32_t recovery_window_start_ms_{0};
+  uint8_t recoveries_in_window_{0};
+  uint8_t resets_in_window_{0};
 
   // ── Stats (atomic — incremented on Core 0, read from Core 1) ───────────────
 

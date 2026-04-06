@@ -1,80 +1,115 @@
 # Elero RF Protocol State Machines
 
-This document describes the internal state machines and data flows for the esphome-elero component.
+This document describes the internal state machines and data flows for the esphome-elero component. The system uses a **dual-core architecture** on ESP32: a dedicated RF task on Core 0 handles all SPI/radio operations, while the ESPHome main loop on Core 1 handles dispatch, entity management, and adapter notifications. The two cores communicate exclusively via FreeRTOS queues with copy semantics -- no shared mutable state.
 
 ---
 
 ## Table of Contents
 
 1. [CC1101 Initialization](#1-cc1101-initialization)
-2. [Main RX/TX Loop](#2-main-rxtx-loop)
-3. [Sending Commands](#3-sending-commands)
-4. [Receiving Commands](#4-receiving-commands)
-5. [Blind State Update](#5-blind-state-update)
-6. [Position Tracking During Movement](#6-position-tracking-during-movement)
-7. [Summary: Key Mechanisms](#summary-key-mechanisms)
+2. [RF Task Loop (Core 0)](#2-rf-task-loop-core-0)
+3. [Main Loop (Core 1)](#3-main-loop-core-1)
+4. [Sending Commands (TX Path)](#4-sending-commands-tx-path)
+5. [Receiving Packets (RX Path)](#5-receiving-packets-rx-path)
+6. [Registry Device Loop](#6-registry-device-loop)
+7. [Key Mechanisms](#7-key-mechanisms)
 
 ---
 
 ## 1. CC1101 Initialization
 
-Called during `Elero::setup()`. Configures the CC1101 RF transceiver via SPI.
+Called during `Elero::setup()` on Core 1. Configures the radio driver via SPI, attaches the GDO0 interrupt, sets up the DeviceRegistry and output adapters, creates 3 FreeRTOS queues, and spawns the RF task on Core 0. After `setup()` completes, **Core 0 exclusively owns all SPI** -- Core 1 never touches hardware again.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> SPI_SETUP: Elero::setup()
+    [*] --> DRIVER_INIT: Elero::setup()
 
-    SPI_SETUP --> GPIO_SETUP: spi_setup()
-    GPIO_SETUP --> ATTACH_ISR: gdo0_pin_->setup()
-    ATTACH_ISR --> RESET: attach_interrupt(FALLING_EDGE)
+    state DRIVER_INIT {
+        [*] --> CHECK_DRIVER: driver_ != nullptr?
+        CHECK_DRIVER --> INIT_DRIVER: driver_->init()
 
-    state RESET {
-        [*] --> CS_ENABLE: enable()
-        CS_ENABLE --> SRES: write_byte(CC1101_SRES)
-        SRES --> WAIT_50US: delay_microseconds_safe(50)
-        WAIT_50US --> SIDLE: write_byte(CC1101_SIDLE)
-        SIDLE --> WAIT_50US_2: delay_microseconds_safe(50)
-        WAIT_50US_2 --> CS_DISABLE: disable()
-        CS_DISABLE --> [*]
-    }
+        state INIT_DRIVER {
+            [*] --> RESET
+            state RESET {
+                [*] --> CS_ENABLE: enable()
+                CS_ENABLE --> SRES: write_byte(CC1101_SRES)
+                SRES --> WAIT_50US: delay_microseconds_safe(50)
+                WAIT_50US --> SIDLE: write_byte(CC1101_SIDLE)
+                SIDLE --> WAIT_50US_2: delay_microseconds_safe(50)
+                WAIT_50US_2 --> CS_DISABLE: disable()
+                CS_DISABLE --> [*]
+            }
 
-    RESET --> INIT
+            RESET --> WRITE_REGS
 
-    state INIT {
-        [*] --> WRITE_REGS
+            state WRITE_REGS {
+                [*] --> FSCTRL
+                FSCTRL --> FREQ: FSCTRL1=0x08, FSCTRL0=0x00
+                FREQ --> MDMCFG: FREQ2/1/0 (868.35MHz default)
+                MDMCFG --> DEVIATN: MDMCFG4-0 (modulation)
+                DEVIATN --> FREND: DEVIATN=0x43
+                FREND --> MCSM: FREND1=0xB6, FREND0=0x10
+                MCSM --> AGCCTRL: MCSM0=0x18, MCSM1=0x3F
+                AGCCTRL --> FSCAL: AGCCTRL2/1/0
+                FSCAL --> IOCFG: FSCAL3/2/1/0
+                IOCFG --> PKTCTRL: IOCFG0=0x06 (GDO0 config)
+                PKTCTRL --> SYNC: PKTCTRL1=0x8C, PKTCTRL0=0x45
+                SYNC --> PATABLE: SYNC1=0xD3, SYNC0=0x91
+                PATABLE --> [*]: PATABLE[8] = 0xc0 (TX power)
+            }
 
-        state WRITE_REGS {
-            [*] --> FSCTRL
-            FSCTRL --> FREQ: FSCTRL1=0x08, FSCTRL0=0x00
-            FREQ --> MDMCFG: FREQ2/1/0 (868.35MHz default)
-            MDMCFG --> DEVIATN: MDMCFG4-0 (modulation)
-            DEVIATN --> FREND: DEVIATN=0x43
-            FREND --> MCSM: FREND1=0xB6, FREND0=0x10
-            MCSM --> AGCCTRL: MCSM0=0x18, MCSM1=0x3F
-            AGCCTRL --> FSCAL: AGCCTRL2/1/0
-            FSCAL --> IOCFG: FSCAL3/2/1/0
-            IOCFG --> PKTCTRL: IOCFG0=0x06 (GDO0 config)
-            PKTCTRL --> SYNC: PKTCTRL1=0x8C, PKTCTRL0=0x45
-            SYNC --> PATABLE: SYNC1=0xD3, SYNC0=0x91
-            PATABLE --> [*]: PATABLE[8] = 0xc0 (TX power)
+            WRITE_REGS --> START_RX: write_cmd(CC1101_SRX)
+            START_RX --> WAIT_RX_STATE
+
+            state WAIT_RX_STATE {
+                [*] --> POLL_MARCSTATE
+                POLL_MARCSTATE --> CHECK_STATE: read_status(MARCSTATE)
+                CHECK_STATE --> READY: state == RX
+                CHECK_STATE --> POLL_MARCSTATE: state != RX (timeout 200 loops)
+                CHECK_STATE --> ERROR: timeout expired
+            }
+
+            WAIT_RX_STATE --> [*]
         }
 
-        WRITE_REGS --> START_RX: write_cmd(CC1101_SRX)
-        START_RX --> WAIT_RX_STATE
-
-        state WAIT_RX_STATE {
-            [*] --> POLL_MARCSTATE
-            POLL_MARCSTATE --> CHECK_STATE: read_status(MARCSTATE)
-            CHECK_STATE --> READY: state == RX
-            CHECK_STATE --> POLL_MARCSTATE: state != RX (timeout 200 loops)
-            CHECK_STATE --> ERROR: timeout expired
-        }
-
-        WAIT_RX_STATE --> [*]
+        INIT_DRIVER --> SETUP_IRQ: irq_pin_->setup()
+        SETUP_IRQ --> ATTACH_ISR: attach_interrupt(edge)
+        ATTACH_ISR --> CLEAR_IRQ: received_.store(false)
+        CLEAR_IRQ --> RECOVER: driver_->recover()
     }
 
-    INIT --> READY: CC1101 in RX mode
-    READY --> [*]
+    DRIVER_INIT --> REGISTRY_SETUP
+
+    state REGISTRY_SETUP {
+        [*] --> SETUP_ADAPTERS: registry_->setup_adapters()
+        SETUP_ADAPTERS --> NVS_CHECK: is_nvs_enabled()?
+        NVS_CHECK --> INIT_PREFS: init_preferences()
+        INIT_PREFS --> RESTORE: restore_all()
+        NVS_CHECK --> DONE: NVS disabled
+        RESTORE --> DONE
+    }
+
+    REGISTRY_SETUP --> SPAWN_RF_TASK
+
+    state SPAWN_RF_TASK {
+        [*] --> CREATE_QUEUES
+        note right of CREATE_QUEUES
+            rx_queue: depth 16, sizeof(RfPacketInfo)
+            tx_queue: depth 4, sizeof(RfTaskRequest)
+            tx_done_queue: depth 4, sizeof(TxResult)
+        end note
+        CREATE_QUEUES --> CREATE_TASK: xTaskCreatePinnedToCore
+        note right of CREATE_TASK
+            func: rf_task_func_
+            name: "elero_rf"
+            stack: 4096 bytes
+            priority: 5
+            core: 0
+        end note
+        CREATE_TASK --> REGISTER_WDT: esp_task_wdt_add()
+    }
+
+    REGISTER_WDT --> [*]: RF task running on Core 0
 ```
 
 ### Key Register Settings
@@ -90,153 +125,242 @@ stateDiagram-v2
 
 ---
 
-## 2. Main RX/TX Loop
+## 2. RF Task Loop (Core 0)
 
-The `Elero::loop()` function runs every ESPHome loop iteration (~16ms).
+The RF task (`rf_task_func_`) runs as an infinite loop on Core 0. It exclusively owns all SPI and radio hardware. It sleeps via `ulTaskNotifyTake(pdTRUE, 1ms)` and is woken either by the GDO0 ISR (via `vTaskNotifyGiveFromISR`) or by the 1ms timeout.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> LOOP_START: Elero::loop()
+flowchart TD
+    SLEEP["ulTaskNotifyTake(pdTRUE, 1ms)
+    woken by: ISR notification OR 1ms timeout"] --> TX_CHECK{tx_in_progress?}
 
-    LOOP_START --> TX_BUSY_CHECK
+    TX_CHECK -->|No| DEQUEUE{"xQueueReceive
+    (tx_queue, 0)"}
+    TX_CHECK -->|Yes| POLL_TX
 
-    TX_BUSY_CHECK --> HANDLE_TX_STATE: tx_ctx_.state != IDLE
-    TX_BUSY_CHECK --> CHECK_ISR_FLAG: tx_ctx_.state == IDLE
+    DEQUEUE -->|TX request| BUILD["build_tx_packet_(cmd)
+    select 0x44 button or 0x6a command builder
+    AES-128 encrypt, write to msg_tx_[]"]
+    BUILD --> START["driver_->load_and_transmit()
+    tx_owner_ = client
+    tx_in_progress = true"]
+    START --> RX_CHECK
 
-    note right of HANDLE_TX_STATE
-        TX in progress - process TX state machine
-        Return early (no RX processing)
-    end note
+    DEQUEUE -->|REINIT_FREQ| ABORT_PENDING{"tx_owner_
+    != nullptr?"}
+    ABORT_PENDING -->|Yes| ABORT_NOTIFY["xQueueSend(tx_done_queue,
+    {owner, false})
+    tx_owner_ = nullptr
+    tx_in_progress = false"]
+    ABORT_PENDING -->|No| REINIT_DO
+    ABORT_NOTIFY --> REINIT_DO["received_ = false
+    update freq registers
+    driver_->set_frequency_regs()"]
+    REINIT_DO --> RX_CHECK
 
-    HANDLE_TX_STATE --> LOOP_END: return
+    DEQUEUE -->|Empty| RX_CHECK
 
-    CHECK_ISR_FLAG --> LOOP_END: received_ == false
-    CHECK_ISR_FLAG --> CLEAR_FLAG: received_ == true
+    POLL_TX["driver_->poll_tx()"] --> TX_RESULT{result?}
+    TX_RESULT -->|PENDING| RX_CHECK
+    TX_RESULT -->|SUCCESS| TX_DONE_OK["xQueueSend(tx_done_queue,
+    {owner, true})
+    tx_owner_ = nullptr
+    tx_in_progress = false"]
+    TX_RESULT -->|FAILED| TX_DONE_FAIL["xQueueSend(tx_done_queue,
+    {owner, false})
+    tx_owner_ = nullptr
+    tx_in_progress = false"]
+    TX_DONE_OK --> RX_CHECK
+    TX_DONE_FAIL --> RX_CHECK
 
-    CLEAR_FLAG --> READ_RXBYTES: received_ = false
+    RX_CHECK{"driver_->has_data()?"} -->|Yes| DRAIN
+    RX_CHECK -->|No| HEALTH
 
-    READ_RXBYTES --> FIFO_OVERFLOW: len & 0x80 (overflow bit)
-    READ_RXBYTES --> CHECK_BYTES: len & 0x7F (byte count)
+    subgraph DRAIN ["drain_fifo_()"]
+        D1["received_.exchange(false)"]
+        D1 --> D2["driver_->read_fifo(msg_rx_, sizeof)"]
+        D2 --> D3{count > 0?}
+        D3 -->|No| D_END[done]
+        D3 -->|Yes| D4["decode_fifo_packets_(count)"]
+        D4 --> D5["for each packet in buffer:
+        decode_packet() per frame
+        parse_packet, AES decrypt, CRC
+        stamp decoded_at_us"]
+        D5 --> D6["xQueueSend(rx_queue, &pkt)
+        or drop + warn if full"]
+        D6 --> D_END
+    end
 
-    FIFO_OVERFLOW --> FLUSH_AND_RX: flush FIFOs
-    FLUSH_AND_RX --> LOOP_END
+    DRAIN --> HEALTH
 
-    CHECK_BYTES --> LOOP_END: no bytes available
-    CHECK_BYTES --> READ_FIFO: bytes > 0
+    HEALTH{"idle AND
+    5s elapsed?"} -->|Yes| HCHECK["driver_->check_health()
+    OK: no action
+    FIFO_OVERFLOW/STUCK/UNRECOVERABLE:
+    driver_->recover()"]
+    HEALTH -->|No| STACK_CHECK
+    HCHECK --> STACK_CHECK
 
-    READ_FIFO --> LOG_RAW: read_buf(RXFIFO, msg_rx_, count)
-    LOG_RAW --> SANITY_CHECK: log raw bytes at VERBOSE level
+    STACK_CHECK{"30s elapsed?"} -->|Yes| HWM["log uxTaskGetStackHighWaterMark()"]
+    STACK_CHECK -->|No| WDT
+    HWM --> WDT
 
-    SANITY_CHECK --> INTERPRET_MSG: msg_rx_[0] + 3 <= fifo_count
-    SANITY_CHECK --> LOOP_END: length mismatch
-
-    INTERPRET_MSG --> LOOP_END
-
-    LOOP_END --> [*]
+    WDT["esp_task_wdt_reset()
+    (feed ESP-IDF watchdog)"] --> SLEEP
 ```
 
-### Loop Priority
+### IPC Structures
 
-1. **TX state machine** — If transmitting, handle TX states and return early
-2. **RX processing** — Check ISR flag, read FIFO, interpret packets
+| Struct | Queue | Direction | Description |
+|--------|-------|-----------|-------------|
+| `RfTaskRequest` | `tx_queue` (depth 4) | Core 1 -> Core 0 | TX commands or frequency reinit requests |
+| `TxResult` | `tx_done_queue` (depth 4) | Core 0 -> Core 1 | TX completion notifications (`{client, success}`) |
+| `RfPacketInfo` | `rx_queue` (depth 16) | Core 0 -> Core 1 | Decoded RX packets with metadata |
+
+All queues use copy semantics (`xQueueSend`/`xQueueReceive`). No pointers to shared mutable state cross the core boundary.
 
 ---
 
-## 3. Sending Commands
+## 3. Main Loop (Core 1)
 
-Commands flow through `CommandSender` queue → `Elero::send_command()` → **blocking** `transmit()`.
-
-> **Implementation Note:** A non-blocking TX state machine (`start_transmit()` / `handle_tx_state_()`)
-> exists in the codebase but is not currently used. The active code path uses blocking waits.
-> This works reliably but can block the ESPHome loop for up to ~40ms per transmission.
+`Elero::loop()` runs every ESPHome loop iteration on Core 1. It never touches SPI or radio hardware. It drains FreeRTOS queues from the RF task and runs the registry/adapter lifecycle.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> USER_ACTION: User calls control()
+flowchart TD
+    START["Elero::loop()"] --> RX_DRAIN
 
-    state "Command Queuing" as QUEUE {
-        USER_ACTION --> ENQUEUE_CMD: sender_.enqueue(cmd_byte)
-        ENQUEUE_CMD --> QUEUE_FULL_CHECK
-        QUEUE_FULL_CHECK --> QUEUED: queue.size() < 10
-        QUEUE_FULL_CHECK --> REJECTED: queue.size() >= 10
-    }
+    subgraph RX_DRAIN ["1. Drain rx_queue"]
+        RX1{"xQueueReceive
+        (rx_queue, 0)"} -->|RfPacketInfo| DISPATCH
+        RX1 -->|empty| TX_DRAIN_START
 
-    QUEUED --> PROCESS_QUEUE: loop() calls process_queue()
+        subgraph DISPATCH ["dispatch_packet(pkt)"]
+            DP1["Find device name for logging
+            (registry_->find by address)"]
+            DP1 --> DP2["ESP_LOGD JSON log
+            (status/command/button/unknown variants)"]
+            DP2 --> DP3["registry_->on_rf_packet(pkt, timestamp)
+            - notify_rf_packet_() to all adapters
+            - status (0xCA/0xC9): find device, update rf_meta,
+              dispatch_status_() to FSM, notify_state_changed_()
+            - command (0x6A): track_remote_()"]
+            DP3 --> DP4["Log dispatch_us + queue_transit_us
+            Update stats counters
+            (adapters only called if snapshot diff != 0)"]
+        end
 
-    state "Queue Processing" as PROCESSING {
-        [*] --> DELAY_CHECK
-        DELAY_CHECK --> WAIT: (now - last_command_) <= 50ms
-        DELAY_CHECK --> POP_COMMAND: delay elapsed
+        DISPATCH --> RX1
+    end
 
-        POP_COMMAND --> BUILD_PACKET: command_.payload[4] = queue.front()
-        BUILD_PACKET --> SEND_TO_HUB: parent->send_command(&command_)
-    }
+    TX_DRAIN_START --> TX_DRAIN
 
-    SEND_TO_HUB --> ENCODE_ENCRYPT
+    subgraph TX_DRAIN ["2. Drain tx_done_queue"]
+        TX1{"xQueueReceive
+        (tx_done_queue, 0)"} -->|TxResult| TX2["Update stat counters
+        client->on_tx_complete(success)
+        (CommandSender state machine)"]
+        TX1 -->|empty| REG_LOOP_START
+        TX2 --> TX1
+    end
 
-    state "Packet Encoding" as ENCODE {
-        ENCODE_ENCRYPT --> CALC_CODE: code = (0 - counter * 0x708f) & 0xffff
-        CALC_CODE --> BUILD_MSG: Fill msg_tx_[0..29]
-        note right of BUILD_MSG
-            [0] = 0x1d (length)
-            [1] = counter
-            [2-3] = pck_inf
-            [4] = hop
-            [5] = 0x01 (sys_addr)
-            [6] = channel
-            [7-9] = remote_addr
-            [10-15] = bwd/fwd addr
-            [16] = 0x01 (dest_count)
-            [17-19] = blind_addr
-            [20-29] = payload
-        end note
-        BUILD_MSG --> ENCRYPT_PAYLOAD: msg_encode(payload)
-    }
+    REG_LOOP_START --> REG_LOOP
 
-    ENCRYPT_PAYLOAD --> TRANSMIT
+    subgraph REG_LOOP ["3. registry_->loop(now)"]
+        RL1["for each active Device"] --> RL2{device type?}
+        RL2 -->|Cover| RL3["loop_cover_()
+        (see Section 6)"]
+        RL2 -->|Light| RL4["loop_light_()
+        (see Section 6)"]
+        RL2 -->|Remote| RL5[no-op]
+        RL3 --> RL1
+        RL4 --> RL1
+        RL5 --> RL1
+        RL1 -->|done| RL6["adapter->loop() for each
+        (MqttAdapter: reconnect check
+        EleroWebServer: mg_mgr_poll)"]
+    end
 
-    state "Blocking Transmit" as TRANSMIT {
-        [*] --> TX_SIDLE: write_cmd(CC1101_SIDLE)
-        TX_SIDLE --> TX_WAIT_IDLE: wait for MARCSTATE_IDLE
-        TX_WAIT_IDLE --> TX_SFTX: write_cmd(CC1101_SFTX)
-        TX_SFTX --> TX_LOAD_FIFO: write_burst(TXFIFO)
-        TX_LOAD_FIFO --> TX_CLEAR_RX: received_ = false
-        TX_CLEAR_RX --> TX_STX: write_cmd(CC1101_STX)
-        TX_STX --> TX_WAIT_TX: wait for MARCSTATE_TX
-        TX_WAIT_TX --> TX_WAIT_DONE: wait for GDO0 interrupt
-        TX_WAIT_DONE --> TX_VERIFY: check TXBYTES == 0
-        TX_VERIFY --> TX_SUCCESS: FIFO empty
-        TX_VERIFY --> TX_ERROR: bytes remaining
-        TX_SUCCESS --> TX_FLUSH_RX: flush_and_rx()
-        TX_ERROR --> TX_FLUSH_RX
-    }
+    REG_LOOP --> STATS["4. publish_stats_()
+    (throttled to every 30s)"]
+```
 
-    TX_FLUSH_RX --> TX_RESULT
+### dispatch_packet() Detail
 
-    state "Retry Logic" as RETRY {
-        TX_RESULT --> INCREMENT_PACKETS: success (send_packets_++)
-        TX_RESULT --> INCREMENT_RETRIES: failure (send_retries_++)
+The `dispatch_packet()` function is the slow-path handler for decoded RX packets. It runs entirely on Core 1 and takes approximately 13ms (JSON formatting + registry dispatch + adapter notifications).
 
-        INCREMENT_PACKETS --> CHECK_PACKETS
-        CHECK_PACKETS --> DEQUEUE: send_packets_ >= 2
-        CHECK_PACKETS --> WAIT_NEXT: send_packets_ < 2
+| Step | Description |
+|------|-------------|
+| 1 | Look up device name from registry (for human-readable logs) |
+| 2 | Format and emit JSON log via `ESP_LOGD` (status, command, button, or unknown variant) |
+| 3 | Call `registry_->on_rf_packet(pkt, timestamp)` which fans out to adapters and FSMs |
+| 4 | Log timing metrics (`dispatch_us`, `queue_transit_us`) and update stats counters |
 
-        note right of DEQUEUE
-            Each command sent 2x
-            Then increment counter
-            counter wraps 255 → 1
-        end note
+While `dispatch_packet()` runs on Core 1, the RF task continues independently on Core 0, servicing the radio and buffering additional packets in the rx_queue.
 
-        INCREMENT_RETRIES --> RETRY_CHECK
-        RETRY_CHECK --> WAIT_NEXT: send_retries_ <= 3
-        RETRY_CHECK --> GIVE_UP: send_retries_ > 3
+---
 
-        GIVE_UP --> DEQUEUE: pop failed command
-    }
+## 4. Sending Commands (TX Path)
 
-    DEQUEUE --> PROCESS_QUEUE: next loop iteration
-    WAIT_NEXT --> [*]: wait 50ms
-    REJECTED --> [*]
+Commands flow from user actions through the adapter layer, into the registry, through `CommandSender`, across the `tx_queue` to the RF task on Core 0, and back via `tx_done_queue`.
+
+```mermaid
+sequenceDiagram
+    box rgb(40,60,40) Core 1 -- ESPHome Loop
+        participant User as HA / WebUI / MQTT
+        participant Adapter as EspCoverShell /<br/>WebServer / MqttAdapter
+        participant Registry as DeviceRegistry
+        participant Sender as CommandSender
+        participant ReqTx as request_tx()
+    end
+    participant TXQ as tx_queue<br/>(depth 4)
+    participant DQ as tx_done_queue<br/>(depth 4)
+    box rgb(40,40,60) Core 0 -- RF Task
+        participant RF as rf_task_func_
+        participant Driver as Radio Driver
+        participant HW as CC1101
+    end
+
+    User->>Adapter: cover command (up/down/stop/tilt)
+
+    Note over Adapter: Route to registry
+    Adapter->>Registry: command_cover(dev, action)
+
+    Note over Registry: Enqueue action + follow-up
+    Registry->>Sender: enqueue(cmd, 3, BUTTON)<br/>collapse consecutive duplicates
+    Registry->>Sender: enqueue(CHECK, 3, COMMAND)<br/>get "moving" status after action
+
+    Note over Sender: CommandSender: IDLE -> WAIT_DELAY
+    Note over Sender: registry->loop() -> process_queue()
+
+    Sender->>Sender: wait 10ms inter-packet delay
+    Sender->>Sender: set cmd fields from QueueEntry<br/>(payload[4], type, type2, hop)
+    Sender->>ReqTx: request_tx(this, command_)
+
+    Note over ReqTx: JSON TX log (no SPI, Core 1)
+    ReqTx->>ReqTx: ESP_LOGD(TAG_RF, TX JSON)
+    ReqTx->>TXQ: xQueueSend(RfTaskRequest)
+
+    Note over Sender: state: WAIT_DELAY -> TX_PENDING
+
+    RF->>TXQ: xQueueReceive
+    TXQ->>RF: RfTaskRequest (copy)
+    RF->>RF: build_tx_packet_(cmd)<br/>select builder: 0x44 button vs 0x6a command<br/>AES-128 encrypt
+    RF->>Driver: load_and_transmit(msg_tx_)
+    Driver->>HW: SIDLE -> SFTX -> write FIFO -> STX
+    HW-->>RF: GDO0 interrupt (TX complete)
+    RF->>RF: poll_tx() -> SUCCESS
+
+    RF->>DQ: xQueueSend(TxResult{client, true})
+
+    Note over Sender: Next main loop iteration
+    User->>DQ: Elero::loop() drains tx_done_queue
+    DQ->>Sender: on_tx_complete(true)
+
+    alt more packets needed
+        Sender->>Sender: send_packets_++ -> WAIT_DELAY<br/>repeat (3 packets per command)
+    else all packets sent
+        Sender->>Sender: advance_queue_()<br/>pop front, increment counter<br/>process next QueueEntry (CHECK)
+    end
 ```
 
 ### TX Packet Structure
@@ -261,333 +385,7 @@ Offset  Field           Size    Description
 25-29   payload_rest    5       Remaining payload
 ```
 
----
-
-## 4. Receiving Commands
-
-Packet reception is interrupt-driven via GDO0 pin.
-
-```mermaid
-stateDiagram-v2
-    [*] --> GDO0_INTERRUPT: CC1101 GDO0 falls
-
-    GDO0_INTERRUPT --> SET_FLAG: IRAM_ATTR interrupt()
-    SET_FLAG --> ISR_DONE: received_ = true
-
-    ISR_DONE --> LOOP_DETECTS: next loop() iteration
-
-    state "FIFO Read" as FIFO_READ {
-        LOOP_DETECTS --> CLEAR_FLAG: was_received = received_
-        CLEAR_FLAG --> READ_STATUS: read_status(RXBYTES)
-        READ_STATUS --> CHECK_OVERFLOW
-
-        CHECK_OVERFLOW --> FLUSH: overflow bit set
-        CHECK_OVERFLOW --> READ_BYTES: no overflow
-
-        READ_BYTES --> READ_BUF: read up to 64 bytes
-    }
-
-    state "Packet Validation" as VALIDATE {
-        READ_BUF --> LEN_CHECK: msg_rx_[0] = length
-        LEN_CHECK --> REJECT_LONG: length > 57
-        LEN_CHECK --> PARSE_HEADER: length valid
-
-        PARSE_HEADER --> EXTRACT_FIELDS
-        note right of EXTRACT_FIELDS
-            cnt = [1], typ = [2], typ2 = [3]
-            hop = [4], syst = [5], chl = [6]
-            src = [7-9], bwd = [10-12], fwd = [13-15]
-            num_dests = [16], dst = [17-19]
-        end note
-
-        EXTRACT_FIELDS --> DEST_CHECK: validate num_dests <= 20
-        DEST_CHECK --> REJECT_DESTS: too many destinations
-        DEST_CHECK --> BOUNDS_CHECK: valid
-
-        BOUNDS_CHECK --> REJECT_OOB: payload out of bounds
-        BOUNDS_CHECK --> DECRYPT: bounds OK
-    }
-
-    state "Decryption & RSSI" as DECRYPT_PHASE {
-        DECRYPT --> MSG_DECODE: protocol::msg_decode(payload)
-        MSG_DECODE --> CALC_RSSI
-        note right of CALC_RSSI
-            rssi_raw from [length+1]
-            Two's complement decode
-            rssi = raw/2 - 74 dBm
-        end note
-        CALC_RSSI --> LOG_PACKET
-    }
-
-    state "Packet Dispatch" as DISPATCH {
-        LOG_PACKET --> UPDATE_RSSI_SENSOR: if sensor registered
-        UPDATE_RSSI_SENSOR --> CALL_RF_CALLBACK: on_rf_packet_(pkt)
-        CALL_RF_CALLBACK --> CHECK_STATUS
-
-        CHECK_STATUS --> STATUS_PACKET: typ == 0xCA or 0xC9
-        CHECK_STATUS --> COMMAND_PACKET: typ == 0x6A or 0x69
-
-        state "Status Response" as STATUS {
-            STATUS_PACKET --> UPDATE_TEXT_SENSOR: publish state string
-            UPDATE_TEXT_SENSOR --> FIND_COVER: address_to_cover_mapping_
-            FIND_COVER --> NOTIFY_COVER: cover found
-            FIND_COVER --> FIND_LIGHT: cover not found
-            NOTIFY_COVER --> SET_RX_STATE: cover->set_rx_state(payload[6])
-            FIND_LIGHT --> NOTIFY_LIGHT: light found
-            NOTIFY_LIGHT --> SET_RX_STATE_LIGHT: light->set_rx_state(payload[6])
-        }
-
-        state "Remote Command" as CMD {
-            COMMAND_PACKET --> ITERATE_DESTS: for each destination
-            ITERATE_DESTS --> SCHEDULE_POLL: cover->schedule_immediate_poll()
-            note right of SCHEDULE_POLL
-                When remote commands blind,
-                trigger immediate status poll
-                so HA updates within ~50ms
-            end note
-        }
-    }
-
-    SET_RX_STATE --> [*]
-    SET_RX_STATE_LIGHT --> [*]
-    SCHEDULE_POLL --> [*]
-    REJECT_LONG --> [*]
-    REJECT_DESTS --> [*]
-    REJECT_OOB --> [*]
-    FLUSH --> [*]
-```
-
-### Packet Types
-
-| Type Byte | Direction | Description |
-|-----------|-----------|-------------|
-| `0x6A` | Remote → Blind | Command with 3-byte addressing |
-| `0x69` | Remote → Blind | Command with 1-byte addressing |
-| `0xCA` | Blind → Remote | Status response with 3-byte addressing |
-| `0xC9` | Blind → Remote | Status response with 1-byte addressing |
-
----
-
-## 5. Blind State Update
-
-When a status packet (`0xCA`/`0xC9`) is received, `set_rx_state()` updates the cover entity.
-
-```mermaid
-stateDiagram-v2
-    [*] --> RX_STATE: set_rx_state(state_byte)
-
-    state "State Decode" as DECODE {
-        RX_STATE --> SAVE_RAW: last_state_raw_ = state
-        SAVE_RAW --> SWITCH_STATE
-
-        SWITCH_STATE --> TOP: state == 0x01
-        SWITCH_STATE --> BOTTOM: state == 0x02
-        SWITCH_STATE --> INTERMEDIATE: state == 0x03
-        SWITCH_STATE --> TILT_STATE: state == 0x04
-        SWITCH_STATE --> MOVING_UP: state == 0x08 or 0x0A
-        SWITCH_STATE --> MOVING_DOWN: state == 0x09 or 0x0B
-        SWITCH_STATE --> STOPPED: state == 0x0D
-        SWITCH_STATE --> TOP_TILT: state == 0x0E
-        SWITCH_STATE --> BOTTOM_TILT: state == 0x0F
-        SWITCH_STATE --> ERROR_STATE: state == 0x05/0x06/0x07
-        SWITCH_STATE --> UNKNOWN: default
-
-        TOP --> SET_VALUES: pos=1.0, op=IDLE, tilt=0
-        BOTTOM --> SET_VALUES: pos=0.0, op=IDLE, tilt=0
-        INTERMEDIATE --> SET_VALUES: pos=unchanged, op=IDLE
-        TILT_STATE --> SET_VALUES: tilt=1.0, op=IDLE
-        MOVING_UP --> SET_VALUES: op=OPENING
-        MOVING_DOWN --> SET_VALUES: op=CLOSING
-        STOPPED --> SET_VALUES: op=IDLE
-        TOP_TILT --> SET_VALUES: pos=1.0, op=IDLE, tilt=1.0
-        BOTTOM_TILT --> SET_VALUES: pos=0.0, op=IDLE, tilt=1.0
-        ERROR_STATE --> LOG_WARN: BLOCKING/OVERHEATED/TIMEOUT
-        LOG_WARN --> SET_VALUES: op=IDLE
-        UNKNOWN --> SET_VALUES: op=IDLE
-    }
-
-    state "State Change Check" as CHANGE_CHECK {
-        SET_VALUES --> COMPARE: check pos/op/tilt changed
-        COMPARE --> NO_CHANGE: all same
-        COMPARE --> APPLY_CHANGES: something changed
-
-        APPLY_CHANGES --> UPDATE_POSITION: this->position = pos
-        UPDATE_POSITION --> UPDATE_OP: this->current_operation = op
-        UPDATE_OP --> UPDATE_TILT: this->tilt = tilt
-        UPDATE_TILT --> PUBLISH: publish_state()
-    }
-
-    NO_CHANGE --> [*]
-    PUBLISH --> [*]
-
-    note right of PUBLISH
-        Home Assistant receives
-        updated entity state
-    end note
-```
-
-### State Byte Values
-
-| Byte | Constant | Position | Operation | Tilt |
-|------|----------|----------|-----------|------|
-| `0x01` | `TOP` | 1.0 (open) | IDLE | 0 |
-| `0x02` | `BOTTOM` | 0.0 (closed) | IDLE | 0 |
-| `0x03` | `INTERMEDIATE` | unchanged | IDLE | 0 |
-| `0x04` | `TILT` | unchanged | IDLE | 1.0 |
-| `0x05` | `BLOCKING` | unchanged | IDLE | - |
-| `0x06` | `OVERHEATED` | unchanged | IDLE | - |
-| `0x07` | `TIMEOUT` | unchanged | IDLE | - |
-| `0x08` | `START_MOVING_UP` | unchanged | OPENING | 0 |
-| `0x09` | `START_MOVING_DOWN` | unchanged | CLOSING | 0 |
-| `0x0A` | `MOVING_UP` | unchanged | OPENING | 0 |
-| `0x0B` | `MOVING_DOWN` | unchanged | CLOSING | 0 |
-| `0x0D` | `STOPPED` | unchanged | IDLE | 0 |
-| `0x0E` | `TOP_TILT` | 1.0 (open) | IDLE | 1.0 |
-| `0x0F` | `BOTTOM_TILT` | 0.0 (closed) | IDLE | 1.0 |
-
----
-
-## 6. Position Tracking During Movement
-
-Dead-reckoning position estimation based on configured open/close durations.
-
-```mermaid
-stateDiagram-v2
-    [*] --> LOOP_CHECK: EleroCover::loop()
-
-    state "Poll Timing" as POLL {
-        LOOP_CHECK --> CALC_INTERVAL
-        CALC_INTERVAL --> MOVING_POLL: operation != IDLE
-        CALC_INTERVAL --> NORMAL_POLL: operation == IDLE
-
-        MOVING_POLL --> INTERVAL_2S: intvl = 2000ms
-        note right of INTERVAL_2S
-            Poll every 2s while moving
-            (max 2 min timeout)
-        end note
-
-        NORMAL_POLL --> INTERVAL_CONFIG: intvl = poll_intvl_
-
-        INTERVAL_2S --> CHECK_POLL_DUE
-        INTERVAL_CONFIG --> CHECK_POLL_DUE
-
-        CHECK_POLL_DUE --> ENQUEUE_CHECK: time elapsed > intvl
-        CHECK_POLL_DUE --> SKIP_POLL: not due yet
-
-        ENQUEUE_CHECK --> PROCESS_QUEUE: sender_.enqueue(command_check_)
-    }
-
-    PROCESS_QUEUE --> POSITION_CHECK
-
-    state "Position Recomputation" as RECOMPUTE {
-        POSITION_CHECK --> SKIP_RECOMPUTE: operation == IDLE
-        POSITION_CHECK --> CHECK_DURATION: operation != IDLE
-
-        CHECK_DURATION --> SKIP_RECOMPUTE: open_duration_ == 0 OR close_duration_ == 0
-        CHECK_DURATION --> CALC_POSITION: durations configured
-
-        CALC_POSITION --> GET_DIRECTION
-        GET_DIRECTION --> DIR_UP: OPENING → dir = +1.0
-        GET_DIRECTION --> DIR_DOWN: CLOSING → dir = -1.0
-
-        DIR_UP --> CALC_ELAPSED
-        DIR_DOWN --> CALC_ELAPSED
-
-        CALC_ELAPSED --> CALC_RATIO: elapsed_ratio = (now - movement_start_) / action_dur
-        CALC_RATIO --> APPLY_DELTA: position = start_position_ + dir * elapsed_ratio
-        APPLY_DELTA --> CLAMP: clamp(0.0, 1.0)
-    }
-
-    state "Target Check" as TARGET {
-        CLAMP --> CHECK_TARGET: is_at_target()
-
-        CHECK_TARGET --> AT_LIMITS: target == OPEN or CLOSED
-        AT_LIMITS --> NO_STOP: let blind handle limits
-
-        CHECK_TARGET --> COMPARE_POS: intermediate target
-        COMPARE_POS --> REACHED: pos >= target (opening) OR pos <= target (closing)
-        COMPARE_POS --> NOT_REACHED: still moving
-
-        REACHED --> SEND_STOP: enqueue(command_stop_)
-        SEND_STOP --> SET_IDLE: operation = IDLE
-    }
-
-    state "Periodic Publish" as PERIODIC {
-        NOT_REACHED --> CHECK_PUBLISH: every 1000ms
-        NO_STOP --> CHECK_PUBLISH
-
-        CHECK_PUBLISH --> PUBLISH_STATE: (now - last_publish_) > 1000
-        CHECK_PUBLISH --> SKIP_PUBLISH: too soon
-
-        PUBLISH_STATE --> UPDATE_TS: last_publish_ = now
-    }
-
-    SKIP_RECOMPUTE --> [*]
-    SKIP_POLL --> [*]
-    UPDATE_TS --> [*]
-    SKIP_PUBLISH --> [*]
-    SET_IDLE --> [*]
-```
-
-### Position Calculation Formula
-
-```
-position = start_position + direction × (elapsed_ms / duration_ms)
-```
-
-Where:
-- `direction` = +1.0 for opening, -1.0 for closing
-- `elapsed_ms` = `millis() - movement_start_`
-- `duration_ms` = `open_duration_` or `close_duration_`
-- Result is clamped to [0.0, 1.0]
-
----
-
-## Summary: Key Mechanisms
-
-### Queuing & Batching
-
-| Aspect | Implementation |
-|--------|----------------|
-| **Command Queue** | `std::queue<uint8_t>` per cover/light, max 10 commands |
-| **Packet Repetition** | Each command sent **2×** (`ELERO_SEND_PACKETS`) |
-| **Inter-packet Delay** | 50ms between sends (`ELERO_DELAY_SEND_PACKETS`) |
-| **Counter Management** | Increments after 2 packets sent, wraps 255→1 |
-
-### Error Handling
-
-| Error Type | Handling |
-|------------|----------|
-| **TX Timeout** | 50ms per state, then `abort_tx_()` → `flush_and_rx()` |
-| **TX Retry** | Up to 3 retries per command (`ELERO_SEND_RETRIES`) |
-| **FIFO Overflow** | `flush_and_rx()` clears both FIFOs, returns to RX |
-| **FIFO Underflow** | In `TRIGGER_TX`, detected via MARCSTATE and aborted immediately |
-| **Invalid Packet** | Logged, marked in dump buffer, silently dropped |
-| **SPI Error** | Checked via CC1101 status byte (bit 7 = overflow) |
-| **Unexpected MARCSTATE** | In `TRIGGER_TX`, aborts immediately if state is not TX/IDLE/FSTXON |
-| **abort_tx_() Re-entrancy** | Early return if already IDLE (prevents double-flush/double-notify) |
-
-### TX State Machine States
-
-```
-IDLE → GOTO_IDLE → FLUSH_TX → LOAD_FIFO → TRIGGER_TX → WAIT_TX_DONE → VERIFY_DONE → RETURN_RX → IDLE
-```
-
-Each state has a 50ms timeout. Any failure triggers `abort_tx_()` which flushes and returns to RX.
-
-**State-specific behavior:**
-
-| State | Success Condition | Fast Abort Condition |
-|-------|-------------------|----------------------|
-| `GOTO_IDLE` | MARCSTATE == IDLE | Timeout only |
-| `FLUSH_TX` | 1ms settling elapsed | Timeout only |
-| `LOAD_FIFO` | FIFO loaded | SPI error |
-| `TRIGGER_TX` | MARCSTATE == TX | UFLOW, OFLOW, or unexpected MARCSTATE |
-| `WAIT_TX_DONE` | GDO0 interrupt | Timeout only |
-| `VERIFY_DONE` | TXBYTES == 0 | Bytes remaining in FIFO |
-| `RETURN_RX` | Always succeeds | N/A (uses `flush_and_rx()`) |
-
-The `TRIGGER_TX` state detects TXFIFO underflow, RXFIFO overflow, and other transient CC1101 states (CALIBRATE, SETTLING) without waiting for the full 50ms timeout.
+### CommandSender State Machine
 
 ```mermaid
 stateDiagram-v2
@@ -595,303 +393,313 @@ stateDiagram-v2
 
     [*] --> IDLE
 
-    IDLE --> GOTO_IDLE: start_transmit()
+    IDLE --> WAIT_DELAY: enqueue(cmd)
+    WAIT_DELAY --> WAIT_DELAY: 10ms not elapsed
+    WAIT_DELAY --> TX_PENDING: request_tx() ok
+    WAIT_DELAY --> WAIT_DELAY: tx_queue full (retry next loop)
 
-    GOTO_IDLE --> FLUSH_TX: MARCSTATE == IDLE
-    GOTO_IDLE --> ABORT: timeout
+    TX_PENDING --> WAIT_DELAY: on_tx_complete()\nmore packets for this entry
+    TX_PENDING --> WAIT_DELAY: on_tx_complete()\nqueue has next entry
+    TX_PENDING --> IDLE: on_tx_complete()\nqueue empty
 
-    FLUSH_TX --> LOAD_FIFO: 1ms elapsed
-    FLUSH_TX --> ABORT: timeout
-
-    LOAD_FIFO --> TRIGGER_TX: FIFO loaded
-    LOAD_FIFO --> ABORT: SPI error
-
-    TRIGGER_TX --> WAIT_TX_DONE: MARCSTATE == TX
-    TRIGGER_TX --> ABORT: UFLOW/OFLOW
-    TRIGGER_TX --> ABORT: timeout
-    TRIGGER_TX --> ABORT: unexpected MARCSTATE
-
-    note right of TRIGGER_TX
-        Fast abort if MARCSTATE not in
-        {TX, IDLE, FSTXON, UFLOW, OFLOW}
-        (catches CALIBRATE, SETTLING, etc.)
+    note right of WAIT_DELAY
+        Each command sent 3x (ELERO_SEND_PACKETS)
+        Then advance_queue_(): pop front,
+        increment counter (wraps 255 -> 1),
+        process next entry (CHECK)
     end note
-
-    WAIT_TX_DONE --> VERIFY_DONE: GDO0 interrupt
-    WAIT_TX_DONE --> ABORT: timeout
-
-    VERIFY_DONE --> RETURN_RX: TXBYTES == 0
-    VERIFY_DONE --> ABORT: bytes remaining
-
-    RETURN_RX --> IDLE: flush_and_rx() + notify success
-
-    state ABORT {
-        direction TB
-        [*] --> CHECK_IDLE
-        CHECK_IDLE --> EARLY_RETURN: already IDLE
-        CHECK_IDLE --> DO_ABORT: not IDLE
-        DO_ABORT --> LOG: log state + MARCSTATE
-        LOG --> FLUSH: flush_and_rx()
-        FLUSH --> NOTIFY: notify_tx_owner_(false)
-    }
-
-    ABORT --> IDLE
 ```
 
-### RX Dispatch Logic
+---
 
-1. **Interrupt sets flag** — ISR runs in IRAM, sets `received_ = true`
-2. **loop() checks flag** — Clears flag, reads FIFO
-3. **Validate packet** — Length, bounds, destination count
-4. **Decrypt payload** — `protocol::msg_decode()`
-5. **Dispatch by type:**
-   - `0xCA`/`0xC9`: Status from blind → `set_rx_state(payload[6])`
-   - `0x6A`/`0x69`: Command from remote → `schedule_immediate_poll()`
+## 5. Receiving Packets (RX Path)
+
+Packet reception is interrupt-driven. The GDO0 pin fires on packet arrival, waking the RF task which reads the FIFO, decodes packets, and queues them for the main loop.
+
+```mermaid
+sequenceDiagram
+    box rgb(40,40,60) Core 0 -- RF Task
+        participant HW as CC1101
+        participant ISR as GDO0 ISR
+        participant RF as rf_task_func_
+    end
+    participant RXQ as rx_queue<br/>(depth 16)
+    box rgb(40,60,40) Core 1 -- ESPHome Loop
+        participant MainLoop as Elero::loop()
+        participant Disp as dispatch_packet()
+        participant Reg as DeviceRegistry
+        participant FSM as cover_sm / light_sm
+        participant Adapt as OutputAdapters
+    end
+
+    HW->>ISR: GDO0 edge (packet in FIFO)
+    ISR->>RF: received_.store(true, memory_order_release)
+    ISR->>RF: vTaskNotifyGiveFromISR (wake)
+
+    Note over RF: driver_->has_data() returns true
+    RF->>RF: received_.exchange(false)
+
+    Note over RF: driver_->read_fifo(msg_rx_, sizeof)
+    RF->>HW: read_status_reliable_(RXBYTES)<br/>double-read errata workaround
+
+    alt FIFO overflow
+        RF->>HW: driver_->recover() -- reset radio
+    else valid data
+        RF->>HW: read_buf(RXFIFO, fifo_count)<br/>single SPI burst read
+        RF->>RF: decode_fifo_packets_(count):<br/>for each packet in buffer:<br/>parse_packet() + AES-128 decrypt<br/>+ CRC check<br/>+ stamp decoded_at_us
+        RF->>RXQ: xQueueSend(RfPacketInfo) per packet
+    end
+
+    Note over MainLoop: Elero::loop() -- next iteration
+    MainLoop->>RXQ: xQueueReceive (non-blocking)
+    RXQ->>Disp: RfPacketInfo (copy)
+
+    Note over Disp: 1. JSON log (snprintf)
+    Disp->>Disp: ESP_LOGD(TAG_RF, JSON)
+
+    Note over Disp: 2. Registry dispatch
+    Disp->>Reg: on_rf_packet(pkt, timestamp)
+    Reg->>Adapt: notify_rf_packet_() -- all adapters see raw pkt
+
+    alt status packet (0xCA/0xC9)
+        Reg->>Reg: find(pkt.src) -- lookup Device by address
+        Reg->>Reg: update rf_meta (last_seen, rssi, state_raw)
+        Reg->>FSM: dispatch_status_() -> on_rf_status()
+        FSM->>FSM: state transition (variant swap)
+        Reg->>Reg: poll.on_rf_received(now)
+        Reg->>Reg: tilt state tracking
+        Note over Reg: notify_state_changed_(dev, now):<br/>compute snapshot → diff vs Published cache<br/>→ if changes == 0: skip (no adapter calls)<br/>→ else: update cache, set last_changes
+        Reg->>Adapt: on_state_changed(dev, changes) -- only if diff != 0
+    else command packet (0x6A)
+        Reg->>Reg: track_remote_() -- auto-discover RemoteDevice
+    end
+
+    Note over Disp: 3. Log dispatch_us + queue_transit_us
+```
+
+### Packet Types
+
+| Type Byte | Direction | Description |
+|-----------|-----------|-------------|
+| `0x44` | Remote -> Blind | Button press (short packet, different builder) |
+| `0x6A` | Remote -> Blind | Command with 3-byte addressing |
+| `0x69` | Remote -> Blind | Command with 1-byte addressing |
+| `0xCA` | Blind -> Remote | Status response with 3-byte addressing |
+| `0xC9` | Blind -> Remote | Status response with 1-byte addressing |
+
+---
+
+## 6. Registry Device Loop
+
+`DeviceRegistry::loop(now)` processes each active device on every main loop iteration. Cover and light devices have distinct processing flows; remote devices are passive trackers.
+
+### Cover Processing
+
+```mermaid
+flowchart TD
+    START["DeviceRegistry::loop(now)"] --> ITER["for each active Device"]
+    ITER --> VARIANT{device type?}
+
+    VARIANT -->|CoverDevice| TICK["1. cover_sm::on_tick(state, now, ctx)
+    check movement timeout (120s)
+    check post-stop cooldown"]
+    VARIANT -->|LightDevice| LTICK["1. light_sm::on_tick()
+    check dimming completion"]
+    VARIANT -->|RemoteDevice| SKIP[no-op]
+
+    TICK --> POLL{"2. should_poll?
+    (PollTimer)"}
+    POLL -->|Yes| POLL_CHECK["enqueue CHECK
+    (1 pkt, 0x6a)"]
+    POLL -->|No| POS_CHECK
+
+    POLL_CHECK --> POS_CHECK
+
+    POS_CHECK{"3. position tracking?
+    moving + has target?"}
+    POS_CHECK -->|At target| POS_STOP["clear_queue()
+    enqueue STOP (0x6a)
+    enqueue CHECK (0x6a)
+    clear target_position"]
+    POS_CHECK -->|Not at target| CMD_Q
+    POS_STOP --> CMD_Q
+
+    CMD_Q["4. sender.process_queue(now, hub)
+    -> request_tx() -> tx_queue"]
+
+    CMD_Q --> NOTIFY{"5. state changed?"}
+    NOTIFY -->|Yes| PUB["notify_state_changed_(dev, now)
+    compute snapshot → diff Published
+    → if changes: on_state_changed(dev, changes)"]
+    NOTIFY -->|Moving + throttle elapsed| PUB
+    NOTIFY -->|No| NEXT[next device]
+
+    PUB --> NEXT
+    NEXT --> ITER
+
+    LTICK --> LDIM{"2. dimming just ended?"}
+    LDIM -->|Yes| LRELEASE["enqueue RELEASE
+    (0x44 button)"]
+    LDIM -->|No| LCMD
+    LRELEASE --> LCMD["3. sender.process_queue()"]
+    LCMD --> LNOTIFY{"4. state changed?"}
+    LNOTIFY -->|Yes| LPUB["notify_state_changed_(dev, now)
+    snapshot → diff → on_state_changed"]
+    LNOTIFY -->|No| NEXT
+    LPUB --> NEXT
+
+    SKIP --> NEXT
+
+    ITER -->|done| ADAPTERS["adapter->loop() for each
+    (MqttAdapter: reconnect check
+    EleroWebServer: mg_mgr_poll)"]
+```
+
+### Cover State Machine (`cover_sm`)
+
+The cover FSM uses variant-based states. Position is always **derived** from `(state, now, config)` -- never stored.
+
+| State | Description | Transitions |
+|-------|-------------|-------------|
+| `Idle` | Blind is stationary | -> `Opening` on UP, -> `Closing` on DOWN |
+| `Opening` | Blind is moving up | -> `Idle` on TOP/STOPPED/timeout, -> `Closing` on DOWN |
+| `Closing` | Blind is moving down | -> `Idle` on BOTTOM/STOPPED/timeout, -> `Opening` on UP |
+| `Stopping` | Stop command sent, awaiting confirmation | -> `Idle` on STOPPED/timeout |
+
+Position calculation (derived on each loop tick):
+
+```
+position = start_position + direction * (elapsed_ms / duration_ms)
+```
+
+Where:
+- `direction` = +1.0 for opening, -1.0 for closing
+- `elapsed_ms` = `now - movement_started_at`
+- `duration_ms` = `open_duration` or `close_duration` from config
+- Result is clamped to [0.0, 1.0]
+
+### Light State Machine (`light_sm`)
+
+| State | Description | Transitions |
+|-------|-------------|-------------|
+| `Off` | Light is off | -> `On` on turn-on, -> `DimmingUp` on dim command |
+| `On` | Light is on | -> `Off` on turn-off, -> `DimmingDown` on dim command |
+| `DimmingUp` | Brightness increasing | -> `On` on completion/stop, -> `DimmingDown` on reverse |
+| `DimmingDown` | Brightness decreasing | -> `Off`/`On` on completion/stop, -> `DimmingUp` on reverse |
+
+Brightness is derived from `(state, now, config.dim_duration)` -- never stored. When dimming ends, `loop_light_()` enqueues a RELEASE command (0x44 button type) to signal the light receiver to hold the current level.
+
+### State Byte Values (RF Status Packets)
+
+| Byte | Constant | Meaning |
+|------|----------|---------|
+| `0x01` | `TOP` | Fully open |
+| `0x02` | `BOTTOM` | Fully closed |
+| `0x03` | `INTERMEDIATE` | Stopped at intermediate position |
+| `0x04` | `TILT` | Tilted |
+| `0x05` | `BLOCKING` | Mechanical blockage detected |
+| `0x06` | `OVERHEATED` | Motor thermal protection |
+| `0x07` | `TIMEOUT` | Movement timeout |
+| `0x08` | `START_MOVING_UP` | Beginning upward movement |
+| `0x09` | `START_MOVING_DOWN` | Beginning downward movement |
+| `0x0A` | `MOVING_UP` | Continuing upward movement |
+| `0x0B` | `MOVING_DOWN` | Continuing downward movement |
+| `0x0D` | `STOPPED` | Stopped by command |
+| `0x0E` | `TOP_TILT` | Fully open + tilted |
+| `0x0F` | `BOTTOM_TILT` | Fully closed + tilted |
+
+---
+
+## 7. Key Mechanisms
+
+### Dual-Core Isolation
+
+The system uses strict core isolation via FreeRTOS queues with copy semantics:
+
+| Aspect | Core 0 (RF Task) | Core 1 (ESPHome Loop) |
+|--------|-------------------|----------------------|
+| **Owns** | SPI bus, CC1101 hardware | DeviceRegistry, adapters, ESPHome entities |
+| **Reads from** | `tx_queue` | `rx_queue`, `tx_done_queue` |
+| **Writes to** | `rx_queue`, `tx_done_queue` | `tx_queue` |
+| **Shared state** | None | None |
+| **Atomic** | `received_` (ISR -> RF task) | Stat counters (RF task -> stats sensors) |
+
+The RF task drains the CC1101 FIFO within approximately 1ms of packet arrival, regardless of how busy the main loop is. `dispatch_packet()` on Core 1 takes approximately 13ms (JSON formatting + registry dispatch + adapter notifications), but during this time the RF task continues to service the radio independently.
+
+### ISR Design
+
+The GDO0 interrupt handler (`Elero::interrupt`) is minimal and runs in IRAM:
+
+1. `received_.store(true, memory_order_release)` -- atomic flag for RF task
+2. `vTaskNotifyGiveFromISR()` -- wake RF task immediately (bypasses 1ms sleep)
+3. `portYIELD_FROM_ISR()` -- context switch if RF task has higher priority
+
+### Command Batching
+
+| Aspect | Implementation |
+|--------|----------------|
+| **Command Queue** | `std::deque` per device via `CommandSender`, max 10 entries |
+| **Packet Repetition** | Each command sent **3x** (`ELERO_SEND_PACKETS`) |
+| **Inter-packet Delay** | 10ms between sends |
+| **Counter Management** | Increments after all packets sent for an entry, wraps 255 -> 1 |
+| **Duplicate Collapse** | Consecutive identical commands are collapsed in the queue |
+| **Auto-append CHECK** | Cover commands auto-append a CHECK (0x6a) to get "moving" status |
+| **Light RELEASE** | Dimming completion triggers RELEASE (0x44 button) to hold brightness |
+
+### Polling Strategy
+
+| Condition | Poll Behavior |
+|-----------|--------------|
+| **Moving** | 1 RF packet per CHECK, 2s interval (reduce TX time during movement) |
+| **Idle** | 1 RF packet per CHECK, 5min interval (blind is mains-powered, always listening; retry via next poll) |
+| **Post-stop** | 1 RF packet CHECK after Stopping→Idle cooldown (verify actual resting position) |
+
+Blinds only respond to received packets during movement -- they do not broadcast unsolicited status updates. The PollTimer uses a boolean `awaiting_response` flag (not time-based).
+
+### Position and Brightness Tracking
+
+Position and brightness are always **derived** from `(state, now, config)` -- never stored as persistent fields. This eliminates an entire class of consistency bugs:
+
+- **Cover position**: `start_position + direction * (elapsed_ms / duration_ms)`, clamped to [0.0, 1.0]
+- **Light brightness**: `start_brightness + direction * (elapsed_ms / dim_duration)`, clamped to [0.0, 1.0]
+- **Target position**: When a cover has a target, `loop_cover_()` checks if the derived position has reached it and sends STOP + CHECK
+
+### Error Recovery
+
+| Error Type | Detection | Recovery |
+|------------|-----------|----------|
+| **TX failure** | `poll_tx()` returns `FAILED` | Report failure via `tx_done_queue`, CommandSender retries |
+| **FIFO overflow** | `read_status_reliable_()` overflow bit | `driver_->recover()` (flush FIFOs, return to RX) |
+| **Stuck radio** | Health check every 5s reads MARCSTATE | `driver_->recover()` (reset and reinit if needed) |
+| **Queue full** | `xQueueSend` returns != `pdPASS` | Log warning, drop packet, increment stat counter |
+| **ISR missed** | 1ms timeout wakes RF task regardless | `has_data()` checks hardware state directly |
 
 ### Timing Constants
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `ELERO_POLL_INTERVAL_MOVING` | 2000ms | Poll frequency while blind is moving |
-| `ELERO_TIMEOUT_MOVEMENT` | 120000ms | Max time to track movement (2 min) |
-| `ELERO_DELAY_SEND_PACKETS` | 50ms | Delay between packet repeats |
-| `ELERO_SEND_PACKETS` | 2 | Times each command is transmitted |
-| `ELERO_SEND_RETRIES` | 3 | Max retries on TX failure |
-| `TxContext::STATE_TIMEOUT_MS` | 50ms | Timeout per TX state machine state |
+| RF task sleep | 1ms | `ulTaskNotifyTake` timeout (max latency without ISR) |
+| Inter-packet delay | 10ms | Delay between TX packets in a command sequence |
+| Packets per command | 3 | Times each command byte is transmitted |
+| Radio watchdog | 5000ms | MARCSTATE health check interval |
+| Stack watermark log | 30000ms | Development aid for stack usage monitoring |
+| Movement timeout | 120000ms | Max time to track cover movement (2 min) |
+| Position publish throttle | 1000ms | Min interval between position updates during movement |
 
 ---
 
 ## Code References
 
-- CC1101 initialization: `elero.cpp:146-238`
-- Main loop: `elero.cpp:85-129`
-- Non-blocking TX state machine: `elero.cpp:513-623` (used by CommandSender)
-- abort_tx_() with re-entrancy guard: `elero.cpp:406-418`
-- Blocking transmit (legacy): `elero.cpp:346-402`
-- Packet interpretation: `elero.cpp:663-783`
+- CC1101 initialization: `elero.cpp` `Elero::setup()`
+- RF task: `elero.cpp` `Elero::rf_task_func_()`
+- Main loop: `elero.cpp` `Elero::loop()`
+- Packet decode: `elero.cpp` `Elero::decode_fifo_packets_()`, `Elero::decode_packet()`
+- Packet dispatch: `elero.cpp` `Elero::dispatch_packet()`
+- TX request: `elero.cpp` `Elero::request_tx()`
+- ISR: `elero.cpp` `Elero::interrupt()`
+- Device registry: `device_registry.cpp` `DeviceRegistry::on_rf_packet()`, `DeviceRegistry::loop()`
+- Cover FSM: `cover_sm.h` / `cover_sm.cpp`
+- Light FSM: `light_sm.h` / `light_sm.cpp`
 - Command sender: `command_sender.h`
-- Cover state handling: `EleroCover.cpp`
-- Position tracking: `EleroCover.cpp`
-
----
-
-## Blocking vs Non-Blocking TX Comparison
-
-The implementation supports two TX modes:
-
-### Legacy Blocking Mode (`send_command`)
-
-Used for simple use cases and raw TX via web UI. Blocks the ESPHome loop during transmission.
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         BLOCKING TX FLOW                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  CommandSender                    Elero Hub                   CC1101       │
-│       │                               │                          │         │
-│       │  send_command(&cmd)           │                          │         │
-│       │──────────────────────────────▶│                          │         │
-│       │                               │  build_tx_packet_()      │         │
-│       │                               │─────────┐                │         │
-│       │                               │◀────────┘                │         │
-│       │                               │                          │         │
-│       │                               │  transmit() [BLOCKING]   │         │
-│       │                               │─────────────────────────▶│         │
-│       │                               │     wait_idle()          │         │
-│       │                               │◀ ─ ─ ─ polling ─ ─ ─ ─ ─│         │
-│       │                               │     load FIFO            │         │
-│       │                               │─────────────────────────▶│         │
-│       │                               │     wait_tx()            │         │
-│       │                               │◀ ─ ─ ─ polling ─ ─ ─ ─ ─│         │
-│       │                               │     wait_tx_done()       │         │
-│       │                               │◀ ─ ─ ─ polling ─ ─ ─ ─ ─│         │
-│       │                               │                          │         │
-│       │◀──────────────────────────────│  return success          │         │
-│       │                               │                          │         │
-│  [5-40ms blocked]                                                           │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-**Characteristics:**
-- Simple, synchronous API
-- Caller knows result immediately
-- Blocks loop for 5-40ms per packet
-- Worst case with retries: ~120ms
-
-### Non-Blocking Mode (`request_tx` + callback)
-
-Used by `CommandSender` (covers and lights). Returns immediately, result delivered via callback.
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                       NON-BLOCKING TX FLOW                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  CommandSender                    Elero Hub                   CC1101       │
-│       │                               │                          │         │
-│       │  request_tx(this, cmd)        │                          │         │
-│       │──────────────────────────────▶│                          │         │
-│       │                               │  tx_owner_ = this        │         │
-│       │                               │  build_tx_packet_()      │         │
-│       │                               │  start_transmit()        │         │
-│       │◀──────────────────────────────│  return true             │         │
-│       │  [returns immediately]        │                          │         │
-│       │                               │                          │         │
-│  ═══════════════════════════════════  │  loop() iterations  ═════│═════════│
-│       │                               │                          │         │
-│       │                               │  handle_tx_state_()      │         │
-│       │                               │─────────────────────────▶│         │
-│       │                               │◀─────────────────────────│         │
-│       │                               │  ...state machine...     │         │
-│       │                               │                          │         │
-│  ═══════════════════════════════════  │  ════════════════════════│═════════│
-│       │                               │                          │         │
-│       │                               │  TX complete!            │         │
-│       │                               │  notify_tx_owner_(ok)    │         │
-│       │  on_tx_complete(success)      │                          │         │
-│       │◀──────────────────────────────│                          │         │
-│       │                               │  tx_owner_ = nullptr     │         │
-│       │                               │                          │         │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-**Characteristics:**
-- Asynchronous, callback-based API
-- Loop never blocked (0ms)
-- RX can be checked between TX operations
-- State tracking required in sender
-
-### Timing Comparison: 4 Blinds Commanded Simultaneously
-
-**Blocking Mode:**
-```
-t=0ms     Cover1 loop → send_command() ─────────────[BLOCKS 10ms]
-t=10ms    Cover2 loop → send_command() ─────────────[BLOCKS 10ms]
-t=20ms    Cover3 loop → send_command() ─────────────[BLOCKS 10ms]
-t=30ms    Cover4 loop → send_command() ─────────────[BLOCKS 10ms]
-t=40ms    Loop ends, RX check finally happens
-          ↓
-          Total loop block: 40ms
-          RX checks during burst: 0
-```
-
-**Non-Blocking Mode:**
-```
-t=0ms     Cover1 loop → request_tx() → returns immediately
-t=0ms     Cover2 loop → request_tx() → busy, will retry
-t=0ms     Cover3 loop → request_tx() → busy, will retry
-t=0ms     Cover4 loop → request_tx() → busy, will retry
-t=0ms     Loop ends (not blocked!)
-          ↓
-t=1ms     Next loop: handle_tx_state_() progresses TX
-t=10ms    TX complete, on_tx_complete() to Cover1
-t=10ms    RX check (could catch responses!)
-t=10ms    Cover2 request_tx() → granted
-          ...continues...
-          ↓
-          Total loop block: 0ms
-          RX checks during burst: 4
-```
-
-### State Machine Integration
-
-```mermaid
-stateDiagram-v2
-    direction LR
-
-    state "CommandSender" as CS {
-        [*] --> CS_IDLE
-        CS_IDLE --> CS_WAIT: enqueue(cmd)
-        CS_WAIT --> CS_WAIT: delay not elapsed
-        CS_WAIT --> CS_WAIT: hub busy
-        CS_WAIT --> CS_PENDING: request_tx() ok
-        CS_PENDING --> CS_WAIT: on_tx_complete\nmore packets
-        CS_PENDING --> CS_IDLE: on_tx_complete\nqueue empty
-    }
-
-    state "Elero Hub" as HUB {
-        [*] --> HUB_IDLE
-        HUB_IDLE --> HUB_TX: request_tx()
-        HUB_TX --> HUB_TX: handle_tx_state_()
-        HUB_TX --> HUB_IDLE: TX complete\nnotify owner
-    }
-
-    CS_PENDING --> HUB_TX: owns
-    HUB_TX --> CS_PENDING: callback
-```
-
-### Ownership Guarantees
-
-| Invariant | How Enforced |
-|-----------|--------------|
-| Single owner | `request_tx()` checks `tx_owner_ != nullptr` |
-| Callback guaranteed | All exit paths call `notify_tx_owner_()` |
-| No double callback | Owner cleared before callback |
-| Re-entrancy safe | Owner cleared before callback |
-| Cancellation safe | `cancelled_` flag checked first in callback |
-
-### When to Use Each Mode
-
-| Use Case | Recommended Mode |
-|----------|------------------|
-| EleroCover / EleroLight | Non-blocking (`CommandSender`) |
-| Raw TX via web UI | Blocking (`send_command`) |
-| Simple scripts | Blocking (`send_command`) |
-| High-traffic scenarios | Non-blocking |
-
----
-
-## Implementation Review Notes
-
-### Protocol Compliance
-
-| Aspect | Spec | Implementation | Status |
-|--------|------|----------------|--------|
-| Packet repetition | 3× with 10ms delay | 2× with 50ms delay | ⚠️ Deviation (works) |
-| Rolling counter | Increment per TX | Wraps 255→1 | ✅ Correct |
-| Encryption | nibble + XOR + r20 | Matches exactly | ✅ Correct |
-| Message type | 0x6A for commands | Used correctly | ✅ Correct |
-
-### ESP32 Best Practices
-
-| Practice | Status | Notes |
-|----------|--------|-------|
-| IRAM_ATTR on ISR | ✅ | `interrupt()` and `set_received()` |
-| Minimal ISR work | ✅ | Sets flag only |
-| RAII for SPI | ✅ | `SpiTransaction` class |
-| Bounded queues | ✅ | Max 10 commands |
-| Timeouts | ✅ | 200 × 200µs = 40ms max per state |
-| Non-blocking loop | ✅ | Via `request_tx()` + callback |
-
-### Diagnostic Logging
-
-TX state machine failures include detailed context for debugging:
-
-| Log Level | Information Included |
-|-----------|---------------------|
-| `LOGW` | `abort_tx_()`: TxState enum value + MARCSTATE register |
-| `LOGE` | Timeout: State name + elapsed time (ms) + MARCSTATE (where applicable) |
-| `LOGE` | FIFO underflow/overflow: Specific error type |
-| `LOGW` | Unexpected MARCSTATE in `TRIGGER_TX`: MARCSTATE value |
-
-Example log output:
-```
-[W][elero:411]: TX aborted in state 3, marcstate=0x16
-[E][elero:533]: TX timeout in GOTO_IDLE after 51ms, marcstate=0x01
-[E][elero:574]: TX FIFO underflow detected, aborting
-[W][elero:585]: Unexpected MARCSTATE=0x04 in TRIGGER_TX, aborting
-```
-
-### Known Limitations
-
-1. **Volatile vs Atomic:** The `received_` flag uses `std::atomic<bool>` for
-   correct memory ordering between ISR and main loop.
-
-2. **CCA Bypass:** Clear Channel Assessment is intentionally bypassed (go to IDLE
-   before STX) because Elero motors transmit continuously during status updates.
-
-3. **FIFO Flush:** `flush_and_rx()` discards pending RX data. With non-blocking TX,
-   we check RX between transmissions, reducing (but not eliminating) this window.
+- Packet encoding: `elero_packet.h` / `elero_packet.cpp`
+- Protocol constants: `elero_protocol.h`

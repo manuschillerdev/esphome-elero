@@ -20,7 +20,6 @@ export interface Cover extends DeviceBase {
   remote: string
   open_ms: number
   close_ms: number
-  poll_ms: number
   supports_tilt: boolean
 }
 
@@ -45,7 +44,6 @@ export interface DeviceUpdates {
   remote?: string
   open_ms?: number
   close_ms?: number
-  poll_ms?: number
   supports_tilt?: boolean
   dim_ms?: number
 }
@@ -61,7 +59,7 @@ function configToCover(b: BlindConfig): Cover {
   return {
     type: 'cover', address: b.address, name: b.name, updated_at: b.updated_at ?? null,
     enabled: b.enabled, channel: b.channel, remote: b.remote,
-    open_ms: b.open_ms, close_ms: b.close_ms, poll_ms: b.poll_ms, supports_tilt: b.supports_tilt,
+    open_ms: b.open_ms, close_ms: b.close_ms, supports_tilt: b.supports_tilt,
   }
 }
 
@@ -81,7 +79,7 @@ function configToRemote(r: RemoteConfig): Remote {
 function makeCover(partial: Partial<Cover> & Pick<Cover, 'address'>): Cover {
   return {
     type: 'cover', name: '', updated_at: null, enabled: true, channel: 0, remote: '',
-    open_ms: 0, close_ms: 0, poll_ms: 0, supports_tilt: false,
+    open_ms: 0, close_ms: 0, supports_tilt: false,
     ...partial,
   }
 }
@@ -115,7 +113,6 @@ function coverToYaml(d: Cover): string {
     ...(d.open_ms > 0 ? [`    open_duration: ${formatDuration(d.open_ms)}`] : []),
     ...(d.close_ms > 0 ? [`    close_duration: ${formatDuration(d.close_ms)}`] : []),
     ...(d.supports_tilt ? ['    supports_tilt: true'] : []),
-    ...(d.poll_ms > 0 ? [`    poll_interval: ${formatDuration(d.poll_ms)}`] : []),
   ].join('\n')
 }
 
@@ -145,7 +142,7 @@ export function createDeviceModel(uiModel: UiModel, hubModel: HubModel) {
     for (const pkt of hubModel.packets.value) {
       const t = pkt.type?.toLowerCase()
 
-      if ((t === msg_type.COMMAND || t === msg_type.COMMAND_ALT) && !pkt.echo) {
+      if (t === msg_type.COMMAND || t === msg_type.COMMAND_ALT) {
         const cmd = pkt.command?.toLowerCase()
         if (cmd && DISCOVERY_COMMANDS.has(cmd)) {
           if (!discovered.has(pkt.dst)) {

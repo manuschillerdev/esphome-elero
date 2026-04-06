@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import light, sensor, text_sensor
+from esphome.components import button, light, sensor, text_sensor
 from esphome.const import (
     CONF_CHANNEL,
     CONF_NAME,
@@ -13,7 +13,7 @@ from esphome.const import (
 from .. import CONF_ELERO_ID, elero, elero_ns
 
 DEPENDENCIES = ["elero"]
-AUTO_LOAD = ["sensor", "text_sensor"]
+AUTO_LOAD = ["button", "sensor", "text_sensor"]
 
 CONF_DST_ADDRESS = "dst_address"
 CONF_SRC_ADDRESS = "src_address"
@@ -26,9 +26,11 @@ CONF_DIM_DURATION = "dim_duration"
 CONF_AUTO_SENSORS = "auto_sensors"
 CONF_RSSI_SENSOR = "rssi_sensor"
 CONF_STATUS_SENSOR = "status_sensor"
+CONF_REFRESH_BUTTON = "refresh_button"
 
 # New architecture: EspLightShell replaces EleroLight
 EspLightShell = elero_ns.class_("EspLightShell", light.LightOutput, cg.Component)
+RefreshButton = elero_ns.class_("RefreshButton", button.Button)
 
 _RSSI_SENSOR_SCHEMA = sensor.sensor_schema(
     unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
@@ -37,6 +39,11 @@ _RSSI_SENSOR_SCHEMA = sensor.sensor_schema(
     state_class=STATE_CLASS_MEASUREMENT,
 )
 _STATUS_SENSOR_SCHEMA = text_sensor.text_sensor_schema()
+_REFRESH_BUTTON_SCHEMA = button.button_schema(
+    RefreshButton,
+    entity_category="diagnostic",
+    icon="mdi:refresh",
+)
 
 
 def _auto_sensor_validator(config):
@@ -49,6 +56,8 @@ def _auto_sensor_validator(config):
         result[CONF_RSSI_SENSOR] = _RSSI_SENSOR_SCHEMA({CONF_NAME: f"{light_name} RSSI"})
     if CONF_STATUS_SENSOR not in result:
         result[CONF_STATUS_SENSOR] = _STATUS_SENSOR_SCHEMA({CONF_NAME: f"{light_name} Status"})
+    if CONF_REFRESH_BUTTON not in result:
+        result[CONF_REFRESH_BUTTON] = _REFRESH_BUTTON_SCHEMA({CONF_NAME: f"{light_name} Refresh"})
     return result
 
 
@@ -69,6 +78,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
             cv.Optional(CONF_RSSI_SENSOR): _RSSI_SENSOR_SCHEMA,
             cv.Optional(CONF_STATUS_SENSOR): _STATUS_SENSOR_SCHEMA,
+            cv.Optional(CONF_REFRESH_BUTTON): _REFRESH_BUTTON_SCHEMA,
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _auto_sensor_validator,
@@ -109,3 +119,6 @@ async def to_code(config):
         status_var = await text_sensor.new_text_sensor(config[CONF_STATUS_SENSOR])
         cg.add(var.set_status_sensor(status_var))
 
+    if CONF_REFRESH_BUTTON in config:
+        btn_var = await button.new_button(config[CONF_REFRESH_BUTTON])
+        cg.add(var.set_refresh_button(btn_var))

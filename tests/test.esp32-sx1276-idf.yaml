@@ -1,0 +1,58 @@
+# ESPHome compile test: ESP32 + SX1276 with ESP-IDF framework
+# Target hardware: LILYGO LoRa32 V2.1-1.6 (SX1276 868 MHz)
+esphome:
+  name: test-esp32-sx1276-idf
+  friendly_name: Test ESP32 SX1276 IDF
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test-network"
+  password: ""
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+spi:
+  clk_pin: GPIO5
+  mosi_pin: GPIO27
+  miso_pin: GPIO19
+
+elero:
+  radio: sx1276
+  cs_pin: GPIO18
+  irq_pin: GPIO26     # DIO0
+  rst_pin: GPIO23
+  pa_power: 17
+  freq0: 0x7a
+  freq1: 0x71
+  freq2: 0x21
+
+cover:
+  - platform: elero
+    dst_address: 0xa831e5
+    channel: 4
+    src_address: 0xf0d008
+    name: "Test Cover"
+    open_duration: 25s
+    close_duration: 22s
+    supports_tilt: true
+
+light:
+  - platform: elero
+    dst_address: 0xc41a2b
+    channel: 6
+    src_address: 0xf0d008
+    name: "Test Light"
+    dim_duration: 5s
+
+elero_web:
+  port: 80

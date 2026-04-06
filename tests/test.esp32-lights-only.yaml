@@ -1,0 +1,57 @@
+# ESPHome compile test: lights only (no covers)
+# Verifies light platform compiles standalone without cover dependencies
+substitutions:
+  spi_clk: GPIO18
+  spi_mosi: GPIO23
+  spi_miso: GPIO19
+  spi_cs: GPIO5
+  gdo0_pin: GPIO26
+
+esphome:
+  name: test-esp32-lights-only
+  friendly_name: Test ESP32 Lights Only
+  platformio_options:
+    build_unflags: -std=gnu++11
+    build_flags:
+      - -std=gnu++2a
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test-network"
+  password: ""
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+spi:
+  clk_pin: ${spi_clk}
+  mosi_pin: ${spi_mosi}
+  miso_pin: ${spi_miso}
+
+elero:
+  cs_pin: ${spi_cs}
+  gdo0_pin: ${gdo0_pin}
+
+light:
+  - platform: elero
+    dst_address: 0xc41a2b
+    channel: 6
+    src_address: 0xf0d008
+    name: "Light On/Off Only"
+    dim_duration: 0s
+
+  - platform: elero
+    dst_address: 0xd52b3c
+    channel: 7
+    src_address: 0xf0d008
+    name: "Light Dimmable"
+    dim_duration: 5s
