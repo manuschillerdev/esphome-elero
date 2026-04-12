@@ -435,6 +435,10 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
     // Don't persist — auto-discovered remotes are ephemeral until user saves.
     // updated_at remains 0, so adapters know not to publish to MQTT.
     notify_added_(*slot);
+    // Prime the Published cache so subsequent identical packets dedupe to zero.
+    // Without this, every echo/retransmit of the first observed packet would fire
+    // a full publish — see ELERO_GROUP_INVESTIGATION.md §8.1.
+    notify_state_changed_(*slot, now);
     ESP_LOGI(TAG, "Discovered remote 0x%06x (slot %zu)", pkt.src, slot_index_(*slot));
 }
 
@@ -615,8 +619,8 @@ void DeviceRegistry::notify_state_changed_(Device &dev, uint32_t now) {
         auto snap = compute_light_snapshot(dev, now);
         changes = diff_and_update_light(snap, std::get<LightDevice>(dev.logic).published);
     } else if (dev.is_remote()) {
-        // Remotes have no Published cache — always notify
-        changes = state_change::ALL;
+        auto snap = compute_remote_snapshot(dev);
+        changes = diff_and_update_remote(snap, std::get<RemoteDevice>(dev.logic).published);
     }
 
     if (changes == 0) {
@@ -655,6 +659,8 @@ void DeviceRegistry::force_republish_all() {
             std::get<CoverDevice>(dev.logic).published = {};
         } else if (dev.is_light()) {
             std::get<LightDevice>(dev.logic).published = {};
+        } else if (dev.is_remote()) {
+            std::get<RemoteDevice>(dev.logic).published = {};
         }
         notify_state_changed_(dev, now);
     }

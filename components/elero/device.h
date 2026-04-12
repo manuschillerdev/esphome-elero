@@ -99,6 +99,18 @@ struct RemoteDevice {
     uint8_t  last_command{0};
     uint32_t last_target{0};
     uint8_t  last_channel{0};
+
+    /// Last-published state cache. Registry diffs against this to detect changes.
+    /// Without dedup, every mesh-relayed echo of our own TX (which is indistinguishable
+    /// from the physical remote we impersonate at the src-address level) would trigger a
+    /// full publish — see docs/ELERO_GROUP_INVESTIGATION.md §8.1.
+    /// Sentinel defaults guarantee non-zero diff on first publish.
+    struct Published {
+        uint8_t  last_command{0xFF};
+        uint32_t last_target{0xFFFFFFFF};
+        uint8_t  last_channel{0xFF};
+        int      rssi_rounded{-999};
+    } published;
 };
 
 using DeviceLogic = std::variant<CoverDevice, LightDevice, RemoteDevice>;

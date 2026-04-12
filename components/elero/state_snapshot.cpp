@@ -36,6 +36,16 @@ CoverStateSnapshot compute_cover_snapshot(const Device &dev, uint32_t now) {
     };
 }
 
+RemoteStateSnapshot compute_remote_snapshot(const Device &dev) {
+    const auto &remote = std::get<RemoteDevice>(dev.logic);
+    return RemoteStateSnapshot{
+        .last_command = remote.last_command,
+        .last_target = remote.last_target,
+        .last_channel = remote.last_channel,
+        .rssi = dev.rf.last_rssi,
+    };
+}
+
 LightStateSnapshot compute_light_snapshot(const Device &dev, uint32_t now) {
     const auto &light = std::get<LightDevice>(dev.logic);
     auto ctx = light_context(dev.config);
@@ -111,6 +121,7 @@ const char *state_change_str(uint16_t changes) {
     if (changes & state_change::STATE_STRING)    append("STATE");
     if (changes & state_change::COMMAND_SOURCE)  append("CMD");
     if (changes & state_change::BRIGHTNESS)      append("BRI");
+    if (changes & state_change::REMOTE_ACTIVITY) append("REMOTE");
 
     return buf;
 }
@@ -154,6 +165,34 @@ uint16_t diff_and_update_cover(const CoverStateSnapshot &snap, CoverDevice::Publ
     if (pub.command_source != snap.command_source) {
         changes |= state_change::COMMAND_SOURCE;
         pub.command_source = snap.command_source;
+    }
+
+    return changes;
+}
+
+uint16_t diff_and_update_remote(const RemoteStateSnapshot &snap, RemoteDevice::Published &pub) {
+    // Remotes publish a single JSON blob (MQTT) covering all fields, so the bitmask
+    // is only used as a "should publish?" gate. Without this dedup, every mesh-relayed
+    // echo of our own TX fires a full publish — see ELERO_GROUP_INVESTIGATION.md §8.1.
+    // RSSI is bucketed to whole dB so link-quality jitter doesn't churn publishes.
+    uint16_t changes = 0;
+
+    if (pub.last_command != snap.last_command) {
+        changes |= state_change::REMOTE_ACTIVITY;
+        pub.last_command = snap.last_command;
+    }
+    if (pub.last_target != snap.last_target) {
+        changes |= state_change::REMOTE_ACTIVITY;
+        pub.last_target = snap.last_target;
+    }
+    if (pub.last_channel != snap.last_channel) {
+        changes |= state_change::REMOTE_ACTIVITY;
+        pub.last_channel = snap.last_channel;
+    }
+    int rssi_int = static_cast<int>(round_rssi(snap.rssi));
+    if (pub.rssi_rounded != rssi_int) {
+        changes |= state_change::RSSI;
+        pub.rssi_rounded = rssi_int;
     }
 
     return changes;
