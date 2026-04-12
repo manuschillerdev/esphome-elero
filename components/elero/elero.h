@@ -51,6 +51,9 @@ struct RfPacketInfo {
   uint8_t lqi;            ///< Link Quality Indicator (0-127)
   bool crc_ok;            ///< CRC status from CC1101 appended byte
   uint8_t hop;
+  uint8_t num_dests;          ///< Number of destinations (1 for directed, N for group)
+  uint32_t bwd;               ///< Backward (last-relay) address
+  uint32_t fwd;               ///< Forward (next-hop) address
   uint8_t payload[10];
   uint8_t raw_len;
   uint8_t raw[CC1101_FIFO_LENGTH];

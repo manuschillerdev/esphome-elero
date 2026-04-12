@@ -476,6 +476,9 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
   pkt.lqi = r.lqi;
   pkt.crc_ok = (r.crc_ok != 0);
   pkt.hop = r.hop;
+  pkt.num_dests = r.num_dests;
+  pkt.bwd = r.bwd_addr;
+  pkt.fwd = r.fwd_addr;
 #ifdef USE_ESP32
   pkt.decoded_at_us = esp_timer_get_time();
 #endif
@@ -549,15 +552,91 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
              pkt.channel, pkt.src, pkt.dst, pkt.command,
              pkt.rssi, pkt.lqi, pkt.crc_ok ? "true" : "false");
   } else {
+    // Unclassified types (notably type=0x45 group broadcasts). Log everything
+    // we have for protocol analysis: relay info, destination list, raw packet,
+    // decoded payload (msg_decode output), and raw encrypted trailer bytes.
+
+    // Relay info (bwd/fwd) — always useful for 0x45 mesh analysis
+    char relay_buf[64] = "";
+    const bool relay_differs = (pkt.bwd != pkt.src) || (pkt.fwd != pkt.src);
+    if (pkt.type == 0x45 || relay_differs) {
+      snprintf(relay_buf, sizeof(relay_buf),
+               ",\"bwd\":\"0x%06x\",\"fwd\":\"0x%06x\"", pkt.bwd, pkt.fwd);
+    }
+
+    // Destination list — decode from raw packet (not stored in RfPacketInfo)
+    char dsts_buf[128] = "";
+    if (pkt.num_dests > 1 && pkt.raw_len > pkt_offset::FIRST_DEST) {
+      const bool three_byte = pkt.type > msg_type::ADDR_3BYTE_THRESHOLD;
+      const size_t first = pkt_offset::FIRST_DEST;
+      const size_t width = three_byte ? ADDR_SIZE : 1u;
+      size_t pos = snprintf(dsts_buf, sizeof(dsts_buf), ",\"dsts\":[");
+      for (uint8_t i = 0; i < pkt.num_dests && first + i * width < pkt.raw_len; ++i) {
+        if (three_byte) {
+          uint32_t a = extract_addr(&pkt.raw[first + i * width]);
+          pos += snprintf(dsts_buf + pos, sizeof(dsts_buf) - pos, "%s\"0x%06x\"", i ? "," : "", a);
+        } else {
+          pos += snprintf(dsts_buf + pos, sizeof(dsts_buf) - pos, "%s%d", i ? "," : "", pkt.raw[first + i * width]);
+        }
+      }
+      if (pos + 2 < sizeof(dsts_buf)) {
+        dsts_buf[pos++] = ']';
+        dsts_buf[pos] = '\0';
+      }
+    }
+
+    // Raw on-wire bytes (minus length byte and trailing RSSI/LQI appendix)
+    const uint8_t logical_len = (pkt.raw_len >= 3) ? pkt.raw[0] : 0;
+    const size_t raw_end = (logical_len > 0 && 1u + logical_len <= pkt.raw_len)
+                               ? static_cast<size_t>(1u + logical_len)
+                               : 0u;
+    char raw_hex[CC1101_FIFO_LENGTH * 3 + 16] = "";
+    if (raw_end > 1) {
+      size_t pos = snprintf(raw_hex, sizeof(raw_hex), ",\"raw\":\"");
+      for (size_t i = 1; i < raw_end && pos + 4 < sizeof(raw_hex); ++i) {
+        pos += snprintf(raw_hex + pos, sizeof(raw_hex) - pos,
+                        (i == 1) ? "%02x" : " %02x", pkt.raw[i]);
+      }
+      if (pos + 2 < sizeof(raw_hex)) {
+        raw_hex[pos++] = '"';
+        raw_hex[pos] = '\0';
+      }
+    }
+
+    // Decoded payload (msg_decode output — may be garbage if encryption differs)
+    char payload_buf[64];
+    snprintf(payload_buf, sizeof(payload_buf),
+             ",\"payload\":\"%02x %02x %02x %02x %02x %02x %02x %02x\"",
+             pkt.payload[0], pkt.payload[1], pkt.payload[2], pkt.payload[3],
+             pkt.payload[4], pkt.payload[5], pkt.payload[6], pkt.payload[7]);
+
+    // Raw encrypted trailer (pre-decryption) — for comparing across captures
+    // without relying on msg_decode being correct for this packet type
+    char enc_raw_buf[64] = "";
+    {
+      const bool three_byte = pkt.type > msg_type::ADDR_3BYTE_THRESHOLD;
+      const size_t dests_len = three_byte ? pkt.num_dests * ADDR_SIZE : pkt.num_dests;
+      const size_t enc_start = pkt_offset::FIRST_DEST + 2 + dests_len;
+      const size_t enc_end = enc_start + 8;
+      if (enc_end <= raw_end && enc_start < pkt.raw_len) {
+        snprintf(enc_raw_buf, sizeof(enc_raw_buf),
+                 ",\"enc_raw\":\"%02x %02x %02x %02x %02x %02x %02x %02x\"",
+                 pkt.raw[enc_start], pkt.raw[enc_start + 1], pkt.raw[enc_start + 2],
+                 pkt.raw[enc_start + 3], pkt.raw[enc_start + 4], pkt.raw[enc_start + 5],
+                 pkt.raw[enc_start + 6], pkt.raw[enc_start + 7]);
+      }
+    }
+
     ESP_LOGD(TAG_RF,
              "{\"ts_ms\":%lu,\"dir\":\"rx\",\"blind\":\"%s\","
              "\"len\":%d,\"cnt\":%d,\"type\":\"0x%02x\",\"type2\":\"0x%02x\",\"hop\":\"0x%02x\","
-             "\"channel\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\","
-             "\"rssi\":%.1f,\"lqi\":%d,\"crc_ok\":%s}",
+             "\"channel\":%d,\"num_dests\":%d,\"src\":\"0x%06x\",\"dst\":\"0x%06x\","
+             "\"rssi\":%.1f,\"lqi\":%d,\"crc_ok\":%s%s%s%s%s%s%s}",
              (unsigned long) pkt.timestamp_ms, blind_buf,
              pkt.raw_len - PACKET_TOTAL_OVERHEAD, pkt.cnt, pkt.type, pkt.type2, pkt.hop,
-             pkt.channel, pkt.src, pkt.dst,
-             pkt.rssi, pkt.lqi, pkt.crc_ok ? "true" : "false");
+             pkt.channel, pkt.num_dests, pkt.src, pkt.dst,
+             pkt.rssi, pkt.lqi, pkt.crc_ok ? "true" : "false",
+             relay_buf, dsts_buf, payload_buf, enc_raw_buf, raw_hex);
   }
 
   // Dispatch through unified device registry (state machines, adapters, observers)
