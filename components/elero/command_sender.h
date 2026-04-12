@@ -214,6 +214,7 @@ class CommandSender : public TxClient {
     }
     this->send_packets_ = 0;
     this->send_retries_ = 0;
+    this->command_.num_dests = 0;  // Clear group fields after each command drains
     this->increase_counter_();
     this->state_ = this->command_queue_.empty() ? State::IDLE : State::WAIT_DELAY;
   }

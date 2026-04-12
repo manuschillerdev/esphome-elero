@@ -192,9 +192,6 @@ Device *DeviceRegistry::find(uint32_t address) {
 void DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte, CommandSource src) {
     if (!dev.is_cover()) return;
 
-    // Clear any stale group fields from a prior command_group() call
-    dev.sender.command().num_dests = 0;
-
     auto &cover = std::get<CoverDevice>(dev.logic);
     auto ctx = cover_context(dev.config);
     uint32_t now = millis();
@@ -225,7 +222,6 @@ void DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte, CommandSource 
 
 void DeviceRegistry::set_cover_position(Device &dev, float target, CommandSource src) {
     if (!dev.is_cover()) return;
-    dev.sender.command().num_dests = 0;
 
     auto &cover = std::get<CoverDevice>(dev.logic);
     auto ctx = cover_context(dev.config);
@@ -258,7 +254,6 @@ void DeviceRegistry::set_cover_position(Device &dev, float target, CommandSource
 
 void DeviceRegistry::command_cover_tilt(Device &dev, CommandSource src) {
     if (!dev.is_cover()) return;
-    dev.sender.command().num_dests = 0;
 
     auto &cover = std::get<CoverDevice>(dev.logic);
     auto ctx = cover_context(dev.config);
@@ -359,7 +354,9 @@ void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
         cmd.dest_channels[i] = devices[i]->config.channel;
     }
 
-    // Enqueue the command (3x press) then release (3x release) via the lead device's sender
+    // Enqueue the command (3x press) via the lead device's sender.
+    // No RELEASE needed for covers — blinds execute on press. For lights/dimming,
+    // RELEASE is handled by loop_light_() after dim duration expires.
     (void) lead.sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::BUTTON);
     // Follow up with CHECK on each individual device so they report back status
     for (size_t i = 0; i < count; ++i) {
@@ -388,10 +385,10 @@ void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
         notify_state_changed_(*devices[i], now);
     }
 
-    // num_dests stays set on the lead's command template until the next
-    // command_cover() call, which resets it to 0. The CHECK commands queued
-    // above use type=COMMAND (0x6a) — build_tx_packet_ only checks num_dests
-    // for BUTTON type, so CHECKs are safe.
+    // num_dests is auto-cleared by CommandSender::advance_queue_() after the
+    // group button entry drains. The CHECK commands queued above use
+    // type=COMMAND (0x6a) — build_tx_packet_ only checks num_dests for
+    // BUTTON type, so CHECKs are safe regardless of timing.
 
     ESP_LOGI(TAG, "Group command 0x%02x to %zu devices (channels: %s)",
              cmd_byte, count,
