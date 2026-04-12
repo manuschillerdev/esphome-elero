@@ -375,7 +375,18 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 }
 
 void Elero::build_tx_packet_(const EleroCommand &cmd) {
-  if (cmd.type == packet::msg_type::BUTTON) {
+  if (cmd.type == packet::msg_type::BUTTON && cmd.num_dests > 1) {
+    // Group 0x44: multi-dest button packet
+    packet::GroupButtonTxParams params;
+    params.counter = cmd.counter;
+    params.src_addr = cmd.src_addr;
+    params.command = cmd.payload[4];
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    params.num_dests = cmd.num_dests;
+    params.dest_channels = cmd.dest_channels;
+    packet::build_group_button_packet(params, this->msg_tx_);
+  } else if (cmd.type == packet::msg_type::BUTTON) {
     packet::ButtonTxParams params;
     params.counter = cmd.counter;
     params.src_addr = cmd.src_addr;

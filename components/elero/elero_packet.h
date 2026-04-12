@@ -176,6 +176,8 @@ constexpr uint32_t INTER_PACKET_MS = 10;          ///< 10ms between button packe
 constexpr uint8_t MSG_LENGTH = 0x1B;              ///< Button packet length (27 bytes)
 constexpr uint8_t TYPE2 = 0x10;                   ///< type2 for button packets
 constexpr uint8_t HOP = 0x00;                     ///< hop count for button packets
+constexpr uint8_t GROUP_BASE_LENGTH = 26;         ///< Group 0x44 base length (len = 26 + N)
+constexpr uint8_t GROUP_CHANNEL = 0x00;           ///< Channel byte for group packets (group marker)
 }  // namespace button
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -426,6 +428,36 @@ struct ButtonTxParams {
 /// @return Packet length (always button::MSG_LENGTH + 1 = 28)
 size_t build_button_packet(const ButtonTxParams& params, uint8_t* out_buf);
 
+/// Maximum number of destinations in a group 0x44 packet.
+/// Derived from CC1101 TX FIFO (64 bytes): TX buffer = 1 (len byte) + 26 (base) + N = 27 + N ≤ 64.
+constexpr uint8_t GROUP_MAX_DESTS = FIFO_LENGTH - 27;  // = 37
+
+/// Parameters for building a 0x44 group button TX packet (multi-dest).
+struct GroupButtonTxParams {
+  uint8_t counter{1};                              ///< Rolling message counter
+  uint32_t src_addr{0};                            ///< Source address (emulated remote)
+  uint8_t command{button::RELEASE};                ///< Command byte (UP/DOWN/STOP/CHECK/RELEASE)
+  uint8_t type2{button::TYPE2};                    ///< Secondary type byte (0x10)
+  uint8_t hop{button::HOP};                        ///< Hop count (0x00 for button)
+  uint8_t num_dests{0};                            ///< Number of destination channels
+  const uint8_t *dest_channels{nullptr};           ///< Pointer to channel array (not owned)
+};
+
+/// Build a 0x44 group button TX packet (multi-dest).
+///
+/// Group packets address N blinds by channel in a single RF transmission.
+/// Layout differs from single-dest button packets:
+/// - Length: 26 + N (variable)
+/// - Channel byte: 0x00 (group marker)
+/// - num_dests = N, followed by N 1-byte channel destinations
+/// - payload_1 (0x00) and payload_2 (0x04) after dest list (shifted by N)
+/// - Encrypted section at 17 + N + 2 (shifted by dest count)
+///
+/// @param params Group command parameters
+/// @param out_buf Output buffer (must be at least FIFO_LENGTH bytes)
+/// @return Packet length including length byte, or 0 if validation fails
+size_t build_group_button_packet(const GroupButtonTxParams& params, uint8_t* out_buf);
+
 // ─── Cover State Mapping ────────────────────────────────────────────────────
 
 /// Cover operation states (matches ESPHome CoverOperation enum)
@@ -469,6 +501,10 @@ struct EleroCommand {
   uint8_t type2;       ///< Secondary type byte
   uint8_t hop;
   uint8_t payload[10];
+
+  // ── Group TX (0x44 multi-dest) ──
+  uint8_t num_dests{0};                                    ///< 0 = single-dest (default), >1 = group
+  uint8_t dest_channels[packet::GROUP_MAX_DESTS]{};        ///< Channel IDs for group TX
 };
 
 }  // namespace esphome::elero

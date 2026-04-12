@@ -800,3 +800,189 @@ TEST(DiffLightTest, BrightnessChange_ReturnsBrightnessFlag) {
     EXPECT_NE(changes & state_change::BRIGHTNESS, 0);
     EXPECT_EQ(changes & ~state_change::BRIGHTNESS, 0);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// command_group() — multi-dest 0x44
+// ═══════════════════════════════════════════════════════════════════════════════
+
+static NvsDeviceConfig make_cover_config_ch(uint32_t addr, uint8_t channel,
+                                             uint32_t src = 0xF0D008,
+                                             const char *name = "Cover") {
+    NvsDeviceConfig cfg{};
+    cfg.type = DeviceType::COVER;
+    cfg.dst_address = addr;
+    cfg.src_address = src;
+    cfg.channel = channel;
+    cfg.open_duration_ms = 10000;
+    cfg.close_duration_ms = 10000;
+    strncpy(cfg.name, name, NVS_NAME_MAX - 1);
+    return cfg;
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_TwoCovers_EnqueuesAndNotifies) {
+    auto *dev1 = registry_.register_device(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = registry_.register_device(make_cover_config_ch(0xA00002, 3));
+    ASSERT_NE(dev1, nullptr);
+    ASSERT_NE(dev2, nullptr);
+    adapter_.clear();
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::UP);
+
+    // Both devices should have state_changed notifications
+    EXPECT_GE(adapter_.state_changed.size(), 2u);
+
+    // Lead device should have the group command queued
+    EXPECT_TRUE(dev1->sender.has_pending_commands());
+
+    // Each device should have a CHECK queued
+    EXPECT_TRUE(dev2->sender.has_pending_commands());
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_UpdatesFSMs) {
+    auto *dev1 = registry_.register_device(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = registry_.register_device(make_cover_config_ch(0xA00002, 3));
+    adapter_.clear();
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::DOWN);
+
+    // Both covers should be in Closing state
+    auto &cover1 = std::get<CoverDevice>(dev1->logic);
+    auto &cover2 = std::get<CoverDevice>(dev2->logic);
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Closing>(cover1.state));
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Closing>(cover2.state));
+    EXPECT_EQ(cover1.last_direction, cover_sm::Operation::CLOSING);
+    EXPECT_EQ(cover2.last_direction, cover_sm::Operation::CLOSING);
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_StopClearsTarget) {
+    auto *dev1 = registry_.register_device(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = registry_.register_device(make_cover_config_ch(0xA00002, 3));
+
+    // First start movement
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::UP);
+
+    // Then stop
+    adapter_.clear();
+    registry_.command_group(devs, 2, pkt::command::STOP);
+
+    auto &cover1 = std::get<CoverDevice>(dev1->logic);
+    auto &cover2 = std::get<CoverDevice>(dev2->logic);
+    EXPECT_EQ(cover1.target_position, cover_sm::NO_TARGET);
+    EXPECT_EQ(cover2.target_position, cover_sm::NO_TARGET);
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_SetsGroupFieldsOnLeadSender) {
+    auto *dev1 = registry_.register_device(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = registry_.register_device(make_cover_config_ch(0xA00002, 3));
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::UP);
+
+    // Lead sender's command template should have group fields set
+    const auto &cmd = dev1->sender.command();
+    EXPECT_EQ(cmd.num_dests, 2);
+    EXPECT_EQ(cmd.dest_channels[0], 1);
+    EXPECT_EQ(cmd.dest_channels[1], 3);
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_NumDestsAutoCleared) {
+    // Test the mechanism directly: CommandSender::advance_queue_() clears num_dests.
+    // We use a deferred-completion mock because process_queue sets TX_PENDING
+    // AFTER request_tx returns — synchronous on_tx_complete would be overwritten.
+    CommandSender sender;
+    auto &cmd = sender.command();
+    cmd.src_addr = 0xF0D008;
+    cmd.dst_addr = 0xA00001;
+    cmd.channel = 1;
+    cmd.type = pkt::msg_type::BUTTON;
+
+    // Simulate what command_group does: set group fields, enqueue
+    cmd.num_dests = 2;
+    cmd.dest_channels[0] = 1;
+    cmd.dest_channels[1] = 3;
+    (void) sender.enqueue(pkt::command::UP, pkt::button::PACKETS, pkt::msg_type::BUTTON);
+
+    EXPECT_EQ(cmd.num_dests, 2);  // Still set while queued
+
+    // Mock hub that defers on_tx_complete to the next tick
+    struct DeferredHub {
+        TxClient *pending{nullptr};
+        bool request_tx(TxClient *client, const EleroCommand &) {
+            pending = client;
+            return true;
+        }
+        void complete() {
+            if (pending) { pending->on_tx_complete(true); pending = nullptr; }
+        }
+    } mock_hub;
+
+    // Drain the queue: each cycle = process_queue (sends) + complete + advance time
+    for (int i = 0; i < 20; ++i) {
+        mock_time_.advance(15);
+        sender.process_queue(mock_time_.millis(), &mock_hub, "test");
+        mock_hub.complete();
+        if (!sender.has_pending_commands() &&
+            sender.state() == CommandSender::State::IDLE) break;
+    }
+
+    EXPECT_EQ(sender.state(), CommandSender::State::IDLE);
+    EXPECT_FALSE(sender.has_pending_commands());
+    EXPECT_EQ(sender.command().num_dests, 0);
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_RejectsCountBelow2) {
+    auto *dev1 = registry_.register_device(make_cover_config_ch(0xA00001, 1));
+    adapter_.clear();
+
+    Device *devs[] = {dev1};
+    registry_.command_group(devs, 1, pkt::command::UP);
+
+    // Should not have notified anything
+    EXPECT_TRUE(adapter_.state_changed.empty());
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_RejectsNullDevices) {
+    adapter_.clear();
+    registry_.command_group(nullptr, 2, pkt::command::UP);
+    EXPECT_TRUE(adapter_.state_changed.empty());
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_RejectsMixedSrcAddress) {
+    auto *dev1 = registry_.register_device(make_cover_config_ch(0xA00001, 1, 0xF0D008));
+    auto *dev2 = registry_.register_device(make_cover_config_ch(0xA00002, 3, 0xDEAD00));
+    adapter_.clear();
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::UP);
+
+    // Should reject — different src_address
+    EXPECT_TRUE(adapter_.state_changed.empty());
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_RejectsLightDevice) {
+    auto *dev1 = registry_.register_device(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = add_light(0xC41A2B);
+    adapter_.clear();
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::UP);
+
+    // Should reject — dev2 is not a cover
+    EXPECT_TRUE(adapter_.state_changed.empty());
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_TracksCommandSource) {
+    auto *dev1 = registry_.register_device(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = registry_.register_device(make_cover_config_ch(0xA00002, 3));
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::UP, CommandSource::REMOTE);
+
+    auto &cover1 = std::get<CoverDevice>(dev1->logic);
+    auto &cover2 = std::get<CoverDevice>(dev2->logic);
+    EXPECT_EQ(cover1.last_command_source, CommandSource::REMOTE);
+    EXPECT_EQ(cover2.last_command_source, CommandSource::REMOTE);
+}

@@ -324,6 +324,85 @@ void DeviceRegistry::set_light_brightness(Device &dev, float brightness, Command
     notify_state_changed_(dev, now);
 }
 
+void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t cmd_byte,
+                                    CommandSource src) {
+    if (count < 2 || count > packet::GROUP_MAX_DESTS || devices == nullptr) {
+        ESP_LOGW(TAG, "command_group: invalid count %zu (need 2..%d)", count, packet::GROUP_MAX_DESTS);
+        return;
+    }
+
+    // Validate all devices are active covers sharing the same src_address
+    uint32_t src_addr = devices[0]->config.src_address;
+    for (size_t i = 0; i < count; ++i) {
+        if (!devices[i] || !devices[i]->active || !devices[i]->is_cover()) {
+            ESP_LOGW(TAG, "command_group: device[%zu] is not an active cover", i);
+            return;
+        }
+        if (devices[i]->config.src_address != src_addr) {
+            ESP_LOGW(TAG, "command_group: device[%zu] has different src_address (0x%06x vs 0x%06x)",
+                     i, devices[i]->config.src_address, src_addr);
+            return;
+        }
+    }
+
+    // Build the group command on the first device's sender.
+    // Set multi-dest fields so build_tx_packet_ dispatches to build_group_button_packet.
+    Device &lead = *devices[0];
+    auto &cmd = lead.sender.command();
+    cmd.num_dests = static_cast<uint8_t>(count);
+    for (size_t i = 0; i < count; ++i) {
+        cmd.dest_channels[i] = devices[i]->config.channel;
+    }
+
+    // Enqueue the command (3x press) via the lead device's sender.
+    // No RELEASE needed for covers — blinds execute on press. For lights/dimming,
+    // RELEASE is handled by loop_light_() after dim duration expires.
+    (void) lead.sender.enqueue(cmd_byte, packet::button::PACKETS, packet::msg_type::BUTTON);
+    // Follow up with CHECK on each individual device so they report back status
+    for (size_t i = 0; i < count; ++i) {
+        (void) devices[i]->sender.enqueue(packet::command::CHECK,
+                                           packet::limits::CHECK_PACKETS,
+                                           packet::msg_type::COMMAND);
+    }
+
+    // Update FSMs and notify for all devices
+    uint32_t now = millis();
+    for (size_t i = 0; i < count; ++i) {
+        if (!devices[i]->is_cover()) continue;
+        auto &cover = std::get<CoverDevice>(devices[i]->logic);
+        auto ctx = cover_context(devices[i]->config);
+        cover.last_command_source = src;
+
+        if (cmd_byte == packet::command::STOP) {
+            cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
+            cover.target_position = cover_sm::NO_TARGET;
+        } else {
+            if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
+            if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
+            cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
+            cover.poll.on_command_sent(now);
+        }
+        notify_state_changed_(*devices[i], now);
+    }
+
+    // num_dests is auto-cleared by CommandSender::advance_queue_() after the
+    // group button entry drains. The CHECK commands queued above use
+    // type=COMMAND (0x6a) — build_tx_packet_ only checks num_dests for
+    // BUTTON type, so CHECKs are safe regardless of timing.
+
+    ESP_LOGI(TAG, "Group command 0x%02x to %zu devices (channels: %s)",
+             cmd_byte, count,
+             [&]() {
+                 static char buf[128];
+                 size_t pos = 0;
+                 for (size_t i = 0; i < count && pos < sizeof(buf) - 4; ++i) {
+                     if (i > 0) buf[pos++] = ',';
+                     pos += snprintf(buf + pos, sizeof(buf) - pos, "%d", devices[i]->config.channel);
+                 }
+                 return buf;
+             }());
+}
+
 void DeviceRegistry::request_check(Device &dev) {
     if (!dev.active) return;
     (void) dev.sender.enqueue(packet::command::CHECK, packet::limits::CHECK_PACKETS, packet::msg_type::COMMAND);
