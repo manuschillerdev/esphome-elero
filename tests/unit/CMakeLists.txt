@@ -111,6 +111,13 @@ add_executable(test_device_registry
 target_compile_definitions(test_device_registry PRIVATE UNIT_TEST)
 target_link_libraries(test_device_registry GTest::gtest_main)
 
+# Group button packet building (0x44 multi-dest TX)
+add_executable(test_group_packet
+  test_group_packet.cpp
+  ${ELERO_PACKET_SRC}
+)
+target_link_libraries(test_group_packet GTest::gtest_main)
+
 # CC1101-compatible CRC-16 and PN9 whitening (pure functions, used by SX1262/SX1276 drivers)
 add_executable(test_cc1101_compat
   test_cc1101_compat.cpp
@@ -136,6 +143,7 @@ gtest_discover_tests(test_string_functions)
 gtest_discover_tests(test_cover_sm)
 gtest_discover_tests(test_light_sm)
 gtest_discover_tests(test_poll_timer)
+gtest_discover_tests(test_group_packet)
 gtest_discover_tests(test_device_registry)
 
 # All test targets
@@ -144,7 +152,7 @@ set(ALL_TEST_TARGETS
   test_packet_vectors test_command_sender test_golden_vectors
   test_encryption_vectors test_parse_roundtrip test_string_functions
   test_cover_sm test_light_sm test_poll_timer
-  test_device_registry
+  test_group_packet test_device_registry
 )
 
 # Combined target for running all tests

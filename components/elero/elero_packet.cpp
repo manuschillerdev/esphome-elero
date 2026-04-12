@@ -203,6 +203,65 @@ size_t build_button_packet(const ButtonTxParams& params, uint8_t* out_buf) {
   return button::MSG_LENGTH + 1;
 }
 
+size_t build_group_button_packet(const GroupButtonTxParams& params, uint8_t* out_buf) {
+  // Validate: num_dests must be >= 2 (otherwise use single-dest build_button_packet)
+  if (params.num_dests < 2 || params.dest_channels == nullptr) {
+    return 0;
+  }
+
+  // Validate: resulting packet must fit in TX FIFO
+  // TX buffer = 1 (length byte) + packet_length = 1 + 26 + N
+  uint8_t packet_length = button::GROUP_BASE_LENGTH + params.num_dests;
+  if (static_cast<size_t>(packet_length) + 1 > FIFO_LENGTH) {
+    return 0;
+  }
+
+  // Clear buffer
+  memset(out_buf, 0, static_cast<size_t>(packet_length) + 1);
+
+  // Header fields (identical layout to single-dest button up to byte 16)
+  out_buf[pkt_offset::LENGTH] = packet_length;
+  out_buf[pkt_offset::COUNTER] = params.counter;
+  out_buf[pkt_offset::TYPE] = msg_type::BUTTON;
+  out_buf[pkt_offset::TYPE2] = params.type2;
+  out_buf[pkt_offset::HOP] = params.hop;
+  out_buf[pkt_offset::SYS] = TX_SYS_ADDR;
+  out_buf[pkt_offset::CHANNEL] = button::GROUP_CHANNEL;  // 0x00 = group marker
+
+  // Addresses (all same — our emulated remote)
+  write_addr(&out_buf[pkt_offset::SRC_ADDR], params.src_addr);
+  write_addr(&out_buf[pkt_offset::BWD_ADDR], params.src_addr);
+  write_addr(&out_buf[pkt_offset::FWD_ADDR], params.src_addr);
+
+  // Destination count + channel list
+  out_buf[pkt_offset::NUM_DESTS] = params.num_dests;
+  for (uint8_t i = 0; i < params.num_dests; ++i) {
+    out_buf[pkt_offset::FIRST_DEST + i] = params.dest_channels[i];
+  }
+
+  // Payload bytes (shifted by num_dests relative to single-dest)
+  size_t payload_start = pkt_offset::FIRST_DEST + params.num_dests;
+  out_buf[payload_start] = defaults::PAYLOAD_1;      // 0x00
+  out_buf[payload_start + 1] = defaults::PAYLOAD_2;  // 0x04
+
+  // Encrypted section (8 bytes, immediately after payload_1/payload_2)
+  uint8_t *enc = &out_buf[payload_start + 2];
+  uint16_t code = calc_crypto_code(params.counter);
+  enc[payload_offset::CRYPTO_HIGH] = (code >> 8) & 0xFF;
+  enc[payload_offset::CRYPTO_LOW] = code & 0xFF;
+  enc[payload_offset::COMMAND] = params.command;
+  enc[payload_offset::COMMAND2] = 0;
+  enc[4] = 0;
+  enc[5] = 0;
+  enc[payload_offset::STATE] = 0;
+  enc[payload_offset::PARITY] = 0;
+
+  // Encrypt the 8-byte section in-place
+  protocol::msg_encode(enc);
+
+  return static_cast<size_t>(packet_length) + 1;
+}
+
 CoverStateResult map_cover_state(uint8_t elero_state) {
   CoverStateResult r{};
   r.position = -1.0f;  // -1 means "unchanged"
