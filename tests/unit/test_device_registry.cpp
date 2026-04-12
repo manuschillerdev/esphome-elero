@@ -537,6 +537,41 @@ TEST_F(DeviceRegistryTest, RfCommand_UpdatesExistingRemote) {
     EXPECT_EQ(rd.last_command, pkt::command::DOWN);
 }
 
+// Regression: before RemoteDevice::Published was introduced, every packet from a
+// tracked remote fired a full state-change publish (changes = ALL), so mesh-relayed
+// echoes of our own TX caused a publish storm. See ELERO_GROUP_INVESTIGATION.md §8.1.
+// Now: identical repeated packets must be deduped to zero notifications.
+TEST_F(DeviceRegistryTest, RfCommand_IdenticalRemotePacket_DedupedToNoPublish) {
+    add_cover(0xA831E5);
+    registry_.set_nvs_enabled(true);
+
+    // First packet: discovery + initial notify (snapshot vs sentinel defaults diffs everything)
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP),
+                           mock_time_.millis());
+    adapter_.clear();
+
+    // Identical second packet: same command, target, channel, RSSI bucket → zero notifications
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP),
+                           mock_time_.millis());
+
+    EXPECT_EQ(adapter_.state_changed.size(), 0u)
+        << "Identical remote packet must not fire a publish (dedup regression)";
+}
+
+TEST_F(DeviceRegistryTest, RfCommand_ChangedRemoteField_Publishes) {
+    add_cover(0xA831E5);
+    registry_.set_nvs_enabled(true);
+
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP),
+                           mock_time_.millis());
+    adapter_.clear();
+
+    // Changed command byte → must publish
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::DOWN),
+                           mock_time_.millis());
+    EXPECT_EQ(adapter_.state_changed.size(), 1u);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // LOOP — integration tests for the main loop logic
 // ═══════════════════════════════════════════════════════════════════════════════

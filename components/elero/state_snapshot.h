@@ -34,6 +34,7 @@ constexpr uint16_t RSSI           = 1 << 5;
 constexpr uint16_t STATE_STRING   = 1 << 6;
 constexpr uint16_t COMMAND_SOURCE = 1 << 7;
 constexpr uint16_t BRIGHTNESS     = 1 << 8;  ///< light: on/off or brightness changed
+constexpr uint16_t REMOTE_ACTIVITY = 1 << 9; ///< remote: command/target/channel changed
 constexpr uint16_t ALL            = 0xFFFF;   ///< Force-publish everything (reconnect, initial)
 }  // namespace state_change
 
@@ -76,6 +77,17 @@ struct LightStateSnapshot {
     /// Write snapshot fields to a JSON object. Caller adds identity/config fields.
     void to_json(JsonObject obj) const;
 #endif
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REMOTE SNAPSHOT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct RemoteStateSnapshot {
+    uint8_t  last_command;
+    uint32_t last_target;
+    uint8_t  last_channel;
+    float    rssi;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -134,6 +146,9 @@ CoverStateSnapshot compute_cover_snapshot(const Device &dev, uint32_t now);
 /// Compute a light state snapshot from a Device. Single source of truth.
 LightStateSnapshot compute_light_snapshot(const Device &dev, uint32_t now);
 
+/// Compute a remote state snapshot from a Device. Single source of truth.
+RemoteStateSnapshot compute_remote_snapshot(const Device &dev);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DIFF FUNCTIONS — compare snapshot against Published cache, return change flags
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -149,6 +164,10 @@ uint16_t diff_and_update_cover(const CoverStateSnapshot &snap, CoverDevice::Publ
 /// Compare light snapshot against Published cache. Returns bitmask of changed fields.
 /// Updates cache for changed fields.
 uint16_t diff_and_update_light(const LightStateSnapshot &snap, LightDevice::Published &pub);
+
+/// Compare remote snapshot against Published cache. Returns bitmask of changed fields.
+/// Updates cache for changed fields.
+uint16_t diff_and_update_remote(const RemoteStateSnapshot &snap, RemoteDevice::Published &pub);
 
 }  // namespace elero
 }  // namespace esphome
