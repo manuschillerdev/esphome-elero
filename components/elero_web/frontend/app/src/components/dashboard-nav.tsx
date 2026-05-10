@@ -1,6 +1,6 @@
 import { Badge } from './ui/badge'
 import { cn } from '@/lib/utils'
-import { LayoutGrid, Cpu } from './icons'
+import { LayoutGrid, List, Cpu } from './icons'
 import { activeTab as activeTabSignal, filterCounts, setActiveTab } from '@/store'
 
 export function DashboardNav() {
@@ -9,6 +9,7 @@ export function DashboardNav() {
 
   const tabs = [
     { id: 'devices' as const, label: 'Devices', icon: LayoutGrid, count: counts.all },
+    { id: 'manage' as const, label: 'Manage', icon: List, count: counts.all },
     { id: 'hub' as const, label: 'Hub', icon: Cpu },
   ]
 

@@ -171,7 +171,7 @@ export const learnIn = signal<LearnInStateData>({
 
 export type StatusFilter = 'all' | 'saved' | 'unsaved'
 export type DeviceTypeFilter = 'all' | 'covers' | 'lights'
-export type ActiveTab = 'devices' | 'packets' | 'hub'
+export type ActiveTab = 'devices' | 'manage' | 'packets' | 'hub'
 
 export interface Filters {
   status: StatusFilter

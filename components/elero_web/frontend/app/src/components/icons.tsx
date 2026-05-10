@@ -340,3 +340,49 @@ export function Power(props: IconProps) {
     </svg>
   )
 }
+
+// Multi-blind group icon — two stacked blinds
+export function Users(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  )
+}
+
+export function ChevronRight(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  )
+}
+
+export function Search(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  )
+}
+
+export function X(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  )
+}
+
+export function Check(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  )
+}

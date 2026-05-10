@@ -6,14 +6,15 @@ import { DashboardNav } from './components/dashboard-nav'
 import { DiscoveryBanner } from './components/discovery-banner'
 import { ControlBar } from './components/control-bar'
 import { DeviceGrid } from './components/device-grid'
+import { ManageTab } from './components/manage-tab'
 import { RfPackets } from './components/rf-packets'
 import { HubPanel } from './components/hub-panel'
 import { Toaster } from './components/toaster'
 
 // ─── Side effects (module-level, run once on import) ────────────────────────
 
-const VALID_TABS = new Set(['devices', 'packets', 'hub'] as const)
-type Tab = 'devices' | 'packets' | 'hub'
+const VALID_TABS = new Set(['devices', 'manage', 'packets', 'hub'] as const)
+type Tab = 'devices' | 'manage' | 'packets' | 'hub'
 
 function tabFromHash(): Tab | null {
   const h = location.hash.replace('#', '')
@@ -65,6 +66,7 @@ export function App() {
               </div>
             )}
 
+            {activeTab === 'manage' && <ManageTab />}
             {activeTab === 'packets' && <RfPackets />}
             {activeTab === 'hub' && <HubPanel />}
           </div>
