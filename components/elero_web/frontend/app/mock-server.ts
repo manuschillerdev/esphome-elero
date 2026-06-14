@@ -5,7 +5,14 @@ const PORT = 8080
 // ─── Mock Data ───────────────────────────────────────────────────────────────
 
 const CONFIG = {
-  hub: { device: 'lilygo-t-embed', version: '0.0.0-mock', mode: 'mqtt', crud: true },
+  hub: {
+    device: 'lilygo-t-embed',
+    version: '0.0.0-mock',
+    mode: 'mqtt',
+    crud: true,
+    name: 'Mock Elero Gateway',
+    default_src_address: '0x000001',
+  },
   radio: {
     chipset: 'cc1101',
     rx_sensitivity: -104,
@@ -13,6 +20,7 @@ const CONFIG = {
   },
   blinds: [
     { address: '0x313238', name: 'Terrasse',       channel: 2,  remote: '0x17a753', enabled: true, open_ms: 25000, close_ms: 25000, poll_ms: 300000, supports_tilt: false, updated_at: 1234567 },
+    { address: '0x313238', name: 'Terrasse',       channel: 3,  remote: '0x28b864', enabled: true, open_ms: 25000, close_ms: 25000, poll_ms: 300000, supports_tilt: false, updated_at: 1234567 },
     { address: '0x333238', name: 'Lichthof OG',    channel: 7,  remote: '0x17a753', enabled: true, open_ms: 20000, close_ms: 20000, poll_ms: 300000, supports_tilt: true,  updated_at: 1234567 },
     { address: '0x413238', name: 'Terrasse Küche', channel: 3,  remote: '0x28b864', enabled: true, open_ms: 30000, close_ms: 30000, poll_ms: 300000, supports_tilt: false, updated_at: 1234567 },
     { address: '0x4d5748', name: 'Schlafzimmer',   channel: 33, remote: '0x28b864', enabled: true, open_ms: 22000, close_ms: 22000, poll_ms: 300000, supports_tilt: true,  updated_at: 1234567 },

@@ -117,6 +117,11 @@ export function parseFreq(val: number | string | undefined, defaultVal: number):
 
 export type AppDeviceType = 'cover' | 'light' | 'remote' | 'unknown'
 
+export interface DevicePairing {
+  remote: string
+  channel: number
+}
+
 export interface Device {
   address: string
   type: DeviceType
@@ -124,17 +129,13 @@ export interface Device {
   enabled: boolean
   channel: number
   remote: string
+  pairings: DevicePairing[]
   name: string
   open_ms: number
   close_ms: number
   supports_tilt: boolean
   dim_ms: number
   lastStatus: RfPacketWithTimestamp | null
-}
-
-export interface DeviceGroup {
-  remote: Device
-  devices: Device[]
 }
 
 // ─── Primary Signals ────────────────────────────────────────────────────────
@@ -169,45 +170,11 @@ export const learnIn = signal<LearnInStateData>({
   busy: false,
 })
 
-export type StatusFilter = 'all' | 'saved' | 'unsaved'
-export type DeviceTypeFilter = 'all' | 'covers' | 'lights'
-export type ActiveTab = 'devices' | 'manage' | 'packets' | 'hub'
+export type ActiveTab = 'manage' | 'packets' | 'hub'
 
-export interface Filters {
-  status: StatusFilter
-  deviceType: DeviceTypeFilter
-  rf: string
-}
-
-const DEFAULT_FILTERS: Filters = { status: 'all', deviceType: 'all', rf: '' }
-
-export const activeTab = signal<ActiveTab>('devices')
-export const filters = signal<Filters>(DEFAULT_FILTERS)
+export const activeTab = signal<ActiveTab>('manage')
 
 // ─── Computed (auto-tracked, auto-memoized) ─────────────────────────────────
-
-export const deviceGroups = computed<DeviceGroup[]>(() => {
-  const devs = devices.value
-  const { status, deviceType } = filters.value
-  const groups = new Map<string, Device[]>()
-  for (const d of devs.values()) {
-    if (d.type === 'remote') continue
-    if (status === 'saved' && d.updated_at === null) continue
-    if (status === 'unsaved' && d.updated_at !== null) continue
-    if (deviceType === 'covers' && d.type !== 'cover') continue
-    if (deviceType === 'lights' && d.type !== 'light') continue
-    const key = d.remote || 'unknown'
-    const arr = groups.get(key)
-    if (arr) arr.push(d)
-    else groups.set(key, [d])
-  }
-  return [...groups]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([addr, items]) => ({
-      remote: devs.get(addr) ?? makeDevice({ address: addr, type: 'remote' }),
-      devices: items.sort((a, b) => a.address.localeCompare(b.address)),
-    }))
-})
 
 export const filterCounts = computed(() => {
   let saved = 0, unsaved = 0, covers = 0, lights = 0
@@ -234,12 +201,32 @@ export const deviceTypeMap = computed<Record<string, AppDeviceType>>(() => {
 
 // ─── Device Factories ────────────────────────────────────────────────────────
 
+function makePairings(remote: string | undefined, channel: number | undefined): DevicePairing[] {
+  return remote ? [{ remote, channel: channel ?? 0 }] : []
+}
+
+function mergePairings(...sources: Array<DevicePairing[] | undefined>): DevicePairing[] {
+  const result: DevicePairing[] = []
+  const seen = new Set<string>()
+  for (const source of sources) {
+    for (const pairing of source ?? []) {
+      if (!pairing.remote) continue
+      const key = `${pairing.remote}:${pairing.channel}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(pairing)
+    }
+  }
+  return result
+}
+
 function makeDevice(partial: Partial<Device> & { address: string; type: DeviceType }): Device {
   return {
     updated_at: null,
     enabled: true,
     channel: 0,
     remote: '',
+    pairings: [],
     name: '',
     open_ms: 0,
     close_ms: 0,
@@ -253,7 +240,7 @@ function makeDevice(partial: Partial<Device> & { address: string; type: DeviceTy
 function blindToDevice(b: BlindConfig): Device {
   return makeDevice({
     address: b.address, type: 'cover', updated_at: b.updated_at || null, enabled: b.enabled,
-    name: b.name, channel: b.channel, remote: b.remote,
+    name: b.name, channel: b.channel, remote: b.remote, pairings: makePairings(b.remote, b.channel),
     open_ms: b.open_ms, close_ms: b.close_ms, supports_tilt: b.supports_tilt,
     lastStatus: b.state && b.state !== '0x00'
       ? { state: b.state, rssi: b.rssi } as RfPacketWithTimestamp
@@ -264,7 +251,7 @@ function blindToDevice(b: BlindConfig): Device {
 function lightToDevice(l: LightConfig): Device {
   return makeDevice({
     address: l.address, type: 'light', updated_at: l.updated_at || null, enabled: l.enabled,
-    name: l.name, channel: l.channel, remote: l.remote, dim_ms: l.dim_ms,
+    name: l.name, channel: l.channel, remote: l.remote, pairings: makePairings(l.remote, l.channel), dim_ms: l.dim_ms,
     lastStatus: l.state && l.state !== '0x00'
       ? { state: l.state, rssi: l.rssi } as RfPacketWithTimestamp
       : null,
@@ -288,12 +275,26 @@ export function setDevices(data: ConfigData) {
   for (const b of data.blinds) {
     const device = blindToDevice(b)
     const existing = next.get(b.address)
-    next.set(b.address, { ...device, lastStatus: existing?.lastStatus ?? device.lastStatus })
+    next.set(b.address, {
+      ...existing,
+      ...device,
+      remote: existing?.remote || device.remote,
+      channel: existing?.remote ? existing.channel : device.channel,
+      pairings: mergePairings(existing?.pairings, device.pairings),
+      lastStatus: existing?.lastStatus ?? device.lastStatus,
+    })
   }
   for (const l of data.lights) {
     const device = lightToDevice(l)
     const existing = next.get(l.address)
-    next.set(l.address, { ...device, lastStatus: existing?.lastStatus ?? device.lastStatus })
+    next.set(l.address, {
+      ...existing,
+      ...device,
+      remote: existing?.remote || device.remote,
+      channel: existing?.remote ? existing.channel : device.channel,
+      pairings: mergePairings(existing?.pairings, device.pairings),
+      lastStatus: existing?.lastStatus ?? device.lastStatus,
+    })
   }
   for (const r of data.remotes ?? []) {
     const existing = next.get(r.address)
@@ -319,7 +320,11 @@ export function updateDevice(address: string, updates: Partial<Device>) {
   const d = devices.value.get(address)
   if (!d) return
   const next = new Map(devices.value)
-  next.set(address, { ...d, updated_at: null, ...updates })
+  const updated = { ...d, updated_at: null, ...updates }
+  if ('remote' in updates || 'channel' in updates) {
+    updated.pairings = mergePairings(d.pairings, makePairings(updated.remote, updated.channel))
+  }
+  next.set(address, updated)
   devices.value = next
 }
 
@@ -334,7 +339,18 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
   }
 
   if (t === msg_type.COMMAND || t === msg_type.COMMAND_ALT) {
-    if (!devs.has(pkt.dst)) mut().set(pkt.dst, makeDevice({ address: pkt.dst, type: 'cover', remote: pkt.src, channel: pkt.channel }))
+    const target = (next ?? devs).get(pkt.dst)
+    const pairing = makePairings(pkt.src, pkt.channel)
+    if (!target) {
+      mut().set(pkt.dst, makeDevice({ address: pkt.dst, type: 'cover', remote: pkt.src, channel: pkt.channel, pairings: pairing }))
+    } else if (target.type !== 'remote') {
+      mut().set(pkt.dst, {
+        ...target,
+        remote: target.remote || pkt.src,
+        channel: target.remote ? target.channel : pkt.channel,
+        pairings: mergePairings(target.pairings, pairing),
+      })
+    }
     if (!(next ?? devs).has(pkt.src)) mut().set(pkt.src, makeDevice({ address: pkt.src, type: 'remote' }))
   } else if (t === msg_type.STATUS || t === msg_type.STATUS_ALT) {
     const existing = (next ?? devs).get(pkt.src)
@@ -372,7 +388,7 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
   const existing = devices.value.get(data.address)
   const next = new Map(devices.value)
 
-  next.set(data.address, makeDevice({
+  const device = makeDevice({
     address: data.address,
     type: data.device_type,
     updated_at: data.updated_at || null,
@@ -380,12 +396,18 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
     name: data.name ?? '',
     channel: data.channel ?? 0,
     remote: data.remote ?? '',
+    pairings: makePairings(data.remote, data.channel),
     open_ms: data.open_ms ?? 0,
     close_ms: data.close_ms ?? 0,
     supports_tilt: data.supports_tilt ?? false,
     dim_ms: data.dim_ms ?? 0,
     lastStatus: existing?.lastStatus ?? null,
-  }))
+  })
+
+  next.set(data.address, {
+    ...device,
+    pairings: mergePairings(existing?.pairings, device.pairings),
+  })
 
   // Ensure remote entry exists for non-remote devices
   if (data.device_type !== 'remote' && data.remote && !next.has(data.remote)) {
@@ -500,22 +522,6 @@ export function onDeviceRemoved({ address }: CrudEventData) {
 
 export function setActiveTab(tab: ActiveTab) {
   activeTab.value = tab
-}
-
-export function setStatusFilter(status: StatusFilter) {
-  filters.value = { ...filters.value, status }
-}
-
-export function setDeviceTypeFilter(deviceType: DeviceTypeFilter) {
-  filters.value = { ...filters.value, deviceType }
-}
-
-export function setRfFilter(rf: string) {
-  filters.value = { ...filters.value, rf }
-}
-
-export function resetFilters() {
-  filters.value = DEFAULT_FILTERS
 }
 
 // ─── YAML Export ──────────────────────────────────────────────────────────────

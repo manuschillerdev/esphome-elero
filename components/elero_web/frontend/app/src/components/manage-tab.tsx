@@ -1,3 +1,4 @@
+import { Fragment } from 'preact'
 import { useSignal } from '@preact/signals'
 import {
   createTable,
@@ -9,6 +10,7 @@ import {
   getExpandedRowModel,
   type TableState,
   type Updater,
+  type FilterFn,
   type Row,
   type Cell,
   type Header,
@@ -16,43 +18,115 @@ import {
 import { Button } from './ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 import { Badge } from './ui/badge'
+import { InlineEdit } from './ui/inline-edit'
 import { SignalIndicator } from './signal-indicator'
+import { DiscoveryBanner } from './discovery-banner'
 import { DeviceExpandedPanel } from './device-row'
 import {
-  Blinds, Lightbulb, RemoteControl, Users,
+  Blinds, Lightbulb, LightbulbOff, RemoteControl, Users,
   ChevronUp, ChevronDown, ChevronRight, Square, Search, X, Plus,
+  Shrink, Save, Download,
 } from './icons'
 import { cn } from '@/lib/utils'
 import {
-  devices, displayNames, getStateLabel,
+  devices, displayNames, getStateLabel, showToast, updateDevice, exportYaml,
+  hub, rebootNeeded,
   type Device,
 } from '@/store'
-import { sendDeviceCommand, sendCreateGroup } from '@/ws'
+import { sendDeviceCommand, sendRestart, sendUpsertDevice } from '@/ws'
 
 // ─── Row model ──────────────────────────────────────────────────────────────
 
+const UNPAIRED_REMOTE_FILTER = '__unpaired__'
+
+interface PairedRemote {
+  address: string
+  label: string
+  channel: number
+}
+
+interface RemoteOption {
+  address: string
+  label: string
+}
+
+type StatusFilter = '' | 'saved' | 'unsaved'
+
+type TypeFilter = '' | 'cover' | 'light'
+
 interface Row_ {
   device: Device
-  /** display name of the owning remote, or "—" */
-  remoteName: string
+  status: 'saved' | 'unsaved'
+  /** Physical or virtual remotes paired to this device. Current API exposes one; UI treats it as a relationship list. */
+  pairedRemotes: PairedRemote[]
+  /** Searchable remote labels/addresses. */
+  pairedRemoteText: string
+  /** HA state name or "—" */
+  haState: string
   /** rf state name (lowercased) or "—" */
   rfState: string
   /** rssi number or null */
   rssi: number | null
 }
 
+function buildPairedRemotes(device: Device, names: Record<string, string>): PairedRemote[] {
+  const pairings = device.pairings.length > 0
+    ? device.pairings
+    : device.remote
+      ? [{ remote: device.remote, channel: device.channel }]
+      : []
+  return pairings.map((pairing) => ({
+    address: pairing.remote,
+    label: names[pairing.remote] ?? pairing.remote,
+    channel: pairing.channel,
+  }))
+}
+
 function buildRows(devs: Map<string, Device>, names: Record<string, string>): Row_[] {
   const rows: Row_[] = []
   for (const d of devs.values()) {
-    if (d.type === 'remote') continue   // remotes shown only as group headers / chips
+    if (d.type === 'remote') continue   // remotes are relationships, not primary rows
+    const pairedRemotes = buildPairedRemotes(d, names)
     rows.push({
       device: d,
-      remoteName: d.remote ? (names[d.remote] ?? d.remote) : '—',
+      status: d.updated_at === null ? 'unsaved' : 'saved',
+      pairedRemotes,
+      pairedRemoteText: pairedRemotes.length > 0
+        ? pairedRemotes.map((remote) => `${remote.label} ${remote.address} CH ${remote.channel}`).join(' ')
+        : 'Unpaired',
+      haState: ((d.lastStatus as Record<string, unknown> | null)?.ha_state as string | undefined)?.toUpperCase() ?? '—',
       rfState: getStateLabel((d.lastStatus?.state) as string | undefined),
       rssi: d.lastStatus?.rssi ?? null,
     })
   }
   return rows
+}
+
+function buildRemoteOptions(rows: Row_[]): RemoteOption[] {
+  const options = new Map<string, string>()
+  let hasUnpaired = false
+  for (const row of rows) {
+    if (row.pairedRemotes.length === 0) {
+      hasUnpaired = true
+      continue
+    }
+    for (const remote of row.pairedRemotes) options.set(remote.address, remote.label)
+  }
+  const remotes = Array.from(options, ([address, label]) => ({ address, label }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+  return hasUnpaired ? [...remotes, { address: UNPAIRED_REMOTE_FILTER, label: 'Unpaired' }] : remotes
+}
+
+const pairedRemotesFilter: FilterFn<Row_> = (row, _columnId, filterValue) => {
+  const selected = String(filterValue ?? '')
+  if (!selected) return true
+  if (selected === UNPAIRED_REMOTE_FILTER) return row.original.pairedRemotes.length === 0
+  return row.original.pairedRemotes.some((remote) => remote.address === selected)
+}
+
+const statusFilter: FilterFn<Row_> = (row, _columnId, filterValue) => {
+  const selected = String(filterValue ?? '')
+  return !selected || row.original.status === selected
 }
 
 // ─── Type icon ──────────────────────────────────────────────────────────────
@@ -78,52 +152,157 @@ function TypeIcon({ type }: { type: Device['type'] }) {
   )
 }
 
-// ─── State pill ─────────────────────────────────────────────────────────────
+// ─── Cell renderers ────────────────────────────────────────────────────────
 
-function StatePill({ row }: { row: Row_ }) {
-  const dev = row.device
-  const unsaved = dev.updated_at === null
-  const state = row.rfState
+function StatusDot({ device }: { device: Device }) {
+  const unsaved = device.updated_at === null
+  const label = unsaved ? 'Unsaved' : device.enabled ? 'Saved & published' : 'Saved & unpublished'
   return (
-    <div className="flex items-center gap-1.5">
-      <span
-        className={cn(
-          'inline-flex size-1.5 shrink-0 rounded-full',
-          unsaved ? 'bg-orange-400' : dev.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/40',
-        )}
-      />
-      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{state}</span>
+    <Tooltip>
+      <TooltipTrigger>
+        <span
+          className={cn(
+            'inline-flex size-2 shrink-0 rounded-full',
+            unsaved ? 'bg-orange-400' : device.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+          )}
+        />
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function NameCell({ row }: { row: Row_ }) {
+  const device = row.device
+  const fallback = device.type === 'cover'
+    ? `Unnamed cover (${device.address})`
+    : device.type === 'light'
+      ? `Unnamed light (${device.address})`
+      : device.address
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <StatusDot device={device} />
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="truncate text-sm font-medium text-foreground">
+          <InlineEdit value={device.name || fallback} onSave={(name) => updateDevice(device.address, { name })} />
+        </span>
+        <span className="font-mono text-[10px] text-muted-foreground">{device.address}</span>
+      </div>
+    </div>
+  )
+}
+
+function StateCell({ row }: { row: Row_ }) {
+  return (
+    <div className="flex flex-col gap-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      <span>HA {row.haState}</span>
+      <span>RF {row.rfState}</span>
+    </div>
+  )
+}
+
+function PairedRemotesCell({ row }: { row: Row_ }) {
+  const remotes = row.pairedRemotes
+  if (remotes.length === 0) {
+    return <span className="text-xs text-muted-foreground">Unpaired</span>
+  }
+
+  const visible = remotes.slice(0, 2)
+  const hidden = remotes.length - visible.length
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1">
+      {visible.map((remote) => (
+        <Tooltip key={`${remote.address}:${remote.channel}`}>
+          <TooltipTrigger>
+            <span className="inline-flex max-w-44 items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              <span className="truncate">{remote.label}</span>
+              <span className="rounded bg-background/70 px-1 font-mono text-[10px] tabular-nums">CH {remote.channel}</span>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{remote.address}</TooltipContent>
+        </Tooltip>
+      ))}
+      {hidden > 0 && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">+{hidden}</Badge>}
     </div>
   )
 }
 
 // ─── Inline action buttons (compact) ────────────────────────────────────────
 
+function SaveButton({ device }: { device: Device }) {
+  if (!hub.value.crud) return null
+  return (
+    <Tooltip>
+      <TooltipTrigger>
+        <Button variant="ghost" size="icon" className="size-6 text-primary hover:text-primary" onClick={() => sendUpsertDevice(device)}>
+          <Save className="size-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{device.updated_at !== null ? 'Saved — click to update' : 'Save to NVS'}</TooltipContent>
+    </Tooltip>
+  )
+}
+
 function InlineActions({ device }: { device: Device }) {
   if (device.type === 'cover') {
     return (
       <div className="flex items-center justify-end gap-0.5 text-primary">
-        <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'up')}>
-          <ChevronUp className="size-3.5" />
-        </Button>
-        <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'stop')}>
-          <Square className="size-3" />
-        </Button>
-        <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'down')}>
-          <ChevronDown className="size-3.5" />
-        </Button>
+        <SaveButton device={device} />
+        <Tooltip>
+          <TooltipTrigger>
+            <Button variant="ghost" size="icon" className="size-6 text-primary hover:text-primary disabled:text-muted-foreground/40 disabled:pointer-events-none" disabled={!device.supports_tilt} onClick={() => sendDeviceCommand(device, 'tilt')}>
+              <Shrink className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{device.supports_tilt ? 'Tilt' : 'Tilt (disabled)'}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger>
+            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'up')}>
+              <ChevronUp className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Open</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger>
+            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'stop')}>
+              <Square className="size-3" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Stop</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger>
+            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'down')}>
+              <ChevronDown className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Close</TooltipContent>
+        </Tooltip>
       </div>
     )
   }
   if (device.type === 'light') {
     return (
       <div className="flex items-center justify-end gap-0.5 text-primary">
-        <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'up')}>
-          <ChevronUp className="size-3.5" />
-        </Button>
-        <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'down')}>
-          <ChevronDown className="size-3.5" />
-        </Button>
+        <SaveButton device={device} />
+        <Tooltip>
+          <TooltipTrigger>
+            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'up')}>
+              <Lightbulb className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>On</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger>
+            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'down')}>
+              <LightbulbOff className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Off</TooltipContent>
+        </Tooltip>
       </div>
     )
   }
@@ -175,6 +354,11 @@ const columns = [
       )
     },
   }),
+  columnHelper.accessor((r) => r.status, {
+    id: 'status',
+    header: 'Status',
+    filterFn: statusFilter,
+  }),
   columnHelper.accessor((r) => r.device.type, {
     id: 'type',
     header: 'Type',
@@ -184,31 +368,18 @@ const columns = [
   columnHelper.accessor((r) => r.device.name || r.device.address, {
     id: 'name',
     header: 'Name',
-    cell: (info) => (
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="truncate text-sm font-medium text-foreground">{info.getValue()}</span>
-        <span className="font-mono text-[10px] text-muted-foreground">{info.row.original.device.address}</span>
-      </div>
-    ),
+    cell: (info) => <NameCell row={info.row.original} />,
   }),
-  columnHelper.accessor((r) => r.remoteName, {
-    id: 'remote',
-    header: 'Remote',
-    cell: (info) => (
-      <span className="truncate text-xs text-muted-foreground">{info.getValue()}</span>
-    ),
+  columnHelper.accessor((r) => r.pairedRemoteText, {
+    id: 'pairedRemotes',
+    header: 'Remote / channel pairings',
+    cell: (info) => <PairedRemotesCell row={info.row.original} />,
+    filterFn: pairedRemotesFilter,
   }),
-  columnHelper.accessor((r) => r.device.channel, {
-    id: 'channel',
-    header: 'CH',
-    cell: (info) => (
-      <span className="font-mono text-xs tabular-nums text-muted-foreground">{info.getValue()}</span>
-    ),
-  }),
-  columnHelper.accessor((r) => r.rfState, {
+  columnHelper.accessor((r) => `${r.haState} ${r.rfState}`, {
     id: 'state',
     header: 'State',
-    cell: (info) => <StatePill row={info.row.original} />,
+    cell: (info) => <StateCell row={info.row.original} />,
   }),
   columnHelper.accessor((r) => r.rssi ?? -999, {
     id: 'rssi',
@@ -232,22 +403,38 @@ const columns = [
 
 // ─── Toolbar ────────────────────────────────────────────────────────────────
 
-type GroupBy = 'none' | 'remote' | 'type'
+type GroupBy = 'none' | 'type'
 
 function Toolbar({
   search, onSearch,
+  statusFilterValue, onStatusFilter,
   typeFilter, onTypeFilter,
+  remoteFilter, onRemoteFilter, remoteOptions,
   groupBy, onGroupBy,
-  rowCount,
+  rowCount, totalCount,
+  savedCount, unsavedCount, coverCount, lightCount,
+  onExportYaml, exportFeedback,
   onCreateGroup, selectedCount,
 }: {
   search: string
   onSearch: (v: string) => void
-  typeFilter: string
-  onTypeFilter: (v: string) => void
+  statusFilterValue: StatusFilter
+  onStatusFilter: (v: StatusFilter) => void
+  typeFilter: TypeFilter
+  onTypeFilter: (v: TypeFilter) => void
+  remoteFilter: string
+  onRemoteFilter: (v: string) => void
+  remoteOptions: RemoteOption[]
   groupBy: GroupBy
   onGroupBy: (v: GroupBy) => void
   rowCount: number
+  totalCount: number
+  savedCount: number
+  unsavedCount: number
+  coverCount: number
+  lightCount: number
+  onExportYaml: () => void
+  exportFeedback: string | null
   selectedCount: number
   onCreateGroup: () => void
 }) {
@@ -260,7 +447,7 @@ function Toolbar({
           type="text"
           value={search}
           onInput={(e) => onSearch((e.target as HTMLInputElement).value)}
-          placeholder="Search name or address…"
+          placeholder="Search name, address, or remote…"
           className="h-7 w-56 rounded-md border border-input bg-background pl-7 pr-7 text-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
         />
         {search && (
@@ -274,15 +461,38 @@ function Toolbar({
         )}
       </div>
 
+      {/* Save-state filter */}
+      <select
+        value={statusFilterValue}
+        onChange={(e) => onStatusFilter((e.target as HTMLSelectElement).value as StatusFilter)}
+        className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+      >
+        <option value="">All ({totalCount})</option>
+        <option value="saved">Saved ({savedCount})</option>
+        <option value="unsaved">Unsaved ({unsavedCount})</option>
+      </select>
+
       {/* Type filter */}
       <select
         value={typeFilter}
-        onChange={(e) => onTypeFilter((e.target as HTMLSelectElement).value)}
+        onChange={(e) => onTypeFilter((e.target as HTMLSelectElement).value as TypeFilter)}
         className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
       >
         <option value="">All types</option>
-        <option value="cover">Covers</option>
-        <option value="light">Lights</option>
+        <option value="cover">Covers ({coverCount})</option>
+        <option value="light">Lights ({lightCount})</option>
+      </select>
+
+      {/* Remote filter */}
+      <select
+        value={remoteFilter}
+        onChange={(e) => onRemoteFilter((e.target as HTMLSelectElement).value)}
+        className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+      >
+        <option value="">All remotes</option>
+        {remoteOptions.map((remote) => (
+          <option key={remote.address} value={remote.address}>{remote.label}</option>
+        ))}
       </select>
 
       {/* Group-by */}
@@ -294,7 +504,6 @@ function Toolbar({
           className="h-7 rounded-md border border-input bg-background px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
         >
           <option value="none">None</option>
-          <option value="remote">Remote</option>
           <option value="type">Type</option>
         </select>
       </label>
@@ -305,6 +514,18 @@ function Toolbar({
       </span>
 
       <div className="ml-auto flex items-center gap-2">
+        {savedCount > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 text-xs"
+            onClick={onExportYaml}
+            title="Copy ESPHome YAML for all saved devices to clipboard"
+          >
+            <Download className="size-3.5" />
+            {exportFeedback ?? 'Export YAML'}
+          </Button>
+        )}
         <Button
           size="sm"
           variant="outline"
@@ -335,7 +556,7 @@ function SelectionBar({
     <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-popover px-4 py-2 shadow-lg">
       <span className="text-xs font-medium">
         {selectedDevices.length} selected
-        {remotes > 1 && <span className="ml-1 text-muted-foreground">· {remotes} remotes</span>}
+        {remotes > 1 && <span className="ml-1 text-muted-foreground">· {remotes} paired remotes</span>}
       </span>
       <div className="h-4 w-px bg-border" />
       <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => sendBulk(selectedDevices, 'up')}>
@@ -382,11 +603,14 @@ function CreateGroupModal({
 }) {
   const name = useSignal('')
   const checked = useSignal<Set<string>>(new Set(initialMembers.map((d) => d.address)))
+  const names = displayNames.value
 
   const members = initialMembers
   const checkedCount = checked.value.size
   const remoteCount = new Set(
-    members.filter((m) => checked.value.has(m.address)).map((m) => m.remote),
+    members
+      .filter((m) => checked.value.has(m.address))
+      .flatMap((m) => buildPairedRemotes(m, names).map((remote) => remote.address)),
   ).size
   const valid = name.value.trim().length > 0 && checkedCount >= 2
 
@@ -399,7 +623,7 @@ function CreateGroupModal({
   const submit = () => {
     if (!valid) return
     const addrs = members.filter((m) => checked.value.has(m.address)).map((m) => m.address)
-    sendCreateGroup(name.value.trim(), addrs)
+    showToast('info', `Group "${name.value.trim()}" is ready, but backend persistence is not implemented yet (${addrs.length} members).`)
     onClose()
   }
 
@@ -458,8 +682,9 @@ function CreateGroupModal({
                       />
                       <TypeIcon type={m.type} />
                       <span className="flex-1 truncate text-sm">{m.name || m.address}</span>
-                      <span className="text-[10px] text-muted-foreground">CH {m.channel}</span>
-                      <span className="text-[10px] text-muted-foreground">{m.remote}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {buildPairedRemotes(m, names).map((remote) => `${remote.label} · CH ${remote.channel}`).join(', ') || 'Unpaired'}
+                      </span>
                     </li>
                   )
                 })}
@@ -495,9 +720,60 @@ function CreateGroupModal({
         </div>
 
         <p className="mt-3 text-[10px] text-muted-foreground">
-          Backend persistence lands in PR-B; for now this submits a stub WS message.
+          Backend persistence lands in PR-B; for now this validates the selection locally only.
         </p>
       </div>
+    </div>
+  )
+}
+
+// ─── Page chrome ───────────────────────────────────────────────────────────
+
+function RebootBanner() {
+  if (!rebootNeeded.value || hub.value.mode !== 'native') return null
+  return (
+    <div className="flex items-center justify-between rounded-xl border border-orange-300 bg-orange-50 px-4 py-3 text-sm dark:border-orange-700 dark:bg-orange-950">
+      <span className="text-orange-800 dark:text-orange-200">
+        Reboot required for changes to take effect in Home Assistant
+      </span>
+      <button
+        className="rounded-md bg-orange-600 px-3 py-1 text-xs font-medium text-white hover:bg-orange-700"
+        onClick={() => sendRestart()}
+      >
+        Reboot now
+      </button>
+    </div>
+  )
+}
+
+function EmptyState({ status, type, hasFilters }: { status: StatusFilter; type: TypeFilter; hasFilters: boolean }) {
+  const title = hasFilters
+    ? 'No devices match the current filters'
+    : type === 'cover'
+      ? 'No covers configured'
+      : type === 'light'
+        ? 'No lights configured'
+        : status === 'unsaved'
+          ? 'No unsaved changes'
+          : status === 'saved'
+            ? 'No saved devices'
+            : 'No devices yet'
+  const description = hasFilters
+    ? 'Adjust the search, status, type, or remote filter.'
+    : status === 'unsaved'
+      ? 'Press buttons on your physical Elero remotes to discover new devices, or edit settings on existing devices. Unsaved changes will appear here.'
+      : status === 'saved'
+        ? 'Save discovered devices to NVS, or add devices to your ESPHome YAML configuration.'
+        : type === 'cover'
+          ? 'Add a cover with platform: elero to your ESPHome YAML, specifying dst_address, src_address, and channel. Then reflash.'
+          : type === 'light'
+            ? 'Add a light with platform: elero to your ESPHome YAML, specifying dst_address, src_address, and channel. Then reflash.'
+            : 'Add devices to your ESPHome YAML configuration, or press buttons on your physical remotes to discover new addresses. If nothing appears, check your frequency and pin configuration on the Hub page.'
+
+  return (
+    <div className="p-8 text-center">
+      <p className="text-sm font-medium text-foreground">{title}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{description}</p>
     </div>
   )
 }
@@ -508,10 +784,10 @@ const INITIAL_STATE: TableState = {
   sorting: [],
   columnFilters: [],
   globalFilter: '',
-  grouping: ['remote'],
+  grouping: [],
   expanded: true,   // auto-expand all group rows
   rowSelection: {},
-  columnVisibility: {},
+  columnVisibility: { status: false },
   columnOrder: [],
   columnPinning: { left: [], right: [] },
   rowPinning: { top: [], bottom: [] },
@@ -528,12 +804,19 @@ export function ManageTab() {
   const names = displayNames.value
   const tableState = useSignal<TableState>(INITIAL_STATE)
   const detailOpen = useSignal<Set<string>>(new Set())
+  const exportFeedback = useSignal<string | null>(null)
 
   const data = buildRows(allDevices, names)
+  const remoteOptions = buildRemoteOptions(data)
+  const savedCount = data.filter((row) => row.status === 'saved').length
+  const unsavedCount = data.filter((row) => row.status === 'unsaved').length
+  const coverCount = data.filter((row) => row.device.type === 'cover').length
+  const lightCount = data.filter((row) => row.device.type === 'light').length
 
   const table = createTable<Row_>({
     data,
     columns,
+    getRowId: (row) => row.device.address,
     state: tableState.value,
     onStateChange: (updater: Updater<TableState>) => {
       tableState.value = typeof updater === 'function'
@@ -567,12 +850,21 @@ export function ManageTab() {
   const setGlobalFilter = (v: string) => {
     tableState.value = { ...tableState.value, globalFilter: v }
   }
-  const setTypeFilter = (v: string) => {
-    const others = tableState.value.columnFilters.filter((f) => f.id !== 'type')
+  const setColumnFilter = (id: string, value: string) => {
+    const others = tableState.value.columnFilters.filter((f) => f.id !== id)
     tableState.value = {
       ...tableState.value,
-      columnFilters: v ? [...others, { id: 'type', value: v }] : others,
+      columnFilters: value ? [...others, { id, value }] : others,
     }
+  }
+  const setStatusFilter = (v: StatusFilter) => {
+    setColumnFilter('status', v)
+  }
+  const setTypeFilter = (v: TypeFilter) => {
+    setColumnFilter('type', v)
+  }
+  const setRemoteFilter = (v: string) => {
+    setColumnFilter('pairedRemotes', v)
   }
   const setGroupBy = (v: GroupBy) => {
     tableState.value = { ...tableState.value, grouping: v === 'none' ? [] : [v] }
@@ -582,34 +874,59 @@ export function ManageTab() {
   }
 
   const search = tableState.value.globalFilter as string
-  const typeFilter = (tableState.value.columnFilters.find((f) => f.id === 'type')?.value as string) ?? ''
-  const groupBy: GroupBy = tableState.value.grouping[0] === 'remote' ? 'remote'
-    : tableState.value.grouping[0] === 'type' ? 'type' : 'none'
+  const statusFilterValue = (tableState.value.columnFilters.find((f) => f.id === 'status')?.value as StatusFilter) ?? ''
+  const typeFilter = (tableState.value.columnFilters.find((f) => f.id === 'type')?.value as TypeFilter) ?? ''
+  const remoteFilter = (tableState.value.columnFilters.find((f) => f.id === 'pairedRemotes')?.value as string) ?? ''
+  const groupBy: GroupBy = tableState.value.grouping[0] === 'type' ? 'type' : 'none'
 
   const rowModel = table.getRowModel()
   const selectedRows = table.getSelectedRowModel().rows
   const selectedDevices = selectedRows.map((r) => r.original.device)
-  const selectedRemotes = new Set(selectedDevices.map((d) => d.remote)).size
+  const selectedRemotes = new Set(
+    selectedRows.flatMap((row) => row.original.pairedRemotes.map((remote) => remote.address)),
+  ).size
 
   const modalOpen = useSignal(false)
   const handleCreateGroup = () => { modalOpen.value = true }
   const handleModalClose = () => { modalOpen.value = false }
+  const handleExportYaml = () => {
+    const yaml = exportYaml()
+    if (!yaml.trim()) return
+    void navigator.clipboard.writeText(yaml).then(() => {
+      exportFeedback.value = 'Copied!'
+      setTimeout(() => { exportFeedback.value = null }, 2000)
+    }).catch(() => showToast('error', 'Could not copy YAML to clipboard'))
+  }
 
   return (
-    <div className="flex flex-col gap-0">
-      <Toolbar
-        search={search}
-        onSearch={setGlobalFilter}
-        typeFilter={typeFilter}
-        onTypeFilter={setTypeFilter}
-        groupBy={groupBy}
-        onGroupBy={setGroupBy}
-        rowCount={data.length}
-        selectedCount={selectedDevices.length}
-        onCreateGroup={handleCreateGroup}
-      />
+    <div className="flex flex-col gap-4">
+      <DiscoveryBanner />
+      <RebootBanner />
 
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
+        <Toolbar
+          search={search}
+          onSearch={setGlobalFilter}
+          statusFilterValue={statusFilterValue}
+          onStatusFilter={setStatusFilter}
+          typeFilter={typeFilter}
+          onTypeFilter={setTypeFilter}
+          remoteFilter={remoteFilter}
+          onRemoteFilter={setRemoteFilter}
+          remoteOptions={remoteOptions}
+          groupBy={groupBy}
+          onGroupBy={setGroupBy}
+          rowCount={rowModel.rows.length}
+          totalCount={data.length}
+          savedCount={savedCount}
+          unsavedCount={unsavedCount}
+          coverCount={coverCount}
+          lightCount={lightCount}
+          onExportYaml={handleExportYaml}
+          exportFeedback={exportFeedback.value}
+          selectedCount={selectedDevices.length}
+          onCreateGroup={handleCreateGroup}
+        />
         <table className="w-full text-xs">
           <thead className="bg-muted">
             {table.getHeaderGroups().map((hg) => (
@@ -657,8 +974,7 @@ export function ManageTab() {
                       >
                         {row.getIsExpanded() ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
                         <span>
-                          {groupBy === 'remote' ? 'Remote: ' : 'Type: '}
-                          <span className="text-foreground">{String(row.groupingValue)}</span>
+                          Type: <span className="text-foreground">{String(row.groupingValue)}</span>
                         </span>
                         <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{row.subRows.length}</Badge>
                       </button>
@@ -668,9 +984,8 @@ export function ManageTab() {
               }
               const isDetailOpen = detailOpen.value.has(row.id)
               return (
-                <>
+                <Fragment key={row.id}>
                   <tr
-                    key={row.id}
                     className={cn(
                       'transition-colors hover:bg-muted/30',
                       row.getIsSelected() && 'bg-primary/5',
@@ -695,16 +1010,18 @@ export function ManageTab() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               )
             })}
           </tbody>
         </table>
 
         {rowModel.rows.length === 0 && (
-          <div className="p-8 text-center text-sm text-muted-foreground">
-            No devices match the current filters.
-          </div>
+          <EmptyState
+            status={statusFilterValue}
+            type={typeFilter}
+            hasFilters={Boolean(search || remoteFilter)}
+          />
         )}
       </div>
 

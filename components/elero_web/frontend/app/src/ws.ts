@@ -144,13 +144,3 @@ export function sendLearnInConfirmDown() {
 export function sendLearnInCancel() {
   send({ type: 'learn_in_cancel' })
 }
-
-// Stub — backend handler lands in PR-B. Payload shape will be solidified in AsyncAPI
-// at that time; for now we emit the request and the hub ignores it.
-export function sendCreateGroup(name: string, member_addresses: string[]) {
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'create_group', name, member_addresses }))
-  }
-  // eslint-disable-next-line no-console
-  console.log('[sendCreateGroup]', { name, member_addresses })
-}
