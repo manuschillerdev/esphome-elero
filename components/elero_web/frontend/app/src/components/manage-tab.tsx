@@ -23,13 +23,13 @@ import { SignalIndicator } from './signal-indicator'
 import { DiscoveryBanner } from './discovery-banner'
 import { DeviceExpandedPanel } from './device-row'
 import {
-  Blinds, Lightbulb, LightbulbOff, RemoteControl, Users,
+  Blinds, Lightbulb, LightbulbOff, RemoteControl, LayoutGrid,
   ChevronUp, ChevronDown, ChevronRight, Square, Search, X, Plus,
-  Shrink, Save, Download, Trash2,
+  Shrink, Save, Trash2,
 } from './icons'
 import { cn } from '@/lib/utils'
 import {
-  devices, groups, displayNames, getStateLabel, showToast, updateDevice, exportYaml,
+  devices, groups, displayNames, getStateLabel, showToast, updateDevice, updateGroup,
   hub, rebootNeeded, command, msg_type,
   type Device, type DevicePairing, type GroupConfig,
 } from '@/store'
@@ -136,7 +136,7 @@ function TypeIcon({ type }: { type: Device['type'] }) {
     type === 'cover' ? Blinds :
     type === 'light' ? Lightbulb :
     type === 'remote' ? RemoteControl :
-    Users
+    LayoutGrid
   const label =
     type === 'cover' ? 'Cover' :
     type === 'light' ? 'Light' :
@@ -448,8 +448,7 @@ function Toolbar({
   groupBy, onGroupBy,
   rowCount, totalCount,
   savedCount, unsavedCount, coverCount, lightCount,
-  onExportYaml, exportFeedback,
-  onCreateGroup, selectedCount,
+  selectedCount,
 }: {
   search: string
   onSearch: (v: string) => void
@@ -468,10 +467,7 @@ function Toolbar({
   unsavedCount: number
   coverCount: number
   lightCount: number
-  onExportYaml: () => void
-  exportFeedback: string | null
   selectedCount: number
-  onCreateGroup: () => void
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/20 px-3 py-2">
@@ -548,30 +544,7 @@ function Toolbar({
         {selectedCount > 0 && <span className="ml-1 text-foreground">· {selectedCount} selected</span>}
       </span>
 
-      <div className="ml-auto flex items-center gap-2">
-        {savedCount > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 gap-1.5 text-xs"
-            onClick={onExportYaml}
-            title="Copy ESPHome YAML for all saved devices to clipboard"
-          >
-            <Download className="size-3.5" />
-            {exportFeedback ?? 'Export YAML'}
-          </Button>
-        )}
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 gap-1.5 text-xs"
-          disabled={selectedCount < 2}
-          onClick={onCreateGroup}
-        >
-          <Plus className="size-3" />
-          Create group
-        </Button>
-      </div>
+      <div className="ml-auto" />
     </div>
   )
 }
@@ -579,10 +552,9 @@ function Toolbar({
 // ─── Floating action bar (selection > 0) ────────────────────────────────────
 
 function SelectionBar({
-  selectedDevices, remotes, onClear, onCreateGroup,
+  selectedDevices, onClear, onCreateGroup,
 }: {
   selectedDevices: Device[]
-  remotes: number
   onClear: () => void
   onCreateGroup: () => void
 }) {
@@ -591,7 +563,6 @@ function SelectionBar({
     <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-popover px-4 py-2 shadow-lg">
       <span className="text-xs font-medium">
         {selectedDevices.length} selected
-        {remotes > 1 && <span className="ml-1 text-muted-foreground">· {remotes} paired remotes</span>}
       </span>
       <div className="h-4 w-px bg-border" />
       <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => sendBulk(selectedDevices, 'up')}>
@@ -641,91 +612,169 @@ function groupKind(members: Device[]): 'cover' | 'light' | 'mixed' | 'missing' {
   return members.every((member) => member.type === first) ? first : 'mixed'
 }
 
-function GroupsPanel({ devs, names }: { devs: Map<string, Device>; names: Record<string, string> }) {
+function GroupIcon({ kind }: { kind: ReturnType<typeof groupKind> }) {
+  const Icon = kind === 'cover' ? Blinds : kind === 'light' ? Lightbulb : LayoutGrid
+  return <Icon className="size-4 shrink-0 text-muted-foreground" />
+}
+
+function saveGroup(group: GroupConfig) {
+  const current = groups.value.get(group.id) ?? group
+  const name = current.name.trim()
+  if (!name) {
+    showToast('error', 'Group name is required')
+    return
+  }
+  sendUpsertGroup({ id: current.id, name, device_ids: current.device_ids })
+}
+
+function GroupStatusDot({ group }: { group: GroupConfig }) {
+  const unsaved = group.updated_at === null
+  return (
+    <Tooltip>
+      <TooltipTrigger>
+        <span className={cn('inline-flex size-2 shrink-0 rounded-full', unsaved ? 'bg-orange-400' : 'bg-emerald-500')} />
+      </TooltipTrigger>
+      <TooltipContent>{unsaved ? 'Unsaved' : 'Saved'}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function GroupsPanel({ devs }: { devs: Map<string, Device> }) {
   const savedGroups = [...groups.value.values()]
   if (savedGroups.length === 0) return null
 
   return (
-    <div className="rounded-lg border border-border bg-card">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <div>
-          <h2 className="text-sm font-semibold">Groups</h2>
-          <p className="text-[11px] text-muted-foreground">Saved groups send one RF command per paired remote.</p>
-        </div>
-        <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{savedGroups.length}</Badge>
-      </div>
-      <div className="grid gap-2 p-3 sm:grid-cols-2">
-        {savedGroups.map((group) => {
-          const members = groupMemberDevices(group, devs)
-          const kind = groupKind(members)
-          const missing = group.device_ids.length - members.length
-          const remoteCount = new Set(
-            members.flatMap((member) => buildPairedRemotes(member, names).map((remote) => remote.address)),
-          ).size
-          const canCommand = kind === 'cover' || kind === 'light'
-          return (
-            <div key={group.id} className="rounded-md border border-border bg-muted/10 p-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <Users className="size-4 text-muted-foreground" />
-                    <span className="truncate text-sm font-medium">{group.name}</span>
+    <div className="overflow-x-auto rounded-lg border border-border bg-card">
+      <table className="w-full text-xs">
+        <thead className="bg-muted text-primary">
+          <tr>
+            <th className="px-3 py-2 text-left font-medium">Group</th>
+            <th className="px-3 py-2 text-left font-medium">Type</th>
+            <th className="px-3 py-2 text-left font-medium">Members</th>
+            <th className="px-3 py-2 text-right font-medium">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {savedGroups.map((group) => {
+            const members = groupMemberDevices(group, devs)
+            const kind = groupKind(members)
+            const missing = group.device_ids.length - members.length
+            const canCommand = kind === 'cover' || kind === 'light'
+            return (
+              <tr key={group.id} className="border-b border-border last:border-b-0 hover:bg-muted/20">
+                <td className="px-3 py-2.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <GroupStatusDot group={group} />
+                    <GroupIcon kind={kind} />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-foreground">
+                        <InlineEdit value={group.name} onSave={(name) => updateGroup(group.id, { name })} />
+                      </div>
+                      <div className="font-mono text-[10px] text-muted-foreground">{group.id}</div>
+                    </div>
                   </div>
-                  <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">{group.id}</p>
-                </div>
-                <Tooltip>
-                  <TooltipTrigger>
-                    <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => sendRemoveGroup(group.id)}>
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Remove group</TooltipContent>
-                </Tooltip>
-              </div>
-
-              <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
-                <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
-                  {kind === 'cover' ? 'Covers' : kind === 'light' ? 'Lights' : 'Invalid'}
-                </Badge>
-                <span>{members.length} member{members.length === 1 ? '' : 's'}</span>
-                {remoteCount > 0 && <span>· {remoteCount} remote{remoteCount === 1 ? '' : 's'}</span>}
-                {missing > 0 && <span className="text-destructive">· {missing} missing</span>}
-              </div>
-
-              <div className="mt-2 line-clamp-2 text-[11px] text-muted-foreground">
-                {members.map((member) => member.name || member.address).join(', ') || 'No resolvable members'}
-              </div>
-
-              <div className="mt-3 flex items-center gap-1 text-primary">
-                {kind === 'cover' && (
-                  <>
-                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'up')}>
-                      <ChevronUp className="size-3" /> Open
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'stop')}>
-                      <Square className="size-3" /> Stop
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'down')}>
-                      <ChevronDown className="size-3" /> Close
-                    </Button>
-                  </>
-                )}
-                {kind === 'light' && (
-                  <>
-                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'up')}>
-                      <Lightbulb className="size-3" /> On
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'down')}>
-                      <LightbulbOff className="size-3" /> Off
-                    </Button>
-                  </>
-                )}
-                {!canCommand && <span className="text-[11px] text-destructive">Fix membership before commanding.</span>}
-              </div>
-            </div>
-          )
-        })}
-      </div>
+                </td>
+                <td className="px-3 py-2.5">
+                  <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                    {kind === 'cover' ? 'Covers' : kind === 'light' ? 'Lights' : 'Invalid'}
+                  </Badge>
+                </td>
+                <td className="max-w-xl px-3 py-2.5">
+                  <div className="flex flex-wrap gap-1">
+                    {members.length > 0 ? members.map((member) => (
+                      <span key={member.address} className="inline-flex max-w-40 items-center rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                        <span className="truncate">{member.name || member.address}</span>
+                      </span>
+                    )) : <span className="text-[11px] text-muted-foreground">No resolvable members</span>}
+                    {missing > 0 && (
+                      <span className="inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] text-destructive">
+                        {missing} missing
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="px-3 py-2.5">
+                  <div className="flex items-center justify-end gap-0.5 text-primary">
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <Button variant="ghost" size="icon" className="size-6 text-primary hover:text-primary" onClick={() => saveGroup(group)}>
+                          <Save className="size-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{group.updated_at !== null ? 'Saved — click to update' : 'Save to NVS'}</TooltipContent>
+                    </Tooltip>
+                    {kind === 'cover' && (
+                      <>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <Button variant="ghost" size="icon" className="size-6 text-primary hover:text-primary disabled:text-muted-foreground/40 disabled:pointer-events-none" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'tilt')}>
+                              <Shrink className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Tilt group</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <Button variant="ghost" size="icon" className="size-6" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'up')}>
+                              <ChevronUp className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Open group</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <Button variant="ghost" size="icon" className="size-6" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'stop')}>
+                              <Square className="size-3" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Stop group</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <Button variant="ghost" size="icon" className="size-6" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'down')}>
+                              <ChevronDown className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Close group</TooltipContent>
+                        </Tooltip>
+                      </>
+                    )}
+                    {kind === 'light' && (
+                      <>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <Button variant="ghost" size="icon" className="size-6" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'up')}>
+                              <Lightbulb className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Turn group on</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <Button variant="ghost" size="icon" className="size-6" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'down')}>
+                              <LightbulbOff className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Turn group off</TooltipContent>
+                        </Tooltip>
+                      </>
+                    )}
+                    {!canCommand && <span className="mr-1 text-[11px] text-destructive">Invalid</span>}
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <Button variant="ghost" size="icon" className="size-6 text-destructive hover:text-destructive" onClick={() => sendRemoveGroup(group.id)}>
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Remove group</TooltipContent>
+                    </Tooltip>
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -757,9 +806,6 @@ function CreateGroupModal({
   const checkedCount = checkedMembers.length
   const selectedTypes = new Set(checkedMembers.map((m) => m.type))
   const mixedTypes = selectedTypes.size > 1
-  const remoteCount = new Set(
-    checkedMembers.flatMap((m) => buildPairedRemotes(m, names).map((remote) => remote.address)),
-  ).size
   const valid = name.value.trim().length > 0 && checkedCount >= 2 && !mixedTypes
 
   const toggle = (addr: string) => {
@@ -841,12 +887,6 @@ function CreateGroupModal({
             </div>
           </div>
 
-          {remoteCount > 1 && checkedCount >= 2 && (
-            <div className="rounded-md border border-orange-300/50 bg-orange-50/50 px-3 py-2 text-[11px] text-orange-900 dark:border-orange-700/30 dark:bg-orange-950/20 dark:text-orange-200">
-              Cross-remote group: hub will emit <strong>{remoteCount}</strong> RF packets per command, one per remote.
-            </div>
-          )}
-
           {excludedUnsaved > 0 && (
             <div className="text-[11px] text-muted-foreground">
               {excludedUnsaved} unsaved device{excludedUnsaved === 1 ? '' : 's'} hidden. Save devices before grouping them.
@@ -879,10 +919,6 @@ function CreateGroupModal({
             Create
           </Button>
         </div>
-
-        <p className="mt-3 text-[10px] text-muted-foreground">
-          Saved groups are persisted in NVS and validated by the hub.
-        </p>
       </div>
     </div>
   )
@@ -924,12 +960,12 @@ function EmptyState({ status, type, hasFilters }: { status: StatusFilter; type: 
     : status === 'unsaved'
       ? 'Press buttons on your physical Elero remotes to discover new devices, or edit settings on existing devices. Unsaved changes will appear here.'
       : status === 'saved'
-        ? 'Save discovered devices to NVS, or add devices to your ESPHome YAML configuration.'
+        ? 'Save discovered devices to NVS, or clear filters to inspect all devices.'
         : type === 'cover'
-          ? 'Add a cover with platform: elero to your ESPHome YAML, specifying dst_address, src_address, and channel. Then reflash.'
+          ? 'Press buttons on your physical Elero remotes to discover covers, then save them to NVS.'
           : type === 'light'
-            ? 'Add a light with platform: elero to your ESPHome YAML, specifying dst_address, src_address, and channel. Then reflash.'
-            : 'Add devices to your ESPHome YAML configuration, or press buttons on your physical remotes to discover new addresses. If nothing appears, check your frequency and pin configuration on the Hub page.'
+            ? 'Press buttons on your physical Elero remotes to discover lights, then save them to NVS.'
+            : 'Press buttons on your physical remotes to discover new addresses. If nothing appears, check your frequency and pin configuration on the Hub page.'
 
   return (
     <div className="p-8 text-center">
@@ -965,7 +1001,6 @@ export function ManageTab() {
   const names = displayNames.value
   const tableState = useSignal<TableState>(INITIAL_STATE)
   const detailOpen = useSignal<Set<string>>(new Set())
-  const exportFeedback = useSignal<string | null>(null)
 
   const data = buildRows(allDevices, names)
   const remoteOptions = buildRemoteOptions(data)
@@ -1043,27 +1078,16 @@ export function ManageTab() {
   const rowModel = table.getRowModel()
   const selectedRows = table.getSelectedRowModel().rows
   const selectedDevices = selectedRows.map((r) => r.original.device)
-  const selectedRemotes = new Set(
-    selectedRows.flatMap((row) => row.original.pairedRemotes.map((remote) => remote.address)),
-  ).size
 
   const modalOpen = useSignal(false)
   const handleCreateGroup = () => { modalOpen.value = true }
   const handleModalClose = () => { modalOpen.value = false }
-  const handleExportYaml = () => {
-    const yaml = exportYaml()
-    if (!yaml.trim()) return
-    void navigator.clipboard.writeText(yaml).then(() => {
-      exportFeedback.value = 'Copied!'
-      setTimeout(() => { exportFeedback.value = null }, 2000)
-    }).catch(() => showToast('error', 'Could not copy YAML to clipboard'))
-  }
 
   return (
     <div className="flex flex-col gap-4">
       <DiscoveryBanner />
       <RebootBanner />
-      <GroupsPanel devs={allDevices} names={names} />
+      <GroupsPanel devs={allDevices} />
 
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
         <Toolbar
@@ -1084,10 +1108,7 @@ export function ManageTab() {
           unsavedCount={unsavedCount}
           coverCount={coverCount}
           lightCount={lightCount}
-          onExportYaml={handleExportYaml}
-          exportFeedback={exportFeedback.value}
           selectedCount={selectedDevices.length}
-          onCreateGroup={handleCreateGroup}
         />
         <table className="w-full text-xs">
           <thead className="bg-muted">
@@ -1189,7 +1210,6 @@ export function ManageTab() {
 
       <SelectionBar
         selectedDevices={selectedDevices}
-        remotes={selectedRemotes}
         onClear={clearSelection}
         onCreateGroup={handleCreateGroup}
       />

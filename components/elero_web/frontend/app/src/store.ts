@@ -2,13 +2,14 @@ import { signal, computed, batch } from '@preact/signals'
 import type {
   ConfigData, RfData, DeviceType, CrudEventData, DeviceUpsertedData,
   StateChangedData, FreqConfig, HubMode, HubConfig, HubConfigEventData, RadioConfig,
-  BlindConfig, LightConfig, RemoteConfig, GroupConfig, GroupRemovedData,
+  BlindConfig, LightConfig, RemoteConfig, GroupConfig as WireGroupConfig, GroupRemovedData,
   RfStateName,
   ConfigSnapshot, ImportResult, LearnInStateData,
 } from '@/generated'
 
 // Re-export generated types used by components
-export type { RfData, DeviceType, BlindConfig, LightConfig, GroupConfig, FreqConfig, HubMode, HubConfig, RadioConfig, CrudEventData, DeviceUpsertedData, StateChangedData, RfStateName, LearnInStateData }
+export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, HubConfig, RadioConfig, CrudEventData, DeviceUpsertedData, StateChangedData, RfStateName, LearnInStateData }
+export type GroupConfig = WireGroupConfig & { updated_at: number | null }
 
 // ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
 
@@ -266,6 +267,10 @@ function remoteToDevice(r: RemoteConfig): Device {
   })
 }
 
+function groupToApp(group: WireGroupConfig, updated_at: number | null = Date.now()): GroupConfig {
+  return { ...group, updated_at }
+}
+
 // ─── Actions ─────────────────────────────────────────────────────────────────
 
 export function setConnected(val: boolean) {
@@ -312,7 +317,7 @@ export function setDevices(data: ConfigData) {
   }
   batch(() => {
     devices.value = next
-    groups.value = new Map((data.groups ?? []).map((group) => [group.id, group]))
+    groups.value = new Map((data.groups ?? []).map((group) => [group.id, groupToApp(group)]))
     hub.value = data.hub
     radio.value = data.radio
     learnIn.value = { state: 'idle', active: false, busy: false }
@@ -452,19 +457,24 @@ export function onLearnInState(data: LearnInStateData) {
   learnIn.value = data
 }
 
-export function onGroupUpserted(data: GroupConfig) {
+export function onGroupUpserted(data: WireGroupConfig) {
   const next = new Map(groups.value)
-  next.set(data.id, data)
+  next.set(data.id, groupToApp(data))
   groups.value = next
-  showToast('success', `Group "${data.name}" saved`)
 }
 
 export function onGroupRemoved(data: GroupRemovedData) {
-  const existing = groups.value.get(data.id)
   const next = new Map(groups.value)
   next.delete(data.id)
   groups.value = next
-  if (existing) showToast('success', `Group "${existing.name}" removed`)
+}
+
+export function updateGroup(id: string, updates: Partial<GroupConfig>) {
+  const group = groups.value.get(id)
+  if (!group) return
+  const next = new Map(groups.value)
+  next.set(id, { ...group, updated_at: null, ...updates })
+  groups.value = next
 }
 
 // ─── Toast (one-shot user feedback) ─────────────────────────────────────────
@@ -552,52 +562,4 @@ export function onDeviceRemoved({ address }: CrudEventData) {
 
 export function setActiveTab(tab: ActiveTab) {
   activeTab.value = tab
-}
-
-// ─── YAML Export ──────────────────────────────────────────────────────────────
-
-function formatDuration(ms: number): string {
-  if (ms >= 60000 && ms % 60000 === 0) return `${ms / 60000}min`
-  if (ms >= 1000 && ms % 1000 === 0) return `${ms / 1000}s`
-  return `${ms}ms`
-}
-
-function coverToYaml(d: Device): string {
-  return [
-    '  - platform: elero',
-    ...(d.name ? [`    name: "${d.name}"`] : []),
-    `    dst_address: ${d.address}`,
-    `    src_address: ${d.remote}`,
-    `    channel: ${d.channel}`,
-    ...(d.open_ms > 0 ? [`    open_duration: ${formatDuration(d.open_ms)}`] : []),
-    ...(d.close_ms > 0 ? [`    close_duration: ${formatDuration(d.close_ms)}`] : []),
-    ...(d.supports_tilt ? ['    supports_tilt: true'] : []),
-  ].join('\n')
-}
-
-function lightToYaml(d: Device): string {
-  return [
-    '  - platform: elero',
-    ...(d.name ? [`    name: "${d.name}"`] : []),
-    `    dst_address: ${d.address}`,
-    `    src_address: ${d.remote}`,
-    `    channel: ${d.channel}`,
-    ...(d.dim_ms > 0 ? [`    dim_duration: ${formatDuration(d.dim_ms)}`] : []),
-  ].join('\n')
-}
-
-export function exportYaml(): string {
-  const devs = [...devices.value.values()].filter(d => d.updated_at !== null)
-  const covers = devs.filter(d => d.type === 'cover')
-  const lights = devs.filter(d => d.type === 'light')
-  const sections: string[] = []
-
-  if (covers.length > 0) {
-    sections.push(['cover:', ...covers.map(coverToYaml)].join('\n'))
-  }
-  if (lights.length > 0) {
-    sections.push(['light:', ...lights.map(lightToYaml)].join('\n'))
-  }
-
-  return sections.join('\n\n') + '\n'
 }
