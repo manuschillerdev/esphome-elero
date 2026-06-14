@@ -25,15 +25,15 @@ import { DeviceExpandedPanel } from './device-row'
 import {
   Blinds, Lightbulb, LightbulbOff, RemoteControl, Users,
   ChevronUp, ChevronDown, ChevronRight, Square, Search, X, Plus,
-  Shrink, Save, Download,
+  Shrink, Save, Download, Trash2,
 } from './icons'
 import { cn } from '@/lib/utils'
 import {
-  devices, displayNames, getStateLabel, showToast, updateDevice, exportYaml,
-  hub, rebootNeeded,
-  type Device,
+  devices, groups, displayNames, getStateLabel, showToast, updateDevice, exportYaml,
+  hub, rebootNeeded, command, msg_type,
+  type Device, type DevicePairing, type GroupConfig,
 } from '@/store'
-import { sendDeviceCommand, sendRestart, sendUpsertDevice } from '@/ws'
+import { sendDeviceCommand, sendGroupCommand, sendRawCommand, sendRemoveGroup, sendRestart, sendUpsertDevice, sendUpsertGroup } from '@/ws'
 
 // ─── Row model ──────────────────────────────────────────────────────────────
 
@@ -243,6 +243,41 @@ function SaveButton({ device }: { device: Device }) {
   )
 }
 
+type ManageCommand = 'up' | 'down' | 'stop' | 'tilt'
+
+const rawCommandByAction: Record<ManageCommand, string> = {
+  up: command.UP,
+  down: command.DOWN,
+  stop: command.STOP,
+  tilt: command.TILT,
+}
+
+function firstPairing(device: Device): DevicePairing | null {
+  if (device.pairings.length > 0) return device.pairings[0]
+  return device.remote ? { remote: device.remote, channel: device.channel } : null
+}
+
+function sendManageCommand(device: Device, action: ManageCommand) {
+  if (device.updated_at !== null) {
+    sendDeviceCommand(device, action)
+    return
+  }
+
+  const pairing = firstPairing(device)
+  if (!pairing) {
+    showToast('error', `Cannot test ${device.name || device.address}: no paired remote/channel discovered yet`)
+    return
+  }
+
+  sendRawCommand({
+    dst_address: device.address,
+    src_address: pairing.remote,
+    channel: pairing.channel,
+    command: rawCommandByAction[action],
+    msg_type: device.type === 'cover' && action === 'stop' ? msg_type.COMMAND : msg_type.BUTTON,
+  })
+}
+
 function InlineActions({ device }: { device: Device }) {
   if (device.type === 'cover') {
     return (
@@ -250,7 +285,7 @@ function InlineActions({ device }: { device: Device }) {
         <SaveButton device={device} />
         <Tooltip>
           <TooltipTrigger>
-            <Button variant="ghost" size="icon" className="size-6 text-primary hover:text-primary disabled:text-muted-foreground/40 disabled:pointer-events-none" disabled={!device.supports_tilt} onClick={() => sendDeviceCommand(device, 'tilt')}>
+            <Button variant="ghost" size="icon" className="size-6 text-primary hover:text-primary disabled:text-muted-foreground/40 disabled:pointer-events-none" disabled={!device.supports_tilt} onClick={() => sendManageCommand(device, 'tilt')}>
               <Shrink className="size-3.5" />
             </Button>
           </TooltipTrigger>
@@ -258,7 +293,7 @@ function InlineActions({ device }: { device: Device }) {
         </Tooltip>
         <Tooltip>
           <TooltipTrigger>
-            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'up')}>
+            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendManageCommand(device, 'up')}>
               <ChevronUp className="size-3.5" />
             </Button>
           </TooltipTrigger>
@@ -266,7 +301,7 @@ function InlineActions({ device }: { device: Device }) {
         </Tooltip>
         <Tooltip>
           <TooltipTrigger>
-            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'stop')}>
+            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendManageCommand(device, 'stop')}>
               <Square className="size-3" />
             </Button>
           </TooltipTrigger>
@@ -274,7 +309,7 @@ function InlineActions({ device }: { device: Device }) {
         </Tooltip>
         <Tooltip>
           <TooltipTrigger>
-            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'down')}>
+            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendManageCommand(device, 'down')}>
               <ChevronDown className="size-3.5" />
             </Button>
           </TooltipTrigger>
@@ -289,7 +324,7 @@ function InlineActions({ device }: { device: Device }) {
         <SaveButton device={device} />
         <Tooltip>
           <TooltipTrigger>
-            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'up')}>
+            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendManageCommand(device, 'up')}>
               <Lightbulb className="size-3.5" />
             </Button>
           </TooltipTrigger>
@@ -297,7 +332,7 @@ function InlineActions({ device }: { device: Device }) {
         </Tooltip>
         <Tooltip>
           <TooltipTrigger>
-            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendDeviceCommand(device, 'down')}>
+            <Button variant="ghost" size="icon" className="size-6" onClick={() => sendManageCommand(device, 'down')}>
               <LightbulbOff className="size-3.5" />
             </Button>
           </TooltipTrigger>
@@ -588,9 +623,119 @@ function SelectionBar({
 function sendBulk(devs: Device[], cmd: 'up' | 'down' | 'stop') {
   for (const d of devs) {
     if (d.type === 'cover' || d.type === 'light') {
-      sendDeviceCommand(d, cmd)
+      sendManageCommand(d, cmd)
     }
   }
+}
+
+function groupMemberDevices(group: GroupConfig, devs: Map<string, Device>): Device[] {
+  return group.device_ids
+    .map((id) => devs.get(id))
+    .filter((device): device is Device => Boolean(device && device.type !== 'remote'))
+}
+
+function groupKind(members: Device[]): 'cover' | 'light' | 'mixed' | 'missing' {
+  if (members.length === 0) return 'missing'
+  const first = members[0].type
+  if (first !== 'cover' && first !== 'light') return 'missing'
+  return members.every((member) => member.type === first) ? first : 'mixed'
+}
+
+function GroupsPanel({ devs, names }: { devs: Map<string, Device>; names: Record<string, string> }) {
+  const savedGroups = [...groups.value.values()]
+  if (savedGroups.length === 0) return null
+
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <div>
+          <h2 className="text-sm font-semibold">Groups</h2>
+          <p className="text-[11px] text-muted-foreground">Saved groups send one RF command per paired remote.</p>
+        </div>
+        <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{savedGroups.length}</Badge>
+      </div>
+      <div className="grid gap-2 p-3 sm:grid-cols-2">
+        {savedGroups.map((group) => {
+          const members = groupMemberDevices(group, devs)
+          const kind = groupKind(members)
+          const missing = group.device_ids.length - members.length
+          const remoteCount = new Set(
+            members.flatMap((member) => buildPairedRemotes(member, names).map((remote) => remote.address)),
+          ).size
+          const canCommand = kind === 'cover' || kind === 'light'
+          return (
+            <div key={group.id} className="rounded-md border border-border bg-muted/10 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <Users className="size-4 text-muted-foreground" />
+                    <span className="truncate text-sm font-medium">{group.name}</span>
+                  </div>
+                  <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">{group.id}</p>
+                </div>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Button variant="ghost" size="icon" className="size-7 text-destructive hover:text-destructive" onClick={() => sendRemoveGroup(group.id)}>
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Remove group</TooltipContent>
+                </Tooltip>
+              </div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+                <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                  {kind === 'cover' ? 'Covers' : kind === 'light' ? 'Lights' : 'Invalid'}
+                </Badge>
+                <span>{members.length} member{members.length === 1 ? '' : 's'}</span>
+                {remoteCount > 0 && <span>· {remoteCount} remote{remoteCount === 1 ? '' : 's'}</span>}
+                {missing > 0 && <span className="text-destructive">· {missing} missing</span>}
+              </div>
+
+              <div className="mt-2 line-clamp-2 text-[11px] text-muted-foreground">
+                {members.map((member) => member.name || member.address).join(', ') || 'No resolvable members'}
+              </div>
+
+              <div className="mt-3 flex items-center gap-1 text-primary">
+                {kind === 'cover' && (
+                  <>
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'up')}>
+                      <ChevronUp className="size-3" /> Open
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'stop')}>
+                      <Square className="size-3" /> Stop
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'down')}>
+                      <ChevronDown className="size-3" /> Close
+                    </Button>
+                  </>
+                )}
+                {kind === 'light' && (
+                  <>
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'up')}>
+                      <Lightbulb className="size-3" /> On
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" disabled={!canCommand} onClick={() => sendGroupCommand(group.id, 'down')}>
+                      <LightbulbOff className="size-3" /> Off
+                    </Button>
+                  </>
+                )}
+                {!canCommand && <span className="text-[11px] text-destructive">Fix membership before commanding.</span>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function makeGroupId(name: string): string {
+  const slug = name.trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 10) || 'group'
+  return `grp_${slug}_${Date.now().toString(36).slice(-6)}`.slice(0, 23)
 }
 
 // ─── Create-group modal ─────────────────────────────────────────────────────
@@ -605,14 +750,17 @@ function CreateGroupModal({
   const checked = useSignal<Set<string>>(new Set(initialMembers.map((d) => d.address)))
   const names = displayNames.value
 
-  const members = initialMembers
-  const checkedCount = checked.value.size
+  const controllableMembers = initialMembers.filter((device) => device.type === 'cover' || device.type === 'light')
+  const members = controllableMembers.filter((device) => device.updated_at !== null)
+  const excludedUnsaved = controllableMembers.length - members.length
+  const checkedMembers = members.filter((m) => checked.value.has(m.address))
+  const checkedCount = checkedMembers.length
+  const selectedTypes = new Set(checkedMembers.map((m) => m.type))
+  const mixedTypes = selectedTypes.size > 1
   const remoteCount = new Set(
-    members
-      .filter((m) => checked.value.has(m.address))
-      .flatMap((m) => buildPairedRemotes(m, names).map((remote) => remote.address)),
+    checkedMembers.flatMap((m) => buildPairedRemotes(m, names).map((remote) => remote.address)),
   ).size
-  const valid = name.value.trim().length > 0 && checkedCount >= 2
+  const valid = name.value.trim().length > 0 && checkedCount >= 2 && !mixedTypes
 
   const toggle = (addr: string) => {
     const next = new Set(checked.value)
@@ -622,8 +770,9 @@ function CreateGroupModal({
 
   const submit = () => {
     if (!valid) return
-    const addrs = members.filter((m) => checked.value.has(m.address)).map((m) => m.address)
-    showToast('info', `Group "${name.value.trim()}" is ready, but backend persistence is not implemented yet (${addrs.length} members).`)
+    const groupName = name.value.trim().slice(0, 23)
+    const device_ids = checkedMembers.map((m) => m.address)
+    sendUpsertGroup({ id: makeGroupId(groupName), name: groupName, device_ids })
     onClose()
   }
 
@@ -698,6 +847,18 @@ function CreateGroupModal({
             </div>
           )}
 
+          {excludedUnsaved > 0 && (
+            <div className="text-[11px] text-muted-foreground">
+              {excludedUnsaved} unsaved device{excludedUnsaved === 1 ? '' : 's'} hidden. Save devices before grouping them.
+            </div>
+          )}
+
+          {mixedTypes && (
+            <div className="text-[11px] text-destructive">
+              Groups cannot mix covers and lights.
+            </div>
+          )}
+
           {checkedCount < 2 && (
             <div className="text-[11px] text-muted-foreground">
               Select at least 2 members.
@@ -720,7 +881,7 @@ function CreateGroupModal({
         </div>
 
         <p className="mt-3 text-[10px] text-muted-foreground">
-          Backend persistence lands in PR-B; for now this validates the selection locally only.
+          Saved groups are persisted in NVS and validated by the hub.
         </p>
       </div>
     </div>
@@ -902,6 +1063,7 @@ export function ManageTab() {
     <div className="flex flex-col gap-4">
       <DiscoveryBanner />
       <RebootBanner />
+      <GroupsPanel devs={allDevices} names={names} />
 
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
         <Toolbar

@@ -61,6 +61,10 @@ channels:
         $ref: "#/components/messages/deviceUpsertedEvent"
       deviceRemovedEvent:
         $ref: "#/components/messages/deviceRemovedEvent"
+      groupUpsertedEvent:
+        $ref: "#/components/messages/groupUpsertedEvent"
+      groupRemovedEvent:
+        $ref: "#/components/messages/groupRemovedEvent"
       stateChangedEvent:
         $ref: "#/components/messages/stateChangedEvent"
       errorEvent:
@@ -73,6 +77,12 @@ channels:
         $ref: "#/components/messages/upsertDeviceMessage"
       removeDeviceMessage:
         $ref: "#/components/messages/removeDeviceMessage"
+      upsertGroupMessage:
+        $ref: "#/components/messages/upsertGroupMessage"
+      removeGroupMessage:
+        $ref: "#/components/messages/removeGroupMessage"
+      groupCmdMessage:
+        $ref: "#/components/messages/groupCmdMessage"
       restartMessage:
         $ref: "#/components/messages/restartMessage"
       setHubConfigMessage:
@@ -135,6 +145,24 @@ operations:
     messages:
       - $ref: "#/channels/eleroWs/messages/deviceRemovedEvent"
 
+  receiveGroupUpserted:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive group upserted notification
+    description: Broadcast when a saved group is created or updated in NVS.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/groupUpsertedEvent"
+
+  receiveGroupRemoved:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive group removed notification
+    description: Broadcast when a saved group is removed from NVS.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/groupRemovedEvent"
+
   receiveStateChanged:
     action: receive
     channel:
@@ -194,6 +222,39 @@ operations:
     description: Available only when `crud` is `true` in the config event.
     messages:
       - $ref: "#/channels/eleroWs/messages/removeDeviceMessage"
+
+  sendUpsertGroup:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Create or update a saved group in NVS
+    description: |
+      Available only when `crud` is `true` in the config event. The backend
+      validates that `device_ids` resolve to existing non-remote devices and
+      that all resolved devices have the same derived type.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/upsertGroupMessage"
+
+  sendRemoveGroup:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Remove a saved group from NVS
+    description: Available only when `crud` is `true` in the config event.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/removeGroupMessage"
+
+  sendGroupCmd:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Send an action to all members of a saved group
+    description: |
+      Backend resolves the group, derives the common member type, partitions
+      members by registered remote/src address, and emits one RF group command
+      per remote bucket. Incoming RF/status handling remains per-device.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/groupCmdMessage"
 
   sendRestart:
     action: send
@@ -354,6 +415,22 @@ components:
       payload:
         $ref: "#/components/schemas/CrudEventEnvelope"
 
+    groupUpsertedEvent:
+      name: group_upserted
+      title: Group Upserted Event
+      summary: A saved group was created or updated in NVS
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/GroupUpsertedEnvelope"
+
+    groupRemovedEvent:
+      name: group_removed
+      title: Group Removed Event
+      summary: A saved group was removed from NVS
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/GroupRemovedEnvelope"
+
     stateChangedEvent:
       name: state_changed
       title: State Changed Event
@@ -401,6 +478,30 @@ components:
       contentType: application/json
       payload:
         $ref: "#/components/schemas/RemoveDevicePayload"
+
+    upsertGroupMessage:
+      name: upsert_group
+      title: Upsert Group Message
+      summary: Create or update a saved group in NVS storage
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/UpsertGroupPayload"
+
+    removeGroupMessage:
+      name: remove_group
+      title: Remove Group Message
+      summary: Remove a saved group from NVS storage
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RemoveGroupPayload"
+
+    groupCmdMessage:
+      name: group_cmd
+      title: Group Command Message
+      summary: Send an action to all members of a saved group
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/GroupCmdPayload"
 
     restartMessage:
       name: restart
@@ -547,6 +648,30 @@ components:
         data:
           $ref: "#/components/schemas/CrudEventData"
 
+    GroupUpsertedEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      description: Envelope for group_upserted events.
+      properties:
+        event:
+          type: string
+          const: group_upserted
+        data:
+          $ref: "#/components/schemas/GroupConfig"
+
+    GroupRemovedEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      description: Envelope for group_removed events.
+      properties:
+        event:
+          type: string
+          const: group_removed
+        data:
+          $ref: "#/components/schemas/GroupRemovedData"
+
     StateChangedEnvelope:
       type: object
       additionalProperties: false
@@ -585,7 +710,7 @@ components:
     ConfigData:
       type: object
       additionalProperties: false
-      required: [hub, radio, blinds, lights, remotes]
+      required: [hub, radio, blinds, lights, remotes, groups]
       properties:
         hub:
           $ref: "#/components/schemas/HubConfig"
@@ -606,6 +731,11 @@ components:
           description: Known remote controls. In native mode, derived from cover/light src_address. In NVS modes, includes auto-discovered remotes.
           items:
             $ref: "#/components/schemas/RemoteConfig"
+        groups:
+          type: array
+          description: Saved device groups. Group device ids reference stable device address ids from blinds/lights.
+          items:
+            $ref: "#/components/schemas/GroupConfig"
 
     HubConfig:
       type: object
@@ -808,6 +938,48 @@ components:
           type: integer
           description: Timestamp (millis()) when last persisted to NVS (0 = derived from config)
           examples: [1234567]
+
+    GroupConfig:
+      type: object
+      additionalProperties: false
+      required: [id, name, device_ids]
+      description: |
+        Saved group metadata. Groups are not devices and do not store a device
+        type; the backend derives and validates the common member type from the
+        referenced device ids. Device ids are stable 3-byte device addresses.
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 23
+          description: Stable group id persisted in NVS.
+          examples: ["grp_living_k8x2p1"]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 23
+          description: Display name.
+          examples: ["Living Room"]
+        device_ids:
+          type: array
+          minItems: 2
+          maxItems: 48
+          uniqueItems: true
+          description: Stable device address ids. All must resolve to existing covers or all to existing lights.
+          items:
+            type: string
+            description: 3-byte device address (hex string)
+            examples: ["0xa831e5"]
+
+    GroupRemovedData:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id:
+          type: string
+          description: Removed group id.
+          examples: ["grp_living_k8x2p1"]
 
     RfData:
       type: object
@@ -1276,6 +1448,69 @@ components:
         device_type:
           $ref: "#/components/schemas/DeviceType"
 
+    UpsertGroupPayload:
+      type: object
+      additionalProperties: false
+      required: [type, id, name, device_ids]
+      description: |
+        Create or update a saved group in NVS. The backend validates that all
+        `device_ids` resolve to existing non-remote devices and that the
+        resolved devices are either all covers or all lights.
+      properties:
+        type:
+          type: string
+          const: upsert_group
+        id:
+          type: string
+          minLength: 1
+          maxLength: 23
+          description: Stable group id.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 23
+          description: Display name.
+        device_ids:
+          type: array
+          minItems: 2
+          maxItems: 48
+          uniqueItems: true
+          items:
+            type: string
+            description: Stable device address id (hex string).
+            examples: ["0xa831e5"]
+
+    RemoveGroupPayload:
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      description: Remove a saved group from NVS.
+      properties:
+        type:
+          type: string
+          const: remove_group
+        id:
+          type: string
+          description: Group id.
+
+    GroupCmdPayload:
+      type: object
+      additionalProperties: false
+      required: [type, id, action]
+      description: |
+        Send an action to a saved group. Backend derives the common member type,
+        partitions members by remote/src address, and emits one RF group command
+        per remote bucket.
+      properties:
+        type:
+          type: string
+          const: group_cmd
+        id:
+          type: string
+          description: Group id.
+        action:
+          $ref: "#/components/schemas/DeviceAction"
+
     RestartPayload:
       type: object
       additionalProperties: false
@@ -1352,7 +1587,7 @@ components:
     ConfigSnapshot:
       type: object
       additionalProperties: false
-      required: [snapshot_version, exported_at, exporter, hub, devices]
+      required: [snapshot_version, exported_at, exporter, hub, devices, groups]
       description: |
         Versioned configuration backup. `snapshot_version` is bumped on
         breaking schema changes; the import handler rejects unknown versions.
@@ -1360,10 +1595,10 @@ components:
         snapshot_version:
           type: integer
           description: |
-            Snapshot envelope version (currently 1). Must match the C++
+            Snapshot envelope version (currently 2). Must match the C++
             `SNAPSHOT_VERSION` const in `components/elero_web/elero_web_server.cpp` —
-            the import handler rejects any value it doesn't recognise.
-          examples: [1]
+            the import handler rejects newer values it doesn't recognise.
+          examples: [2]
         exported_at:
           type: integer
           description: Timestamp (millis() since boot on the source device) when exported.
@@ -1377,6 +1612,11 @@ components:
           description: All active devices, in slot order.
           items:
             $ref: "#/components/schemas/DeviceSnapshot"
+        groups:
+          type: array
+          description: Saved groups.
+          items:
+            $ref: "#/components/schemas/GroupConfig"
 
     SnapshotExporter:
       type: object
@@ -1502,7 +1742,7 @@ components:
     ImportResult:
       type: object
       additionalProperties: false
-      required: [added, updated, skipped, errors]
+      required: [added, updated, skipped, groups_added, groups_updated, groups_skipped, errors]
       description: Summary of one import operation.
       properties:
         added:
@@ -1514,6 +1754,15 @@ components:
         skipped:
           type: integer
           description: Devices not applied (errored or no free slot).
+        groups_added:
+          type: integer
+          description: Groups created.
+        groups_updated:
+          type: integer
+          description: Groups updated in place.
+        groups_skipped:
+          type: integer
+          description: Groups not applied.
         hub_applied:
           type: boolean
           description: Whether hub-level overrides were applied.

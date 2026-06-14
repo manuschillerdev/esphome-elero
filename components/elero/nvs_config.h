@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include "device_type.h"
@@ -11,8 +12,17 @@ namespace elero {
 /// NVS config version — bump when struct layout changes (v3: added updated_at)
 constexpr uint8_t NVS_CONFIG_VERSION = 3;
 
+/// NVS group config version — separate compound objects, not device slots.
+constexpr uint8_t NVS_GROUP_CONFIG_VERSION = 1;
+
 /// Maximum name length (including null terminator)
 constexpr size_t NVS_NAME_MAX = 24;
+
+/// Maximum group id length (including null terminator)
+constexpr size_t NVS_GROUP_ID_MAX = 24;
+
+/// Maximum group members. Device ids are stable hardware destination addresses.
+constexpr size_t NVS_GROUP_MAX_MEMBERS = 48;
 
 /// NVS preference hash keys — must be unique per manager type to avoid collisions.
 /// MQTT mode uses "elero_cover", NVS mode uses "elero_nvs_cover", etc.
@@ -23,6 +33,7 @@ inline constexpr const char *REMOTE = "elero_remote";
 inline constexpr const char *NVS_COVER = "elero_nvs_cover";
 inline constexpr const char *NVS_LIGHT = "elero_nvs_light";
 inline constexpr const char *NVS_REMOTE = "elero_nvs_remote";
+inline constexpr const char *GROUP = "elero_group";
 }  // namespace nvs_pref_key
 
 /// Fixed-size device configuration persisted via ESPHome preferences.
@@ -81,6 +92,45 @@ struct NvsDeviceConfig {
 };
 
 static_assert(sizeof(NvsDeviceConfig) == 64, "NvsDeviceConfig must be 64 bytes for NVS storage");
+
+/// Fixed-size group configuration persisted via ESPHome preferences.
+/// Groups are pure membership metadata: id + display name + stable device ids.
+/// Device type is intentionally not stored; it is derived from referenced devices
+/// and guarded during upsert/command validation.
+struct NvsGroupConfig {
+  uint8_t version{NVS_GROUP_CONFIG_VERSION};
+  uint8_t member_count{0};
+  uint16_t reserved{0};
+
+  char id[NVS_GROUP_ID_MAX]{};
+  char name[NVS_NAME_MAX]{};
+  uint32_t device_ids[NVS_GROUP_MAX_MEMBERS]{};
+
+  bool is_valid() const {
+    return version == NVS_GROUP_CONFIG_VERSION && id[0] != '\0' &&
+           member_count > 0 && member_count <= NVS_GROUP_MAX_MEMBERS;
+  }
+
+  void set_id(const char *value) {
+    if (value == nullptr) {
+      id[0] = '\0';
+      return;
+    }
+    strncpy(id, value, NVS_GROUP_ID_MAX - 1);
+    id[NVS_GROUP_ID_MAX - 1] = '\0';
+  }
+
+  void set_name(const char *value) {
+    if (value == nullptr) {
+      name[0] = '\0';
+      return;
+    }
+    strncpy(name, value, NVS_NAME_MAX - 1);
+    name[NVS_NAME_MAX - 1] = '\0';
+  }
+};
+
+static_assert(sizeof(NvsGroupConfig) == 244, "NvsGroupConfig layout changed unexpectedly");
 
 }  // namespace elero
 }  // namespace esphome

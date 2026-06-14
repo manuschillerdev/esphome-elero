@@ -26,6 +26,7 @@ class Elero;  // Forward declaration (radio core)
 class DeviceRegistry {
  public:
     static constexpr size_t MAX_DEVICES = 48;
+    static constexpr size_t MAX_GROUPS = 16;
 
     // ═════════════════════════════════════════════════════════════════════════
     // LIFECYCLE
@@ -69,6 +70,17 @@ class DeviceRegistry {
     /// Remove a device by address and type. Returns true if found and removed.
     bool remove(uint32_t address, DeviceType type);
 
+    /// Add or update a saved group with NVS persistence. Validates that all
+    /// device ids resolve to active non-remote devices of one derived type.
+    NvsGroupConfig *upsert_group(const NvsGroupConfig &config, std::string *error = nullptr);
+
+    /// Remove a saved group by id. Returns true if found and removed.
+    bool remove_group(const char *id);
+
+    /// Find a saved group by id.
+    [[nodiscard]] NvsGroupConfig *find_group(const char *id);
+    [[nodiscard]] const NvsGroupConfig *find_group(const char *id) const;
+
     /// Find a device by address and type.
     [[nodiscard]] Device *find(uint32_t address, DeviceType type);
 
@@ -94,13 +106,19 @@ class DeviceRegistry {
     /// Set a light's target brightness (0.0–1.0). Determines dim direction, starts dimming.
     void set_light_brightness(Device &dev, float brightness);
 
-    /// Send a group command to multiple cover devices in a single 0x44 multi-dest packet.
+    /// Send one RF group command to multiple same-type devices sharing one remote.
     /// Each device's channel becomes a destination in the packet. All devices must share
-    /// the same src_address (same emulated remote). Uses 3x press + 3x release button protocol.
-    /// @param devices Pointer to array of Device pointers (must be active covers)
+    /// the same src_address (same emulated remote). Single-member buckets fall back to
+    /// the normal per-device command path at the saved-group orchestration layer.
+    /// @param devices Pointer to array of Device pointers (must be active covers or active lights)
     /// @param count Number of devices in the array
     /// @param cmd_byte Command byte (UP/DOWN/STOP/CHECK)
     void command_group(Device *const *devices, size_t count, uint8_t cmd_byte);
+
+    /// Dispatch a saved group command by id. Resolves member ids, derives their
+    /// common device type, partitions by src_address, then emits one TX command
+    /// per remote bucket. RX/status handling remains per-device and unchanged.
+    bool command_saved_group(const char *id, uint8_t cmd_byte, std::string *error = nullptr);
 
     /// Request an immediate status CHECK for any device (cover or light).
     /// Enqueues a single CHECK packet — blind responds with current state.
@@ -143,7 +161,15 @@ class DeviceRegistry {
         }
     }
 
+    template<std::invocable<const NvsGroupConfig &> F>
+    void for_each_group(F &&fn) const {
+        for (const auto &group : groups_) {
+            if (group.is_valid()) fn(group);
+        }
+    }
+
     [[nodiscard]] size_t count_active() const;
+    [[nodiscard]] size_t count_groups() const;
     [[nodiscard]] size_t count_active(DeviceType type) const;
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -190,6 +216,7 @@ class DeviceRegistry {
 
  private:
     std::array<Device, MAX_DEVICES> slots_{};
+    std::array<NvsGroupConfig, MAX_GROUPS> groups_{};
     std::vector<OutputAdapter *> adapters_;
     Elero *hub_{nullptr};
     bool nvs_enabled_{false};
@@ -197,6 +224,7 @@ class DeviceRegistry {
 
     // NVS preference handles (one per slot)
     ESPPreferenceObject prefs_[MAX_DEVICES]{};
+    ESPPreferenceObject group_prefs_[MAX_GROUPS]{};
     bool prefs_initialized_{false};
 
     // Hub config (display name override)
@@ -209,11 +237,18 @@ class DeviceRegistry {
 
     // ── Internal helpers ──
     Device *find_free_slot_();
+    NvsGroupConfig *find_free_group_slot_();
+    [[nodiscard]] bool validate_group_(const NvsGroupConfig &config, std::string *error) const;
+    void persist_group_(const NvsGroupConfig &group, size_t slot_idx);
+    void clear_group_slot_(NvsGroupConfig &group);
+    void prune_device_from_groups_(uint32_t address);
     void notify_added_(const Device &dev);
     void notify_removed_(const Device &dev);
     void notify_state_changed_(Device &dev, uint32_t now);
     void notify_config_changed_(const Device &dev);
     void notify_rf_packet_(const RfPacketInfo &pkt);
+    void notify_group_upserted_(const NvsGroupConfig &group);
+    void notify_group_removed_(const char *id);
 
     [[nodiscard]] bool enqueue_or_warn_(Device &dev, uint8_t cmd_byte,
                                         uint8_t packets, uint8_t type,

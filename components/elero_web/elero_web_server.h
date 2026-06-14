@@ -46,6 +46,8 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
   void on_state_changed(const Device &dev, uint16_t changes) override;
   void on_config_changed(const Device &dev) override;
   void on_rf_packet(const RfPacketInfo &pkt) override;
+  void on_group_upserted(const NvsGroupConfig &group) override;
+  void on_group_removed(const char *id) override;
 
   // LogListener interface - forward logs to WebSocket clients
   void on_log(uint8_t level, const char *tag, const char *message, size_t message_len) override;
@@ -80,11 +82,15 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
   std::string build_config_json();
   std::string build_rf_json(const RfPacketInfo &pkt);
   std::string build_device_upserted_json_(const Device &dev);
+  std::string build_group_json_(const NvsGroupConfig &group) const;
   std::string build_learn_in_state_json_() const;
 
   // Device CRUD handlers (MQTT mode)
   void handle_upsert_device_(struct mg_connection *c, JsonObject root);
   void handle_remove_device_(struct mg_connection *c, JsonObject root);
+  void handle_upsert_group_(struct mg_connection *c, JsonObject root);
+  void handle_remove_group_(struct mg_connection *c, JsonObject root);
+  void handle_group_command_(struct mg_connection *c, JsonObject root);
 
   // Hub config handler (persisted display name override)
   void handle_set_hub_config_(struct mg_connection *c, JsonObject root);
@@ -108,8 +114,9 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
   /// This is the single low-level primitive — cmd handler calls into this.
   void dispatch_device_command_(Device &dev, uint8_t cmd_byte);
 
-  // Parse NvsDeviceConfig from JSON object
+  // Parse NvsDeviceConfig / NvsGroupConfig from JSON objects
   bool parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error);
+  bool parse_group_config_(JsonObject root, NvsGroupConfig &config, std::string &error);
 
   LearnInState last_learn_in_state_{LearnInState::IDLE};
   bool last_learn_in_active_{false};

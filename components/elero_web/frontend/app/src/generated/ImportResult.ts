@@ -16,6 +16,18 @@ interface ImportResult {
    */
   'skipped': number;
   /**
+   * Groups created.
+   */
+  'groups_added': number;
+  /**
+   * Groups updated in place.
+   */
+  'groups_updated': number;
+  /**
+   * Groups not applied.
+   */
+  'groups_skipped': number;
+  /**
    * Whether hub-level overrides were applied.
    */
   'hub_applied'?: boolean;

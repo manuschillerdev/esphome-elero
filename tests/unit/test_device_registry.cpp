@@ -132,6 +132,12 @@ struct MockAdapter : public OutputAdapter {
     void on_hub_config_changed() override {
         hub_config_changed++;
     }
+    void on_group_upserted(const NvsGroupConfig &group) override {
+        group_upserted.push_back(group.id);
+    }
+    void on_group_removed(const char *id) override {
+        group_removed.push_back(id == nullptr ? "" : id);
+    }
 
     std::vector<uint32_t> added;
     std::vector<uint32_t> removed;
@@ -140,10 +146,13 @@ struct MockAdapter : public OutputAdapter {
     std::vector<uint32_t> config_changed;
     int rf_packets{0};
     int hub_config_changed{0};
+    std::vector<std::string> group_upserted;
+    std::vector<std::string> group_removed;
 
     void clear() {
         added.clear(); removed.clear(); state_changed.clear();
         last_changes.clear(); config_changed.clear();
+        group_upserted.clear(); group_removed.clear();
         rf_packets = 0; hub_config_changed = 0;
     }
 };
@@ -172,6 +181,18 @@ static NvsDeviceConfig make_light_config(uint32_t addr, const char *name = "Test
     cfg.channel = 6;
     cfg.dim_duration_ms = 5000;
     strncpy(cfg.name, name, NVS_NAME_MAX - 1);
+    return cfg;
+}
+
+static NvsGroupConfig make_group_config(const char *id, const char *name, std::initializer_list<uint32_t> members) {
+    NvsGroupConfig cfg{};
+    cfg.set_id(id);
+    cfg.set_name(name);
+    cfg.member_count = static_cast<uint8_t>(members.size());
+    size_t idx = 0;
+    for (uint32_t member : members) {
+        cfg.device_ids[idx++] = member;
+    }
     return cfg;
 }
 
@@ -978,6 +999,80 @@ TEST_F(DeviceRegistryTest, CommandGroup_RejectsLightDevice) {
 
     // Should reject — dev2 is not a cover
     EXPECT_TRUE(adapter_.state_changed.empty());
+}
+
+TEST_F(DeviceRegistryTest, UpsertGroup_AcceptsSameTypeDeviceIds) {
+    ASSERT_NE(registry_.upsert(make_cover_config_ch(0xA00001, 1)), nullptr);
+    ASSERT_NE(registry_.upsert(make_cover_config_ch(0xA00002, 3)), nullptr);
+
+    auto group = make_group_config("grp_test", "Test Group", {0xA00001, 0xA00002});
+    std::string error;
+    auto *saved = registry_.upsert_group(group, &error);
+
+    ASSERT_NE(saved, nullptr) << error;
+    EXPECT_EQ(registry_.count_groups(), 1u);
+    EXPECT_STREQ(saved->id, "grp_test");
+    EXPECT_EQ(saved->member_count, 2);
+    ASSERT_EQ(adapter_.group_upserted.size(), 1u);
+    EXPECT_EQ(adapter_.group_upserted[0], "grp_test");
+}
+
+TEST_F(DeviceRegistryTest, UpsertGroup_RejectsMixedDeviceTypes) {
+    ASSERT_NE(registry_.upsert(make_cover_config(0xA00001)), nullptr);
+    ASSERT_NE(registry_.upsert(make_light_config(0xB00002)), nullptr);
+
+    auto group = make_group_config("grp_mixed", "Mixed", {0xA00001, 0xB00002});
+    std::string error;
+
+    EXPECT_EQ(registry_.upsert_group(group, &error), nullptr);
+    EXPECT_EQ(registry_.count_groups(), 0u);
+    EXPECT_NE(error.find("mix"), std::string::npos);
+}
+
+TEST_F(DeviceRegistryTest, CommandSavedGroup_PartitionsByRemote) {
+    auto cfg1 = make_cover_config_ch(0xA00001, 1);
+    cfg1.src_address = 0x111111;
+    auto cfg2 = make_cover_config_ch(0xA00002, 3);
+    cfg2.src_address = 0x111111;
+    auto cfg3 = make_cover_config_ch(0xA00003, 5);
+    cfg3.src_address = 0x222222;
+    auto *dev1 = registry_.upsert(cfg1);
+    auto *dev2 = registry_.upsert(cfg2);
+    auto *dev3 = registry_.upsert(cfg3);
+    ASSERT_NE(dev1, nullptr);
+    ASSERT_NE(dev2, nullptr);
+    ASSERT_NE(dev3, nullptr);
+
+    auto group = make_group_config("grp_multi", "Multi", {0xA00001, 0xA00002, 0xA00003});
+    std::string error;
+    ASSERT_NE(registry_.upsert_group(group, &error), nullptr) << error;
+    adapter_.clear();
+
+    EXPECT_TRUE(registry_.command_saved_group("grp_multi", pkt::command::UP, &error)) << error;
+
+    EXPECT_EQ(dev1->sender.command().num_dests, 2);
+    EXPECT_EQ(dev1->sender.command().dest_channels[0], 1);
+    EXPECT_EQ(dev1->sender.command().dest_channels[1], 3);
+    EXPECT_EQ(dev3->sender.command().num_dests, 0);
+    EXPECT_GE(adapter_.state_changed.size(), 3u);
+}
+
+TEST_F(DeviceRegistryTest, RemoveDevice_PrunesSavedGroups) {
+    ASSERT_NE(registry_.upsert(make_cover_config_ch(0xA00001, 1)), nullptr);
+    ASSERT_NE(registry_.upsert(make_cover_config_ch(0xA00002, 3)), nullptr);
+    ASSERT_NE(registry_.upsert(make_cover_config_ch(0xA00003, 5)), nullptr);
+    auto group = make_group_config("grp_prune", "Prune", {0xA00001, 0xA00002, 0xA00003});
+    std::string error;
+    ASSERT_NE(registry_.upsert_group(group, &error), nullptr) << error;
+    adapter_.clear();
+
+    EXPECT_TRUE(registry_.remove(0xA00003, DeviceType::COVER));
+
+    const auto *saved = registry_.find_group("grp_prune");
+    ASSERT_NE(saved, nullptr);
+    EXPECT_EQ(saved->member_count, 2);
+    ASSERT_EQ(adapter_.group_upserted.size(), 1u);
+    EXPECT_EQ(adapter_.group_upserted[0], "grp_prune");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

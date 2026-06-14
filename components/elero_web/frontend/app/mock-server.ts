@@ -33,6 +33,9 @@ const CONFIG = {
     { address: '0x17a753', name: 'Fernbedienung 1', updated_at: 1234567 },
     { address: '0x28b864', name: 'Fernbedienung 2', updated_at: 1234567 },
   ],
+  groups: [
+    { id: 'grp_terrasse_k8x2p1', name: 'Terrasse', device_ids: ['0x313238', '0x413238'] },
+  ],
 }
 
 // Known remotes (will send 0x44 button packets)
@@ -275,6 +278,30 @@ wss.on('connection', (ws: WebSocket) => {
     try {
       const msg = JSON.parse(data.toString())
       console.log(`← Command: ${msg.type} ${msg.address} ${msg.action}`)
+
+      if (msg.type === 'upsert_group') {
+        const existing = CONFIG.groups.findIndex(g => g.id === msg.id)
+        const group = { id: msg.id, name: msg.name, device_ids: msg.device_ids }
+        if (existing >= 0) CONFIG.groups[existing] = group
+        else CONFIG.groups.push(group)
+        ws.send(JSON.stringify({ event: 'group_upserted', data: group }))
+        console.log(`→ Group saved: ${group.name}`)
+      }
+
+      if (msg.type === 'remove_group') {
+        const existing = CONFIG.groups.findIndex(g => g.id === msg.id)
+        if (existing >= 0) CONFIG.groups.splice(existing, 1)
+        ws.send(JSON.stringify({ event: 'group_removed', data: { id: msg.id } }))
+        console.log(`→ Group removed: ${msg.id}`)
+      }
+
+      if (msg.type === 'group_cmd') {
+        const group = CONFIG.groups.find(g => g.id === msg.id)
+        console.log(`← Group command: ${group?.name ?? msg.id} ${msg.action}`)
+        for (const address of group?.device_ids ?? []) {
+          ws.emit('message', Buffer.from(JSON.stringify({ type: 'cmd', address, action: msg.action })))
+        }
+      }
 
       if (msg.type === 'cmd') {
         // Check if target is a light or blind

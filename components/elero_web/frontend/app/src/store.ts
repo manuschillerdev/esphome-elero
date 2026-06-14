@@ -2,13 +2,13 @@ import { signal, computed, batch } from '@preact/signals'
 import type {
   ConfigData, RfData, DeviceType, CrudEventData, DeviceUpsertedData,
   StateChangedData, FreqConfig, HubMode, HubConfig, HubConfigEventData, RadioConfig,
-  BlindConfig, LightConfig, RemoteConfig,
+  BlindConfig, LightConfig, RemoteConfig, GroupConfig, GroupRemovedData,
   RfStateName,
   ConfigSnapshot, ImportResult, LearnInStateData,
 } from '@/generated'
 
 // Re-export generated types used by components
-export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, HubConfig, RadioConfig, CrudEventData, DeviceUpsertedData, StateChangedData, RfStateName, LearnInStateData }
+export type { RfData, DeviceType, BlindConfig, LightConfig, GroupConfig, FreqConfig, HubMode, HubConfig, RadioConfig, CrudEventData, DeviceUpsertedData, StateChangedData, RfStateName, LearnInStateData }
 
 // ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
 
@@ -158,6 +158,8 @@ export const radio = signal<RadioConfig>({
 })
 
 export const devices = signal<Map<string, Device>>(new Map())
+
+export const groups = signal<Map<string, GroupConfig>>(new Map())
 
 export const rfPackets = signal<RfPacketWithTimestamp[]>([])
 
@@ -310,6 +312,7 @@ export function setDevices(data: ConfigData) {
   }
   batch(() => {
     devices.value = next
+    groups.value = new Map((data.groups ?? []).map((group) => [group.id, group]))
     hub.value = data.hub
     radio.value = data.radio
     learnIn.value = { state: 'idle', active: false, busy: false }
@@ -449,6 +452,21 @@ export function onLearnInState(data: LearnInStateData) {
   learnIn.value = data
 }
 
+export function onGroupUpserted(data: GroupConfig) {
+  const next = new Map(groups.value)
+  next.set(data.id, data)
+  groups.value = next
+  showToast('success', `Group "${data.name}" saved`)
+}
+
+export function onGroupRemoved(data: GroupRemovedData) {
+  const existing = groups.value.get(data.id)
+  const next = new Map(groups.value)
+  next.delete(data.id)
+  groups.value = next
+  if (existing) showToast('success', `Group "${existing.name}" removed`)
+}
+
 // ─── Toast (one-shot user feedback) ─────────────────────────────────────────
 
 export type ToastVariant = 'info' | 'success' | 'error'
@@ -489,15 +507,19 @@ export function onConfigSnapshot(snap: ConfigSnapshot) {
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
-  showToast('success', `Backup downloaded (${snap.devices.length} device${snap.devices.length === 1 ? '' : 's'})`)
+  const groupCount = snap.groups?.length ?? 0
+  showToast('success', `Backup downloaded (${snap.devices.length} device${snap.devices.length === 1 ? '' : 's'}, ${groupCount} group${groupCount === 1 ? '' : 's'})`)
 }
 
 export function onImportResult(result: ImportResult) {
-  const total = result.added + result.updated + result.skipped
+  const total = result.added + result.updated + result.skipped + result.groups_added + result.groups_updated + result.groups_skipped
   const parts: string[] = []
-  if (result.added > 0) parts.push(`${result.added} added`)
-  if (result.updated > 0) parts.push(`${result.updated} updated`)
-  if (result.skipped > 0) parts.push(`${result.skipped} skipped`)
+  if (result.added > 0) parts.push(`${result.added} device${result.added === 1 ? '' : 's'} added`)
+  if (result.updated > 0) parts.push(`${result.updated} device${result.updated === 1 ? '' : 's'} updated`)
+  if (result.skipped > 0) parts.push(`${result.skipped} device${result.skipped === 1 ? '' : 's'} skipped`)
+  if (result.groups_added > 0) parts.push(`${result.groups_added} group${result.groups_added === 1 ? '' : 's'} added`)
+  if (result.groups_updated > 0) parts.push(`${result.groups_updated} group${result.groups_updated === 1 ? '' : 's'} updated`)
+  if (result.groups_skipped > 0) parts.push(`${result.groups_skipped} group${result.groups_skipped === 1 ? '' : 's'} skipped`)
   if (result.hub_applied) parts.push('hub config restored')
   const summary = parts.length > 0 ? parts.join(', ') : 'no changes'
   if (result.errors.length > 0) {
@@ -513,7 +535,15 @@ export function onImportResult(result: ImportResult) {
 export function onDeviceRemoved({ address }: CrudEventData) {
   const next = new Map(devices.value)
   next.delete(address)
-  devices.value = next
+  const nextGroups = new Map<string, GroupConfig>()
+  for (const [id, group] of groups.value) {
+    const device_ids = group.device_ids.filter((deviceId) => deviceId !== address)
+    if (device_ids.length >= 2) nextGroups.set(id, { ...group, device_ids })
+  }
+  batch(() => {
+    devices.value = next
+    groups.value = nextGroups
+  })
 
   if (hub.value.mode === 'native') {
     rebootNeeded.value = true

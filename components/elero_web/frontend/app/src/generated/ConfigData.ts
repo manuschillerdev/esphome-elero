@@ -3,6 +3,7 @@ import {RadioConfig} from './RadioConfig';
 import {BlindConfig} from './BlindConfig';
 import {LightConfig} from './LightConfig';
 import {RemoteConfig} from './RemoteConfig';
+import {GroupConfig} from './GroupConfig';
 interface ConfigData {
   /**
    * Gateway identity and operating mode
@@ -24,5 +25,9 @@ interface ConfigData {
    * Known remote controls. In native mode, derived from cover/light src_address. In NVS modes, includes auto-discovered remotes.
    */
   'remotes': RemoteConfig[];
+  /**
+   * Saved device groups. Group device ids reference stable device address ids from blinds/lights.
+   */
+  'groups': GroupConfig[];
 }
 export { ConfigData };

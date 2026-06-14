@@ -1,9 +1,9 @@
-import type { CmdPayload, RawPayload, UpsertDevicePayload, RemoveDevicePayload, RestartPayload, SetHubConfigPayload, DeviceAction, StateChangedData, HubConfigEventData, ExportConfigPayload, ImportConfigPayload, ConfigSnapshot, ImportResult, LearnInStartPayload, LearnInConfirmUpPayload, LearnInConfirmDownPayload, LearnInCancelPayload, LearnInStateData } from '@/generated'
+import type { CmdPayload, RawPayload, UpsertDevicePayload, RemoveDevicePayload, RestartPayload, SetHubConfigPayload, DeviceAction, StateChangedData, HubConfigEventData, ExportConfigPayload, ImportConfigPayload, ConfigSnapshot, ImportResult, LearnInStartPayload, LearnInConfirmUpPayload, LearnInConfirmDownPayload, LearnInCancelPayload, LearnInStateData, UpsertGroupPayload, RemoveGroupPayload, GroupCmdPayload, GroupConfig, GroupRemovedData, ErrorData } from '@/generated'
 import {
   setConnected, setDevices, addRfPacket,
   onDeviceUpserted, onDeviceRemoved, onStateChanged, onHubConfig,
-  onConfigSnapshot, onImportResult, onLearnInState,
-  devices,
+  onConfigSnapshot, onImportResult, onLearnInState, onGroupUpserted, onGroupRemoved,
+  devices, showToast,
   type Device,
 } from './store'
 
@@ -53,6 +53,10 @@ export function initWs() {
       onDeviceUpserted(data)
     } else if (event === 'device_removed') {
       onDeviceRemoved(data)
+    } else if (event === 'group_upserted') {
+      onGroupUpserted(data as GroupConfig)
+    } else if (event === 'group_removed') {
+      onGroupRemoved(data as GroupRemovedData)
     } else if (event === 'hub_config') {
       onHubConfig(data as HubConfigEventData)
     } else if (event === 'config_snapshot') {
@@ -61,13 +65,15 @@ export function initWs() {
       onImportResult(data as ImportResult)
     } else if (event === 'learn_in_state') {
       onLearnInState(data as LearnInStateData)
+    } else if (event === 'error') {
+      showToast('error', (data as ErrorData).msg)
     }
   }
 }
 
 // ─── Send helpers ───────────────────────────────────────────────────────────
 
-function send(payload: CmdPayload | RawPayload | UpsertDevicePayload | RemoveDevicePayload | RestartPayload | SetHubConfigPayload | ExportConfigPayload | ImportConfigPayload | LearnInStartPayload | LearnInConfirmUpPayload | LearnInConfirmDownPayload | LearnInCancelPayload) {
+function send(payload: CmdPayload | RawPayload | UpsertDevicePayload | RemoveDevicePayload | RestartPayload | SetHubConfigPayload | ExportConfigPayload | ImportConfigPayload | LearnInStartPayload | LearnInConfirmUpPayload | LearnInConfirmDownPayload | LearnInCancelPayload | UpsertGroupPayload | RemoveGroupPayload | GroupCmdPayload) {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(payload))
   }
@@ -103,6 +109,18 @@ export function sendUpsertDevice(device: Device) {
 
 export function sendRemoveDevice(address: string, device_type: RemoveDevicePayload['device_type']) {
   send({ type: 'remove_device', dst_address: address, device_type })
+}
+
+export function sendUpsertGroup(group: Omit<UpsertGroupPayload, 'type'>) {
+  send({ type: 'upsert_group', ...group })
+}
+
+export function sendRemoveGroup(id: string) {
+  send({ type: 'remove_group', id })
+}
+
+export function sendGroupCommand(id: string, action: DeviceAction) {
+  send({ type: 'group_cmd', id, action })
 }
 
 export function sendRestart() {
