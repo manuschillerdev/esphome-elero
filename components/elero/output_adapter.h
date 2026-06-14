@@ -47,8 +47,8 @@ class OutputAdapter {
     /// Not all adapters need this — default is no-op.
     virtual void on_rf_packet(const RfPacketInfo &pkt) {}
 
-    /// A saved group was created or updated. Only adapters that expose group
-    /// management need this; groups are not Home Assistant entities by default.
+    /// A saved group was created or updated. Adapters may expose this as a
+    /// virtual group entity backed by registry group command dispatch.
     virtual void on_group_upserted(const NvsGroupConfig &group) {}
 
     /// A saved group was removed.

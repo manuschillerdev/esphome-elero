@@ -30,6 +30,19 @@ static const char *const LIGHT_STATE_OPTIONS[] = {
     "stopped", "blocking", "overheated", "timeout", "unknown",
 };
 
+static uint8_t mqtt_payload_to_command(const char *payload, DeviceType type) {
+    if (payload == nullptr) return packet::command::INVALID;
+    if (type == DeviceType::LIGHT) {
+        if (strcmp(payload, action::ON) == 0 || strcmp(payload, ha_state::ON) == 0) {
+            return packet::command::UP;
+        }
+        if (strcmp(payload, action::OFF) == 0 || strcmp(payload, ha_state::OFF) == 0) {
+            return packet::command::DOWN;
+        }
+    }
+    return elero_action_to_command(payload);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // LIFECYCLE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -59,9 +72,12 @@ void MqttAdapter::on_hub_config_changed() {
     ctx_.device_name = registry_->hub_display_name();
     if (!ctx_.mqtt->is_connected()) return;
 
-    // Only the gateway discovery embeds the hub name; child devices link via
-    // `via_device: device_id` which is stable.
+    // Gateway-level entities embed the hub name; child device discoveries link
+    // via stable `via_device` identifiers and do not need republishing here.
     publish_gateway_discovery_();
+    registry_->for_each_group([this](const NvsGroupConfig &group) {
+        publish_group_discovery_(group);
+    });
 }
 
 void MqttAdapter::loop() {
@@ -174,6 +190,20 @@ void MqttAdapter::on_config_changed(const Device &dev) {
     }
 }
 
+void MqttAdapter::on_group_upserted(const NvsGroupConfig &group) {
+    if (!ctx_.mqtt->is_connected()) return;
+    remove_group_discovery_(group.id);
+    publish_group_discovery_(group);
+    subscribe_group_commands_(group);
+    publish_gateway_state_();
+}
+
+void MqttAdapter::on_group_removed(const char *id) {
+    if (!ctx_.mqtt->is_connected()) return;
+    remove_group_discovery_(id);
+    publish_gateway_state_();
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // COVER
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -183,10 +213,11 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
     auto oid = ctx_.object_id(DeviceType::COVER, addr);
     bool tilt = dev.config.supports_tilt != 0;
 
-    // Cover entity — primary entity has no name; HA uses device name as friendly name.
+    // Primary entity uses the configured device name directly. Avoid HA's
+    // device-name prefix so dashboard cards stay short.
     std::string payload = json::build_json([&](JsonObject root) {
-        root["name"] = nullptr;
-        root["has_entity_name"] = true;
+        root["name"] = dev.config.name;
+        root["has_entity_name"] = false;
         root["unique_id"] = oid;
         root["command_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::SET);
         root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::STATE);
@@ -369,10 +400,11 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
     auto oid = ctx_.object_id(DeviceType::LIGHT, addr);
     bool has_brightness = dev.config.dim_duration_ms > 0;
 
-    // Light entity — primary entity has no name; HA uses device name as friendly name.
+    // Primary entity uses the configured device name directly. Avoid HA's
+    // device-name prefix so dashboard cards stay short.
     std::string payload = json::build_json([&](JsonObject root) {
-        root["name"] = nullptr;
-        root["has_entity_name"] = true;
+        root["name"] = dev.config.name;
+        root["has_entity_name"] = false;
         root["unique_id"] = oid;
         root["schema"] = "json";
         root["command_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::SET);
@@ -532,8 +564,8 @@ void MqttAdapter::publish_remote_discovery_(const Device &dev) {
     auto st = ctx_.topic(DeviceType::REMOTE, addr, mqtt_topic::STATE);
 
     std::string payload = json::build_json([&](JsonObject root) {
-        root["name"] = nullptr;
-        root["has_entity_name"] = true;
+        root["name"] = dev.config.name;
+        root["has_entity_name"] = false;
         root["unique_id"] = oid;
         root["state_topic"] = st;
         root["value_template"] = "{{ value_json.rssi }}";
@@ -566,6 +598,128 @@ void MqttAdapter::publish_remote_state_(const Device &dev) {
     });
 
     ctx_.publish(DeviceType::REMOTE, addr, mqtt_topic::STATE, payload, false);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GROUPS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bool MqttAdapter::group_type_(const NvsGroupConfig &group, DeviceType *type) const {
+    if (registry_ == nullptr || !group.is_valid()) return false;
+
+    bool found = false;
+    DeviceType derived = DeviceType::REMOTE;
+    for (uint8_t i = 0; i < group.member_count; ++i) {
+        Device *dev = registry_->find(group.device_ids[i]);
+        if (dev == nullptr || dev->is_remote() || !dev->active) return false;
+        if (!found) {
+            derived = dev->config.type;
+            found = true;
+        } else if (dev->config.type != derived) {
+            return false;
+        }
+    }
+
+    if (type != nullptr) *type = derived;
+    return found && (derived == DeviceType::COVER || derived == DeviceType::LIGHT);
+}
+
+void MqttAdapter::publish_group_discovery_(const NvsGroupConfig &group) {
+    DeviceType type = DeviceType::COVER;
+    if (!group_type_(group, &type)) {
+        ESP_LOGW(TAG, "Skipping group discovery for '%s': invalid members", group.id);
+        return;
+    }
+
+    const auto oid = ctx_.group_object_id(group.id);
+    const auto command_topic = ctx_.group_topic(group.id, mqtt_topic::SET);
+    const auto attributes_topic = ctx_.group_topic(group.id, mqtt_topic::ATTRIBUTES);
+
+    std::string payload = json::build_json([&](JsonObject root) {
+        root["name"] = group.name;
+        root["has_entity_name"] = false;
+        root["unique_id"] = oid;
+        root["command_topic"] = command_topic;
+        root["optimistic"] = true;
+        root["json_attributes_topic"] = attributes_topic;
+        if (type == DeviceType::COVER) {
+            root["payload_open"] = action::OPEN;
+            root["payload_close"] = action::CLOSE;
+            root["payload_stop"] = action::STOP;
+            Device *first = registry_ != nullptr ? registry_->find(group.device_ids[0]) : nullptr;
+            if (first != nullptr) {
+                root["device_class"] = ha_cover_class_str(static_cast<HaCoverClass>(first->config.ha_device_class));
+            }
+        } else {
+            root["payload_on"] = action::UP;
+            root["payload_off"] = action::DOWN;
+        }
+        ctx_.add_availability(root);
+        JsonObject device = root["device"].to<JsonObject>();
+        ctx_.add_hub_device_block(device);
+    });
+
+    ctx_.publish_discovery(type == DeviceType::COVER ? ha_discovery::COVER : ha_discovery::LIGHT,
+                           oid, payload);
+    publish_group_attributes_(group);
+    ESP_LOGD(TAG, "Published %s group discovery for '%s'", device_type_str(type), group.id);
+}
+
+void MqttAdapter::publish_group_attributes_(const NvsGroupConfig &group) {
+    DeviceType type = DeviceType::COVER;
+    if (!group_type_(group, &type)) return;
+
+    std::string payload = json::build_json([&](JsonObject root) {
+        root["elero_kind"] = "group";
+        root["device_type"] = device_type_str(type);
+        root["member_count"] = static_cast<int>(group.member_count);
+        auto ids = root["member_device_ids"].to<JsonArray>();
+        auto names = root["member_names"].to<JsonArray>();
+        for (uint8_t i = 0; i < group.member_count; ++i) {
+            ids.add(hex_str(group.device_ids[i]));
+            Device *dev = registry_ != nullptr ? registry_->find(group.device_ids[i]) : nullptr;
+            names.add(dev != nullptr ? dev->config.name : "");
+        }
+    });
+
+    ctx_.mqtt->publish(ctx_.group_topic(group.id, mqtt_topic::ATTRIBUTES).c_str(),
+                       payload.c_str(), true);
+}
+
+void MqttAdapter::subscribe_group_commands_(const NvsGroupConfig &group) {
+    DeviceType type = DeviceType::COVER;
+    if (!group_type_(group, &type)) return;
+
+    const std::string id = group.id;
+    ctx_.mqtt->subscribe(ctx_.group_topic(group.id, mqtt_topic::SET).c_str(),
+        [this, id, type](const char *, const char *payload) {
+            if (registry_ == nullptr) return;
+
+            uint8_t cmd_byte = mqtt_payload_to_command(payload, type);
+            if (cmd_byte == packet::command::INVALID) {
+                ESP_LOGW(TAG, "Unknown group action for '%s': %s", id.c_str(), payload != nullptr ? payload : "<null>");
+                return;
+            }
+
+            std::string error;
+            if (!registry_->command_saved_group(id.c_str(), cmd_byte, &error)) {
+                ESP_LOGW(TAG, "Group command failed for '%s': %s", id.c_str(),
+                         error.empty() ? "unknown error" : error.c_str());
+            }
+        });
+
+    ESP_LOGD(TAG, "Subscribed to group commands for '%s'", group.id);
+}
+
+void MqttAdapter::remove_group_discovery_(const char *id) {
+    if (id == nullptr || id[0] == '\0') return;
+
+    ctx_.mqtt->unsubscribe(ctx_.group_topic(id, mqtt_topic::SET).c_str());
+    const auto oid = ctx_.group_object_id(id);
+    ctx_.remove_discovery(ha_discovery::COVER, oid);
+    ctx_.remove_discovery(ha_discovery::LIGHT, oid);
+    ctx_.mqtt->publish(ctx_.group_topic(id, mqtt_topic::ATTRIBUTES).c_str(), "", true);
+    ESP_LOGD(TAG, "Removed group discovery for '%s'", id);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -608,12 +762,14 @@ void MqttAdapter::publish_gateway_state_() {
     size_t covers = registry_->count_active(DeviceType::COVER);
     size_t lights = registry_->count_active(DeviceType::LIGHT);
     size_t remotes = registry_->count_active(DeviceType::REMOTE);
+    size_t groups = registry_->count_groups();
 
     std::string payload = json::build_json([&](JsonObject root) {
         root["active_devices"] = static_cast<int>(covers + lights + remotes);
         root["covers"] = static_cast<int>(covers);
         root["lights"] = static_cast<int>(lights);
         root["remotes"] = static_cast<int>(remotes);
+        root["groups"] = static_cast<int>(groups);
     });
 
     ctx_.mqtt->publish(
@@ -644,7 +800,9 @@ void MqttAdapter::start_stale_collection_() {
                     JsonArray ids = dev["identifiers"];
                     if (ids.isNull() || ids.size() == 0) return false;
                     const char *id = ids[0];
-                    return id != nullptr && device_id == id;
+                    if (id == nullptr) return false;
+                    std::string ident = id;
+                    return ident == device_id || ident.rfind(device_id + "_", 0) == 0;
                 });
                 if (is_ours) {
                     collected_topics_.emplace_back(topic);
@@ -719,6 +877,13 @@ void MqttAdapter::collect_expected_topics_(std::vector<std::string> &out) const 
             out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr)));
         }
     });
+
+    registry_->for_each_group([&](const NvsGroupConfig &group) {
+        DeviceType type = DeviceType::COVER;
+        if (!group_type_(group, &type)) return;
+        out.push_back(ctx_.discovery_topic(type == DeviceType::COVER ? ha_discovery::COVER : ha_discovery::LIGHT,
+                                           ctx_.group_object_id(group.id)));
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -741,6 +906,11 @@ void MqttAdapter::republish_all_() {
         } else if (dev.is_remote()) {
             publish_remote_discovery_(dev);
         }
+    });
+
+    registry_->for_each_group([this](const NvsGroupConfig &group) {
+        publish_group_discovery_(group);
+        subscribe_group_commands_(group);
     });
 
     // Force full state republish through the registry's snapshot→diff→notify pipeline.

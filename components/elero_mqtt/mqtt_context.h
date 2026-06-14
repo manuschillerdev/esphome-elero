@@ -78,6 +78,17 @@ struct MqttContext {
     return result;
   }
 
+  /// Build group state topic: {prefix}/group/{id}{suffix}
+  std::string group_topic(const char *id, const char *suffix) const {
+    std::string result;
+    result.reserve(topic_prefix.size() + strlen("/group/") + strlen(id) + strlen(suffix));
+    result += topic_prefix;
+    result += "/group/";
+    result += id;
+    result += suffix;
+    return result;
+  }
+
   /// Build object ID: {device_id}_{device_type}_{addr_hex}[_{suffix}]
   std::string object_id(DeviceType type, uint32_t addr, const char *suffix = nullptr) const {
     const char *type_str = device_type_str(type);
@@ -90,6 +101,18 @@ struct MqttContext {
     result += type_str;
     result += '_';
     result += hex;
+    if (suffix != nullptr) { result += '_'; result += suffix; }
+    return result;
+  }
+
+  /// Build group object ID: {device_id}_group_{id}[_{suffix}]
+  std::string group_object_id(const char *id, const char *suffix = nullptr) const {
+    std::string result;
+    result.reserve(device_id.size() + strlen("_group_") + strlen(id) +
+                   (suffix != nullptr ? 1 + strlen(suffix) : 0));
+    result += device_id;
+    result += "_group_";
+    result += id;
     if (suffix != nullptr) { result += '_'; result += suffix; }
     return result;
   }

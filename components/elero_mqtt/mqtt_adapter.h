@@ -47,6 +47,8 @@ class MqttAdapter : public OutputAdapter {
     void on_state_changed(const Device &dev, uint16_t changes) override;
     void on_config_changed(const Device &dev) override;
     void on_rf_packet(const RfPacketInfo &pkt) override {}  // MQTT doesn't forward raw RF
+    void on_group_upserted(const NvsGroupConfig &group) override;
+    void on_group_removed(const char *id) override;
     void on_hub_config_changed() override;
 
  private:
@@ -63,6 +65,13 @@ class MqttAdapter : public OutputAdapter {
     // ── Remote helpers ──
     void publish_remote_discovery_(const Device &dev);
     void publish_remote_state_(const Device &dev);
+
+    // ── Group helpers ──
+    bool group_type_(const NvsGroupConfig &group, DeviceType *type) const;
+    void publish_group_discovery_(const NvsGroupConfig &group);
+    void publish_group_attributes_(const NvsGroupConfig &group);
+    void subscribe_group_commands_(const NvsGroupConfig &group);
+    void remove_group_discovery_(const char *id);
 
     // ── Shared helpers ──
     void remove_all_discovery_(const Device &dev);
