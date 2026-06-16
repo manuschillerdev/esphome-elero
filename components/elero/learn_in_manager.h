@@ -34,10 +34,7 @@ class Elero;
 struct LearnInStartRequest {
   uint32_t src_addr{0};
   uint8_t channel{0};
-  uint8_t programming_cmd{packet::command::INVALID};
-  uint8_t packets{packet::button::PACKETS};
-  uint8_t type2{packet::button::TYPE2};
-  uint8_t hop{packet::button::HOP};
+  uint8_t packets{packet::program::PACKETS};
   uint32_t session_timeout_ms{300000};
 };
 
@@ -113,7 +110,6 @@ class LearnInManager : public TxClient {
   [[nodiscard]] bool is_busy() const { return tx_pending_ || queued_step_ != 0; }
   [[nodiscard]] uint32_t src_addr() const { return command_.src_addr; }
   [[nodiscard]] uint8_t channel() const { return command_.channel; }
-  [[nodiscard]] uint8_t programming_cmd() const { return programming_cmd_; }
 
  private:
   [[nodiscard]] static bool time_reached_(uint32_t now, uint32_t deadline);
@@ -126,11 +122,10 @@ class LearnInManager : public TxClient {
   void reset_transport_();
   void reset_all_();
 
-  EleroCommand command_{1, 0, 0, 0, packet::msg_type::BUTTON,
-                        packet::button::TYPE2, packet::button::HOP, {0}};
+  EleroCommand command_{1, 0, 0, 0, packet::msg_type::PROGRAM,
+                        packet::program::TYPE2, packet::program::HOP, {0}};
   LearnInState state_{LearnInState::IDLE};
-  uint8_t programming_cmd_{packet::command::INVALID};
-  uint8_t packets_per_step_{packet::button::PACKETS};
+  uint8_t packets_per_step_{packet::program::PACKETS};
   uint8_t queued_step_{0};
   uint8_t sent_packets_{0};
   uint8_t retries_{0};

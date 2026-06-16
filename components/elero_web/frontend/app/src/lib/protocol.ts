@@ -4,8 +4,10 @@ import type { RfData, RfStateName } from '@/generated'
 
 export const msg_type = {
   BUTTON: '0x44',
+  BUTTON_GROUP: '0x45',
   COMMAND: '0x6a',
   COMMAND_ALT: '0x69',
+  PROGRAM: '0x70',
   STATUS: '0xca',
   STATUS_ALT: '0xc9',
 } as const
@@ -17,6 +19,9 @@ export const command = {
   TILT: '0x24',
   DOWN: '0x40',
   INTERMEDIATE: '0x44',
+  PROGRAM: '0x80',
+  PROGRAM_GROUP: '0x81',
+  PROGRAM_TARGET: '0x84',
 } as const
 
 /** Commands that indicate a real user action (not a status poll). */
@@ -94,6 +99,11 @@ export function isCommandPacket(pkt: RfData): boolean {
 
 export function isButtonPacket(pkt: RfData): boolean {
   return pkt.type?.toLowerCase() === msg_type.BUTTON
+}
+
+export function isSelectorPacket(pkt: RfData): boolean {
+  const t = pkt.type?.toLowerCase()
+  return t === msg_type.BUTTON || t === msg_type.BUTTON_GROUP || t === msg_type.PROGRAM
 }
 
 export function isMovingState(raw: string | undefined): boolean {

@@ -38,7 +38,7 @@ bool LearnInManager::start(const LearnInStartRequest &request) {
   if (!prime_session_(request)) {
     return false;
   }
-  return queue_step_(programming_cmd_, LearnInState::PROGRAMMING);
+  return queue_step_(packet::command::PROGRAM, LearnInState::PROGRAMMING);
 }
 
 bool LearnInManager::confirm_up() {
@@ -166,10 +166,6 @@ bool LearnInManager::prime_session_(const LearnInStartRequest &request) {
     ESP_LOGW(TAG, "Learn-in start rejected: channel missing");
     return false;
   }
-  if (request.programming_cmd == packet::command::INVALID) {
-    ESP_LOGW(TAG, "Learn-in start rejected: programming_cmd missing");
-    return false;
-  }
   if (request.packets == 0) {
     ESP_LOGW(TAG, "Learn-in start rejected: packets must be > 0");
     return false;
@@ -180,12 +176,11 @@ bool LearnInManager::prime_session_(const LearnInStartRequest &request) {
   command_.dst_addr = 0;
   command_.src_addr = request.src_addr;
   command_.channel = request.channel;
-  command_.type = packet::msg_type::BUTTON;
-  command_.type2 = request.type2;
-  command_.hop = request.hop;
+  command_.type = packet::msg_type::PROGRAM;
+  command_.type2 = packet::program::TYPE2;
+  command_.hop = packet::program::HOP;
   command_.payload[0] = 0;
   command_.payload[1] = 0;
-  programming_cmd_ = request.programming_cmd;
   packets_per_step_ = request.packets;
   session_deadline_ms_ = get_time_provider().millis() + request.session_timeout_ms;
   return true;
@@ -200,6 +195,15 @@ bool LearnInManager::queue_step_(uint8_t cmd_byte, LearnInState pending_state) {
   retries_ = 0;
   next_attempt_ms_ = 0;
   tx_start_time_ = 0;
+  if (pending_state == LearnInState::PROGRAMMING) {
+    command_.type = packet::msg_type::PROGRAM;
+    command_.type2 = packet::program::TYPE2;
+    command_.hop = packet::program::HOP;
+  } else {
+    command_.type = packet::msg_type::BUTTON;
+    command_.type2 = packet::button::TYPE2;
+    command_.hop = packet::button::HOP;
+  }
   state_ = pending_state;
   ESP_LOGI(TAG, "Learn-in queued state=%s cmd=0x%02x src=0x%06x ch=%u",
            learn_in_state_str(state_), cmd_byte, command_.src_addr, command_.channel);
@@ -233,8 +237,7 @@ void LearnInManager::reset_transport_() {
 void LearnInManager::reset_all_() {
   reset_transport_();
   ignore_tx_complete_ = false;
-  programming_cmd_ = packet::command::INVALID;
-  packets_per_step_ = packet::button::PACKETS;
+  packets_per_step_ = packet::program::PACKETS;
   session_deadline_ms_ = 0;
   state_ = LearnInState::IDLE;
 }

@@ -3,7 +3,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 import { type Column } from './ui/data-table'
 import { Blinds, Lightbulb, Copy, CheckCircle2, RemoteControl } from './icons'
 import {
-  isStatusPacket, isCommandPacket, isButtonPacket,
+  isStatusPacket, isCommandPacket, isSelectorPacket,
   getMsgTypeLabel, getCommandLabel, getStateLabel,
   type RfPacketWithTimestamp, type AppDeviceType,
 } from '@/store'
@@ -114,8 +114,8 @@ export function buildFullColumns(
     },
     {
       key: 'command', label: 'Command', sortable: true, filter: 'select',
-      value: (pkt) => (isCommandPacket(pkt) || isButtonPacket(pkt)) ? getCommandLabel(pkt.command) : '',
-      render: (pkt) => <span className="text-muted-foreground">{(isCommandPacket(pkt) || isButtonPacket(pkt)) ? getCommandLabel(pkt.command) : '-'}</span>,
+      value: (pkt) => (isCommandPacket(pkt) || isSelectorPacket(pkt)) ? getCommandLabel(pkt.command) : '',
+      render: (pkt) => <span className="text-muted-foreground">{(isCommandPacket(pkt) || isSelectorPacket(pkt)) ? getCommandLabel(pkt.command) : '-'}</span>,
     },
     {
       key: 'state', label: 'State', sortable: true, filter: 'select',
@@ -160,12 +160,12 @@ export function buildCompactColumns(
       key: 'detail', label: 'Detail', sortable: true,
       value: (pkt) => {
         if (isStatusPacket(pkt)) return getStateLabel(pkt.state)
-        if (isCommandPacket(pkt) || isButtonPacket(pkt)) return getCommandLabel(pkt.command)
+        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return getCommandLabel(pkt.command)
         return ''
       },
       render: (pkt) => {
         if (isStatusPacket(pkt)) return <span className="text-muted-foreground">{getStateLabel(pkt.state)}</span>
-        if (isCommandPacket(pkt) || isButtonPacket(pkt)) return <span className="text-muted-foreground">{getCommandLabel(pkt.command)}</span>
+        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return <span className="text-muted-foreground">{getCommandLabel(pkt.command)}</span>
         return <span className="text-muted-foreground">-</span>
       },
     },

@@ -76,12 +76,13 @@ constexpr uint8_t VERSION_NOT_CONNECTED_HIGH = 0xFF;  ///< VERSION reads 0xFF wh
 // ═══════════════════════════════════════════════════════════════════════════════
 
 namespace msg_type {
-constexpr uint8_t BUTTON = 0x44;              ///< Button press/release (broadcast)
+constexpr uint8_t BUTTON = 0x44;              ///< Single-channel selector button packet
+constexpr uint8_t BUTTON_GROUP = 0x45;        ///< Selector-list group/central button packet
 constexpr uint8_t COMMAND = 0x6a;             ///< Targeted command to blind
 constexpr uint8_t COMMAND_ALT = 0x69;         ///< Alternate command format
+constexpr uint8_t PROGRAM = 0x70;             ///< Single-channel programming/P selector packet
 constexpr uint8_t STATUS = 0xca;              ///< Status response from blind
 constexpr uint8_t STATUS_ALT = 0xc9;          ///< Alternate status format
-constexpr uint8_t ADDR_3BYTE_THRESHOLD = 0x60;  ///< Types > this use 3-byte addressing
 }  // namespace msg_type
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -95,6 +96,9 @@ constexpr uint8_t UP = 0x20;                  ///< Move up / open
 constexpr uint8_t TILT = 0x24;                ///< Tilt position
 constexpr uint8_t DOWN = 0x40;                ///< Move down / close
 constexpr uint8_t INTERMEDIATE = 0x44;        ///< Move to intermediate position
+constexpr uint8_t PROGRAM = 0x80;             ///< Programming/P for single-channel selector packet
+constexpr uint8_t PROGRAM_GROUP = 0x81;       ///< Programming/P for group selector packets (RX only)
+constexpr uint8_t PROGRAM_TARGET = 0x84;      ///< Programming/P for targeted packets (RX only)
 constexpr uint8_t INVALID = 0xFF;             ///< Invalid/unknown command marker
 }  // namespace command
 
@@ -180,6 +184,14 @@ constexpr uint8_t GROUP_BASE_LENGTH = 26;         ///< Group 0x44 base length (l
 constexpr uint8_t GROUP_CHANNEL = 0x00;           ///< Channel byte for group packets (group marker)
 }  // namespace button
 
+namespace program {
+constexpr uint8_t MSG_LENGTH = button::MSG_LENGTH;  ///< Programming/P packet length (27 bytes)
+constexpr uint8_t TYPE2 = button::TYPE2;            ///< type2 for programming/P selector packets
+constexpr uint8_t HOP = button::HOP;                ///< hop count for programming/P selector packets
+constexpr uint8_t COMMAND = command::PROGRAM;       ///< Canonical single-channel P command byte
+constexpr uint8_t PACKETS = button::PACKETS;        ///< Packets per programming/P phase
+}  // namespace program
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENCRYPTION CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -227,7 +239,7 @@ struct ParseResult {
 
   // Payload (after decryption)
   uint8_t payload[10]{0}; ///< Decrypted payload bytes
-  uint8_t command{0};     ///< Command byte (for command packets)
+  uint8_t command{0};     ///< Command byte (for command/selector packets)
   uint8_t state{0};       ///< State byte (for status packets)
 };
 
@@ -269,11 +281,40 @@ inline bool is_status_packet(uint8_t type) {
   return type == msg_type::STATUS || type == msg_type::STATUS_ALT;
 }
 
-/// Check if packet type is a button packet.
+/// Check if packet type uses a one-byte selector destination envelope.
+/// @param type Message type byte
+/// @return true for selector envelopes (0x44, 0x45, 0x70)
+inline bool uses_one_byte_selector_envelope(uint8_t type) {
+  return type == msg_type::BUTTON || type == msg_type::BUTTON_GROUP ||
+         type == msg_type::PROGRAM;
+}
+
+/// Check if packet type uses a 3-byte address destination envelope.
+/// @param type Message type byte
+/// @return true for address envelopes (0x6a, 0x69, 0xca, 0xc9)
+inline bool uses_three_byte_address_envelope(uint8_t type) {
+  return is_command_packet(type) || is_status_packet(type);
+}
+
+/// Check if packet type carries a command byte in the decrypted payload.
+/// @param type Message type byte
+/// @return true for command/button/program packets
+inline bool carries_command(uint8_t type) {
+  return is_command_packet(type) || uses_one_byte_selector_envelope(type);
+}
+
+/// Check if packet type is a normal button packet.
 /// @param type Message type byte
 /// @return true if button packet (0x44)
 inline bool is_button_packet(uint8_t type) {
   return type == msg_type::BUTTON;
+}
+
+/// Check if packet type is a single-channel programming/P packet.
+/// @param type Message type byte
+/// @return true if programming/P selector packet (0x70)
+inline bool is_program_packet(uint8_t type) {
+  return type == msg_type::PROGRAM;
 }
 
 // ─── Main Parse Function ────────────────────────────────────────────────────
@@ -362,7 +403,7 @@ constexpr uint8_t PACKET_TOTAL_OVERHEAD = 3;
 namespace payload_offset {
 constexpr size_t CRYPTO_HIGH = 0;   // Crypto code high byte
 constexpr size_t CRYPTO_LOW = 1;    // Crypto code low byte
-constexpr size_t COMMAND = 2;       // Command byte (for 0x6A/0x69 packets)
+constexpr size_t COMMAND = 2;       // Command byte (for command/selector packets)
 constexpr size_t COMMAND2 = 3;      // Secondary command byte
 constexpr size_t STATE = 6;         // State byte (for 0xCA/0xC9 packets, from blinds)
 constexpr size_t PARITY = 7;        // Parity byte
@@ -419,14 +460,36 @@ struct ButtonTxParams {
 ///
 /// Button packets differ from targeted (0x6A) packets:
 /// - Length: 27 bytes (vs 29)
-/// - No destination address (broadcasts on channel)
-/// - No payload_1/payload_2 before encrypted section
+/// - One-byte selector destination instead of 3-byte destination address
 /// - Encrypted section at offset 20 (vs 22)
 ///
 /// @param params Button command parameters
 /// @param out_buf Output buffer (must be at least 28 bytes)
 /// @return Packet length (always button::MSG_LENGTH + 1 = 28)
 size_t build_button_packet(const ButtonTxParams& params, uint8_t* out_buf);
+
+/// Parameters for building the canonical single-channel programming/P TX packet.
+struct ProgramTxParams {
+  uint8_t counter{1};                              ///< Rolling message counter
+  uint32_t src_addr{0};                            ///< Source address (emulated remote)
+  uint8_t channel{0};                              ///< RF channel / selector
+  uint8_t command{program::COMMAND};               ///< Programming/P command byte (0x80)
+  uint8_t type2{program::TYPE2};                   ///< Secondary type byte (0x10)
+  uint8_t hop{program::HOP};                       ///< Hop count (0x00)
+};
+
+/// Build the canonical 0x70 single-channel programming/P TX packet.
+///
+/// Layout matches the observed single-channel P envelope:
+/// - Length: 27 bytes
+/// - type=0x70, type2=0x10, hop=0x00
+/// - One-byte selector destination equal to channel
+/// - Encrypted command byte 0x80
+///
+/// @param params Programming/P command parameters
+/// @param out_buf Output buffer (must be at least 28 bytes)
+/// @return Packet length (always program::MSG_LENGTH + 1 = 28)
+size_t build_program_packet(const ProgramTxParams& params, uint8_t* out_buf);
 
 /// Maximum number of destinations in a group 0x44 packet.
 /// Derived from CC1101 TX FIFO (64 bytes): TX buffer = 1 (len byte) + 26 (base) + N = 27 + N ≤ 64.

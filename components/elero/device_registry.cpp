@@ -667,9 +667,9 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
             dev->rf.last_state_raw = pkt.state;
             dispatch_status_(*dev, pkt.state, now);
         }
-    } else if (packet::is_command_packet(pkt.type)) {
-        // Remote commands are passive — we only auto-discover the remote.
-        // The blind's status response (via dispatch_status_) handles state.
+    } else if (packet::carries_command(pkt.type)) {
+        // Remote commands/selector actions are passive — auto-discover the remote.
+        // The blind's status response (via dispatch_status_) handles device state.
         track_remote_(pkt, now);
     }
 }

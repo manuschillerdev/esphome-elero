@@ -79,33 +79,42 @@ The codebase uses consistent naming across all layers:
 
 | Type | Hex | Direction | Description |
 |------|-----|-----------|-------------|
-| Button Press | 0x44 | Remote → Blind | Direct button press/release |
-| Command | 0x6A | Controller → Blind | Targeted command to specific blind |
-| Status Response | 0xCA | Blind → Controller | Status with blind address |
-| Status Response | 0xC9 | Blind → Controller | Status (alternate format) |
+| Button / selector | 0x44 | Remote → Blind | Button press/release with one-byte channel selector |
+| Group/list selector | 0x45 | Remote → Blind | Group/central selector-list envelope |
+| Command | 0x6A | Controller/Remote → Blind | Targeted command with 3-byte destination address |
+| Command Alt | 0x69 | Controller/Remote → Blind | Alternate targeted command envelope |
+| Program selector | 0x70 | Remote → Blind | Single-channel programming/P envelope with one-byte selector |
+| Status Response | 0xCA | Blind → Controller | Status with 3-byte address |
+| Status Response Alt | 0xC9 | Blind → Controller | Alternate status format |
+
+**Envelope rule:** classify packet shape explicitly. Selector envelopes (`0x44`, `0x45`, `0x70`) use one-byte destinations even though `0x70 > 0x60`. Address envelopes (`0x6A`, `0x69`, `0xCA`, `0xC9`) use 3-byte addresses. Do not rely on a blanket `type > 0x60` rule.
 
 ---
 
 ## Payload Structure
 
-### Button Press (0x44) - Length 0x1B (27 bytes)
+### Selector packets (`0x44`, `0x45`, `0x70`)
 
 ```
-Offset 17-18: [channel, 0x00]
-Offset 19:    0x03 (fixed)
-Offset 20-27: Encrypted payload (8 bytes)
+Offset 16:            num_dests
+Offset 17..17+N-1:    N one-byte selectors/channels
+Offset 17+N:          payload prefix byte 1
+Offset 18+N:          payload prefix byte 2
+Offset 19+N..26+N:    encrypted payload (8 bytes)
 ```
 
-### Command (0x6A) - Length 0x1D (29 bytes)
+Canonical single-channel packets use `N=1`, selector equal to `channel`, prefix bytes `00 03`, and length `0x1B`.
+
+### Command packets (`0x6A`, `0x69`) - Length 0x1D (29 bytes)
 
 ```
 Offset 17-19: Blind address (3 bytes, big-endian)
-Offset 20:    0x00
-Offset 21:    0x03 (or 0x04)
+Offset 20:    Payload prefix byte 1 (usually 0x00)
+Offset 21:    Payload prefix byte 2 (observed 0x03/0x04)
 Offset 22-29: Encrypted payload (8 bytes)
 ```
 
-### Status Response (0xCA/0xC9) - Length 0x1C-0x1E
+### Status Response (`0xCA`, `0xC9`) - Length 0x1C-0x1E
 
 ```
 Payload contains:
@@ -213,6 +222,9 @@ void calc_parity(uint8_t* msg) {
 | TILT | 0x24 | Tilt position |
 | DOWN / CLOSE | 0x40 | Move down / close |
 | INTERMEDIATE | 0x44 | Move to intermediate position |
+| PROGRAM / P | 0x80 | Programming/P, single-channel selector envelope |
+| PROGRAM / P GROUP | 0x81 | Programming/P, group/list selector envelope (RX/sniffing only) |
+| PROGRAM / P TARGETED | 0x84 | Programming/P, targeted 3-byte-address envelope (RX/sniffing only) |
 
 ### Light Commands (if applicable)
 
@@ -365,15 +377,15 @@ The power-cycle learn-in flow is documented in official elero handheld transmitt
 
 ### Affected transmitters
 
-- **TempoTel 2**
-  - Product page: https://www.elero.com/en/products/control-systems/tempotel-2/
-  - Manual PDF: https://www.elero.com/en/downloads-service/downloads/?tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bdownload%5D=324&cHash=19416ea19b003d4510544ed8c8638c8f
-- **VarioTel 2**
-  - Product page: https://www.elero.com/en/products/control-systems/variotel-2/
-  - Manual PDF: https://www.elero.com/en/downloads-service/downloads/?tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bdownload%5D=325&cHash=af753ee20fbd7a77ee897b17bf8f1830
-- **MonoTel 2**
-  - Product page: https://www.elero.com/en/products/control-systems/monotel-2/
-  - Manual PDF: https://www.elero.com/en/downloads-service/downloads/?tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bdownload%5D=320&cHash=2b5c961f89e27370f8023983cceef0c1
+Local reference PDFs:
+- `docs/manuals/monotel2.pdf`
+- `docs/manuals/tempotel2.pdf`
+- `docs/manuals/variotel2.pdf`
+
+Product references:
+- **TempoTel 2** — https://www.elero.com/en/products/control-systems/tempotel-2/
+- **VarioTel 2** — https://www.elero.com/en/products/control-systems/variotel-2/
+- **MonoTel 2** — https://www.elero.com/en/products/control-systems/monotel-2/
 
 ### Manual-backed programming flow
 
@@ -383,44 +395,54 @@ The manuals describe essentially the same learn-in sequence:
    - TempoTel 2: "switch the circuit breaker off and on again after a few seconds."
    - VarioTel 2: "switch the circuit breaker off and on again after a few seconds."
    - MonoTel 2: "switch the circuit breaker off and on again after a few seconds."
-2. **Receiver enters programming mode for about 5 minutes**
-3. **Press the transmitter programming button `P` briefly**
-4. The blind/curtain jogs to indicate programming mode
-5. Confirm learn-in with **UP** when movement starts upward
-6. Confirm learn-in with **DOWN** when movement starts downward
+2. **Receiver enters learn readiness for about 5 minutes**
+3. **Press transmitter programming button `P` for about 1 second**
+4. The blind/curtain moves up and down for about 2 minutes
+5. Confirm learn-in with **UP** within 1 second of upward movement starting
+6. Confirm learn-in with **DOWN** within 1 second of downward movement starting
+7. If the blind does not stop after DOWN confirmation, repeat learn-in
 
-### Architectural implications for esphome-elero
+Manual safety/UX implications:
+- Receivers power-cycled together can all enter learn readiness and react to `P`.
+- Guide users to put only the intended receiver into learn readiness where possible.
+- If more than 10 bidirectional receivers are learned into one channel simultaneously, transmitter group mode can be entered.
 
-- A learn-in feature should **not** be modeled as a normal cover/light runtime command (`command_cover`, `command_light`).
-- The C++ backend should expose **native learn-in primitives / domain APIs** that frontends can call.
-- The user-facing onboarding flow (power-cycle instructions, confirmation prompts, naming, save/apply) should live in the **web UI or Home Assistant**, not in the RF/backend layer.
-- The implementation should assume a roughly **5 minute programming window** after power restoration.
-- A single mains feed may power **multiple receivers**, and the manuals explicitly warn that they can all enter programming mode together after power is restored.
-- Therefore, UX and docs must warn users to isolate the intended motor where possible.
+### Observed P / learn-in RF envelopes
+
+The manuals confirm the user-visible procedure but do not publish RF internals. These are empirical captures from physical remotes:
+
+| Remote/context | Header/envelope | Addressing | Command | Decrypted payload | TX status |
+|----------------|-----------------|------------|---------|-------------------|-----------|
+| MonoTel single channel | `type=0x70 type2=0x10 hop=0x00` | `channel=selector`, `num_dests=1`, one-byte dest = selector | `0x80` | `00 00 80 00 00 00 00 40/C0` | Canonical hub TX |
+| TempoTel single channel | `type=0x70 type2=0x10 hop=0x00` | Same single-channel selector envelope | `0x80` | `00 00 80 00 00 00 00 40` | Canonical hub TX |
+| VarioTel selector capture | `type=0x70 type2=0x10 hop=0x00` | Same single-channel selector envelope | `0x80` | `00 00 80 00 00 00 00 C0` | Canonical hub TX |
+| VarioTel targeted single channel | `type=0x6A` followed by `type=0x69` | 3-byte destination = known receiver address | `0x84` | `00 00 84 00 00 00 00 80` | RX/sniffing only |
+| TempoTel learned group/central | `type=0x45 type2=0x10/0x11 hop=0x15/0x25` | `channel=0`, selector list observed `01 03 07` | `0x81` | `00 00 81 00 00 00 00 00` | RX/sniffing only |
+
+Practical interpretation:
+- `PROGRAM/P` is a semantic command family, not a single packet type.
+- `0x80`, `0x81`, and `0x84` are observed `PROGRAM/P` command bytes.
+- `0x70`, `0x45`, `0x6A`, and `0x69` are envelope/addressing choices around the same semantic action.
+- For hub-side learn-in TX, implement only the simple single-channel selector envelope: `len=0x1B`, `type=0x70`, `type2=0x10`, `hop=0x00`, `channel=<selected channel>`, `src=bwd=fwd=<hub source address>`, `num_dests=1`, `dest[0]=<selected channel>`, encrypted command `0x80`.
+- Keep `0x45/0x81` group P and `0x6A/0x69/0x84` targeted P as RX-only sniffing support unless real hardware validation says otherwise.
+- Do not expose RF command bytes in user-facing UI.
 
 ### Recommended backend/frontend split
 
 **Backend (C++ core):**
-- Own RF/domain logic for learn-in
-- Expose transport-agnostic functions such as:
-  - send learn/programming `P` action
-  - confirm learn step `UP`
-  - confirm learn step `DOWN`
-  - cancel learn-in
-  - optionally observe/report pairing-window/session state
-- Keep this logic separate from normal configured-device command dispatch because learn-in may happen before a blind address is known
+- Own RF/domain logic for learn-in.
+- Keep learn-in separate from normal configured-device command dispatch.
+- PROGRAMMING sends canonical `0x70/0x80` P.
+- CONFIRMING_UP sends existing channel/button UP (`0x44/0x20`).
+- CONFIRMING_DOWN sends existing channel/button DOWN (`0x44/0x40`).
+- Radio drivers transmit opaque packet bytes only; no chip driver should know P semantics.
 
 **Frontend (Web UI / Home Assistant):**
-- Guide the user through mains power cycling
-- Explain timing and safety constraints
-- Trigger backend learn-in primitives in the right order
-- Handle onboarding UX, naming, persistence, and retries
+- Guide power cycling and safety timing.
+- Warn that multiple receivers may react if they enter learn readiness together.
+- Trigger backend learn-in primitives; do not expose RF bytes.
 
-This keeps the backend reusable across multiple frontends while preserving the architecture rule that RF/business logic belongs in core C++ and UI flow belongs in adapters/clients.
-
-### Protocol note
-
-The manuals confirm the user-visible procedure, but they do **not** document the RF payload/command byte used by the `P` button. That packet sequence still must be determined empirically by sniffing real remote traffic.
+### Example channel-button repeat sequence
 
 ```c
 // Example transmission sequence for DOWN
@@ -472,28 +494,30 @@ spi_write_reg(0x08, 0x45);  // PKTCTRL0
 
 ### type2 Field (Offset 3)
 
-The secondary type byte varies between devices:
+The secondary type byte varies by envelope/context:
 
 | Value | Observed In | Notes |
 |-------|-------------|-------|
-| 0x00 | Most devices | Default/standard |
-| 0x10 | Some remotes | Seen in button press packets |
+| 0x00 | Normal targeted commands | Default in older command references |
+| 0x10 | Button/program envelopes, targeted VarioTel P | Common remote-originated packet info |
+| 0x11 | TempoTel group/list P | Alternate repeated group/list packet info |
+| 0x12 | VarioTel targeted P alternate (`type=0x69`) | Follow-up/alternate targeted program envelope |
 | 0x01 | Legacy devices | Alternate format |
 
-**Recommendation:** Use `type2=0x00` for commands unless reverse-engineering a specific remote.
+**Recommendation:** preserve captured `type2` when replaying/sniffing a known envelope. For generated backend learn-in P use canonical `type2=0x10`; for normal targeted commands use project defaults unless hardware evidence says otherwise.
 
 ### hop Field (Offset 4)
 
-The hop count typically starts at 0x0a (10) and decrements with each relay:
+For targeted command/status packets, hop typically starts at `0x0a` and may decrement through relays. Button/program envelopes also use this byte, but observed values are envelope/context-specific.
 
-| Value | Meaning |
-|-------|---------|
-| 0x0a | Direct transmission (no relays) |
-| 0x09 | Relayed once |
-| 0x08 | Relayed twice |
-| 0x00 | Max relay depth reached |
+| Value | Observed In | Notes |
+|-------|-------------|-------|
+| 0x0a | Targeted commands/status, VarioTel targeted P | Direct targeted communication in existing references |
+| 0x00 | Single-channel `type=0x70` P | Canonical program selector hop, not “max relay depth” in this context |
+| 0x15 | TempoTel group/list P | Group/list context |
+| 0x25 | TempoTel learned group P | Group/list context variant |
 
-**Recommendation:** Use `hop=0x0a` for direct communication.
+**Recommendation:** treat hop as envelope-specific. Preserve captured values when analyzing physical remotes; generate `hop=0x00` for canonical single-channel P and `hop=0x0a` for normal targeted commands.
 
 ---
 
@@ -550,4 +574,5 @@ Both TX and RX packets are logged in JSON format for machine parsing:
 - The receiver accepts arbitrary rolling counter values (does not require sequential counters from a specific remote)
 - Addresses can be discovered by sniffing RF traffic during normal remote operation
 - Status responses include RSSI for signal strength monitoring
-- Button messages (0x44) broadcast to all blinds on channel; command messages (0x6A) target specific blind addresses
+- Selector messages (`0x44`, `0x45`, `0x70`) use channel/list selectors; command messages (`0x6A`, `0x69`) target 3-byte blind addresses
+- Implement one TX path per semantic need; keep group/synchronized/targeted P variants RX-only until separately validated

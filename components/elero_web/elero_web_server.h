@@ -123,7 +123,6 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
   bool last_learn_in_busy_{false};
   uint32_t last_learn_in_src_{0};
   uint8_t last_learn_in_channel_{0};
-  uint8_t last_learn_in_cmd_{packet::command::INVALID};
 };
 
 }  // namespace elero

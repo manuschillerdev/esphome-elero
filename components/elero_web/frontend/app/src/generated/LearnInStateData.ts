@@ -25,10 +25,5 @@ interface LearnInStateData {
    * @example 5
    */
   'channel'?: number;
-  /**
-   * RF command byte used for the programming/P action, if any.
-   * @example 0x55
-   */
-  'programming_cmd'?: string;
 }
 export { LearnInStateData };

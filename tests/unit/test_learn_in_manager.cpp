@@ -56,14 +56,16 @@ TEST_F(LearnInManagerTest, FullLearnInFlowCompletes) {
   LearnInStartRequest req{};
   req.src_addr = 0x17A753;
   req.channel = 5;
-  req.programming_cmd = 0x55;
 
   ASSERT_TRUE(manager_.start(req));
   EXPECT_EQ(manager_.state(), LearnInState::PROGRAMMING);
 
-  for (int i = 0; i < packet::button::PACKETS; ++i) {
+  for (int i = 0; i < packet::program::PACKETS; ++i) {
     manager_.loop(mock_time_.millis(), &hub_);
-    ASSERT_EQ(hub_.last_cmd.payload[4], 0x55);
+    ASSERT_EQ(hub_.last_cmd.type, packet::msg_type::PROGRAM);
+    ASSERT_EQ(hub_.last_cmd.type2, packet::program::TYPE2);
+    ASSERT_EQ(hub_.last_cmd.hop, packet::program::HOP);
+    ASSERT_EQ(hub_.last_cmd.payload[4], packet::command::PROGRAM);
     hub_.complete(true);
     mock_time_.advance(packet::button::INTER_PACKET_MS);
   }
@@ -72,6 +74,9 @@ TEST_F(LearnInManagerTest, FullLearnInFlowCompletes) {
   ASSERT_TRUE(manager_.confirm_up());
   for (int i = 0; i < packet::button::PACKETS; ++i) {
     manager_.loop(mock_time_.millis(), &hub_);
+    ASSERT_EQ(hub_.last_cmd.type, packet::msg_type::BUTTON);
+    ASSERT_EQ(hub_.last_cmd.type2, packet::button::TYPE2);
+    ASSERT_EQ(hub_.last_cmd.hop, packet::button::HOP);
     ASSERT_EQ(hub_.last_cmd.payload[4], packet::command::UP);
     hub_.complete(true);
     mock_time_.advance(packet::button::INTER_PACKET_MS);
@@ -81,6 +86,9 @@ TEST_F(LearnInManagerTest, FullLearnInFlowCompletes) {
   ASSERT_TRUE(manager_.confirm_down());
   for (int i = 0; i < packet::button::PACKETS; ++i) {
     manager_.loop(mock_time_.millis(), &hub_);
+    ASSERT_EQ(hub_.last_cmd.type, packet::msg_type::BUTTON);
+    ASSERT_EQ(hub_.last_cmd.type2, packet::button::TYPE2);
+    ASSERT_EQ(hub_.last_cmd.hop, packet::button::HOP);
     ASSERT_EQ(hub_.last_cmd.payload[4], packet::command::DOWN);
     hub_.complete(true);
     mock_time_.advance(packet::button::INTER_PACKET_MS);
@@ -92,7 +100,6 @@ TEST_F(LearnInManagerTest, ConfirmOrderIsEnforced) {
   LearnInStartRequest req{};
   req.src_addr = 0x17A753;
   req.channel = 5;
-  req.programming_cmd = 0x55;
 
   ASSERT_TRUE(manager_.start(req));
   EXPECT_FALSE(manager_.confirm_down());
@@ -103,7 +110,6 @@ TEST_F(LearnInManagerTest, RetriesAndFailsAfterMaxRetries) {
   LearnInStartRequest req{};
   req.src_addr = 0x17A753;
   req.channel = 5;
-  req.programming_cmd = 0x55;
 
   ASSERT_TRUE(manager_.start(req));
 
@@ -121,7 +127,6 @@ TEST_F(LearnInManagerTest, TimesOutSession) {
   LearnInStartRequest req{};
   req.src_addr = 0x17A753;
   req.channel = 5;
-  req.programming_cmd = 0x55;
   req.session_timeout_ms = 100;
 
   ASSERT_TRUE(manager_.start(req));

@@ -162,21 +162,18 @@ void EleroWebServer::loop() {
   bool busy = learn_in.is_busy();
   uint32_t src = learn_in.src_addr();
   uint8_t channel = learn_in.channel();
-  uint8_t cmd = learn_in.programming_cmd();
   LearnInState state = this->parent_->learn_in_state();
 
   if (state != this->last_learn_in_state_ ||
       active != this->last_learn_in_active_ ||
       busy != this->last_learn_in_busy_ ||
       src != this->last_learn_in_src_ ||
-      channel != this->last_learn_in_channel_ ||
-      cmd != this->last_learn_in_cmd_) {
+      channel != this->last_learn_in_channel_) {
     this->last_learn_in_state_ = state;
     this->last_learn_in_active_ = active;
     this->last_learn_in_busy_ = busy;
     this->last_learn_in_src_ = src;
     this->last_learn_in_channel_ = channel;
-    this->last_learn_in_cmd_ = cmd;
     this->ws_broadcast("learn_in_state", this->build_learn_in_state_json_());
   }
 }
@@ -693,9 +690,6 @@ std::string EleroWebServer::build_learn_in_state_json_() const {
       root["src_address"] = hex_str(learn_in.src_addr());
       root["channel"] = learn_in.channel();
     }
-    if (learn_in.programming_cmd() != packet::command::INVALID) {
-      root["programming_cmd"] = hex_str8(learn_in.programming_cmd());
-    }
   });
 }
 
@@ -1183,10 +1177,7 @@ void EleroWebServer::handle_learn_in_start_(struct mg_connection *c, JsonObject 
     request.src_addr = derive_default_virtual_remote_address();
   }
   request.channel = root["channel"] | 0;
-  request.programming_cmd = parse_hex_or(root, "programming_cmd", packet::command::INVALID);
-  request.packets = parse_hex_or(root, "packets", packet::button::PACKETS);
-  request.type2 = parse_hex_or(root, "type2", packet::button::TYPE2);
-  request.hop = parse_hex_or(root, "hop", packet::button::HOP);
+  request.packets = parse_hex_or(root, "packets", packet::program::PACKETS);
   request.session_timeout_ms = root["session_timeout_ms"] | 300000;
 
   if (!this->parent_->start_learn_in(request)) {

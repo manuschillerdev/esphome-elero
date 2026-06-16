@@ -45,7 +45,7 @@ struct RfPacketInfo {
   uint8_t channel;
   uint8_t type;           ///< Message type byte (0x6a=command, 0xca=status, etc.)
   uint8_t type2;          ///< Secondary type byte
-  uint8_t command;        ///< Command byte (for command packets)
+  uint8_t command;        ///< Command byte (for command/selector packets)
   uint8_t state;          ///< State byte (for status packets)
   uint8_t cnt;            ///< Rolling counter value from packet
   float rssi;

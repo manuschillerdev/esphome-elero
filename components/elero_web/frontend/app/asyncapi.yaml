@@ -348,9 +348,9 @@ operations:
     summary: Start a learn-in session
     description: |
       Starts the backend learn-in state machine using the given virtual remote
-      source address, channel, and empirically determined programming command.
-      Frontends remain responsible for instructing the user to power-cycle the
-      motor before calling this.
+      source address and channel. The backend sends the canonical single-channel
+      programming/P packet; frontends remain responsible for instructing the user
+      to power-cycle the motor before calling this.
     messages:
       - $ref: "#/channels/eleroWs/messages/learnInStartMessage"
 
@@ -1006,9 +1006,11 @@ components:
           type: string
           description: |
             Message type byte (hex string):
-            - `0x44` — button press/release (broadcast)
+            - `0x44` — button press/release selector packet
+            - `0x45` — group/central selector packet
             - `0x6a` — targeted command to blind
             - `0x69` — alternate command format
+            - `0x70` — single-channel programming/P selector packet
             - `0xca` — status response from blind
             - `0xc9` — alternate status format
           examples: ["0xca"]
@@ -1019,13 +1021,16 @@ components:
         command:
           type: string
           description: |
-            Command byte (hex string, for command packets):
+            Command byte (hex string, for command/selector packets):
             - `0x00` — check (request status)
             - `0x10` — stop
             - `0x20` — up/open
             - `0x24` — tilt
             - `0x40` — down/close
             - `0x44` — intermediate position
+            - `0x80` — programming/P selector action
+            - `0x81` — programming/P group selector action
+            - `0x84` — programming/P targeted action
           examples: ["0x20"]
         state:
           type: string
@@ -1225,10 +1230,6 @@ components:
           type: integer
           description: RF channel for the current session, if any.
           examples: [5]
-        programming_cmd:
-          type: string
-          description: RF command byte used for the programming/P action, if any.
-          examples: ["0x55"]
 
     # ── Client → Server Payloads ──
 
@@ -1295,7 +1296,7 @@ components:
     LearnInStartPayload:
       type: object
       additionalProperties: false
-      required: [type, src_address, channel, programming_cmd]
+      required: [type, src_address, channel]
       description: |
         Starts a backend learn-in session. The frontend must already have guided
         the user through the required power-cycle of the target motor.
@@ -1310,23 +1311,9 @@ components:
         channel:
           type: integer
           description: RF channel to learn in
+          minimum: 1
+          maximum: 255
           examples: [5]
-        programming_cmd:
-          type: string
-          description: Empirically determined RF command byte for the remote's programming/P action.
-          examples: ["0x55"]
-        packets:
-          type: integer
-          description: Number of RF button packets per learn-in step (default 3)
-          examples: [3]
-        type2:
-          type: string
-          description: Secondary type byte for button packets (default 0x10)
-          examples: ["0x10"]
-        hop:
-          type: string
-          description: Hop count byte for button packets (default 0x00)
-          examples: ["0x00"]
         session_timeout_ms:
           type: integer
           description: Learn-in session timeout in milliseconds (default 300000)

@@ -22,9 +22,11 @@ interface RfData {
   'channel': number;
   /**
    * Message type byte (hex string):
-   * - `0x44` — button press/release (broadcast)
+   * - `0x44` — button press/release selector packet
+   * - `0x45` — group/central selector packet
    * - `0x6a` — targeted command to blind
    * - `0x69` — alternate command format
+   * - `0x70` — single-channel programming/P selector packet
    * - `0xca` — status response from blind
    * - `0xc9` — alternate status format
    * @example 0xca
@@ -36,13 +38,16 @@ interface RfData {
    */
   'type2': string;
   /**
-   * Command byte (hex string, for command packets):
+   * Command byte (hex string, for command/selector packets):
    * - `0x00` — check (request status)
    * - `0x10` — stop
    * - `0x20` — up/open
    * - `0x24` — tilt
    * - `0x40` — down/close
    * - `0x44` — intermediate position
+   * - `0x80` — programming/P selector action
+   * - `0x81` — programming/P group selector action
+   * - `0x84` — programming/P targeted action
    * @example 0x20
    */
   'command': string;

@@ -219,6 +219,18 @@ static RfPacketInfo make_command_pkt(uint32_t src, uint32_t dst, uint8_t cmd) {
     return pkt;
 }
 
+static RfPacketInfo make_selector_pkt(uint32_t src, uint8_t channel, uint8_t type, uint8_t cmd) {
+    RfPacketInfo pkt{};
+    pkt.timestamp_ms = esphome::millis();
+    pkt.src = src;
+    pkt.dst = channel;
+    pkt.type = type;
+    pkt.command = cmd;
+    pkt.channel = channel;
+    pkt.rssi = -55.0f;
+    return pkt;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Fixture
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -546,6 +558,23 @@ TEST_F(DeviceRegistryTest, RfCommand_UpdatesExistingRemote) {
     EXPECT_EQ(adapter_.added.size(), 0u);
     auto &rd = std::get<RemoteDevice>(registry_.find(0xBBBBBB, DeviceType::REMOTE)->logic);
     EXPECT_EQ(rd.last_command, pkt::command::DOWN);
+}
+
+TEST_F(DeviceRegistryTest, RfSelectorProgram_DiscoversRemote) {
+    registry_.set_nvs_enabled(true);
+    adapter_.clear();
+
+    registry_.on_rf_packet(make_selector_pkt(0xBBBBBB, 5, pkt::msg_type::PROGRAM,
+                                             pkt::command::PROGRAM),
+                           mock_time_.millis());
+
+    ASSERT_EQ(adapter_.added.size(), 1u);
+    auto *remote = registry_.find(0xBBBBBB, DeviceType::REMOTE);
+    ASSERT_NE(remote, nullptr);
+    auto &rd = std::get<RemoteDevice>(remote->logic);
+    EXPECT_EQ(rd.last_command, pkt::command::PROGRAM);
+    EXPECT_EQ(rd.last_target, 5u);
+    EXPECT_EQ(rd.last_channel, 5);
 }
 
 // Regression: before RemoteDevice::Published was introduced, every packet from a

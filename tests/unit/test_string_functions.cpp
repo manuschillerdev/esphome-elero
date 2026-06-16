@@ -57,6 +57,9 @@ TEST(CommandToString, AllKnownCommands) {
   EXPECT_STREQ(elero_command_to_string(command::TILT), "TILT");
   EXPECT_STREQ(elero_command_to_string(command::DOWN), "DOWN");
   EXPECT_STREQ(elero_command_to_string(command::INTERMEDIATE), "INTERMEDIATE");
+  EXPECT_STREQ(elero_command_to_string(command::PROGRAM), "PROGRAM");
+  EXPECT_STREQ(elero_command_to_string(command::PROGRAM_GROUP), "PROGRAM_GROUP");
+  EXPECT_STREQ(elero_command_to_string(command::PROGRAM_TARGET), "PROGRAM_TARGET");
 }
 
 TEST(CommandToString, UnknownCommand) {

@@ -404,6 +404,15 @@ void Elero::build_tx_packet_(const EleroCommand &cmd) {
     params.num_dests = cmd.num_dests;
     params.dest_channels = cmd.dest_channels;
     packet::build_group_button_packet(params, this->msg_tx_);
+  } else if (cmd.type == packet::msg_type::PROGRAM) {
+    packet::ProgramTxParams params;
+    params.counter = cmd.counter;
+    params.src_addr = cmd.src_addr;
+    params.channel = cmd.channel;
+    params.command = cmd.payload[4];
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    packet::build_program_packet(params, this->msg_tx_);
   } else if (cmd.type == packet::msg_type::BUTTON) {
     packet::ButtonTxParams params;
     params.counter = cmd.counter;
@@ -459,11 +468,10 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
   }
 
   // Extract fields relevant to this packet type
-  bool is_cmd = is_command_packet(r.type);
+  bool has_command = carries_command(r.type);
   bool is_status_pkt = is_status_packet(r.type);
-  bool is_btn = is_button_packet(r.type);
-  uint8_t command = (is_cmd || is_btn) ? r.payload[payload_offset::COMMAND] : 0;
-  uint8_t state = is_status_pkt ? r.payload[payload_offset::STATE] : 0;
+  uint8_t command = has_command ? r.command : 0;
+  uint8_t state = is_status_pkt ? r.state : 0;
 
   // Build RfPacketInfo
   RfPacketInfo pkt{};
