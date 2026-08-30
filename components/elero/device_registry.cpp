@@ -367,19 +367,20 @@ void DeviceRegistry::set_cover_position(Device &dev, float target) {
     notify_state_changed_(dev, now);
 }
 
-void DeviceRegistry::command_cover_tilt(Device &dev) {
+void DeviceRegistry::command_cover_tilt(Device &dev, bool open) {
     if (!dev.is_cover()) return;
 
     auto &cover = std::get<CoverDevice>(dev.logic);
     auto ctx = cover_context(dev.config);
     uint32_t now = millis();
 
-    bool tilt_queued = enqueue_or_warn_(dev, packet::command::TILT,
+    const uint8_t cmd = open ? packet::command::TILT_UP : packet::command::TILT_DOWN;
+    bool tilt_queued = enqueue_or_warn_(dev, cmd,
                                         packet::button::PACKETS,
                                         packet::msg_type::BUTTON,
                                         "command_cover_tilt");
     (void) enqueue_check_(dev, "command_cover_tilt");
-    cover.state = cover_sm::on_command(cover.state, packet::command::TILT, now, ctx);
+    cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
     if (tilt_queued) {
         cover.poll.on_command_sent(now);
     }
