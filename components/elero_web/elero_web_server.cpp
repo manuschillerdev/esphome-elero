@@ -120,9 +120,13 @@ void EleroWebServer::setup() {
     return;
   }
 
-  // Register as log listener to forward logs to WebSocket clients
+  // Register log callback to forward logs to WebSocket clients
   if (logger::global_logger != nullptr) {
-    logger::global_logger->add_log_listener(this);
+    logger::global_logger->add_log_callback(
+        this, [](void *inst, uint8_t level, const char *tag,
+                 const char *message, size_t message_len) {
+          static_cast<EleroWebServer *>(inst)->on_log(level, tag, message, message_len);
+        });
   }
 
   if (g_server != nullptr) {

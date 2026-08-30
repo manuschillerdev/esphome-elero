@@ -23,7 +23,7 @@ namespace elero {
 /// WebSocket server - acts as RF bridge, log forwarder, and CRUD proxy
 /// Server → Client: config (on connect), rf (packets), log (ESPHome logs), crud events
 /// Client → Server: cmd (blind commands), raw (raw RF packets), upsert_device, remove_device
-class EleroWebServer : public Component, public OutputAdapter, public logger::LogListener {
+class EleroWebServer : public Component, public OutputAdapter {
  public:
   void setup() override;
   void loop() override;
@@ -49,8 +49,8 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
   void on_group_upserted(const NvsGroupConfig &group) override;
   void on_group_removed(const char *id) override;
 
-  // LogListener interface - forward logs to WebSocket clients
-  void on_log(uint8_t level, const char *tag, const char *message, size_t message_len) override;
+  // Forwards logs to WebSocket clients (registered via Logger::add_log_callback)
+  void on_log(uint8_t level, const char *tag, const char *message, size_t message_len);
 
  protected:
   Elero *parent_{nullptr};
