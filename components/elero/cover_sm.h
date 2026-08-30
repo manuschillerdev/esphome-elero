@@ -23,6 +23,11 @@ constexpr float POSITION_CLOSED = 0.0f;   ///< Fully closed (bottom)
 constexpr float POSITION_OPEN = 1.0f;     ///< Fully open (top)
 constexpr float NO_TARGET = -1.0f;        ///< No intermediate target position
 
+/// Tilt requests above this split into "step the slats open", below into
+/// "step them closed". The motors report tilt as a boolean, so a requested
+/// tilt position only ever carries a direction.
+constexpr float TILT_OPEN_THRESHOLD = 0.5f;
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // STATES — each carries exactly its own data
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -97,8 +97,9 @@ class DeviceRegistry {
     /// Set a cover's target position (0.0–1.0). Determines direction, sets target, starts movement.
     void set_cover_position(Device &dev, float target);
 
-    /// Dispatch a tilt command to a cover device.
-    void command_cover_tilt(Device &dev);
+    /// Dispatch a directional slat step to a cover device.
+    /// @param open true steps the slats open, false steps them closed.
+    void command_cover_tilt(Device &dev, bool open);
 
     /// Dispatch a command byte to a light device (on/off + FSM + enqueue).
     void command_light(Device &dev, uint8_t cmd_byte);
