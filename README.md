@@ -12,6 +12,7 @@ ESPHome component for controlling Elero wireless blinds and lights via an ESP32 
 Pick a device config for your board:
 
 - [ESP32 + CC1101](docs/devices/esp32-cc1101.md) -- generic ESP32 with external CC1101 module
+- [ESP32-C6 + CC1101](docs/devices/esp32-c6-cc1101.md) -- ESP32-C6 with external CC1101 module
 - [Heltec WiFi LoRa 32 V4](docs/devices/heltec-lora-v4.md) -- onboard SX1262 (experimental)
 - [LILYGO LoRa32 V2.1](docs/devices/lilygo-lora32-sx1276.md) -- onboard SX1276 (experimental)
 - [LilyGO T-Embed](docs/devices/lilygo-t-embed.md) -- onboard CC1101

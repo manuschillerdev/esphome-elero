@@ -3,12 +3,12 @@ name = "esphome-elero"
 version = "0.2.0"
 description = "ESPHome external component for Elero wireless blinds"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = []
 
 [dependency-groups]
 dev = [
-    "esphome==2026.2.4",
+    "esphome==2026.8.1",
     "ruff>=0.11",
     "pytest>=8.0",
     # PlatformIO ESP32 build deps (pioarduino builder imports these unconditionally)
