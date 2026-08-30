@@ -4,10 +4,10 @@ import { type Column } from './ui/data-table'
 import { Blinds, Lightbulb, Copy, CheckCircle2, RemoteControl } from './icons'
 import {
   isStatusPacket, isCommandPacket, isButtonPacket,
-  getMsgTypeLabel, getCommandLabel, getStateLabel,
+  getMsgTypeLabel, getCommandLabel, getStateLabel, showToast,
   type RfPacketWithTimestamp, type AppDeviceType,
 } from '@/store'
-import { cn } from '@/lib/utils'
+import { cn, copyText } from '@/lib/utils'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -31,9 +31,14 @@ export function CopyPacketBtn({ pkt }: { pkt: RfPacketWithTimestamp }) {
 
   const onClick = () => {
     const { received_at: _, ...rest } = pkt as unknown as Record<string, unknown>
-    void navigator.clipboard.writeText(JSON.stringify(rest, null, 2))
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 1500)
+    void copyText(JSON.stringify(rest, null, 2)).then((ok) => {
+      if (!ok) {
+        showToast('error', 'Could not copy the packet — the browser blocked clipboard access')
+        return
+      }
+      copied.value = true
+      setTimeout(() => { copied.value = false }, 1500)
+    })
   }
 
   return (
