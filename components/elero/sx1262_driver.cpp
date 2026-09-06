@@ -61,7 +61,6 @@ bool Sx1262Driver::init() {
     if (readback != test_val) {
       ESP_LOGE(TAG, "SPI write verification failed: wrote 0x%02x to SYNCWORD, read 0x%02x", test_val, readback);
       ESP_LOGE(TAG, "  Check MOSI wiring (MISO may still work)");
-      this->failed_ = true;
       return false;
     }
   }
@@ -367,63 +366,32 @@ RadioHealth Sx1262Driver::check_health() {
   return RadioHealth::STUCK;
 }
 
+bool Sx1262Driver::restore_rx_() {
+  if (this->fem_pa_pin_) this->fem_pa_pin_->digital_write(false);
+  if (this->rx_ready_) this->rx_ready_->store(false, std::memory_order_release);
+  if (this->tx_done_) this->tx_done_->store(false, std::memory_order_release);
+  return this->set_standby_() && this->clear_irq_status_() &&
+         this->restore_rx_packet_params_() && this->set_dio_irq_for_rx_() &&
+         this->set_rx_() && this->read_chip_mode_() == 0x05;
+}
+
 void Sx1262Driver::recover() {
   this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
-
-  // ── Windowed escalation tracking ──────────────────────────────────────────
-  uint32_t now = millis();
-  if (now - this->recovery_window_start_ms_ > RECOVERY_WINDOW_MS) {
-    this->recovery_window_start_ms_ = now;
-    this->recoveries_in_window_ = 0;
-    this->resets_in_window_ = 0;
-  }
-  ++this->recoveries_in_window_;
-
-  // ── Level 1: Soft recovery (standby → clear → RX) ────────────────────────
-  ESP_LOGW(TAG, "recover: soft attempt %d in current window", this->recoveries_in_window_);
-  (void) this->set_standby_();
-
-  (void) this->clear_irq_status_();
-  if (this->rx_ready_) {
-    this->rx_ready_->store(false, std::memory_order_release);
-  }
-  if (this->tx_done_) {
-    this->tx_done_->store(false, std::memory_order_release);
-  }
-
-  (void) this->restore_rx_packet_params_();
-  (void) this->set_dio_irq_for_rx_();
-  (void) this->set_rx_();
-
-  // Verify: did we reach RX?
-  uint8_t chip_mode = this->read_chip_mode_();
-  if (chip_mode == 0x05) {
-    return;  // In RX — soft recovery succeeded
-  }
-
-  // Soft recovery already failed: reset immediately instead of waiting for more
-  // watchdog periods while the radio stays deaf.
-  ++this->resets_in_window_;
-  ESP_LOGE(TAG, "recover: soft recovery failed, RST reset (%d/%d in window, mode=0x%x)",
-           this->resets_in_window_, RESETS_BEFORE_FAILED, chip_mode);
-  this->reset();
-  if (!this->init()) {
-    ESP_LOGE(TAG, "recover: init failed after RST reset");
-  }
-  this->RadioDriver::mode_.store(RadioMode::RX, std::memory_order_release);
-
-  uint8_t reset_chip_mode = this->read_chip_mode_();
-  if (reset_chip_mode == 0x05) {
+  if (this->restore_rx_()) {
+    this->failed_resets_ = 0;
     return;
   }
 
-  if (this->resets_in_window_ >= RESETS_BEFORE_FAILED) {
-    ESP_LOGE(TAG, "recover: unrecoverable after %d resets, marking failed", this->resets_in_window_);
+  ESP_LOGW(TAG, "recover: RX restore failed, resetting radio");
+  // init owns the hardware reset and verifies the complete configuration + RX.
+  if (this->init()) {
+    this->failed_resets_ = 0;
+    return;
+  }
+  if (++this->failed_resets_ >= RESETS_BEFORE_FAILED) {
+    ESP_LOGE(TAG, "recover: unrecoverable after %u consecutive failed resets", this->failed_resets_);
     this->failed_ = true;
-    return;
   }
-
-  ESP_LOGW(TAG, "recover: reset completed but radio still not in RX (mode=0x%x)", reset_chip_mode);
 }
 
 void Sx1262Driver::set_frequency_regs(uint8_t f2, uint8_t f1, uint8_t f0) {
@@ -673,32 +641,7 @@ void Sx1262Driver::tx_set_terminal_result_for_fsm(SemtechTxTerminalResult result
 
 void Sx1262Driver::tx_recover_for_fsm() {
   this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
-
-  if (this->fem_pa_pin_) {
-    this->fem_pa_pin_->digital_write(false);
-  }
-
-  (void) this->set_standby_();
-  (void) this->clear_irq_status_();
-  if (this->rx_ready_) {
-    this->rx_ready_->store(false, std::memory_order_release);
-  }
-  if (this->tx_done_) {
-    this->tx_done_->store(false, std::memory_order_release);
-  }
-
-  (void) this->restore_rx_packet_params_();
-  (void) this->set_dio_irq_for_rx_();
-  (void) this->set_rx_();
-
-  uint8_t chip_mode = this->read_chip_mode_();
-  if (chip_mode != 0x05) {
-    ESP_LOGW(TAG, "RecoverTx: direct RX restore failed (mode=0x%x), escalating", chip_mode);
-    this->recover();
-    return;
-  }
-
-  this->RadioDriver::mode_.store(RadioMode::RX, std::memory_order_release);
+  this->recover();
 }
 
 void Sx1262Driver::dump_config() {

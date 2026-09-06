@@ -1,5 +1,4 @@
 #include "elero.h"
-#include "radio_rx.h"
 #include "elero_protocol.h"
 #include "elero_packet.h"
 #include "elero_strings.h"
@@ -68,15 +67,15 @@ void Elero::loop() {
 #endif
 }
 
-// ─── decode_fifo_packets_: parse multiple packets from raw FIFO buffer ───────
-void Elero::decode_fifo_packets_(size_t fifo_count) {
+// ─── receive_frame: parse driver output ───────
+void Elero::receive_frame(const uint8_t *frame, size_t fifo_count) {
 #ifdef USE_ESP32
   int64_t drain_start_us = esp_timer_get_time();
 #endif
 
   // Log raw bytes at VERBOSE level for analysis
   ESP_LOGV(TAG, "RAW RX %d bytes: %s", static_cast<int>(fifo_count),
-           format_hex_pretty(this->msg_rx_, fifo_count).c_str());
+           format_hex_pretty(frame, fifo_count).c_str());
 
   // Parse multiple packets from the buffer
   size_t offset = 0;
@@ -87,7 +86,7 @@ void Elero::decode_fifo_packets_(size_t fifo_count) {
       break;
     }
 
-    uint8_t pkt_len = this->msg_rx_[offset + packet::pkt_offset::LENGTH];
+    uint8_t pkt_len = frame[offset + packet::pkt_offset::LENGTH];
     size_t total = static_cast<size_t>(pkt_len) + packet::PACKET_TOTAL_OVERHEAD;
 
     // Incomplete packet at end of buffer
@@ -98,7 +97,7 @@ void Elero::decode_fifo_packets_(size_t fifo_count) {
       break;
     }
 
-    auto pkt = this->decode_packet(this->msg_rx_ + offset, fifo_count - offset);
+    auto pkt = this->decode_packet(frame + offset, fifo_count - offset);
     if (pkt) {
 #ifdef USE_ESP32
       if (xQueueSend(this->rx_queue_handle_, &(*pkt), 0) != pdPASS) {
@@ -245,128 +244,47 @@ void Elero::setup() {
 void Elero::rf_task_func_(void *arg) {
   auto *self = static_cast<Elero *>(arg);
   uint32_t last_stack_check_ms = 0;
-  bool tx_in_progress = false;
-  uint32_t tx_attempt = 0;
-  PendingTxCompletion completion;
-
+  RfTransport transport(*self->driver_, self->rx_ready_, self->tx_done_);
   for (;;) {
-    uint32_t now = millis();
-
-    completion.flush([&](const TxResult &result) {
-      return xQueueSend(self->tx_done_queue_handle_, &result, 0) == pdPASS;
-    });
-
-    auto post_tx_done = [&](const TxResult &result) { completion.put(result); };
-
-    auto drain_rx = [&]() {
-      if (self->driver_->failed()) return true;
-      return drain_radio_rx(*self->driver_, self->rx_ready_, self->msg_rx_,
-                            sizeof(self->msg_rx_), [&](size_t count) {
-        self->decode_fifo_packets_(count);
-      });
-    };
-    // A pending command must not flush a completed reply from the previous TX.
-    bool rx_idle = drain_rx();
-
-    // 1. Process TX requests from main loop (only when radio is idle)
-    if (!tx_in_progress && rx_idle && completion.empty()) {
-      RfTaskRequest req{};
-      if (xQueueReceive(self->tx_queue_handle_, &req, 0) == pdPASS) {
-        switch (req.type) {
-          case RfTaskRequest::Type::TX:
-            self->build_tx_packet_(req.cmd);
-            if (!self->driver_->failed() &&
-                self->driver_->load_and_transmit(self->msg_tx_, self->msg_tx_[0] + 1)) {
-              self->tx_owner_ = req.client;
-              tx_attempt = req.attempt;
-              tx_in_progress = true;
-            } else {
-              // load_and_transmit failed — report failure immediately
-              TxResult r{req.client, false, req.attempt};
-              post_tx_done(r);
-            }
-            break;
-
-          case RfTaskRequest::Type::REINIT_FREQ:
-            // Requests are handled only after the active TX has completed.
-            if (self->driver_->failed()) {
-              ESP_LOGW(TAG, "Frequency change rejected: radio failed");
-              break;
-            }
-            self->rx_ready_.store(false, std::memory_order_release);
-            self->tx_done_.store(false, std::memory_order_release);
-            self->freq2_.store(req.freq.f2);
-            self->freq1_.store(req.freq.f1);
-            self->freq0_.store(req.freq.f0);
-            self->driver_->set_frequency_regs(req.freq.f2, req.freq.f1, req.freq.f0);
-            break;
-        }
-      }
+    if (transport.step(*self)) {
+      ESP_LOGW(TAG, "TX complete (failed)");
+      self->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // 2. Progress TX via driver
-    if (tx_in_progress) {
-      auto result = self->driver_->failed() ? TxPollResult::FAILED : self->driver_->poll_tx();
-      switch (result) {
-        case TxPollResult::PENDING:
-          break;
-        case TxPollResult::SUCCESS:
-          ESP_LOGV(TAG, "TX complete (success)");
-          {
-            TxResult r{self->tx_owner_, true, tx_attempt};
-            self->tx_owner_ = nullptr;
-            tx_in_progress = false;
-            post_tx_done(r);
-          }
-          break;
-        case TxPollResult::FAILED:
-          ESP_LOGW(TAG, "TX complete (failed)");
-          self->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
-          {
-            TxResult r{self->tx_owner_, false, tx_attempt};
-            self->tx_owner_ = nullptr;
-            tx_in_progress = false;
-            post_tx_done(r);
-          }
-          break;
-      }
-    }
-
-    // Service fast responses as soon as poll_tx restores RX routing.
-    rx_idle = drain_rx();
-
-    // 4. Radio health check (only when idle, throttled internally to every 5s)
-    if (!tx_in_progress && rx_idle && !self->driver_->failed()) {
-      auto health = self->driver_->check_health();
-      switch (health) {
-        case RadioHealth::OK:
-          break;
-        case RadioHealth::FIFO_OVERFLOW:
-        case RadioHealth::STUCK:
-        case RadioHealth::UNRECOVERABLE:
-          self->driver_->recover();
-          break;
-      }
-    }
-
-    // 5. Stack watermark check (development aid, every 30s)
-    now = millis();
+    // Stack watermark check (development aid, every 30s)
+    const uint32_t now = millis();
     if (now - last_stack_check_ms > 30000) {
       last_stack_check_ms = now;
       ESP_LOGV(TAG, "RF task stack HWM: %u bytes free",
                static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));
     }
 
-    // 6. Feed task watchdog (registered in setup)
+    // Feed task watchdog (registered in setup)
     esp_task_wdt_reset();
 
-    // 7. Yield — sleep until ISR notification or 1ms timeout
+    // Yield — sleep until ISR notification or 1ms timeout
     //    This ensures Core 0 IDLE task runs (prevents TWDT) while keeping
     //    the RF task responsive to both RX interrupts and TX requests.
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
   }
 }
 #endif
+
+bool Elero::take_request(RfTaskRequest &request) {
+#ifdef USE_ESP32
+  return xQueueReceive(this->tx_queue_handle_, &request, 0) == pdPASS;
+#else
+  return false;
+#endif
+}
+
+bool Elero::publish_completion(const TxResult &result) {
+#ifdef USE_ESP32
+  return xQueueSend(this->tx_done_queue_handle_, &result, 0) == pdPASS;
+#else
+  return false;
+#endif
+}
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 #ifdef USE_ESP32
@@ -387,53 +305,11 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 #endif
 }
 
-void Elero::build_tx_packet_(const EleroCommand &cmd) {
-  if (cmd.type == packet::msg_type::BUTTON && cmd.num_dests > 1) {
-    // Group 0x44: multi-dest button packet
-    packet::GroupButtonTxParams params;
-    params.counter = cmd.counter;
-    params.src_addr = cmd.src_addr;
-    params.command = cmd.payload[4];
-    params.type2 = cmd.type2;
-    params.hop = cmd.hop;
-    params.num_dests = cmd.num_dests;
-    params.dest_channels = cmd.dest_channels;
-    packet::build_group_button_packet(params, this->msg_tx_);
-  } else if (cmd.type == packet::msg_type::PROGRAM) {
-    packet::ProgramTxParams params;
-    params.counter = cmd.counter;
-    params.src_addr = cmd.src_addr;
-    params.channel = cmd.channel;
-    params.command = cmd.payload[4];
-    params.type2 = cmd.type2;
-    params.hop = cmd.hop;
-    packet::build_program_packet(params, this->msg_tx_);
-  } else if (cmd.type == packet::msg_type::BUTTON) {
-    packet::ButtonTxParams params;
-    params.counter = cmd.counter;
-    params.src_addr = cmd.src_addr;
-    params.channel = cmd.channel;
-    params.command = cmd.payload[4];
-    params.type2 = cmd.type2;
-    params.hop = cmd.hop;
-    packet::build_button_packet(params, this->msg_tx_);
-  } else {
-    packet::TxParams params;
-    params.counter = cmd.counter;
-    params.dst_addr = cmd.dst_addr;
-    params.src_addr = cmd.src_addr;
-    params.channel = cmd.channel;
-    params.type = cmd.type;
-    params.type2 = cmd.type2;
-    params.hop = cmd.hop;
-    params.command = cmd.payload[4];
-    params.payload_1 = cmd.payload[0];
-    params.payload_2 = cmd.payload[1];
-    packet::build_tx_packet(params, this->msg_tx_);
-  }
-}
-
 bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
+  if (cmd.num_dests > packet::GROUP_MAX_DESTS) {
+    ESP_LOGW(TAG, "TX rejected: too many destinations (%u)", cmd.num_dests);
+    return false;
+  }
 #ifdef USE_ESP32
   ESP_LOGV(TAG_RF, "TX dst=0x%06x src=0x%06x cmd=0x%02x type=0x%02x cnt=%u",
            cmd.dst_addr, cmd.src_addr, cmd.payload[4], cmd.type, cmd.counter);

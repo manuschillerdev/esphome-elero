@@ -29,8 +29,7 @@ namespace esphome::elero::packet {
 // PACKET SIZE LIMITS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-constexpr uint8_t MAX_PACKET_SIZE = 57;       ///< Maximum valid packet length (FCC spec)
-constexpr uint8_t MAX_DESTINATIONS = 20;      ///< Maximum destination count
+constexpr uint8_t MAX_PACKET_SIZE = 57;       ///< Maximum supported packet body length
 constexpr uint8_t FIFO_LENGTH = 64;           ///< CC1101 FIFO size
 constexpr uint8_t MIN_PACKET_SIZE = 4;        ///< Minimum valid packet length
 
@@ -490,9 +489,10 @@ struct ProgramTxParams {
 /// @return Packet length (always program::MSG_LENGTH + 1 = 28)
 size_t build_program_packet(const ProgramTxParams& params, uint8_t* out_buf);
 
-/// Maximum number of destinations in a group 0x44 packet.
-/// Derived from CC1101 TX FIFO (64 bytes): TX buffer = 1 (len byte) + 26 (base) + N = 27 + N ≤ 64.
-constexpr uint8_t GROUP_MAX_DESTS = FIFO_LENGTH - 27;  // = 37
+/// Supported selector-group limit, shared by TX and RX on every chipset.
+/// Wire bytes include the length byte and two CRC bytes.
+constexpr uint8_t GROUP_MAX_DESTS = MAX_PACKET_SIZE - button::GROUP_BASE_LENGTH;
+static_assert(MAX_PACKET_SIZE + 3 <= FIFO_LENGTH);
 
 /// Parameters for building a 0x44 group button TX packet (multi-dest).
 struct GroupButtonTxParams {
@@ -568,5 +568,10 @@ struct EleroCommand {
   uint8_t num_dests{0};                                    ///< 0 = single-dest (default), >1 = group
   uint8_t dest_channels[packet::GROUP_MAX_DESTS]{};        ///< Channel IDs for group TX
 };
+
+namespace packet {
+/// Build the requested envelope into a FIFO_LENGTH buffer; zero rejects invalid size.
+size_t build_command_packet(const EleroCommand &cmd, uint8_t *out_buf);
+}  // namespace packet
 
 }  // namespace esphome::elero

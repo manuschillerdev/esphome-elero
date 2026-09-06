@@ -6,7 +6,7 @@
 ///
 /// ## What is NOT testable on host (requires ESP32 + CC1101 hardware):
 ///
-/// - RF task loop (rf_task_func_) — FreeRTOS task on Core 0, real SPI
+/// - FreeRTOS scheduling and real SPI timing (transport orchestration is host-tested)
 /// - ISR → atomic flag → task notification wakeup timing
 /// - Cross-core queue backpressure (rx_queue full, tx_done_queue ordering)
 /// - drain_fifo_() — real CC1101 FIFO burst reads, multi-packet parsing from wire
@@ -88,6 +88,9 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &) {
     return true;
 }
 
+bool Elero::take_request(RfTaskRequest &) { return false; }
+bool Elero::publish_completion(const TxResult &) { return false; }
+void Elero::receive_frame(const uint8_t *, size_t) {}
 void Elero::setup() {}
 void Elero::loop() {}
 void Elero::dump_config() {}

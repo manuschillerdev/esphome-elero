@@ -92,7 +92,7 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   r.num_dests = raw[pkt_offset::NUM_DESTS];
 
   // Validate destination count
-  if (r.num_dests > MAX_DESTINATIONS) {
+  if (r.num_dests > GROUP_MAX_DESTS) {
     r.reject_reason = "too_many_dests";
     return r;
   }
@@ -221,16 +221,11 @@ size_t build_program_packet(const ProgramTxParams& params, uint8_t* out_buf) {
 
 size_t build_group_button_packet(const GroupButtonTxParams& params, uint8_t* out_buf) {
   // Validate: num_dests must be >= 2 (otherwise use single-dest build_button_packet)
-  if (params.num_dests < 2 || params.dest_channels == nullptr) {
+  if (params.num_dests < 2 || params.num_dests > GROUP_MAX_DESTS || params.dest_channels == nullptr) {
     return 0;
   }
 
-  // Validate: resulting packet must fit in TX FIFO
-  // TX buffer = 1 (length byte) + packet_length = 1 + 26 + N
-  uint8_t packet_length = button::GROUP_BASE_LENGTH + params.num_dests;
-  if (static_cast<size_t>(packet_length) + 1 > FIFO_LENGTH) {
-    return 0;
-  }
+  const uint8_t packet_length = button::GROUP_BASE_LENGTH + params.num_dests;
 
   // Clear buffer
   memset(out_buf, 0, static_cast<size_t>(packet_length) + 1);
@@ -359,6 +354,53 @@ CoverStateResult map_cover_state(uint8_t elero_state) {
   }
 
   return r;
+}
+
+size_t build_command_packet(const EleroCommand &cmd, uint8_t *out_buf) {
+  if (cmd.num_dests > GROUP_MAX_DESTS) return 0;
+  if (cmd.type == packet::msg_type::BUTTON && cmd.num_dests > 1) {
+    // Group 0x44: multi-dest button packet
+    packet::GroupButtonTxParams params;
+    params.counter = cmd.counter;
+    params.src_addr = cmd.src_addr;
+    params.command = cmd.payload[4];
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    params.num_dests = cmd.num_dests;
+    params.dest_channels = cmd.dest_channels;
+    return packet::build_group_button_packet(params, out_buf);
+  } else if (cmd.type == packet::msg_type::PROGRAM) {
+    packet::ProgramTxParams params;
+    params.counter = cmd.counter;
+    params.src_addr = cmd.src_addr;
+    params.channel = cmd.channel;
+    params.command = cmd.payload[4];
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    return packet::build_program_packet(params, out_buf);
+  } else if (cmd.type == packet::msg_type::BUTTON) {
+    packet::ButtonTxParams params;
+    params.counter = cmd.counter;
+    params.src_addr = cmd.src_addr;
+    params.channel = cmd.channel;
+    params.command = cmd.payload[4];
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    return packet::build_button_packet(params, out_buf);
+  } else {
+    packet::TxParams params;
+    params.counter = cmd.counter;
+    params.dst_addr = cmd.dst_addr;
+    params.src_addr = cmd.src_addr;
+    params.channel = cmd.channel;
+    params.type = cmd.type;
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    params.command = cmd.payload[4];
+    params.payload_1 = cmd.payload[0];
+    params.payload_2 = cmd.payload[1];
+    return packet::build_tx_packet(params, out_buf);
+  }
 }
 
 }  // namespace esphome::elero::packet

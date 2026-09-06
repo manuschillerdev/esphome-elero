@@ -234,6 +234,7 @@ class Sx1262Driver : public RadioDriver,
   [[nodiscard]] bool set_dio_irq_for_tx_();
   [[nodiscard]] bool clear_irq_status_();
   [[nodiscard]] bool restore_rx_packet_params_();
+  [[nodiscard]] bool restore_rx_();
   [[nodiscard]] bool apply_errata_pa_clamping_();
   [[nodiscard]] bool apply_errata_sensitivity_();
   void apply_pn9_(uint8_t *data, size_t len);
@@ -287,11 +288,8 @@ class Sx1262Driver : public RadioDriver,
 
   // ── Escalating recovery ───────────────────────────────────────────────────
 
-  static constexpr uint32_t RECOVERY_WINDOW_MS = 60000;    ///< 60s observation window
-  static constexpr uint8_t RESETS_BEFORE_FAILED = 3;       ///< RST resets before marking failed
-  uint32_t recovery_window_start_ms_{0};
-  uint8_t recoveries_in_window_{0};
-  uint8_t resets_in_window_{0};
+  static constexpr uint8_t RESETS_BEFORE_FAILED = 3;
+  uint8_t failed_resets_{0};  ///< Consecutive failed full recoveries
 
   // ── Stats (atomic — incremented on Core 0, read from Core 1) ───────────────
 

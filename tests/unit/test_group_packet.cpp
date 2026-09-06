@@ -40,13 +40,12 @@ TEST(GroupPacketBuilding, RejectsNullChannels) {
   EXPECT_EQ(build_group_button_packet(params, buf), 0u);
 }
 
-TEST(GroupPacketBuilding, RejectsFifoOverflow) {
-  // GROUP_MAX_DESTS = 37, so 38 should fail
-  uint8_t channels[38];
+TEST(GroupPacketBuilding, RejectsUnsupportedGroupSize) {
+  uint8_t channels[GROUP_MAX_DESTS + 1];
   memset(channels, 1, sizeof(channels));
 
   GroupButtonTxParams params;
-  params.num_dests = 38;
+  params.num_dests = GROUP_MAX_DESTS + 1;
   params.dest_channels = channels;
 
   uint8_t buf[FIFO_LENGTH] = {0};
@@ -54,7 +53,6 @@ TEST(GroupPacketBuilding, RejectsFifoOverflow) {
 }
 
 TEST(GroupPacketBuilding, AcceptsMaxDests) {
-  // GROUP_MAX_DESTS = 37: should succeed
   uint8_t channels[GROUP_MAX_DESTS];
   for (uint8_t i = 0; i < GROUP_MAX_DESTS; ++i) channels[i] = i + 1;
 
@@ -68,9 +66,14 @@ TEST(GroupPacketBuilding, AcceptsMaxDests) {
   uint8_t buf[FIFO_LENGTH] = {0};
   size_t len = build_group_button_packet(params, buf);
 
-  // len = 26 + 37 + 1 (length byte) = 64 = FIFO_LENGTH
   EXPECT_EQ(len, static_cast<size_t>(button::GROUP_BASE_LENGTH + GROUP_MAX_DESTS + 1));
-  EXPECT_EQ(len, static_cast<size_t>(FIFO_LENGTH));
+  ASSERT_EQ(len, static_cast<size_t>(MAX_PACKET_SIZE + 1));
+  buf[len] = 180;
+  buf[len + 1] = 0x80;
+  auto parsed = parse_packet(buf, len + 2);
+  ASSERT_TRUE(parsed.valid) << parsed.reject_reason;
+  EXPECT_EQ(parsed.num_dests, GROUP_MAX_DESTS);
+  EXPECT_EQ(parsed.command, command::CHECK);
 }
 
 // ============================================================================
@@ -329,8 +332,7 @@ TEST(GroupPacketBuilding, SharedHeaderLayout) {
 // ============================================================================
 
 TEST(GroupConstants, MaxDests) {
-  // FIFO_LENGTH = 64, TX buffer = 1 + 26 + N, so N ≤ 37
-  EXPECT_EQ(GROUP_MAX_DESTS, 37);
+  EXPECT_EQ(GROUP_MAX_DESTS, 31);
 }
 
 TEST(GroupConstants, GroupBaseLength) {
@@ -348,4 +350,24 @@ TEST(GroupConstants, GroupChannel) {
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
+}
+
+TEST(GroupPacketBuilding, RejectsWrappedSizeBeforeTouchingOutput) {
+  uint8_t channel = 1;
+  GroupButtonTxParams params;
+  params.dest_channels = &channel;
+  params.num_dests = 255;
+  uint8_t buf[FIFO_LENGTH];
+  memset(buf, 0xA5, sizeof(buf));
+  EXPECT_EQ(build_group_button_packet(params, buf), 0u);
+  for (uint8_t byte : buf) EXPECT_EQ(byte, 0xA5);
+}
+
+TEST(GroupPacketBuilding, ParserRejectsFirstUnsupportedGroupLength) {
+  uint8_t buf[FIFO_LENGTH]{};
+  buf[0] = MAX_PACKET_SIZE + 1;
+  buf[pkt_offset::TYPE] = msg_type::BUTTON;
+  buf[pkt_offset::NUM_DESTS] = GROUP_MAX_DESTS + 1;
+  buf[buf[0] + 2] = 0x80;
+  EXPECT_FALSE(parse_packet(buf, buf[0] + 3).valid);
 }

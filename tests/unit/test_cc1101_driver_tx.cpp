@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -289,4 +290,19 @@ TEST_F(Cc1101DriverTxHelperTest, DrainStopsWhenReadPermanentlyFailsRadio) {
   EXPECT_TRUE(drain_radio_rx(radio, rx_ready_, buffer, sizeof(buffer),
                             [&](size_t) { FAIL() << "Failed read delivered data"; }));
   EXPECT_EQ(radio.polls, 1u);
+}
+
+TEST_F(Cc1101DriverTxHelperTest, LargestSupportedGroupReachesHardwareTx) {
+  esphome::spi::test_support::read_bytes = {CC1101_MARCSTATE_IDLE, CC1101_MARCSTATE_TX};
+  EleroCommand cmd{};
+  cmd.type = packet::msg_type::BUTTON;
+  cmd.num_dests = packet::GROUP_MAX_DESTS;
+  for (uint8_t i = 0; i < cmd.num_dests; ++i) cmd.dest_channels[i] = i + 1;
+  uint8_t buffer[packet::FIFO_LENGTH]{};
+  const size_t size = packet::build_command_packet(cmd, buffer);
+  ASSERT_EQ(size, packet::MAX_PACKET_SIZE + 1u);
+  EXPECT_TRUE(driver_.load_and_transmit(buffer, size));
+  EXPECT_EQ(driver_.mode(), RadioMode::TX);
+  const auto &writes = esphome::spi::test_support::writes;
+  EXPECT_NE(std::search(writes.begin(), writes.end(), buffer, buffer + size), writes.end());
 }

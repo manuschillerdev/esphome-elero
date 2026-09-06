@@ -146,6 +146,7 @@ target_link_libraries(test_cc1101_tx_fsm GTest::gtest_main)
 # CC1101 TX helper semantics (fallback success, strict TXBYTES, RX restore)
 add_executable(test_cc1101_driver_tx
   test_cc1101_driver_tx.cpp
+  ${ELERO_PACKET_SRC}
 )
 target_compile_definitions(test_cc1101_driver_tx PRIVATE UNIT_TEST)
 target_link_libraries(test_cc1101_driver_tx GTest::gtest_main)
@@ -160,13 +161,19 @@ target_link_libraries(test_freq_conversion GTest::gtest_main)
 add_executable(test_semtech_tx_fsm test_semtech_tx_fsm.cpp ${ELERO_SEMTECH_TX_FSM_SRC})
 target_link_libraries(test_semtech_tx_fsm GTest::gtest_main)
 foreach(chip sx1262 sx1276)
-  add_executable(test_${chip}_driver test_${chip}_driver.cpp)
+  add_executable(test_${chip}_driver test_${chip}_driver.cpp ${ELERO_PACKET_SRC})
   target_compile_definitions(test_${chip}_driver PRIVATE UNIT_TEST)
   target_link_libraries(test_${chip}_driver GTest::gtest_main)
 endforeach()
 
+add_executable(test_rf_transport test_rf_transport.cpp
+  ${COMPONENTS_DIR}/elero/rf_transport.cpp ${ELERO_PACKET_SRC} ${ELERO_TIME_PROVIDER_SRC})
+target_compile_definitions(test_rf_transport PRIVATE UNIT_TEST)
+target_link_libraries(test_rf_transport GTest::gtest_main)
+
 # Discover all tests
 include(GoogleTest)
+gtest_discover_tests(test_rf_transport)
 gtest_discover_tests(test_cc1101_compat)
 gtest_discover_tests(test_cc1101_tx_fsm)
 gtest_discover_tests(test_cc1101_driver_tx)
@@ -189,7 +196,7 @@ gtest_discover_tests(test_device_registry)
 
 # All test targets
 set(ALL_TEST_TARGETS
-  test_cc1101_compat test_cc1101_tx_fsm test_cc1101_driver_tx
+  test_rf_transport test_cc1101_compat test_cc1101_tx_fsm test_cc1101_driver_tx
   test_freq_conversion test_semtech_tx_fsm test_sx1262_driver test_sx1276_driver
   test_packet_vectors test_command_sender test_golden_vectors
   test_encryption_vectors test_parse_roundtrip test_string_functions

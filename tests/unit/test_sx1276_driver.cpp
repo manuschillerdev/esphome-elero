@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "radio_test_support.h"
 #include "elero/semtech_tx_fsm.cpp"
 #include "elero/sx1276_driver.cpp"
@@ -160,4 +161,24 @@ TEST_F(RadioDriverTest, Sx1276InitPropagatesStandbyTimeout) {
   Sx1276Driver driver;
   EXPECT_FALSE(driver.init());
   EXPECT_EQ(radio.rx_polls, 0u);
+}
+
+TEST_F(RadioDriverTest, Sx1276LargestSupportedGroupReachesHardwareTx) {
+  Sx1276Driver driver;
+  esphome::spi::test_support::transfer_bytes = {0,0, 0,0, 0,sx1276::IRQ1_MODE_READY, 0,sx1276::MODE_STANDBY};
+  EleroCommand cmd{};
+  cmd.type = packet::msg_type::BUTTON;
+  cmd.num_dests = packet::GROUP_MAX_DESTS;
+  for (uint8_t i = 0; i < cmd.num_dests; ++i) cmd.dest_channels[i] = i + 1;
+  uint8_t buffer[packet::FIFO_LENGTH]{};
+  const size_t size = packet::build_command_packet(cmd, buffer);
+  ASSERT_EQ(size, packet::MAX_PACKET_SIZE + 1u);
+  EXPECT_TRUE(driver.load_and_transmit(buffer, size));
+  EXPECT_EQ(driver.mode(), RadioMode::TX);
+  const auto crc = cc1101_crc16(buffer, size);
+  buffer[size] = crc >> 8;
+  buffer[size + 1] = crc & 0xFF;
+  cc1101_pn9_whiten(buffer, size + 2);
+  const auto &writes = esphome::spi::test_support::writes;
+  EXPECT_NE(std::search(writes.begin(), writes.end(), buffer, buffer + size + 2), writes.end());
 }

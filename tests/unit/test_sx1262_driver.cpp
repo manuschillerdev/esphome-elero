@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "radio_test_support.h"
 #include "elero/semtech_tx_fsm.cpp"
 #include "elero/sx1262_driver.cpp"
@@ -161,4 +162,82 @@ TEST_F(RadioDriverTest, Sx1262StandbyWithoutRxEventStillRequiresRecovery) {
   time_.advance(packet::timing::RADIO_WATCHDOG_INTERVAL);
   esphome::spi::test_support::transfer_bytes = {0,0x20, 0,0,0,0, 0,0,0,0};
   EXPECT_EQ(driver.check_health(), RadioHealth::STUCK);
+}
+
+TEST_F(RadioDriverTest, Sx1262RecoveryChecksEveryRestoreOperationBeforeAcceptingRx) {
+  // Eight restore operations plus the final GET_STATUS BUSY check.
+  for (unsigned fail_at = 1; fail_at <= 9; ++fail_at) {
+    Sx1262Driver driver;
+    esphome::spi::test_support::reset();
+    esphome::InternalGPIOPin busy;
+    unsigned calls = 0;
+    busy.read = [&] {
+      ++calls;
+      if (calls == fail_at) {
+        time_.advance(30);
+        return true;
+      }
+      // A failed soft restore must run init, including its SPI write proof.
+      if (calls == fail_at + 1)
+        esphome::spi::test_support::transfer_bytes = {0,0,0,0,0,0,0,0,0xA5};
+      if (calls == fail_at + 40)
+        esphome::spi::test_support::transfer_bytes = {0, 0x50};
+      return false;
+    };
+    driver.set_busy_pin(&busy);
+    driver.recover();
+    EXPECT_EQ(calls, fail_at + 41) << fail_at;
+    EXPECT_FALSE(driver.failed());
+  }
+}
+
+TEST_F(RadioDriverTest, Sx1262SuccessfulRecoveryClearsConsecutiveFailures) {
+  Sx1262Driver driver;
+  esphome::InternalGPIOPin busy;
+  bool fail = true;
+  unsigned calls = 0;
+  busy.read = [&] {
+    if (fail) {
+      time_.advance(30);
+      return true;
+    }
+    if (++calls == 9) esphome::spi::test_support::transfer_bytes = {0, 0x50};
+    return false;
+  };
+  driver.set_busy_pin(&busy);
+  for (int cycle = 0; cycle < 4; ++cycle) {
+    fail = true;
+    driver.recover();
+    driver.recover();
+    EXPECT_FALSE(driver.failed());
+    fail = false;
+    calls = 0;
+    driver.recover();
+    EXPECT_FALSE(driver.failed());
+  }
+  fail = true;
+  driver.recover();
+  driver.recover();
+  EXPECT_FALSE(driver.failed());
+  driver.recover();
+  EXPECT_TRUE(driver.failed());
+}
+
+TEST_F(RadioDriverTest, Sx1262LargestSupportedGroupReachesHardwareTx) {
+  Sx1262Driver driver;
+  EleroCommand cmd{};
+  cmd.type = packet::msg_type::BUTTON;
+  cmd.num_dests = packet::GROUP_MAX_DESTS;
+  for (uint8_t i = 0; i < cmd.num_dests; ++i) cmd.dest_channels[i] = i + 1;
+  uint8_t buffer[packet::FIFO_LENGTH]{};
+  const size_t size = packet::build_command_packet(cmd, buffer);
+  ASSERT_EQ(size, packet::MAX_PACKET_SIZE + 1u);
+  EXPECT_TRUE(driver.load_and_transmit(buffer, size));
+  EXPECT_EQ(driver.mode(), RadioMode::TX);
+  const auto crc = cc1101_crc16(buffer, size);
+  buffer[size] = crc >> 8;
+  buffer[size + 1] = crc & 0xFF;
+  cc1101_pn9_whiten(buffer, size + 2);
+  const auto &writes = esphome::spi::test_support::writes;
+  EXPECT_NE(std::search(writes.begin(), writes.end(), buffer, buffer + size + 2), writes.end());
 }

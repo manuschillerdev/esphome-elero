@@ -12,7 +12,7 @@ namespace elero {
 /// Non-blocking command queue and transmission logic for Elero cover and light components.
 ///
 /// All commands are sent as 0x44 button packets (3x with 10ms gaps), matching
-/// how physical Elero remotes transmit. The hub's build_tx_packet_() uses
+/// how physical Elero remotes transmit. packet::build_command_packet() uses
 /// the command template's type field to select the packet builder.
 ///
 /// State machine:

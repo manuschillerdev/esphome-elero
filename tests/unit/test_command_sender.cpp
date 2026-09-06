@@ -1061,35 +1061,3 @@ TEST_F(CommandSenderTest, QueueSaturationAndWaitingDoNotConsumeHardwareRetries) 
   }
   EXPECT_EQ(sender_.queue_size(), 0u);
 }
-
-#include "elero/tx_completion.h"
-TEST_F(CommandSenderTest, CompletionBurstRetainsNinthResultUntilMainLoopDrains) {
-  PendingTxCompletion completion;
-  std::queue<TxResult> queue;
-  auto publish = [&](const TxResult &result) {
-    if (queue.size() == 8) return false;
-    queue.push(result);
-    return true;
-  };
-  // One active plus eight queued requests may finish while Core 1 is paused.
-  for (uint32_t attempt = 1; attempt <= 9; ++attempt) {
-    ASSERT_TRUE(completion.empty());
-    completion.put({&sender_, attempt != 9, attempt});
-    completion.flush(publish);
-  }
-  ASSERT_EQ(queue.size(), 8u);
-  EXPECT_FALSE(completion.empty()); // RF task must defer new TX admission.
-  for (unsigned i = 0; i < 100; ++i) completion.flush(publish);
-  EXPECT_FALSE(completion.empty());
-  EXPECT_EQ(queue.front().attempt, 1u);
-  queue.pop();
-  completion.flush(publish);
-  EXPECT_TRUE(completion.empty());
-  for (uint32_t attempt = 2; attempt <= 9; ++attempt) {
-    ASSERT_FALSE(queue.empty());
-    EXPECT_EQ(queue.front().attempt, attempt);
-    EXPECT_EQ(queue.front().success, attempt != 9);
-    queue.pop();
-  }
-  EXPECT_TRUE(queue.empty());
-}

@@ -554,7 +554,7 @@ void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
 
     // num_dests is auto-cleared by CommandSender::advance_queue_() after the
     // group button entry drains. The CHECK commands queued above use
-    // type=COMMAND (0x6a) — build_tx_packet_ only checks num_dests for
+    // type=COMMAND (0x6a) — build_command_packet only uses selector destinations for
     // BUTTON type, so CHECKs are safe regardless of timing.
 
     ESP_LOGI(TAG, "Group command 0x%02x via remote 0x%06x to %zu %s devices (channels: %s)",

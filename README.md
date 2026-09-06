@@ -64,6 +64,9 @@ elero_web:
 
 If you're upgrading from a version where devices were defined under `cover: - platform: elero` / `light: - platform: elero`, see [docs/MIGRATION-yaml-to-nvs.md](docs/MIGRATION-yaml-to-nvs.md). The TL;DR: run `uv run scripts/migrate_yaml_to_json.py old.yaml -o backup.json`, remove the `cover:` / `light:` blocks from YAML, flash, then upload the backup via the web UI.
 
+Group transmissions support up to **31 destination channels per source address**
+on CC1101, SX1262, and SX1276. See [radio framing and limits](docs/RADIO_FRAMING.md#supported-group-size).
+
 ## Documentation
 
 - [Configuration Reference](docs/CONFIGURATION.md) -- full parameter tables for all modes

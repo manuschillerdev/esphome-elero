@@ -1,6 +1,6 @@
 # Radio framing and TX/RX ownership
 
-`Elero` builds and parses Elero envelopes. Radio drivers own SPI, interrupt
+`elero_packet` builds and parses Elero envelopes; `Elero` delivers decoded frames. Radio drivers own SPI, interrupt
 acknowledgment, receive framing, integrity checks, and return to RX. A driver
 returns only complete frames. The current parser boundary retains the legacy
 `[length | body | RSSI | LQI/CRC]` representation; it is an adapter format, not
@@ -33,7 +33,7 @@ requires completion and successful return to reception.
   ownership, including malformed or truncated frames.
 
 The shared CRC helper validates framing/integrity only. Elero packet types,
-address counts, and the protocol's 57-byte body limit are validated by the
+address counts, and the implementation's 57-byte body limit are validated by the
 protocol parser, not duplicated as a 27..30-byte driver whitelist.
 
 ## Evidence and hardware validation
@@ -87,3 +87,40 @@ The RF task retains one pending completion until the bounded Core 1 queue accept
 it. While it is pending, new TX admission pauses and RX processing continues.
 If the radio fails permanently, the task reports failures for accepted TX work
 without further SPI access, rather than stranding clients waiting for completion.
+
+## Supported group size
+
+Selector-group TX supports **2–31 destinations per packet/source address** on
+all three chipsets. A group body contains 26 fixed bytes plus one byte per
+selector. The existing 57-byte receive-body limit therefore allows 31 selectors:
+58 bytes submitted to the driver, 60 bytes on air including software/hardware
+CRC. Single-selector commands use the single-channel envelope. Oversized groups
+are rejected before RF enqueue; the builder also rejects them before writing.
+
+This is a software support limit, not a measured maximum supported by every
+motor. History matters: `07f0a95` derived the former 37-selector TX limit from
+the bare CC1101 FIFO, without reserving software CRC; `16e2630` introduced the
+former generic 20-destination parser guard before group TX existed. Neither
+established a hardware group limit. The shared constant now derives from the
+existing receive-body limit, keeping TX and RX compatible on all drivers.
+
+## Transport boundary
+
+`RfTransport::step()` owns one bounded RF iteration: flush retained completions,
+drain RX, admit at most one request, advance TX, drain fast replies, and check
+idle radio health. Its three hub hooks are nonblocking request/completion queues
+and synchronous frame delivery. The hub retains task creation, ISR notification,
+watchdog feeding, sleep, timestamps/decoding, and Core 1 client dispatch. Frequency
+accessors report the latest accepted configuration request; hardware applies
+requests in queue order after TX and unread RX have finished.
+
+SX1262 watchdog and TX recovery use the same checked restore sequence. Any
+required command failure or failure to verify RX triggers full initialization;
+three consecutive failed full recoveries mark the radio failed. A successful
+soft restore or initialization clears that count.
+
+Host transport tests exercise production orchestration with bounded queues and
+a fake radio, including partial RX, rejected frames, missed RX notifications,
+bursts, completion saturation, stale attempts, failed drivers, and frequency
+ordering. SPI-facing driver tests separately verify maximum-size group TX and
+recovery faults. These tests do not establish RF timing or burst performance.
