@@ -1,5 +1,7 @@
 #pragma once
 
+#include "tx_completion.h"
+
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/preferences.h"
@@ -66,6 +68,7 @@ struct RfPacketInfo {
 struct RfTaskRequest {
   enum class Type : uint8_t { TX, REINIT_FREQ } type;
   TxClient *client{nullptr};  ///< TX: completion callback target (stable ptr on Device)
+  uint32_t attempt{0};
   union {
     EleroCommand cmd;                            ///< TX: command to transmit
     struct { uint8_t f2, f1, f0; } freq;         ///< REINIT_FREQ: new frequency registers
@@ -74,11 +77,7 @@ struct RfTaskRequest {
   RfTaskRequest() : type(Type::TX), client(nullptr), cmd{} {}
 };
 
-/// Result from RF task -> main loop (via tx_done_queue).
-struct TxResult {
-  TxClient *client{nullptr};  ///< nullptr for fire-and-forget (raw TX)
-  bool success{false};
-};
+
 
 }  // namespace elero
 }  // namespace esphome

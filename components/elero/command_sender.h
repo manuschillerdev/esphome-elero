@@ -27,8 +27,6 @@ class CommandSender : public TxClient {
     TX_PENDING,
   };
 
-  static constexpr uint32_t TX_PENDING_TIMEOUT_MS = packet::timing::TX_PENDING_TIMEOUT;
-
   CommandSender() = default;
 
   template<typename Hub>
@@ -49,7 +47,6 @@ class CommandSender : public TxClient {
         }
 
         if (this->command_queue_.empty()) {
-          this->cancelled_ = false;
           this->state_ = State::IDLE;
           return;
         }
@@ -69,8 +66,7 @@ class CommandSender : public TxClient {
 
         if (parent->request_tx(this, this->command_)) {
           this->state_ = State::TX_PENDING;
-          this->tx_start_time_ = now;
-          ESP_LOGV(tag, "TX started for 0x%06x cmd=0x%02x, packet %d/%d",
+          ESP_LOGV(tag, "TX queued for 0x%06x cmd=0x%02x, packet %d/%d",
                    this->command_.dst_addr, this->command_.payload[4],
                    this->send_packets_ + 1, this->command_queue_.front().packets);
         } else {
@@ -79,20 +75,8 @@ class CommandSender : public TxClient {
         break;
 
       case State::TX_PENDING:
-        if ((now - this->tx_start_time_) > TX_PENDING_TIMEOUT_MS) {
-          ESP_LOGW(tag, "TX_PENDING timeout for 0x%06x after %ums, treating as failure",
-                   this->command_.dst_addr, TX_PENDING_TIMEOUT_MS);
-          ++this->send_retries_;
-          if (this->send_retries_ > packet::limits::SEND_RETRIES) {
-            ESP_LOGE(tag, "Max retries for 0x%06x after timeout, dropping command 0x%02x",
-                     this->command_.dst_addr, this->command_.payload[4]);
-            this->advance_queue_();
-          } else {
-            uint32_t backoff_ms = this->calculate_backoff_ms_();
-            this->next_attempt_ms_ = now + backoff_ms;
-            this->state_ = State::WAIT_DELAY;
-          }
-        }
+        // Queue waiting is not a hardware attempt. Driver FSMs own TX timeouts
+        // and the RF task retains completion until Core 1 can receive it.
         break;
     }
   }
@@ -101,16 +85,6 @@ class CommandSender : public TxClient {
     if (this->state_ != State::TX_PENDING) {
       ESP_LOGD(this->log_tag_, "Ignoring stale on_tx_complete for 0x%06x (state=%d, success=%d)",
                this->command_.dst_addr, static_cast<int>(this->state_), success);
-      return;
-    }
-
-    if (this->cancelled_) {
-      ESP_LOGD(this->log_tag_, "TX for 0x%06x completed but was cancelled, ignoring",
-               this->command_.dst_addr);
-      this->cancelled_ = false;
-      this->send_packets_ = 0;
-      this->send_retries_ = 0;
-      this->state_ = State::IDLE;
       return;
     }
 
@@ -187,15 +161,9 @@ class CommandSender : public TxClient {
     this->last_tx_time_ = 0;
     this->next_attempt_ms_ = 0;
 
-    if (this->state_ == State::TX_PENDING) {
-      // Already-posted RF work cannot be retracted from the Core 0 TX queue.
-      // clear_queue() is therefore best-effort cancellation: the logical queue is
-      // cleared immediately and the eventual completion callback is ignored.
-      this->increase_counter_();
-      this->cancelled_ = true;
-    } else {
-      this->state_ = State::IDLE;
-    }
+    if (this->state_ == State::TX_PENDING) this->increase_counter_();
+    this->invalidate_tx_attempt();
+    this->state_ = State::IDLE;
   }
 
   State state() const { return this->state_; }
@@ -246,10 +214,8 @@ class CommandSender : public TxClient {
   State state_{State::IDLE};
   uint32_t last_tx_time_{0};
   uint32_t next_attempt_ms_{packet::button::INTER_PACKET_MS};
-  uint32_t tx_start_time_{0};
   uint8_t send_packets_{0};
   uint8_t send_retries_{0};
-  bool cancelled_{false};
   const char *log_tag_{"sender"};
 };
 

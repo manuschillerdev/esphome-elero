@@ -78,6 +78,7 @@ class MockElero {
 
   /// Currently pending client (simulates hub ownership)
   TxClient* pending_client{nullptr};
+  uint32_t pending_attempt{0};
 
   /// Request to transmit a command.
   bool request_tx(TxClient* client, const EleroCommand& cmd) {
@@ -86,6 +87,7 @@ class MockElero {
 
     if (next_request_result) {
       pending_client = client;
+      pending_attempt = client->begin_tx_attempt();
     }
     return next_request_result;
   }
@@ -95,7 +97,7 @@ class MockElero {
     if (pending_client != nullptr) {
       TxClient* client = pending_client;
       pending_client = nullptr;
-      client->on_tx_complete(success);
+      client->complete_tx_attempt(pending_attempt, success);
     }
   }
 
@@ -275,8 +277,8 @@ TEST_F(CommandSenderTest, ClearQueueDuringTx) {
   // Clear queue while TX is in progress
   sender_.clear_queue();
 
-  // State remains TX_PENDING (can't abort mid-TX)
-  EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
+  // Logical cancellation releases ownership immediately.
+  EXPECT_EQ(sender_.state(), CommandSender::State::IDLE);
 
   // When TX completes, it should be ignored
   mock_hub_.complete_tx(true);
@@ -297,38 +299,20 @@ TEST_F(CommandSenderTest, ClearQueueDuringTx_FailureIgnored) {
   EXPECT_FALSE(sender_.has_pending_commands());
 }
 
-TEST_F(CommandSenderTest, ClearQueueDuringTx_TimeoutRecovery) {
-  // This tests the edge case where:
-  // 1. TX starts
-  // 2. clear_queue() is called (sets cancelled_, empties queue)
-  // 3. Timeout fires before callback (moves to WAIT_DELAY)
-  // 4. process_queue called - must not crash on empty queue
-  sender_.enqueue(packet::command::UP);
-  mock_time_.advance(packet::button::INTER_PACKET_MS);
-
-  // Start TX
+TEST_F(CommandSenderTest, CancelledCommandCannotDiscardReplacementCompletion) {
+  ASSERT_TRUE(sender_.enqueue(packet::command::UP, 1));
+  mock_time_.advance(10);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
-  EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
-
-  // Clear queue during TX
+  const auto old_attempt = mock_hub_.pending_attempt;
   sender_.clear_queue();
-  EXPECT_FALSE(sender_.has_pending_commands());
-
-  // Timeout fires (hub never called back)
-  mock_time_.advance(CommandSender::TX_PENDING_TIMEOUT_MS + 10);
+  ASSERT_TRUE(sender_.enqueue(packet::command::DOWN, 1));
+  mock_time_.advance(5000);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
-
-  // Should be in WAIT_DELAY after timeout (with backoff applied)
-  EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
-
-  // Next process_queue should NOT crash on empty queue
-  // Need to wait for backoff (DELAY << 1 for first retry) before queue check happens
-  mock_time_.advance(packet::button::INTER_PACKET_MS << 1);
-  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
-
-  // Should detect empty queue and go to IDLE
-  EXPECT_EQ(sender_.state(), CommandSender::State::IDLE);
-  EXPECT_FALSE(sender_.has_pending_commands());
+  ASSERT_EQ(mock_hub_.recorded_requests.size(), 2u);
+  sender_.complete_tx_attempt(old_attempt, true);
+  EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
+  mock_hub_.complete_tx(true);
+  EXPECT_EQ(sender_.queue_size(), 0u);
 }
 
 // ============================================================================
@@ -355,10 +339,10 @@ TEST_F(CommandSenderTest, RetriesWhenRadioBusy) {
 }
 
 // ============================================================================
-// TX_PENDING Timeout Tests
+// Hardware failure and queue wait tests
 // ============================================================================
 
-TEST_F(CommandSenderTest, TimeoutInTxPending_TriggersRetry) {
+TEST_F(CommandSenderTest, HardwareTimeoutTriggersRetry) {
   sender_.enqueue(packet::command::UP);
   mock_time_.advance(packet::button::INTER_PACKET_MS);
 
@@ -366,8 +350,9 @@ TEST_F(CommandSenderTest, TimeoutInTxPending_TriggersRetry) {
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
 
-  // Simulate hub never calling back - advance time past timeout
-  mock_time_.advance(CommandSender::TX_PENDING_TIMEOUT_MS + 1);
+  // The driver reports a real hardware timeout after queue waiting.
+  mock_time_.advance(5000);
+    mock_hub_.complete_tx(false);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
 
   // Should have transitioned to WAIT_DELAY for retry
@@ -380,7 +365,7 @@ TEST_F(CommandSenderTest, TimeoutInTxPending_TriggersRetry) {
   EXPECT_EQ(mock_hub_.recorded_requests.size(), 2u);
 }
 
-TEST_F(CommandSenderTest, TimeoutInTxPending_DropsAfterMaxRetries) {
+TEST_F(CommandSenderTest, HardwareFailuresDropAfterMaxRetries) {
   sender_.enqueue(packet::command::UP);
 
   for (int i = 0; i <= packet::limits::SEND_RETRIES; ++i) {
@@ -388,7 +373,8 @@ TEST_F(CommandSenderTest, TimeoutInTxPending_DropsAfterMaxRetries) {
     sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
     ASSERT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
 
-    mock_time_.advance(CommandSender::TX_PENDING_TIMEOUT_MS + 1);
+    mock_time_.advance(5000);
+    mock_hub_.complete_tx(false);
     sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   }
 
@@ -396,18 +382,18 @@ TEST_F(CommandSenderTest, TimeoutInTxPending_DropsAfterMaxRetries) {
   EXPECT_FALSE(sender_.has_pending_commands());
 }
 
-TEST_F(CommandSenderTest, NoTimeoutIfCallbackArrives) {
+TEST_F(CommandSenderTest, LongQueueWaitDoesNotPreventCompletion) {
   sender_.enqueue(packet::command::UP);
   mock_time_.advance(packet::button::INTER_PACKET_MS);
 
   // Start TX
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
 
-  // Advance time but not past timeout
-  mock_time_.advance(CommandSender::TX_PENDING_TIMEOUT_MS - 100);
+  // Waiting longer than the former client timeout must not trigger a retry.
+  mock_time_.advance(5000);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
 
-  // Still in TX_PENDING (no timeout yet)
+  // Still awaiting the original attempt.
   EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
 
   // Callback arrives
@@ -417,7 +403,7 @@ TEST_F(CommandSenderTest, NoTimeoutIfCallbackArrives) {
   EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
 }
 
-TEST_F(CommandSenderTest, StaleCallbackAfterTimeoutIsIgnored) {
+TEST_F(CommandSenderTest, DuplicateCallbackAfterHardwareFailureIsIgnored) {
   sender_.enqueue(packet::command::UP);
   mock_time_.advance(packet::button::INTER_PACKET_MS);
 
@@ -425,14 +411,16 @@ TEST_F(CommandSenderTest, StaleCallbackAfterTimeoutIsIgnored) {
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
 
-  // Timeout fires - transitions to WAIT_DELAY for retry
-  mock_time_.advance(CommandSender::TX_PENDING_TIMEOUT_MS + 10);
+  const auto old_attempt = mock_hub_.pending_attempt;
+  // Hardware failure transitions to WAIT_DELAY for retry
+  mock_time_.advance(5000);
+  mock_hub_.complete_tx(false);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
   EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
 
   // Now hub finally calls back (stale callback) - should be ignored
   size_t queue_before = sender_.queue_size();
-  mock_hub_.complete_tx(true);
+  sender_.complete_tx_attempt(old_attempt, true);
 
   // State should remain WAIT_DELAY, queue unchanged
   EXPECT_EQ(sender_.state(), CommandSender::State::WAIT_DELAY);
@@ -1013,4 +1001,95 @@ TEST_F(CommandSenderTest, CounterWrapsAtMax) {
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
+}
+
+TEST_F(CommandSenderTest, ReviewLateCompletionMustNotCompleteRetry) {
+  ASSERT_TRUE(sender_.enqueue(0x20, 1));
+  mock_time_.advance(10);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  const auto old_attempt = mock_hub_.pending_attempt;
+  mock_time_.advance(5000);
+  mock_hub_.complete_tx(false);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  mock_time_.advance(20);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  ASSERT_EQ(mock_hub_.recorded_requests.size(), 2u);
+  sender_.complete_tx_attempt(old_attempt, true); // delayed completion of attempt 1
+  EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
+  EXPECT_EQ(sender_.queue_size(), 1u);
+  mock_hub_.complete_tx(true);
+  EXPECT_EQ(sender_.state(), CommandSender::State::IDLE);
+}
+
+TEST_F(CommandSenderTest, DuplicateCompletionCannotCompleteNextAttempt) {
+  ASSERT_TRUE(sender_.enqueue(0x20, 2));
+  mock_time_.advance(10);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  const auto first_attempt = mock_hub_.pending_attempt;
+  mock_hub_.complete_tx(true);
+  mock_time_.advance(packet::button::INTER_PACKET_MS);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  sender_.complete_tx_attempt(first_attempt, true);
+  EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
+  mock_hub_.complete_tx(true);
+  EXPECT_EQ(sender_.state(), CommandSender::State::IDLE);
+}
+
+TEST_F(CommandSenderTest, QueueSaturationAndWaitingDoNotConsumeHardwareRetries) {
+  ASSERT_TRUE(sender_.enqueue(packet::command::UP, 1));
+  mock_hub_.next_request_result = false;
+  for (unsigned i = 0; i < 20; ++i) {
+    mock_time_.advance(1000);
+    sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  }
+  EXPECT_EQ(sender_.queue_size(), 1u);
+  mock_hub_.next_request_result = true;
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  const auto requests = mock_hub_.recorded_requests.size();
+  for (unsigned i = 0; i < 20; ++i) {
+    mock_time_.advance(1000);
+    sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  }
+  EXPECT_EQ(mock_hub_.recorded_requests.size(), requests);
+  for (unsigned failure = 0; failure <= packet::limits::SEND_RETRIES; ++failure) {
+    mock_hub_.complete_tx(false);
+    if (failure < packet::limits::SEND_RETRIES) {
+      ASSERT_EQ(sender_.queue_size(), 1u);
+      mock_time_.advance(1000);
+      sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+    }
+  }
+  EXPECT_EQ(sender_.queue_size(), 0u);
+}
+
+#include "elero/tx_completion.h"
+TEST_F(CommandSenderTest, CompletionBurstRetainsNinthResultUntilMainLoopDrains) {
+  PendingTxCompletion completion;
+  std::queue<TxResult> queue;
+  auto publish = [&](const TxResult &result) {
+    if (queue.size() == 8) return false;
+    queue.push(result);
+    return true;
+  };
+  // One active plus eight queued requests may finish while Core 1 is paused.
+  for (uint32_t attempt = 1; attempt <= 9; ++attempt) {
+    ASSERT_TRUE(completion.empty());
+    completion.put({&sender_, attempt != 9, attempt});
+    completion.flush(publish);
+  }
+  ASSERT_EQ(queue.size(), 8u);
+  EXPECT_FALSE(completion.empty()); // RF task must defer new TX admission.
+  for (unsigned i = 0; i < 100; ++i) completion.flush(publish);
+  EXPECT_FALSE(completion.empty());
+  EXPECT_EQ(queue.front().attempt, 1u);
+  queue.pop();
+  completion.flush(publish);
+  EXPECT_TRUE(completion.empty());
+  for (uint32_t attempt = 2; attempt <= 9; ++attempt) {
+    ASSERT_FALSE(queue.empty());
+    EXPECT_EQ(queue.front().attempt, attempt);
+    EXPECT_EQ(queue.front().success, attempt != 9);
+    queue.pop();
+  }
+  EXPECT_TRUE(queue.empty());
 }

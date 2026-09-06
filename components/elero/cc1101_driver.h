@@ -57,6 +57,7 @@ class CC1101Driver : public RadioDriver,
   void abort_tx() override;
 
   bool has_data() override;
+  bool receiving() const override { return rx_packet_length_ != 0; }
   size_t read_fifo(uint8_t *buf, size_t max_len) override;
 
   RadioHealth check_health() override;
@@ -111,9 +112,9 @@ class CC1101Driver : public RadioDriver,
 
   // ── Radio control ──────────────────────────────────────────────────────────
 
-  void flush_and_rx();
-  void init_registers();
-  void check_radio_health_();
+  [[nodiscard]] bool flush_and_rx();
+  [[nodiscard]] bool init_registers();
+  void clear_recovery_failures_();
 
 
   // ── TX state machine ───────────────────────────────────────────────────────
@@ -132,6 +133,10 @@ class CC1101Driver : public RadioDriver,
   uint32_t tx_state_enter_time_{0};
   uint8_t tx_verify_retry_count_{0};
   uint8_t tx_buf_[CC1101_FIFO_LENGTH];  ///< Copy of packet for TX
+  uint8_t rx_packet_length_{0};  ///< Consumed length byte; body stays in hardware until complete.
+  uint32_t rx_packet_started_ms_{0};
+  static constexpr uint32_t RX_PACKET_TIMEOUT_MS = 20;
+
   size_t tx_len_{0};                    ///< Length of data in tx_buf_
 
   // ── Frequency registers ────────────────────────────────────────────────────
@@ -150,13 +155,11 @@ class CC1101Driver : public RadioDriver,
   static constexpr uint32_t TX_DONE_TIMEOUT_MS = 50;
   static constexpr uint32_t RX_READY_TIMEOUT_MS = 25;
 
-  // Tracks recovery frequency to escalate: flush → reset → mark_failed.
-  static constexpr uint32_t RECOVERY_WINDOW_MS = 60000;    ///< Window for counting recoveries
-  static constexpr uint8_t RECOVERIES_BEFORE_RESET = 3;    ///< Flush attempts before full reset
-  static constexpr uint8_t RESETS_BEFORE_FAILED = 3;       ///< Resets before marking component failed
-  uint32_t recovery_window_start_ms_{0};
-  uint8_t recoveries_in_window_{0};
-  uint8_t resets_in_window_{0};
+  // Consecutive failures escalate: flush → reset → failed; success clears both.
+  static constexpr uint8_t RECOVERIES_BEFORE_RESET = 3;
+  static constexpr uint8_t RESETS_BEFORE_FAILED = 3;
+  uint8_t failed_recoveries_{0};
+  uint8_t failed_resets_{0};
 
   // ── Stats (atomic — incremented on Core 0, read from Core 1) ───────────────
 

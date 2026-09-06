@@ -61,18 +61,12 @@ void LearnInManager::cancel() {
   if (state_ == LearnInState::IDLE && !is_busy()) {
     return;
   }
-  ignore_tx_complete_ = tx_pending_;
   reset_transport_();
   state_ = LearnInState::CANCELLED;
   ESP_LOGI(TAG, "Learn-in session cancelled");
 }
 
 void LearnInManager::on_tx_complete(bool success) {
-  if (ignore_tx_complete_) {
-    ignore_tx_complete_ = false;
-    tx_pending_ = false;
-    return;
-  }
   if (!tx_pending_) {
     return;
   }
@@ -194,7 +188,6 @@ bool LearnInManager::queue_step_(uint8_t cmd_byte, LearnInState pending_state) {
   sent_packets_ = 0;
   retries_ = 0;
   next_attempt_ms_ = 0;
-  tx_start_time_ = 0;
   if (pending_state == LearnInState::PROGRAMMING) {
     command_.type = packet::msg_type::PROGRAM;
     command_.type2 = packet::program::TYPE2;
@@ -226,17 +219,16 @@ void LearnInManager::increase_counter_() {
 }
 
 void LearnInManager::reset_transport_() {
+  this->invalidate_tx_attempt();
   queued_step_ = 0;
   sent_packets_ = 0;
   retries_ = 0;
   next_attempt_ms_ = 0;
-  tx_start_time_ = 0;
   tx_pending_ = false;
 }
 
 void LearnInManager::reset_all_() {
   reset_transport_();
-  ignore_tx_complete_ = false;
   packets_per_step_ = packet::program::PACKETS;
   session_deadline_ms_ = 0;
   state_ = LearnInState::IDLE;

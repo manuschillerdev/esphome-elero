@@ -30,8 +30,7 @@ set(ELERO_LIGHT_SM_SRC ${COMPONENTS_DIR}/elero/light_sm.cpp)
 set(ELERO_STATE_SNAPSHOT_SRC ${COMPONENTS_DIR}/elero/state_snapshot.cpp)
 set(ELERO_REGISTRY_SRC ${COMPONENTS_DIR}/elero/device_registry.cpp)
 set(ELERO_LEARN_IN_SRC ${COMPONENTS_DIR}/elero/learn_in_manager.cpp)
-set(ELERO_SX1262_TX_FSM_SRC ${COMPONENTS_DIR}/elero/sx1262_tx_fsm.cpp)
-set(ELERO_SX1276_TX_FSM_SRC ${COMPONENTS_DIR}/elero/sx1276_tx_fsm.cpp)
+set(ELERO_SEMTECH_TX_FSM_SRC ${COMPONENTS_DIR}/elero/semtech_tx_fsm.cpp)
 
 # Test executable: Real packet vectors (uses elero_packet.cpp)
 add_executable(test_packet_vectors
@@ -157,19 +156,14 @@ add_executable(test_freq_conversion
 )
 target_link_libraries(test_freq_conversion GTest::gtest_main)
 
-# SX1262 TX state machine (pure FSM, no hardware deps)
-add_executable(test_sx1262_tx_fsm
-  test_sx1262_tx_fsm.cpp
-  ${ELERO_SX1262_TX_FSM_SRC}
-)
-target_link_libraries(test_sx1262_tx_fsm GTest::gtest_main)
-
-# SX1276 TX state machine (pure FSM, no hardware deps)
-add_executable(test_sx1276_tx_fsm
-  test_sx1276_tx_fsm.cpp
-  ${ELERO_SX1276_TX_FSM_SRC}
-)
-target_link_libraries(test_sx1276_tx_fsm GTest::gtest_main)
+# Shared Semtech sequencing and production driver behavior.
+add_executable(test_semtech_tx_fsm test_semtech_tx_fsm.cpp ${ELERO_SEMTECH_TX_FSM_SRC})
+target_link_libraries(test_semtech_tx_fsm GTest::gtest_main)
+foreach(chip sx1262 sx1276)
+  add_executable(test_${chip}_driver test_${chip}_driver.cpp)
+  target_compile_definitions(test_${chip}_driver PRIVATE UNIT_TEST)
+  target_link_libraries(test_${chip}_driver GTest::gtest_main)
+endforeach()
 
 # Discover all tests
 include(GoogleTest)
@@ -177,8 +171,9 @@ gtest_discover_tests(test_cc1101_compat)
 gtest_discover_tests(test_cc1101_tx_fsm)
 gtest_discover_tests(test_cc1101_driver_tx)
 gtest_discover_tests(test_freq_conversion)
-gtest_discover_tests(test_sx1262_tx_fsm)
-gtest_discover_tests(test_sx1276_tx_fsm)
+gtest_discover_tests(test_semtech_tx_fsm)
+gtest_discover_tests(test_sx1262_driver)
+gtest_discover_tests(test_sx1276_driver)
 gtest_discover_tests(test_packet_vectors)
 gtest_discover_tests(test_command_sender)
 gtest_discover_tests(test_golden_vectors)
@@ -195,7 +190,7 @@ gtest_discover_tests(test_device_registry)
 # All test targets
 set(ALL_TEST_TARGETS
   test_cc1101_compat test_cc1101_tx_fsm test_cc1101_driver_tx
-  test_freq_conversion test_sx1262_tx_fsm test_sx1276_tx_fsm
+  test_freq_conversion test_semtech_tx_fsm test_sx1262_driver test_sx1276_driver
   test_packet_vectors test_command_sender test_golden_vectors
   test_encryption_vectors test_parse_roundtrip test_string_functions
   test_cover_sm test_light_sm test_poll_timer

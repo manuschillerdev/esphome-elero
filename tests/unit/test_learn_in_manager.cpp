@@ -10,6 +10,7 @@ class FakeHub {
  public:
   bool queue_accepts{true};
   TxClient *client{nullptr};
+  uint32_t attempt{0};
   EleroCommand last_cmd{};
   int request_count{0};
 
@@ -19,6 +20,7 @@ class FakeHub {
       return false;
     }
     client = tx_client;
+    attempt = client->begin_tx_attempt();
     last_cmd = cmd;
     return true;
   }
@@ -27,7 +29,7 @@ class FakeHub {
     ASSERT_NE(client, nullptr);
     TxClient *current = client;
     client = nullptr;
-    current->on_tx_complete(success);
+    current->complete_tx_attempt(attempt, success);
   }
 };
 
@@ -134,6 +136,46 @@ TEST_F(LearnInManagerTest, TimesOutSession) {
   manager_.loop(mock_time_.millis(), &hub_);
 
   EXPECT_EQ(manager_.state(), LearnInState::TIMED_OUT);
+}
+
+
+TEST_F(LearnInManagerTest, LateCompletionCannotCompleteRetriedStep) {
+  ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
+  manager_.loop(mock_time_.millis(), &hub_);
+  const auto old_attempt = hub_.attempt;
+  mock_time_.advance(5000);
+  hub_.complete(false);
+  manager_.loop(mock_time_.millis(), &hub_);
+  mock_time_.advance(20);
+  manager_.loop(mock_time_.millis(), &hub_);
+  ASSERT_EQ(hub_.request_count, 2);
+  manager_.complete_tx_attempt(old_attempt, true);
+  EXPECT_EQ(manager_.state(), LearnInState::PROGRAMMING);
+  hub_.complete(true);
+  EXPECT_EQ(manager_.state(), LearnInState::WAIT_UP);
+}
+
+TEST_F(LearnInManagerTest, CancelledSessionCompletionCannotCompleteNewSession) {
+  ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
+  manager_.loop(mock_time_.millis(), &hub_);
+  const auto old_attempt = hub_.attempt;
+  manager_.cancel();
+  ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
+  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.complete_tx_attempt(old_attempt, true);
+  EXPECT_EQ(manager_.state(), LearnInState::PROGRAMMING);
+  hub_.complete(true);
+  EXPECT_EQ(manager_.state(), LearnInState::WAIT_UP);
+}
+
+TEST_F(LearnInManagerTest, LongQueueWaitDoesNotRetryProgrammingStep) {
+  ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
+  manager_.loop(mock_time_.millis(), &hub_);
+  mock_time_.advance(10000);
+  manager_.loop(mock_time_.millis(), &hub_);
+  EXPECT_EQ(hub_.request_count, 1);
+  hub_.complete(true);
+  EXPECT_EQ(manager_.state(), LearnInState::WAIT_UP);
 }
 
 }  // namespace

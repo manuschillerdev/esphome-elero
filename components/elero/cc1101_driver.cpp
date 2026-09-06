@@ -49,11 +49,11 @@ bool CC1101Driver::init() {
     return false;
   }
 
-  this->init_registers();
-  return true;
+  return this->init_registers();
 }
 
 void CC1101Driver::reset() {
+  this->rx_packet_length_ = 0;
   // Software reset — we can't read the MISO pin directly.
   this->enable();
   this->write_byte(CC1101_SRES);
@@ -117,37 +117,59 @@ void CC1101Driver::abort_tx() {
 
 bool CC1101Driver::has_data() {
   if (this->RadioDriver::mode() != RadioMode::RX) return false;
-  return this->rx_ready_ != nullptr && this->rx_ready_->load(std::memory_order_acquire);
+  // Poll as well as observing GDO0: a packet can finish during the TX/RX
+  // handoff, or a second packet can already be queued behind the first.
+  if (this->rx_packet_length_ != 0) return true;
+  if (this->rx_ready_ && this->rx_ready_->load(std::memory_order_acquire)) return true;
+  const uint8_t count = this->read_status_reliable_(CC1101_RXBYTES);
+  return (count & packet::cc1101_status::RXBYTES_OVERFLOW_BIT) || count >= 2;
 }
 
 size_t CC1101Driver::read_fifo(uint8_t *buf, size_t max_len) {
-  uint8_t len = this->read_status_reliable_(CC1101_RXBYTES);
-
-  // Overflow — FIFO data unreliable, flush and bail
-  if (len & packet::cc1101_status::RXBYTES_OVERFLOW_BIT) {
-    ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
+  if (buf == nullptr || max_len == 0) return 0;
+  const uint8_t status = this->read_status_reliable_(CC1101_RXBYTES);
+  if (status & packet::cc1101_status::RXBYTES_OVERFLOW_BIT) {
+    ESP_LOGW(TAG, "RX overflow, discarding incomplete frame");
     this->stat_fifo_overflows_.fetch_add(1, std::memory_order_relaxed);
-    this->flush_and_rx();
+    if (!this->flush_and_rx()) this->recover();
     return 0;
   }
-
-  uint8_t fifo_count = len & packet::cc1101_status::BYTE_COUNT_MASK;
-  if (fifo_count == 0) {
+  size_t available = status & packet::cc1101_status::BYTE_COUNT_MASK;
+  if (this->rx_packet_length_ == 0) {
+    // Never empty the FIFO while an unfinished packet is arriving. In
+    // particular, leave a lone length byte until another byte has arrived.
+    if (available < 2) return 0;
+    this->read_buf(CC1101_RXFIFO, &this->rx_packet_length_, 1);
+    --available;
+    this->rx_packet_started_ms_ = millis();
+    if (this->rx_packet_length_ == 0 ||
+        this->rx_packet_length_ + packet::PACKET_TOTAL_OVERHEAD > CC1101_FIFO_LENGTH) {
+      ESP_LOGW(TAG, "Invalid RX frame length %u", this->rx_packet_length_);
+      if (!this->flush_and_rx()) this->recover();
+      return 0;
+    }
+  }
+  const size_t remaining = this->rx_packet_length_ + packet::CC1101_APPEND_SIZE;
+  if (available < remaining) {
+    if (millis() - this->rx_packet_started_ms_ > RX_PACKET_TIMEOUT_MS) {
+      ESP_LOGW(TAG, "Truncated RX frame timed out (length=%u)", this->rx_packet_length_);
+      if (!this->flush_and_rx()) this->recover();
+    }
     return 0;
   }
-
-  // Clamp to buffer size and FIFO length
-  if (fifo_count > max_len) {
-    ESP_LOGV(TAG, "RXBYTES (%d) > buffer (%d), clamping", fifo_count, static_cast<int>(max_len));
-    fifo_count = static_cast<uint8_t>(max_len);
+  if (remaining + 1 > max_len) {
+    ESP_LOGW(TAG, "RX output buffer too small (%u)", static_cast<unsigned>(max_len));
+    if (!this->flush_and_rx()) this->recover();
+    return 0;
   }
-  if (fifo_count > CC1101_FIFO_LENGTH) {
-    ESP_LOGV(TAG, "RXBYTES > FIFO length (%d), clamping", fifo_count);
-    fifo_count = CC1101_FIFO_LENGTH;
+  buf[0] = this->rx_packet_length_;
+  this->read_buf(CC1101_RXFIFO, buf + 1, remaining);
+  this->rx_packet_length_ = 0;
+  if (!(buf[remaining] & packet::cc1101_status::CRC_OK_BIT)) {
+    ESP_LOGD(TAG, "RX frame rejected: CRC mismatch");
+    return 0;
   }
-
-  this->read_buf(CC1101_RXFIFO, buf, fifo_count);
-  return fifo_count;
+  return remaining + 1;
 }
 
 RadioHealth CC1101Driver::check_health() {
@@ -177,34 +199,45 @@ RadioHealth CC1101Driver::check_health() {
   // RXFIFO overflow — radio is deaf until flushed
   if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
     ESP_LOGW(TAG, "Radio watchdog: RX FIFO overflow, flushing");
-    this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
     return RadioHealth::FIFO_OVERFLOW;
   }
 
   // Stuck in IDLE — radio stopped listening
   if (marc == CC1101_MARCSTATE_IDLE) {
     ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
-    this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
     return RadioHealth::STUCK;
   }
 
   // Anything else unexpected
   ESP_LOGW(TAG, "Radio watchdog: unexpected MARCSTATE 0x%02x, reinitializing", marc);
-  this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
   return RadioHealth::UNRECOVERABLE;
 }
 
-void CC1101Driver::recover() {
-  uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+void CC1101Driver::clear_recovery_failures_() {
+  this->failed_recoveries_ = 0;
+  this->failed_resets_ = 0;
+}
 
-  // Stuck in IDLE — one strobe restarts it
-  if (marc == CC1101_MARCSTATE_IDLE) {
-    (void) this->write_cmd(CC1101_SRX);
+void CC1101Driver::recover() {
+  this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
+  if (this->flush_and_rx()) {
+    this->clear_recovery_failures_();
     return;
   }
 
-  // Everything else — full flush and RX
-  this->flush_and_rx();
+  if (this->failed_recoveries_ < RECOVERIES_BEFORE_RESET) ++this->failed_recoveries_;
+  if (this->failed_recoveries_ < RECOVERIES_BEFORE_RESET) return;
+
+  this->reset();
+  if (this->init_registers()) {
+    this->clear_recovery_failures_();
+    return;
+  }
+
+  if (++this->failed_resets_ >= RESETS_BEFORE_FAILED) {
+    ESP_LOGE(TAG, "RX recovery failed after %u consecutive resets", this->failed_resets_);
+    this->failed_ = true;
+  }
 }
 
 void CC1101Driver::set_frequency_regs(uint8_t f2, uint8_t f1, uint8_t f0) {
@@ -212,7 +245,11 @@ void CC1101Driver::set_frequency_regs(uint8_t f2, uint8_t f1, uint8_t f0) {
   this->freq1_ = f1;
   this->freq0_ = f0;
   this->reset();
-  this->init_registers();
+  if (!this->init_registers()) {
+    this->recover();
+    return;
+  }
+  this->clear_recovery_failures_();
   ESP_LOGI(TAG, "CC1101 re-initialised: freq2=0x%02x freq1=0x%02x freq0=0x%02x", f2, f1, f0);
 }
 
@@ -255,7 +292,7 @@ bool CC1101Driver::verify_spi_write_() {
 
 // ─── Register Initialization ──────────────────────────────────────────────
 
-void CC1101Driver::init_registers() {
+bool CC1101Driver::init_registers() {
   // PA table: +10 dBm output power for all 8 power levels
   uint8_t patable_data[] = {0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0};
 
@@ -292,7 +329,10 @@ void CC1101Driver::init_registers() {
   (void) this->write_reg(CC1101_TEST1, 0x35);
   (void) this->write_reg(CC1101_TEST0, 0x09);
   (void) this->write_reg(CC1101_IOCFG0, 0x06);
-  (void) this->write_reg(CC1101_PKTCTRL1, 0x8C);
+  // Keep bad-CRC frames until the driver consumes their status trailer. With
+  // early length reads, automatic CRC flushing could erase a pending body and
+  // splice the next packet onto its saved length byte.
+  (void) this->write_reg(CC1101_PKTCTRL1, 0x84);
   (void) this->write_reg(CC1101_PKTCTRL0, 0x45);
   (void) this->write_reg(CC1101_ADDR, 0x00);
   (void) this->write_reg(CC1101_PKTLEN, 0x3C);
@@ -301,7 +341,7 @@ void CC1101Driver::init_registers() {
   (void) this->write_burst(CC1101_PATABLE, patable_data, 8);
 
   (void) this->write_cmd(CC1101_SRX);
-  (void) this->wait_rx();
+  return this->wait_rx();
 }
 
 // ─── TX State Machine ─────────────────────────────────────────────────────
@@ -326,6 +366,12 @@ bool CC1101Driver::tx_prepare_for_fsm() {
     return false;
   }
 
+  // Complete RX frames are serviced by the hub before requesting TX.
+  // SIDLE may interrupt a frame still on air: discard its prefix now, before
+  // sending, so it cannot corrupt the response received after this TX.
+  this->rx_packet_length_ = 0;
+  (void) this->write_cmd(CC1101_SFRX);
+  if (this->rx_ready_) this->rx_ready_->store(false, std::memory_order_release);
   (void) this->write_cmd(CC1101_SFTX);
   esp_rom_delay_us(100);
 
@@ -439,7 +485,7 @@ Cc1101TxPhaseResult CC1101Driver::tx_return_to_rx_for_fsm() {
   uint8_t rxbytes = this->read_status_reliable_(CC1101_RXBYTES);
   if (rxbytes & packet::cc1101_status::RXBYTES_OVERFLOW_BIT) {
     ESP_LOGW(TAG, "ReturnToRx: RX FIFO overflow after TX, flushing");
-    this->flush_and_rx();
+    if (!this->flush_and_rx()) this->recover();
   } else if ((rxbytes & packet::cc1101_status::BYTE_COUNT_MASK) > 0) {
     ESP_LOGV(TAG, "ReturnToRx: RX FIFO has %d byte(s) after TX, preserving for RX drain",
              rxbytes & packet::cc1101_status::BYTE_COUNT_MASK);
@@ -482,47 +528,14 @@ void CC1101Driver::tx_set_mode_for_fsm(RadioMode mode) {
 void CC1101Driver::tx_recover_for_fsm() {
   this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
 
-  // Track recovery frequency for escalation
-  uint32_t now = millis();
-  if (now - this->recovery_window_start_ms_ > RECOVERY_WINDOW_MS) {
-    // New window — reset counters
-    this->recovery_window_start_ms_ = now;
-    this->recoveries_in_window_ = 0;
-    this->resets_in_window_ = 0;
-  }
-  ++this->recoveries_in_window_;
-
-  // Level 1: Flush FIFOs and return to RX
-  ESP_LOGW(TAG, "recover: flush (%d/%d in window)", this->recoveries_in_window_, RECOVERIES_BEFORE_RESET);
-  this->flush_and_rx();
-
-  uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-  if (marc == CC1101_MARCSTATE_RX || marcstate_is_transient(marc)) {
-    this->tx_set_terminal_result_for_fsm(Cc1101TxTerminalResult::Failed);
-    return;
-  }
-
-  // Level 2: Full chip reset (escalate after repeated flushes)
-  if (this->recoveries_in_window_ >= RECOVERIES_BEFORE_RESET) {
-    ++this->resets_in_window_;
-    ESP_LOGE(TAG, "recover: reset (%d/%d in window, MARCSTATE=0x%02x)",
-             this->resets_in_window_, RESETS_BEFORE_FAILED, marc);
-    this->reset();
-    this->init_registers();
-
-    // Level 3: Mark failed if resets keep happening
-    if (this->resets_in_window_ >= RESETS_BEFORE_FAILED) {
-      ESP_LOGE(TAG, "recover: radio unrecoverable after %d resets, marking failed", this->resets_in_window_);
-      this->failed_ = true;
-    }
-  }
-
+  this->recover();
   this->tx_set_terminal_result_for_fsm(Cc1101TxTerminalResult::Failed);
 }
 
 // ─── Radio Control ────────────────────────────────────────────────────────
 
-void CC1101Driver::flush_and_rx() {
+bool CC1101Driver::flush_and_rx() {
+  this->rx_packet_length_ = 0;
   ESP_LOGVV(TAG, "flush_and_rx");
 
   // 1. Force IDLE
@@ -546,11 +559,8 @@ void CC1101Driver::flush_and_rx() {
   this->RadioDriver::mode_.store(RadioMode::RX, std::memory_order_release);
   (void) this->write_cmd(CC1101_SRX);
 
-  // 5. Verify radio entered RX — caller handles escalation on bad states.
-  uint8_t marc = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-  if (marc != CC1101_MARCSTATE_RX && !marcstate_is_transient(marc)) {
-    ESP_LOGW(TAG, "flush_and_rx: not in RX after SRX, MARCSTATE=0x%02x", marc);
-  }
+  // Transient calibration states are not proof of readiness. Wait boundedly.
+  return this->wait_rx();
 }
 
 // ─── SPI Communication ───────────────────────────────────────────────────

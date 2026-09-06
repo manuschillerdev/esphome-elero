@@ -1,4 +1,5 @@
 #include "elero.h"
+#include "radio_rx.h"
 #include "elero_protocol.h"
 #include "elero_packet.h"
 #include "elero_strings.h"
@@ -42,7 +43,7 @@ void Elero::loop() {
       this->stat_tx_fail_++;
     }
     if (result.client != nullptr) {
-      result.client->on_tx_complete(result.success);
+      result.client->complete_tx_attempt(result.attempt, result.success);
     }
   }
 
@@ -245,49 +246,52 @@ void Elero::rf_task_func_(void *arg) {
   auto *self = static_cast<Elero *>(arg);
   uint32_t last_stack_check_ms = 0;
   bool tx_in_progress = false;
+  uint32_t tx_attempt = 0;
+  PendingTxCompletion completion;
 
   for (;;) {
-    // If driver signaled unrecoverable failure, stop all radio operations.
-    // Only feed watchdog and yield — the hub's loop() will see failed() and
-    // can mark_failed() on the ESPHome component.
-    if (self->driver_->failed()) {
-      esp_task_wdt_reset();
-      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
-      continue;
-    }
-
     uint32_t now = millis();
 
-    auto post_tx_done = [&](const TxResult &r) {
-      if (xQueueSend(self->tx_done_queue_handle_, &r, 0) != pdPASS) {
-        ESP_LOGE(TAG, "tx_done_queue full, dropping TX completion");
-      }
+    completion.flush([&](const TxResult &result) {
+      return xQueueSend(self->tx_done_queue_handle_, &result, 0) == pdPASS;
+    });
+
+    auto post_tx_done = [&](const TxResult &result) { completion.put(result); };
+
+    auto drain_rx = [&]() {
+      if (self->driver_->failed()) return true;
+      return drain_radio_rx(*self->driver_, self->rx_ready_, self->msg_rx_,
+                            sizeof(self->msg_rx_), [&](size_t count) {
+        self->decode_fifo_packets_(count);
+      });
     };
+    // A pending command must not flush a completed reply from the previous TX.
+    bool rx_idle = drain_rx();
 
     // 1. Process TX requests from main loop (only when radio is idle)
-    if (!tx_in_progress) {
+    if (!tx_in_progress && rx_idle && completion.empty()) {
       RfTaskRequest req{};
       if (xQueueReceive(self->tx_queue_handle_, &req, 0) == pdPASS) {
         switch (req.type) {
           case RfTaskRequest::Type::TX:
             self->build_tx_packet_(req.cmd);
-            if (self->driver_->load_and_transmit(self->msg_tx_, self->msg_tx_[0] + 1)) {
+            if (!self->driver_->failed() &&
+                self->driver_->load_and_transmit(self->msg_tx_, self->msg_tx_[0] + 1)) {
               self->tx_owner_ = req.client;
+              tx_attempt = req.attempt;
               tx_in_progress = true;
             } else {
               // load_and_transmit failed — report failure immediately
-              TxResult r{req.client, false};
+              TxResult r{req.client, false, req.attempt};
               post_tx_done(r);
             }
             break;
 
           case RfTaskRequest::Type::REINIT_FREQ:
-            // Abort any pending TX
-            if (self->tx_owner_ != nullptr) {
-              TxResult r{self->tx_owner_, false};
-              self->tx_owner_ = nullptr;
-              post_tx_done(r);
-              tx_in_progress = false;
+            // Requests are handled only after the active TX has completed.
+            if (self->driver_->failed()) {
+              ESP_LOGW(TAG, "Frequency change rejected: radio failed");
+              break;
             }
             self->rx_ready_.store(false, std::memory_order_release);
             self->tx_done_.store(false, std::memory_order_release);
@@ -302,14 +306,14 @@ void Elero::rf_task_func_(void *arg) {
 
     // 2. Progress TX via driver
     if (tx_in_progress) {
-      auto result = self->driver_->poll_tx();
+      auto result = self->driver_->failed() ? TxPollResult::FAILED : self->driver_->poll_tx();
       switch (result) {
         case TxPollResult::PENDING:
           break;
         case TxPollResult::SUCCESS:
           ESP_LOGV(TAG, "TX complete (success)");
           {
-            TxResult r{self->tx_owner_, true};
+            TxResult r{self->tx_owner_, true, tx_attempt};
             self->tx_owner_ = nullptr;
             tx_in_progress = false;
             post_tx_done(r);
@@ -319,7 +323,7 @@ void Elero::rf_task_func_(void *arg) {
           ESP_LOGW(TAG, "TX complete (failed)");
           self->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
           {
-            TxResult r{self->tx_owner_, false};
+            TxResult r{self->tx_owner_, false, tx_attempt};
             self->tx_owner_ = nullptr;
             tx_in_progress = false;
             post_tx_done(r);
@@ -328,20 +332,11 @@ void Elero::rf_task_func_(void *arg) {
       }
     }
 
-    // 3. Drain FIFO if GDO0 interrupt fired (RX mode only — has_data guards this)
-    if (self->driver_->has_data()) {
-      // Clear RX flag
-      self->rx_ready_.store(false, std::memory_order_release);
-      // Read FIFO bytes from driver
-      size_t count = self->driver_->read_fifo(self->msg_rx_, sizeof(self->msg_rx_));
-      if (count > 0) {
-        // Parse packets from buffer (same multi-packet logic as before)
-        self->decode_fifo_packets_(count);
-      }
-    }
+    // Service fast responses as soon as poll_tx restores RX routing.
+    rx_idle = drain_rx();
 
     // 4. Radio health check (only when idle, throttled internally to every 5s)
-    if (!tx_in_progress) {
+    if (!tx_in_progress && rx_idle && !self->driver_->failed()) {
       auto health = self->driver_->check_health();
       switch (health) {
         case RadioHealth::OK:
@@ -448,6 +443,7 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
   req.type = RfTaskRequest::Type::TX;
   req.cmd = cmd;
   req.client = client;
+  req.attempt = client != nullptr ? client->begin_tx_attempt() : 0;
   return xQueueSend(this->tx_queue_handle_, &req, 0) == pdPASS;
 #else
   return false;

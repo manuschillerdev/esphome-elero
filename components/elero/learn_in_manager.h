@@ -69,20 +69,13 @@ class LearnInManager : public TxClient {
     if (is_active() && session_deadline_ms_ != 0 &&
         time_reached_(now, session_deadline_ms_)) {
       state_ = LearnInState::TIMED_OUT;
-      ignore_tx_complete_ = tx_pending_;
       reset_transport_();
       ESP_LOGW("elero.learn_in", "Learn-in session timed out");
       return;
     }
 
-    if (tx_pending_) {
-      if ((now - tx_start_time_) > packet::timing::TX_PENDING_TIMEOUT) {
-        ESP_LOGW("elero.learn_in", "Learn-in TX timeout in state=%s",
-                 learn_in_state_str(state_));
-        on_tx_complete(false);
-      }
-      return;
-    }
+    // Hardware deadlines belong to the driver; queued work waits without retries.
+    if (tx_pending_) return;
 
     if (queued_step_ == 0) {
       return;
@@ -95,9 +88,8 @@ class LearnInManager : public TxClient {
     command_.payload[4] = queued_step_;
     if (hub->request_tx(this, command_)) {
       tx_pending_ = true;
-      tx_start_time_ = now;
       ESP_LOGD("elero.learn_in",
-               "TX started state=%s cmd=0x%02x packet %u/%u src=0x%06x ch=%u",
+               "TX queued state=%s cmd=0x%02x packet %u/%u src=0x%06x ch=%u",
                learn_in_state_str(state_), queued_step_, sent_packets_ + 1,
                packets_per_step_, command_.src_addr, command_.channel);
     }
@@ -130,10 +122,8 @@ class LearnInManager : public TxClient {
   uint8_t sent_packets_{0};
   uint8_t retries_{0};
   uint32_t next_attempt_ms_{0};
-  uint32_t tx_start_time_{0};
   uint32_t session_deadline_ms_{0};
   bool tx_pending_{false};
-  bool ignore_tx_complete_{false};
 };
 
 }  // namespace esphome::elero
