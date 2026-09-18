@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cinttypes>
+
 #include "elero_packet.h"
 #include "time_provider.h"
 #include "tx_client.h"
@@ -70,21 +72,21 @@ class CommandSender : public TxClient {
         if (parent->request_tx(this, this->command_)) {
           this->state_ = State::TX_PENDING;
           this->tx_start_time_ = now;
-          ESP_LOGV(tag, "TX started for 0x%06x cmd=0x%02x, packet %d/%d",
+          ESP_LOGV(tag, "TX started for 0x%06" PRIx32 " cmd=0x%02x, packet %d/%d",
                    this->command_.dst_addr, this->command_.payload[4],
                    this->send_packets_ + 1, this->command_queue_.front().packets);
         } else {
-          ESP_LOGVV(tag, "Radio busy for 0x%06x, will retry", this->command_.dst_addr);
+          ESP_LOGVV(tag, "Radio busy for 0x%06" PRIx32 ", will retry", this->command_.dst_addr);
         }
         break;
 
       case State::TX_PENDING:
         if ((now - this->tx_start_time_) > TX_PENDING_TIMEOUT_MS) {
-          ESP_LOGW(tag, "TX_PENDING timeout for 0x%06x after %ums, treating as failure",
+          ESP_LOGW(tag, "TX_PENDING timeout for 0x%06" PRIx32 " after %" PRIu32 "ms, treating as failure",
                    this->command_.dst_addr, TX_PENDING_TIMEOUT_MS);
           ++this->send_retries_;
           if (this->send_retries_ > packet::limits::SEND_RETRIES) {
-            ESP_LOGE(tag, "Max retries for 0x%06x after timeout, dropping command 0x%02x",
+            ESP_LOGE(tag, "Max retries for 0x%06" PRIx32 " after timeout, dropping command 0x%02x",
                      this->command_.dst_addr, this->command_.payload[4]);
             this->advance_queue_();
           } else {
@@ -99,13 +101,13 @@ class CommandSender : public TxClient {
 
   void on_tx_complete(bool success) override {
     if (this->state_ != State::TX_PENDING) {
-      ESP_LOGD(this->log_tag_, "Ignoring stale on_tx_complete for 0x%06x (state=%d, success=%d)",
+      ESP_LOGD(this->log_tag_, "Ignoring stale on_tx_complete for 0x%06" PRIx32 " (state=%d, success=%d)",
                this->command_.dst_addr, static_cast<int>(this->state_), success);
       return;
     }
 
     if (this->cancelled_) {
-      ESP_LOGD(this->log_tag_, "TX for 0x%06x completed but was cancelled, ignoring",
+      ESP_LOGD(this->log_tag_, "TX for 0x%06" PRIx32 " completed but was cancelled, ignoring",
                this->command_.dst_addr);
       this->cancelled_ = false;
       this->send_packets_ = 0;
@@ -125,7 +127,7 @@ class CommandSender : public TxClient {
           ? packet::button::PACKETS
           : this->command_queue_.front().packets;
       if (this->send_packets_ >= target_packets) {
-        ESP_LOGV(this->log_tag_, "Command 0x%02x to 0x%06x complete (%d packets)",
+        ESP_LOGV(this->log_tag_, "Command 0x%02x to 0x%06" PRIx32 " complete (%d packets)",
                  this->command_.payload[4], this->command_.dst_addr, this->send_packets_);
         this->advance_queue_();
       } else {
@@ -134,16 +136,16 @@ class CommandSender : public TxClient {
       }
     } else {
       ++this->send_retries_;
-      ESP_LOGD(this->log_tag_, "TX retry %d/%d for 0x%06x",
+      ESP_LOGD(this->log_tag_, "TX retry %d/%d for 0x%06" PRIx32,
                this->send_retries_, packet::limits::SEND_RETRIES, this->command_.dst_addr);
 
       if (this->send_retries_ > packet::limits::SEND_RETRIES) {
-        ESP_LOGE(this->log_tag_, "Max retries for 0x%06x, dropping command 0x%02x",
+        ESP_LOGE(this->log_tag_, "Max retries for 0x%06" PRIx32 ", dropping command 0x%02x",
                  this->command_.dst_addr, this->command_.payload[4]);
         this->advance_queue_();
       } else {
         uint32_t backoff_ms = this->calculate_backoff_ms_();
-        ESP_LOGD(this->log_tag_, "Backoff %ums before retry", backoff_ms);
+        ESP_LOGD(this->log_tag_, "Backoff %" PRIu32 "ms before retry", backoff_ms);
         this->next_attempt_ms_ = now + backoff_ms;
         this->state_ = State::WAIT_DELAY;
       }

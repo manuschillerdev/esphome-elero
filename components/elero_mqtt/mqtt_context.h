@@ -14,7 +14,7 @@ namespace elero {
 /// Format a uint32_t as "%06x" for MQTT topic construction (no "0x" prefix).
 [[nodiscard]] inline std::string addr_hex(uint32_t addr) {
   char buf[12];
-  snprintf(buf, sizeof(buf), "%06x", addr);
+  snprintf(buf, sizeof(buf), "%06x", static_cast<unsigned int>(addr));
   return buf;
 }
 

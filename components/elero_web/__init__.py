@@ -70,15 +70,24 @@ def _ensure_ui_header():
     _LOGGER.info(
         "Downloading pre-built frontend (v%s) from %s", ELERO_VERSION, url
     )
+    # Never leave a partial download that a later build mistakes for a header.
+    import tempfile
+
     try:
-        urllib.request.urlretrieve(url, _UI_HEADER)
-    except Exception:
-        _LOGGER.warning(
-            "Could not download %s — the web UI will not be available. "
-            "For local development, run: "
-            "cd components/elero_web/frontend/app && pnpm build",
-            _UI_HEADER_FILENAME,
-        )
+        with tempfile.TemporaryDirectory(dir=_COMPONENT_DIR) as tmp:
+            downloaded = Path(tmp) / _UI_HEADER_FILENAME
+            urllib.request.urlretrieve(url, downloaded)
+            if downloaded.stat().st_size == 0:
+                raise ValueError("Downloaded frontend header is empty")
+            downloaded.replace(_UI_HEADER)
+    except Exception as err:
+        raise cv.Invalid(
+            f"Could not download the matching frontend header from {url}: {err}. "
+            "For a local checkout or unreleased fork, build its frontend first: "
+            "cd components/elero_web/frontend/app && "
+            "pnpm install --frozen-lockfile && pnpm build. "
+            "Then compile again using that checkout as a local external component."
+        ) from err
 
 
 async def to_code(config):
@@ -105,6 +114,9 @@ async def to_code(config):
     cg.add_define("MG_IO_SIZE", 512)
     # Build flag ensures mongoose.c sees this before its own default (#ifndef guard)
     cg.add_build_flag("-DMG_ENABLE_LOG=0")
+    # mongoose.c does not include ESPHome's defines.h. Disable its POSIX
+    # filesystem at the compiler level (the UI is served from flash).
+    cg.add_build_flag("-DMG_ENABLE_POSIX_FS=0")
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)

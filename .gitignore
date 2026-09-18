@@ -31,5 +31,5 @@ components/elero_web/frontend/app/dist/
 components/elero_web/mongoose.c
 components/elero_web/mongoose.h
 
-# Frontend build artifact (downloaded from GitHub release at build time)
-components/elero_web/elero_web_ui.h
+# The generated frontend header is tracked so GitHub external-component
+# installs work without a separate release asset. Rebuild after frontend edits.

@@ -155,7 +155,7 @@ void MqttAdapter::remove_all_discovery_(const Device &dev) {
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr));
     }
 
-    ESP_LOGD(TAG, "Removed discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Removed discovery for 0x%06x", static_cast<unsigned int>(addr));
 }
 
 void MqttAdapter::on_state_changed(const Device &dev, uint16_t changes) {
@@ -294,7 +294,7 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::BINARY_SENSOR, problem_oid, problem_payload);
 
-    ESP_LOGD(TAG, "Published cover discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Published cover discovery for 0x%06x", static_cast<unsigned int>(addr));
 }
 
 void MqttAdapter::publish_cover_state_(const Device &dev, uint16_t changes) {
@@ -388,7 +388,7 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
             registry_->command_cover_tilt(*d);
         });
 
-    ESP_LOGD(TAG, "Subscribed to cover commands for 0x%06x", addr);
+    ESP_LOGD(TAG, "Subscribed to cover commands for 0x%06x", static_cast<unsigned int>(addr));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -470,7 +470,7 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::BINARY_SENSOR, problem_oid, problem_payload);
 
-    ESP_LOGD(TAG, "Published light discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Published light discovery for 0x%06x", static_cast<unsigned int>(addr));
 }
 
 void MqttAdapter::publish_light_state_(const Device &dev, uint16_t changes) {
@@ -551,7 +551,7 @@ void MqttAdapter::subscribe_light_commands_(const Device &dev) {
             }
         });
 
-    ESP_LOGD(TAG, "Subscribed to light commands for 0x%06x", addr);
+    ESP_LOGD(TAG, "Subscribed to light commands for 0x%06x", static_cast<unsigned int>(addr));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -579,7 +579,7 @@ void MqttAdapter::publish_remote_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::SENSOR, oid, payload);
 
-    ESP_LOGD(TAG, "Published remote discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Published remote discovery for 0x%06x", static_cast<unsigned int>(addr));
 }
 
 void MqttAdapter::publish_remote_state_(const Device &dev) {

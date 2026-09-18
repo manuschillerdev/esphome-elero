@@ -3,6 +3,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
+#include <cinttypes>
 
 namespace esphome {
 namespace elero {
@@ -74,7 +75,7 @@ bool Sx1276Driver::init() {
   }
 
   uint32_t freq_reg = this->freq_reg_from_cc1101_regs_();
-  ESP_LOGI(TAG, "SX1276 initialized, FSK mode, freq_reg=0x%06x, version=0x%02x",
+  ESP_LOGI(TAG, "SX1276 initialized, FSK mode, freq_reg=0x%06" PRIx32 ", version=0x%02x",
            freq_reg, version);
 
   return true;
@@ -350,7 +351,7 @@ Sx1276TxPhaseResult Sx1276Driver::tx_wait_done_for_fsm() {
   if (irq_fired) {
     uint8_t irq2 = this->read_reg_(sx1276::REG_IRQ_FLAGS2);
     if (irq2 & sx1276::IRQ2_PACKET_SENT) {
-      ESP_LOGD(TAG, "TX done irq2=0x%02x elapsed=%ums", irq2,
+      ESP_LOGD(TAG, "TX done irq2=0x%02x elapsed=%" PRIu32 "ms", irq2,
                millis() - this->tx_state_enter_time_);
       if (this->tx_done_) {
         this->tx_done_->store(false, std::memory_order_release);
@@ -369,7 +370,7 @@ Sx1276TxPhaseResult Sx1276Driver::tx_wait_done_for_fsm() {
   }
 
   if (millis() - this->tx_state_enter_time_ > TX_TIMEOUT_MS) {
-    ESP_LOGE(TAG, "TX timeout after %ums", TX_TIMEOUT_MS);
+    ESP_LOGE(TAG, "TX timeout after %" PRIu32 "ms", TX_TIMEOUT_MS);
     return Sx1276TxPhaseResult::Failed;
   }
 
@@ -396,12 +397,12 @@ Sx1276TxPhaseResult Sx1276Driver::tx_wait_rx_ready_for_fsm() {
   }
 
   if (elapsed <= RX_READY_TIMEOUT_MS) {
-    ESP_LOGD(TAG, "WaitRxReady: waiting for RX mode=0x%02x irq1=0x%02x irq2=0x%02x after %ums",
+    ESP_LOGD(TAG, "WaitRxReady: waiting for RX mode=0x%02x irq1=0x%02x irq2=0x%02x after %" PRIu32 "ms",
              opmode, irq1, irq2, elapsed);
     return Sx1276TxPhaseResult::Pending;
   }
 
-  ESP_LOGW(TAG, "WaitRxReady: RX restore timeout mode=0x%02x irq1=0x%02x irq2=0x%02x after %ums",
+  ESP_LOGW(TAG, "WaitRxReady: RX restore timeout mode=0x%02x irq1=0x%02x irq2=0x%02x after %" PRIu32 "ms",
            opmode, irq1, irq2, elapsed);
   return Sx1276TxPhaseResult::Failed;
 }

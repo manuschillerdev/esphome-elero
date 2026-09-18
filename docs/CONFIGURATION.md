@@ -2,6 +2,10 @@
 
 Complete reference for all YAML-configurable parameters.
 
+This fork's compatibility target is **ESPHome 2026.8.2**. See the
+[LilyGO ESP32-PICO-D4 / SX1276 native API example and build guide](ESPHOME-2026-LILYGO.md)
+for current ESP-IDF setup, local frontend generation, and hardware verification.
+
 > **Heads up — devices are no longer YAML-defined.** Since v0.11.0
 > (RFC-002), `cover: - platform: elero` and `light: - platform: elero`
 > are gone. All blinds and lights live in NVS and are managed through

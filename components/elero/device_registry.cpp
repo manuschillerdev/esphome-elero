@@ -9,6 +9,7 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/hal.h"
 #include <cstring>
+#include <cinttypes>
 
 namespace esphome::elero {
 
@@ -21,7 +22,7 @@ bool DeviceRegistry::enqueue_or_warn_(Device &dev, uint8_t cmd_byte,
         return true;
     }
 
-    ESP_LOGW(TAG, "0x%06x: failed to enqueue %s cmd=0x%02x",
+    ESP_LOGW(TAG, "0x%06" PRIx32 ": failed to enqueue %s cmd=0x%02x",
              dev.config.dst_address, context, cmd_byte);
     return false;
 }
@@ -99,7 +100,7 @@ void DeviceRegistry::restore_all() {
         if (prefs_[i].load(&cfg) && cfg.is_valid()) {
             init_device(slots_[i], cfg);
             ++restored;
-            ESP_LOGI(TAG, "Restored %s '%s' at 0x%06x (slot %zu)",
+            ESP_LOGI(TAG, "Restored %s '%s' at 0x%06" PRIx32 " (slot %zu)",
                      device_type_str(cfg.type), cfg.name,
                      cfg.dst_address, i);
         }
@@ -170,7 +171,7 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
         update_device_config(*existing, config);
         persist(*existing);
         notify_config_changed_(*existing);
-        ESP_LOGI(TAG, "Updated %s '%s' at 0x%06x",
+        ESP_LOGI(TAG, "Updated %s '%s' at 0x%06" PRIx32,
                  device_type_str(config.type), config.name, config.dst_address);
         return existing;
     }
@@ -178,7 +179,7 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
     // Find a free slot
     Device *slot = find_free_slot_();
     if (!slot) {
-        ESP_LOGE(TAG, "No free slot for %s at 0x%06x",
+        ESP_LOGE(TAG, "No free slot for %s at 0x%06" PRIx32,
                  device_type_str(config.type), config.dst_address);
         return nullptr;
     }
@@ -188,7 +189,7 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
     persist(*slot);
     notify_added_(*slot);
     notify_state_changed_(*slot, millis());
-    ESP_LOGI(TAG, "Added %s '%s' at 0x%06x (slot %zu)",
+    ESP_LOGI(TAG, "Added %s '%s' at 0x%06" PRIx32 " (slot %zu)",
              device_type_str(config.type), config.name,
              config.dst_address, slot_index(*slot));
     return slot;
@@ -198,7 +199,7 @@ bool DeviceRegistry::remove(uint32_t address, DeviceType type) {
     Device *dev = find(address, type);
     if (!dev) return false;
 
-    ESP_LOGI(TAG, "Removing %s at 0x%06x", device_type_str(type), address);
+    ESP_LOGI(TAG, "Removing %s at 0x%06" PRIx32, device_type_str(type), address);
     notify_removed_(*dev);
 
     // Clear NVS (only when persistence is enabled)
@@ -480,7 +481,7 @@ void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
             return;
         }
         if (devices[i]->config.src_address != src_addr) {
-            ESP_LOGW(TAG, "command_group: device[%zu] has different src_address (0x%06x vs 0x%06x)",
+            ESP_LOGW(TAG, "command_group: device[%zu] has different src_address (0x%06" PRIx32 " vs 0x%06" PRIx32 ")",
                      i, devices[i]->config.src_address, src_addr);
             return;
         }
@@ -557,7 +558,7 @@ void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
     // type=COMMAND (0x6a) — build_tx_packet_ only checks num_dests for
     // BUTTON type, so CHECKs are safe regardless of timing.
 
-    ESP_LOGI(TAG, "Group command 0x%02x via remote 0x%06x to %zu %s devices (channels: %s)",
+    ESP_LOGI(TAG, "Group command 0x%02x via remote 0x%06" PRIx32 " to %zu %s devices (channels: %s)",
              cmd_byte, src_addr, count, device_type_str(group_type),
              [&]() {
                  static char buf[128];
@@ -731,11 +732,11 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
     cfg.type = DeviceType::REMOTE;
     cfg.dst_address = pkt.src;
     cfg.channel = pkt.channel;
-    snprintf(cfg.name, NVS_NAME_MAX, DEFAULT_REMOTE_NAME_FMT, pkt.src);
+    snprintf(cfg.name, NVS_NAME_MAX, DEFAULT_REMOTE_NAME_FMT, static_cast<unsigned int>(pkt.src));
 
     Device *slot = find_free_slot_();
     if (!slot) {
-        ESP_LOGW(TAG, "No free slot for remote 0x%06x", pkt.src);
+        ESP_LOGW(TAG, "No free slot for remote 0x%06" PRIx32, pkt.src);
         return;
     }
 
@@ -753,7 +754,7 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
     // Without this, every echo/retransmit of the first observed packet would fire
     // a full publish — see ELERO_GROUP_INVESTIGATION.md §8.1.
     notify_state_changed_(*slot, now);
-    ESP_LOGI(TAG, "Discovered remote 0x%06x (slot %zu)", pkt.src, slot_index(*slot));
+    ESP_LOGI(TAG, "Discovered remote 0x%06" PRIx32 " (slot %zu)", pkt.src, slot_index(*slot));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1068,11 +1069,11 @@ void DeviceRegistry::notify_state_changed_(Device &dev, uint32_t now) {
     }
 
     if (changes == 0) {
-        ESP_LOGVV(TAG, "0x%06x: notify suppressed (no changes)", dev.config.dst_address);
+        ESP_LOGVV(TAG, "0x%06" PRIx32 ": notify suppressed (no changes)", dev.config.dst_address);
         return;
     }
 
-    ESP_LOGD(TAG, "0x%06x: publish [%s] (0x%04x)",
+    ESP_LOGD(TAG, "0x%06" PRIx32 ": publish [%s] (0x%04x)",
              dev.config.dst_address, state_change_str(changes), changes);
 
     dev.last_published_ms = now;

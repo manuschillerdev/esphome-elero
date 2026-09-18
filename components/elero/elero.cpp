@@ -8,6 +8,7 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
+#include <cinttypes>
 #include <algorithm>
 
 #ifdef USE_ESP32
@@ -431,7 +432,7 @@ void Elero::build_tx_packet_(const EleroCommand &cmd) {
 
 bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
 #ifdef USE_ESP32
-  ESP_LOGV(TAG_RF, "TX dst=0x%06x src=0x%06x cmd=0x%02x type=0x%02x cnt=%u",
+  ESP_LOGV(TAG_RF, "TX dst=0x%06" PRIx32 " src=0x%06" PRIx32 " cmd=0x%02x type=0x%02x cnt=%u",
            cmd.dst_addr, cmd.src_addr, cmd.payload[4], cmd.type, cmd.counter);
 
   // Post to RF task queue (non-blocking, no SPI)
@@ -500,7 +501,7 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
   const int64_t dispatch_start_us = esp_timer_get_time();
 #endif
 
-  ESP_LOGV(TAG_RF, "RX src=0x%06x dst=0x%06x type=0x%02x cmd=0x%02x state=0x%02x cnt=%u",
+  ESP_LOGV(TAG_RF, "RX src=0x%06" PRIx32 " dst=0x%06" PRIx32 " type=0x%02x cmd=0x%02x state=0x%02x cnt=%u",
            pkt.src, pkt.dst, pkt.type, pkt.command, pkt.state, pkt.cnt);
 
   // Dispatch through unified device registry (state machines, adapters, observers)

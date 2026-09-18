@@ -12,6 +12,7 @@
 #include "esp_mac.h"
 #endif
 #include <cstdio>
+#include <cinttypes>
 #include <cstring>
 #include <algorithm>
 #include <set>
@@ -122,7 +123,11 @@ void EleroWebServer::setup() {
 
   // Register as log listener to forward logs to WebSocket clients
   if (logger::global_logger != nullptr) {
-    logger::global_logger->add_log_listener(this);
+    logger::global_logger->add_log_callback(
+        this, [](void *self, uint8_t level, const char *tag,
+                 const char *message, size_t message_len) {
+          static_cast<EleroWebServer *>(self)->on_log(level, tag, message, message_len);
+        });
   }
 
   if (g_server != nullptr) {
@@ -420,7 +425,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 
       Device *dev = registry->find(addr);
       if (dev == nullptr) {
-        ESP_LOGW(TAG, "Command for unknown address 0x%06x", addr);
+        ESP_LOGW(TAG, "Command for unknown address 0x%06" PRIx32, addr);
         return true;
       }
 
@@ -481,7 +486,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       bool success = this->parent_->send_raw_command(
           dst_addr, src_addr, channel, raw_command,
           payload_1, payload_2, msg_type, type2_val, hop);
-      ESP_LOGI(TAG, "Raw TX to 0x%06x cmd=0x%02x: %s", dst_addr, raw_command, success ? "OK" : "FAIL");
+      ESP_LOGI(TAG, "Raw TX to 0x%06" PRIx32 " cmd=0x%02x: %s", dst_addr, raw_command, success ? "OK" : "FAIL");
       return true;
     }
 
@@ -717,7 +722,7 @@ void EleroWebServer::dispatch_device_command_(Device &dev, uint8_t cmd_byte) {
   } else {
     (void) dev.sender.enqueue(cmd_byte);
   }
-  ESP_LOGI(TAG, "Device TX to 0x%06x cmd=0x%02x", dev.config.dst_address, cmd_byte);
+  ESP_LOGI(TAG, "Device TX to 0x%06" PRIx32 " cmd=0x%02x", dev.config.dst_address, cmd_byte);
 }
 
 bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error) {

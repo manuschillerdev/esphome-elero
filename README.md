@@ -7,6 +7,17 @@ ESPHome component for controlling Elero wireless blinds and lights via an ESP32 
 
 ## Quick Start
 
+**ESPHome 2026.8.2 fork:** For the ESP32-PICO-D4 LilyGO LoRa32 with SX1276
+and native Home Assistant API, use the [build and hardware-testing guide](docs/ESPHOME-2026-LILYGO.md)
+and [native API/NVS configuration](configs/config.lilygo-lora32-api-nvs.yaml).
+The generated web UI is included, so ESPHome can pull this fork directly:
+
+```yaml
+external_components:
+  - source: github://aSauerwein/esphome-elero@dev
+    refresh: 0s
+```
+
 ### 1. Choose your hardware
 
 Pick a device config for your board:

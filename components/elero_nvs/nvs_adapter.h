@@ -21,6 +21,29 @@
 namespace esphome {
 namespace elero {
 
+// Registered by Python codegen so LightState's loop enable/disable and scheduler
+// participate in the normal ESPHome lifecycle. Only NVS-bound slots are entities.
+class NvsLightState : public light::LightState {
+ public:
+  NvsLightState() : light::LightState(&output_) {}
+  float get_setup_priority() const override { return setup_priority::DATA - 3.0f; }
+  EspLightShell *output() { return &output_; }
+  void setup() override {
+    if (output_.device_ == nullptr) {
+      disable_loop();
+      return;
+    }
+    light::LightState::setup();
+    output_.setup();
+  }
+  void dump_config() override {
+    if (output_.device_ != nullptr) light::LightState::dump_config();
+  }
+
+ private:
+  EspLightShell output_;
+};
+
 class NvsAdapter : public Component, public OutputAdapter {
  public:
   float get_setup_priority() const override {
@@ -30,6 +53,7 @@ class NvsAdapter : public Component, public OutputAdapter {
   }
 
   void set_registry(DeviceRegistry *r) { registry_ = r; }
+  void set_light_slot(size_t index, NvsLightState *state) { light_states_[index] = state; }
 
   void setup(DeviceRegistry &registry) override { registry_ = &registry; }
   void loop() override {}
@@ -67,36 +91,39 @@ class NvsAdapter : public Component, public OutputAdapter {
 
  private:
   void create_cover_(Device *dev, size_t slot_index) {
-    auto *shell = new EspCoverShell();  // NOLINT — owned by App
-    shell->set_name(dev->config.name);
+    auto *shell = new EspCoverShell();  // Firmware-lifetime entity
     shell->set_registry(registry_);
     shell->set_device(dev);
 
     cover_shells_[slot_index] = shell;
-    App.register_cover(shell);
-    App.register_component(shell);
+    // EntityBase retains a StringRef: keep the boot name alive and immutable
+    // even if the registry config is edited before the required reboot.
+    names_[slot_index] = dev->config.name;
+    App.register_cover(shell, names_[slot_index].c_str(), 0, 0);
+    // Covers have no periodic work; initialize directly after binding.
+    shell->setup();
   }
 
   void create_light_(Device *dev, size_t slot_index) {
-    auto *output = new EspLightShell();  // NOLINT — owned by App
+    auto *state = light_states_[slot_index];
+    auto *output = state->output();
     output->set_registry(registry_);
     output->set_device(dev);
 
-    auto *state = new light::LightState(output);  // NOLINT — owned by App
-    state->set_name(dev->config.name);
     state->set_restore_mode(light::LIGHT_RESTORE_DEFAULT_OFF);
 
     output->set_light_state(state);
 
     light_shells_[slot_index] = output;
-    App.register_light(state);
-    App.register_component(state);
-    App.register_component(output);
+    names_[slot_index] = dev->config.name;
+    App.register_light(state, names_[slot_index].c_str(), 0, 0);
   }
 
   DeviceRegistry *registry_{nullptr};
   std::array<EspCoverShell *, DeviceRegistry::MAX_DEVICES> cover_shells_{};
   std::array<EspLightShell *, DeviceRegistry::MAX_DEVICES> light_shells_{};
+  std::array<NvsLightState *, DeviceRegistry::MAX_DEVICES> light_states_{};
+  std::array<std::string, DeviceRegistry::MAX_DEVICES> names_{};
 };
 
 }  // namespace elero
