@@ -49,17 +49,27 @@ signature and `cmake --version` were verified in a normal host process. This
 setup keeps Gatekeeper enabled; existing legacy tool installations can remain
 because the project selects the explicit Aqua backend.
 
-Build the frontend header before compiling a local checkout:
+The frontend header is committed with the component, so a fresh Git installation
+needs no frontend build or release-asset download. To compile a local checkout:
 
 ```sh
 mise install
 mise exec -- uv sync --locked
-mise exec -- pnpm --dir components/elero_web/frontend/app install --frozen-lockfile
-mise exec -- pnpm --dir components/elero_web/frontend/app build
 mise exec -- uv run esphome compile tests/test.esp32-nvs.yaml
 mise exec -- uv run esphome compile tests/test.esp32-mqtt.yaml
 mise exec -- uv run esphome compile tests/test.esp32-ard.yaml
 ```
+
+After changing frontend source, regenerate and commit the bundled header:
+
+```sh
+mise exec -- pnpm --dir components/elero_web/frontend/app install --frozen-lockfile
+mise exec -- pnpm --dir components/elero_web/frontend/app build
+```
+
+CI checks the regenerated header for drift. A separate fresh-install job compiles
+`tests/test.fresh-install.yaml` through ESPHome's Git external-component loader
+at the tested commit, without building or injecting a frontend artifact.
 
 Validated with ESPHome 2026.9.0 and Python 3.12.14:
 
