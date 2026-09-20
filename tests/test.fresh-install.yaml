@@ -1,0 +1,40 @@
+# Exercise Git delivery with no locally built or injected frontend header.
+substitutions:
+  component_repository: https://github.com/manuschillerdev/esphome-elero.git
+  component_ref: dev
+
+esphome:
+  name: test-fresh-install
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: test-network
+  password: ""
+
+api:
+
+external_components:
+  - source:
+      type: git
+      url: ${component_repository}
+      ref: ${component_ref}
+    refresh: 0s
+
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+
+elero:
+  cs_pin: GPIO5
+  gdo0_pin: GPIO26
+
+elero_nvs:
+
+elero_web:

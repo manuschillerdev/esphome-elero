@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Build frontend header (needed by ESPHome compile tests)
+  # Verify the committed header matches the frontend source.
   build-frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
@@ -29,11 +29,10 @@ jobs:
         working-directory: components/elero_web/frontend/app
         run: mise exec node pnpm -- pnpm build
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: elero_web_ui
-          path: components/elero_web/elero_web_ui.h
-          retention-days: 1
+      - name: Verify bundled frontend is tracked and up to date
+        run: |
+          git ls-files --error-unmatch components/elero_web/elero_web_ui.h
+          git diff --exit-code -- components/elero_web/elero_web_ui.h
 
   # ESPHome compile tests for each platform
   esphome-compile:
@@ -60,13 +59,33 @@ jobs:
       - name: Install Python dependencies
         run: mise exec python uv -- uv sync --locked
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: elero_web_ui
-          path: components/elero_web/
-
       - name: Compile ${{ matrix.test }}
         run: mise exec python uv -- uv run esphome compile tests/${{ matrix.test }}.yaml
+
+  fresh-install:
+    name: Fresh Git Installation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: python uv aqua:Kitware/CMake
+
+      - name: Install Python dependencies
+        run: mise exec python uv -- uv sync --locked
+
+      # Clone the exact tested revision through ESPHome, with no frontend build
+      # or artifact injection into the external-component cache.
+      - name: Compile from a fresh Git external component
+        env:
+          COMPONENT_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}.git
+          COMPONENT_REF: ${{ github.sha }}
+        run: |
+          mise exec python uv aqua:Kitware/CMake -- uv run esphome \
+            -s component_repository "$COMPONENT_REPOSITORY" \
+            -s component_ref "$COMPONENT_REF" \
+            compile tests/test.fresh-install.yaml
 
   # Unit tests for protocol layer
   unit-tests:

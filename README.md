@@ -10,6 +10,11 @@ install the pinned tools with `mise install`, then dependencies with `mise exec 
 Native API devices continue to come from NVS; existing device backups and configuration
 remain supported. See [ESPHome compatibility](docs/ESPHOME-COMPATIBILITY.md) for migration details.
 
+The web UI is bundled with the component. GitHub installations do not require
+Node.js, pnpm, or a separate frontend download. Frontend contributors must rebuild
+and commit `components/elero_web/elero_web_ui.h` alongside source changes;
+CI verifies that the generated header matches the source.
+
 ## Quick Start
 
 ### 1. Choose your hardware
