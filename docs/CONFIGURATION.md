@@ -2,6 +2,9 @@
 
 Complete reference for all YAML-configurable parameters.
 
+Requires **ESPHome 2026.9.0 or newer**, with ESP32 using ESP-IDF or Arduino.
+See [ESPHome compatibility](ESPHOME-COMPATIBILITY.md) for native API lifecycle details.
+
 > **Heads up — devices are no longer YAML-defined.** Since v0.11.0
 > (RFC-002), `cover: - platform: elero` and `light: - platform: elero`
 > are gone. All blinds and lights live in NVS and are managed through
