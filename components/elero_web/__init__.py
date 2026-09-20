@@ -6,6 +6,7 @@ import esphome.config_validation as cv
 from esphome.components.elero import CONF_ELERO_ID, CONF_REGISTRY_ID, ELERO_VERSION, DeviceRegistry, elero, elero_ns
 from esphome.components.logger import request_log_listener
 from esphome.const import CONF_ID, CONF_PORT
+from esphome.core import EsphomeError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,7 +58,13 @@ def _ensure_mongoose():
 
 
 def _ensure_ui_header():
-    """Download the pre-built frontend header from the GitHub release."""
+    """Download the pre-built frontend header from the GitHub release.
+
+    elero_web_server.cpp includes this header unconditionally, so a missing
+    file is a hard build failure. Fail here, where the cause is visible,
+    rather than several hundred compile steps later with a bare
+    "elero_web_ui.h: No such file or directory".
+    """
     if _UI_HEADER.exists():
         return
 
@@ -72,13 +79,17 @@ def _ensure_ui_header():
     )
     try:
         urllib.request.urlretrieve(url, _UI_HEADER)
-    except Exception:
-        _LOGGER.warning(
-            "Could not download %s — the web UI will not be available. "
-            "For local development, run: "
-            "cd components/elero_web/frontend/app && pnpm build",
-            _UI_HEADER_FILENAME,
-        )
+    except Exception as err:
+        # urlretrieve can leave a partial file behind on failure.
+        _UI_HEADER.unlink(missing_ok=True)
+        raise EsphomeError(
+            f"Could not download the pre-built web UI ({_UI_HEADER_FILENAME}) "
+            f"from {url}: {err}\n"
+            f"elero_web cannot be compiled without it. Either check that the "
+            f"v{ELERO_VERSION} release publishes {_UI_HEADER_FILENAME}, or "
+            f"build the frontend locally:\n"
+            f"  cd components/elero_web/frontend/app && pnpm install && pnpm build"
+        ) from err
 
 
 async def to_code(config):

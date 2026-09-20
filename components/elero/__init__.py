@@ -7,8 +7,12 @@ from esphome.core import CORE
 
 DEPENDENCIES = ["spi"]
 
-# x-release-please-version
-ELERO_VERSION = "0.9.0"
+# Version of the GitHub release whose pre-built frontend asset
+# (elero_web_ui.h) this source tree expects. release-please rewrites the
+# annotated line on every release — the annotation must stay on the same line
+# as the version string, because the updater only substitutes within the line
+# it is written on.
+ELERO_VERSION = "0.10.1"  # x-release-please-version
 
 elero_ns = cg.esphome_ns.namespace("elero")
 elero = elero_ns.class_("Elero", cg.Component)
