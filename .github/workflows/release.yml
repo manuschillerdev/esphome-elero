@@ -34,23 +34,17 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: jdx/mise-action@v3
         with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: components/elero_web/frontend/app/pnpm-lock.yaml
+          install_args: node pnpm
 
       - name: Install dependencies
         working-directory: components/elero_web/frontend/app
-        run: pnpm install --frozen-lockfile
+        run: mise exec node pnpm -- pnpm install --frozen-lockfile
 
       - name: Build frontend
         working-directory: components/elero_web/frontend/app
-        run: pnpm build
+        run: mise exec node pnpm -- pnpm build
 
       - name: Upload frontend header to release
         env:

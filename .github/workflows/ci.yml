@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [dev, main]
   pull_request:
 
 concurrency:
@@ -17,23 +17,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: jdx/mise-action@v3
         with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: components/elero_web/frontend/app/pnpm-lock.yaml
+          install_args: node pnpm
 
       - name: Install dependencies
         working-directory: components/elero_web/frontend/app
-        run: pnpm install --frozen-lockfile
+        run: mise exec node pnpm -- pnpm install --frozen-lockfile
 
       - name: Build frontend
         working-directory: components/elero_web/frontend/app
-        run: pnpm build
+        run: mise exec node pnpm -- pnpm build
 
       - uses: actions/upload-artifact@v4
         with:
@@ -46,7 +40,6 @@ jobs:
     name: ESPHome Compile (${{ matrix.test }})
     runs-on: ubuntu-latest
     needs: build-frontend
-    container: ghcr.io/esphome/esphome:2026.2.2
     strategy:
       fail-fast: false
       matrix:
@@ -60,13 +53,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: python uv
+
+      - name: Install Python dependencies
+        run: mise exec python uv -- uv sync --locked
+
       - uses: actions/download-artifact@v4
         with:
           name: elero_web_ui
           path: components/elero_web/
 
       - name: Compile ${{ matrix.test }}
-        run: esphome compile tests/${{ matrix.test }}.yaml
+        run: mise exec python uv -- uv run esphome compile tests/${{ matrix.test }}.yaml
 
   # Unit tests for protocol layer
   unit-tests:
@@ -75,14 +75,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: aqua:Kitware/CMake
+
       - name: Configure CMake
-        run: cmake -B build -S tests/unit
+        run: mise exec aqua:Kitware/CMake -- cmake -B build -S tests/unit
 
       - name: Build
-        run: cmake --build build
+        run: mise exec aqua:Kitware/CMake -- cmake --build build
 
       - name: Run tests with JUnit XML output
-        run: cmake --build build --target test_xml
+        run: mise exec aqua:Kitware/CMake -- cmake --build build --target test_xml
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -107,13 +111,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: jdx/mise-action@v3
         with:
-          python-version: '3.11'
+          install_args: python uv
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install Python dependencies
+        run: mise exec python uv -- uv sync --locked
 
       - name: Lint Python files
-        run: ruff check components/
+        run: mise exec python uv -- uv run ruff check components/
+
+      - name: Run Python tests
+        run: mise exec python uv -- uv run pytest

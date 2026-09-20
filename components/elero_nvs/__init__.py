@@ -9,6 +9,10 @@ AUTO_LOAD = ["json", "cover", "light"]
 CODEOWNERS = ["@manuschillerdev"]
 
 NvsAdapter = elero_ns.class_("NvsAdapter", cg.Component, OutputAdapter)
+NvsLightState = elero_ns.class_("NvsLightState", cg.Component)
+# Keep in sync with DeviceRegistry::MAX_DEVICES.
+MAX_DEVICES = 48
+_LIGHT_SLOT_IDS = [f"light_slot_{i}_id" for i in range(MAX_DEVICES)]
 
 CONF_NVS_ADAPTER_ID = "nvs_adapter_id"
 
@@ -17,6 +21,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero_ns.class_("Elero")),
         cv.GenerateID(CONF_REGISTRY_ID): cv.use_id(DeviceRegistry),
         cv.GenerateID(CONF_NVS_ADAPTER_ID): cv.declare_id(NvsAdapter),
+        **{cv.GenerateID(key): cv.declare_id(NvsLightState) for key in _LIGHT_SLOT_IDS},
     }
 )
 
@@ -38,10 +43,15 @@ async def to_code(config):
         # since the actual count isn't known at codegen.
         cg.add_define("USE_COVER")
         cg.add_define("USE_LIGHT")
-        cg.add_define("ESPHOME_ENTITY_COVER_COUNT", 48)
-        cg.add_define("ESPHOME_ENTITY_LIGHT_COUNT", 48)
+        for _ in range(MAX_DEVICES):
+            CORE.register_platform_component("cover", None)
+            CORE.register_platform_component("light", None)
 
         adapter = cg.new_Pvariable(config[CONF_NVS_ADAPTER_ID])
         cg.add(adapter.set_registry(registry))
         cg.add(registry.add_adapter(adapter))
         await cg.register_component(adapter, config)
+        for index, key in enumerate(_LIGHT_SLOT_IDS):
+            state = cg.new_Pvariable(config[key])
+            cg.add(adapter.set_light_slot(index, state))
+            await cg.register_component(state, {})

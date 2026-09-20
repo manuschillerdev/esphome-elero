@@ -5,6 +5,11 @@ ESPHome component for controlling Elero wireless blinds and lights via an ESP32 
 [![ESPHome](https://img.shields.io/badge/ESPHome-Component-blue)](https://esphome.io/)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
+Requires **ESPHome 2026.9.0 or newer**. Local development uses Python 3.12;
+install the pinned tools with `mise install`, then dependencies with `mise exec -- uv sync`.
+Native API devices continue to come from NVS; existing device backups and configuration
+remain supported. See [ESPHome compatibility](docs/ESPHOME-COMPATIBILITY.md) for migration details.
+
 ## Quick Start
 
 ### 1. Choose your hardware

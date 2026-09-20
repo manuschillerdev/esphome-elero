@@ -1,11 +1,17 @@
 [tools]
-python = "3.11"
-node = "lts"
-pnpm = "latest"
-uv = "latest"
-cmake = "latest"
-gitleaks = "latest"
-"pipx:pre-commit" = "latest"
+python = "3.12.14"
+node = "24.14.0"
+pnpm = "10.32.1"
+uv = "0.12.5"
+# The legacy asdf CMake plugin damages macOS app-bundle signatures.
+"aqua:Kitware/CMake" = "4.2.3"
+gitleaks = "8.30.1"
+"pipx:pre-commit" = "4.5.1"
+
+[env]
+# Keep uv on the Python installed by mise, including in CI.
+UV_PYTHON_PREFERENCE = "only-system"
+UV_PYTHON_DOWNLOADS = "never"
 
 [vars]
 usb_port = "/dev/cu.usbmodem2101"

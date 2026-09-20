@@ -66,26 +66,20 @@ def _validate_sx1276_pins(config):
             raise cv.Invalid(f"'{CONF_RST_PIN}' is required for SX1276 radio")
         pa = config.get(CONF_PA_POWER, 17)
         if pa < -1:
-            raise cv.Invalid(
-                f"SX1276 RFO supports min -1 dBm (got {pa})."
-            )
+            raise cv.Invalid(f"SX1276 RFO supports min -1 dBm (got {pa}).")
         if pa > 20:
-            raise cv.Invalid(
-                f"SX1276 supports max +20 dBm (got {pa}). "
-                f"Use pa_power: 20 for maximum output."
-            )
+            raise cv.Invalid(f"SX1276 supports max +20 dBm (got {pa}). Use pa_power: 20 for maximum output.")
     return config
 
 
 CONFIG_SCHEMA = cv.All(
+    cv.require_esphome_version(2026, 9, 0),
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(elero),
             cv.GenerateID(CONF_REGISTRY_ID): cv.declare_id(DeviceRegistry),
             cv.GenerateID(CONF_DRIVER_ID): cv.declare_id(CC1101Driver),
-            cv.Optional(CONF_RADIO, default="cc1101"): cv.one_of(
-                "cc1101", "sx1262", "sx1276", lower=True
-            ),
+            cv.Optional(CONF_RADIO, default="cc1101"): cv.one_of("cc1101", "sx1262", "sx1276", lower=True),
             cv.Optional(CONF_IRQ_PIN): pins.gpio_input_pin_schema,
             cv.Optional(CONF_GDO0_PIN): pins.gpio_input_pin_schema,
             cv.Optional(CONF_FREQ0, default=0x7A): cv.hex_int_range(min=0x0, max=0xFF),
@@ -197,11 +191,7 @@ async def to_code(config):
     # Auto-create internal diagnostic sensors for RF stats
     # Requires sensor component to be loaded (e.g., via RSSI sensors or explicit `sensor:` in YAML)
     if config[CONF_AUTO_STATS] and "sensor" in CORE.loaded_integrations:
-        from esphome.components import sensor  # noqa: F401
-
-        # Import sensor namespace for C++ type reference
-        sensor_ns = cg.esphome_ns.namespace("sensor")
-        SensorClass = sensor_ns.class_("Sensor")
+        from esphome.components import sensor
 
         stats_sensors = [
             ("tx_success_total", "Elero TX Success", "set_stats_tx_success_sensor"),
@@ -216,10 +206,10 @@ async def to_code(config):
             ("last_rx_age_ms", "Elero Last RX Age", "set_stats_last_rx_age_sensor"),
         ]
         for sensor_id, name, setter in stats_sensors:
-            sens_var_id = cv.declare_id(SensorClass)(f"elero_{sensor_id}")
+            sens_var_id = cv.declare_id(sensor.Sensor)(f"elero_{sensor_id}")
             sens = cg.new_Pvariable(sens_var_id)
-            cg.add(sens.set_name(name))
+            CORE.register_platform_component("sensor", sens)
+            cg.add(cg.App.register_sensor(sens, name, 0, 0))
             cg.add(sens.set_internal(True))
             cg.add(sens.set_accuracy_decimals(0))
             cg.add(getattr(var, setter)(sens))
-            cg.add(cg.App.register_sensor(sens))
