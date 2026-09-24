@@ -48,6 +48,8 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
   void on_rf_packet(const RfPacketInfo &pkt) override;
   void on_group_upserted(const NvsGroupConfig &group) override;
   void on_group_removed(const char *id) override;
+  void on_hub_config_changed() override;
+  void on_channel_command_result(const ChannelCommandResult &result) override;
 
   // LogListener interface - forward logs to WebSocket clients
   void on_log(uint8_t level, const char *tag, const char *message, size_t message_len) override;
@@ -112,7 +114,7 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
 
   /// Dispatch a command byte to a known device with proper FSM + follow-ups.
   /// This is the single low-level primitive — cmd handler calls into this.
-  void dispatch_device_command_(Device &dev, uint8_t cmd_byte);
+  void send_operation_result_(struct mg_connection *c, const char *operation, const OperationResult &result);
 
   // Parse NvsDeviceConfig / NvsGroupConfig from JSON objects
   bool parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error);

@@ -1,0 +1,83 @@
+# Native PaperMono frontend. Saved devices use the core's normal status polling.
+substitutions:
+  paper_storage: "false"
+  paper_name: "paper-mono"
+  paper_framework: "esp-idf"
+esphome:
+  name: ${paper_name}
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: ${paper_framework}
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+  level: INFO
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+i2c:
+  id: board_bus
+  sda: GPIO47
+  scl: GPIO48
+  frequency: 100kHz
+  scan: false
+
+paper_mono:
+  id: paper_board
+  i2c_id: board_bus
+
+spi:
+  - id: radio_spi
+    interface: spi3
+    clk_pin: GPIO39
+    mosi_pin: GPIO38
+    miso_pin: GPIO40
+  - id: display_spi
+    interface: spi2
+    clk_pin: GPIO15
+    mosi_pin: GPIO14
+
+font:
+  - file: "gfonts://Roboto"
+    id: body_font
+    size: 22
+  - file: "gfonts://Roboto"
+    id: title_font
+    size: 30
+
+elero_paper:
+  storage: ${paper_storage}
+  id: paper_display
+  board_id: paper_board
+  spi_id: display_spi
+  cs_pin: GPIO16
+  dc_pin: GPIO17
+  busy_pin: GPIO18
+  font_id: body_font
+  title_font_id: title_font
+
+elero:
+  id: elero_hub
+  radio: sx1262
+  spi_id: radio_spi
+  cs_pin: GPIO41
+  irq_pin: GPIO5
+  busy_pin: GPIO21
+  rst_pin:
+    paper_mono: paper_board
+    number: 10
+    mode: OUTPUT
+  tcxo_voltage: 3.0
+  regulator_ldo: true
+  rf_switch: true
+  pa_power: 10

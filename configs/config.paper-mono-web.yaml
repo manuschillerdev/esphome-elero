@@ -1,0 +1,17 @@
+# Optional networked PaperMono: native UI + web UI + Home Assistant native API.
+# Replace the Wi-Fi placeholders before deploying this example.
+packages:
+  paper_mono: !include config.paper-mono.yaml
+
+substitutions:
+  paper_name: "paper-mono-web"
+
+wifi:
+  ssid: "CHANGE_ME"
+  password: "CHANGE_ME"
+
+api:
+
+elero_web:
+
+elero_nvs:

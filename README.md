@@ -13,6 +13,7 @@ Pick a device config for your board:
 
 - [ESP32 + CC1101](docs/devices/esp32-cc1101.md) -- generic ESP32 with external CC1101 module
 - [Heltec WiFi LoRa 32 V4](docs/devices/heltec-lora-v4.md) -- onboard SX1262 (experimental)
+- [PaperMono native frontend](docs/PAPER_MONO.md) -- optional onboard controls, devices, groups, learn-in, RF tools and NVS persistence. Runs independently of the web server; microSD backup support is separately opt-in.
 - [LILYGO LoRa32 V2.1](docs/devices/lilygo-lora32-sx1276.md) -- onboard SX1276 (experimental)
 - [LilyGO T-Embed](docs/devices/lilygo-t-embed.md) -- onboard CC1101
 

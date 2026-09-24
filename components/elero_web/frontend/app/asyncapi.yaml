@@ -2,7 +2,7 @@ asyncapi: 3.0.0
 
 info:
   title: Elero WebSocket API
-  version: 2.0.0
+  version: 2.1.0
   description: |
     Real-time WebSocket interface for the esphome-elero gateway.
 
@@ -53,6 +53,12 @@ channels:
   eleroWs:
     address: /elero/ws
     messages:
+      operationResultEvent:
+        $ref: "#/components/messages/operationResultEvent"
+      channelCommandResultEvent:
+        $ref: "#/components/messages/channelCommandResultEvent"
+      channelCmdMessage:
+        $ref: "#/components/messages/channelCmdMessage"
       configEvent:
         $ref: "#/components/messages/configEvent"
       rfEvent:
@@ -109,6 +115,25 @@ channels:
         $ref: "#/components/messages/learnInCancelMessage"
 
 operations:
+  receiveOperationResult:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    messages:
+      - $ref: "#/channels/eleroWs/messages/operationResultEvent"
+  receiveChannelCommandResult:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    messages:
+      - $ref: "#/channels/eleroWs/messages/channelCommandResultEvent"
+  sendChannelCommand:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    messages:
+      - $ref: "#/channels/eleroWs/messages/channelCmdMessage"
+
   receiveConfig:
     action: receive
     channel:
@@ -383,6 +408,21 @@ operations:
 
 components:
   messages:
+    operationResultEvent:
+      name: operation_result
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/OperationResultEnvelope"
+    channelCommandResultEvent:
+      name: channel_command_result
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/ChannelCommandResultEnvelope"
+    channelCmdMessage:
+      name: channel_cmd
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/ChannelCmdPayload"
     configEvent:
       name: config
       title: Configuration Event
@@ -600,6 +640,90 @@ components:
         $ref: "#/components/schemas/LearnInCancelPayload"
 
   schemas:
+    OperationSuccessStatus:
+      type: string
+      enum: [applied, queued]
+    OperationFailureStatus:
+      type: string
+      enum: [rejected, failed]
+    TransmissionStatus:
+      type: string
+      enum: [queued, transmitted, failed, cancelled]
+    ChannelAction:
+      type: string
+      enum: [up, stop, down]
+    OperationResultEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          const: operation_result
+          type: string
+        data:
+          $ref: "#/components/schemas/OperationResultData"
+    OperationResultData:
+      type: object
+      additionalProperties: false
+      required: [operation, operation_id, status, msg]
+      description: Applied means flash sync succeeded. Queued does not mean transmitted or motor acknowledged.
+      properties:
+        operation:
+          type: string
+        operation_id:
+          type: integer
+          description: Nonzero for channel commands; hub-local until reboot. Zero for untracked operations.
+        status:
+          $ref: "#/components/schemas/OperationSuccessStatus"
+        msg:
+          type: string
+    ChannelCommandResultEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: channel_command_result
+        data:
+          $ref: "#/components/schemas/ChannelCommandResultData"
+    ChannelCommandResultData:
+      type: object
+      additionalProperties: false
+      required: [operation_id, remote, channel, command, status]
+      description: Broadcast RF progress, not a motor acknowledgement. STOP cancels the previous pending operation.
+      properties:
+        operation_id:
+          type: integer
+          minimum: 1
+        remote:
+          type: string
+        channel:
+          type: integer
+          minimum: 1
+          maximum: 255
+        command:
+          type: integer
+        status:
+          $ref: "#/components/schemas/TransmissionStatus"
+    ChannelCmdPayload:
+      type: object
+      additionalProperties: false
+      required: [type, src_address, channel, action]
+      properties:
+        type:
+          type: string
+          const: channel_cmd
+        src_address:
+          type: string
+          description: Nonzero 24-bit remote address, prefixed with 0x for hexadecimal.
+        channel:
+          type: integer
+          minimum: 1
+          maximum: 255
+        action:
+          $ref: "#/components/schemas/ChannelAction"
+
     # ── Server → Client Envelopes ──
 
     ConfigEventEnvelope:
@@ -1203,6 +1327,12 @@ components:
       additionalProperties: false
       required: [msg]
       properties:
+        operation:
+          type: string
+        operation_id:
+          type: integer
+        status:
+          $ref: "#/components/schemas/OperationFailureStatus"
         msg:
           type: string
           description: Human-readable error message
@@ -1732,6 +1862,9 @@ components:
       required: [added, updated, skipped, groups_added, groups_updated, groups_skipped, errors]
       description: Summary of one import operation.
       properties:
+        persisted:
+          type: boolean
+          description: Whether final flash sync succeeded. Errors include any sync failure.
         added:
           type: integer
           description: Devices created (no prior `(type, dst_address)` match).

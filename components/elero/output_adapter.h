@@ -12,6 +12,7 @@
 #pragma once
 
 #include "device.h"
+#include "operation_result.h"
 
 namespace esphome::elero {
 
@@ -58,6 +59,9 @@ class OutputAdapter {
     /// embed the hub name in published metadata (MQTT discovery device block,
     /// WebSocket config event) should re-publish.
     virtual void on_hub_config_changed() {}
+
+    /// Channel command progress; transmitted is RF completion, not motor ACK.
+    virtual void on_channel_command_result(const ChannelCommandResult &result) {}
 };
 
 }  // namespace esphome::elero
