@@ -115,8 +115,8 @@ bool Sx1262Driver::init() {
   if (!this->write_opcode_(sx1262::CALIBRATE, &cal_mask, 1)) return false;
   if (!this->wait_busy_()) return false;
 
-  // 8. Regulator mode (DC-DC)
-  uint8_t reg_mode = 0x01;
+  // 8. Regulator mode depends on the module's power circuit.
+  uint8_t reg_mode = this->regulator_ldo_ ? 0x00 : 0x01;
   if (!this->write_opcode_(sx1262::SET_REGULATOR_MODE, &reg_mode, 1)) return false;
 
   // 9. DIO2 as RF switch (before modulation config)

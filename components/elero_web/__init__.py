@@ -10,7 +10,7 @@ from esphome.const import CONF_ID, CONF_PORT
 _LOGGER = logging.getLogger(__name__)
 
 DEPENDENCIES = ["elero", "network", "logger"]
-AUTO_LOAD = ["json"]
+AUTO_LOAD = ["json", "elero_config"]
 CODEOWNERS = ["@manuschillerdev"]
 
 # Mongoose version pinned for reproducible builds

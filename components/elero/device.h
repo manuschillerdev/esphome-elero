@@ -98,6 +98,7 @@ using DeviceLogic = std::variant<CoverDevice, LightDevice, RemoteDevice>;
 
 struct Device {
     bool            active{false};       ///< false = empty slot
+    bool            discovery_candidate{false};  ///< observed only; no automatic RF polling
     NvsDeviceConfig config;              ///< Persistence format, used directly
     RfMeta          rf;                  ///< Shared RF metadata
     DeviceLogic     logic;               ///< Type-specific state (movable)
@@ -158,6 +159,7 @@ inline void configure_sender(CommandSender &sender, const NvsDeviceConfig &cfg) 
 
 /// Initialize a device slot from config.
 inline void init_device(Device &dev, const NvsDeviceConfig &cfg) {
+    dev.discovery_candidate = false;
     dev.active = true;
     dev.config = cfg;
     dev.rf = {};

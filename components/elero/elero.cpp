@@ -55,16 +55,54 @@ void Elero::loop() {
   uint32_t now = millis();
 
   // 3. Registry loop (state machines, command queues, adapter loops)
+  this->publish_channel_result_();
   if (this->registry_ != nullptr) {
     this->registry_->loop(now);
   }
 
   // 4. Learn-in / provisioning loop (transport-agnostic RF primitives)
   this->learn_in_.loop(now, this);
+  if (channel_controller_) channel_controller_->process_queue(now, this, "elero.channel");
 
   // 5. Publish RF stats sensors (throttled to every 30s)
   this->publish_stats_();
 #endif
+}
+
+bool Elero::send_channel_command(uint32_t remote, uint8_t channel, uint8_t command) {
+  return request_channel_command(remote, channel, command).ok();
+}
+
+OperationResult Elero::request_channel_command(uint32_t remote, uint8_t channel, uint8_t command) {
+  if (is_failed()) return {OperationStatus::REJECTED, "Radio unavailable"};
+  if (remote == 0 || remote > 0xFFFFFF || channel == 0 ||
+      (command != packet::command::UP && command != packet::command::STOP && command != packet::command::DOWN))
+    return {OperationStatus::REJECTED, "Invalid remote, channel, or command"};
+  publish_channel_result_();
+  if (!channel_controller_) channel_controller_ = std::make_unique<ChannelController>();
+  if (!channel_controller_->send(remote, channel, command))
+    return {OperationStatus::REJECTED, "Channel command busy"};
+  if (channel_result_.operation_id && channel_result_.status == TransmissionStatus::QUEUED) {
+    channel_result_.status = TransmissionStatus::CANCELLED;
+    if (registry_) registry_->notify_channel_command(channel_result_);
+  }
+  if (++channel_operation_id_ == 0) ++channel_operation_id_;
+  channel_result_ = {channel_operation_id_, remote, channel, command, TransmissionStatus::QUEUED};
+  if (registry_) registry_->notify_channel_command(channel_result_);
+  return {OperationStatus::QUEUED, "Command queued", channel_operation_id_};
+}
+
+void Elero::publish_channel_result_() {
+  if (!channel_controller_ || channel_result_.operation_id == 0 ||
+      channel_result_.status != TransmissionStatus::QUEUED) return;
+  const auto state = channel_controller_->result();
+  if (state == ChannelCommandState::SENT)
+    channel_result_.status = TransmissionStatus::TRANSMITTED;
+  else if (state == ChannelCommandState::FAILED)
+    channel_result_.status = TransmissionStatus::FAILED;
+  else
+    return;
+  if (registry_) registry_->notify_channel_command(channel_result_);
 }
 
 // ─── receive_frame: parse driver output ───────

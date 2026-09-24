@@ -17,23 +17,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: jdx/mise-action@v2
         with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: components/elero_web/frontend/app/pnpm-lock.yaml
+          install_args: node pnpm
 
       - name: Install dependencies
         working-directory: components/elero_web/frontend/app
-        run: pnpm install --frozen-lockfile
+        run: mise exec -- pnpm install --frozen-lockfile
 
       - name: Build frontend
         working-directory: components/elero_web/frontend/app
-        run: pnpm build
+        run: mise exec -- pnpm build
 
       - uses: actions/upload-artifact@v4
         with:
@@ -46,7 +40,6 @@ jobs:
     name: ESPHome Compile (${{ matrix.test }})
     runs-on: ubuntu-latest
     needs: build-frontend
-    container: ghcr.io/esphome/esphome:2026.2.2
     strategy:
       fail-fast: false
       matrix:
@@ -67,8 +60,12 @@ jobs:
           name: elero_web_ui
           path: components/elero_web/
 
+      - uses: jdx/mise-action@v2
+        with:
+          install_args: python uv
+
       - name: Compile ${{ matrix.test }}
-        run: esphome compile tests/${{ matrix.test }}.yaml
+        run: mise exec -- uv run esphome compile tests/${{ matrix.test }}.yaml
 
   # Unit tests for protocol layer
   unit-tests:
@@ -77,14 +74,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: jdx/mise-action@v2
+        with:
+          install_args: aqua:Kitware/CMake
+
       - name: Configure CMake
-        run: cmake -B build -S tests/unit
+        run: mise exec -- cmake -B build -S tests/unit
 
       - name: Build
-        run: cmake --build build
+        run: mise exec -- cmake --build build
 
       - name: Run tests with JUnit XML output
-        run: cmake --build build --target test_xml
+        run: mise exec -- cmake --build build --target test_xml
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -109,13 +110,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: jdx/mise-action@v2
         with:
-          python-version: '3.11'
-
-      - name: Install ruff
-        run: pip install ruff
+          install_args: python uv
 
       - name: Lint Python files
-        run: ruff check components/
+        run: mise exec -- uv run ruff check components/
+
+  paper-mono:
+    name: Optional frontends (${{ matrix.task }})
+    runs-on: ubuntu-latest
+    needs: build-frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [compile:radio-only, compile:paper-mono, compile:paper-mono-sd, compile:paper-mono-web, compile:paper-mono-arduino]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        with:
+          install_args: python uv
+      - uses: actions/download-artifact@v4
+        with:
+          name: elero_web_ui
+          path: components/elero_web/
+      - run: mise run "${{ matrix.task }}"

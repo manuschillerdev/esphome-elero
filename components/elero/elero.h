@@ -12,6 +12,9 @@
 #include "elero_strings.h"
 #include "device_type.h"
 #include "learn_in_manager.h"
+#include "operation_result.h"
+#include "channel_controller.h"
+#include <memory>
 #include <string>
 #include <atomic>
 
@@ -88,6 +91,13 @@ class Elero : public Component, private RfTransportPort {
   // Posts command to RF task queue. Returns false for unsupported group size or a full queue.
   // Completion is notified asynchronously via TxClient::on_tx_complete() on Core 1.
   [[nodiscard]] bool request_tx(TxClient *client, const EleroCommand &cmd);
+
+  /// Core-owned channel control. Allocated on first use; independent of any UI.
+  [[nodiscard]] bool send_channel_command(uint32_t remote, uint8_t channel, uint8_t command);
+  [[nodiscard]] OperationResult request_channel_command(uint32_t remote, uint8_t channel, uint8_t command);
+  ChannelCommandState channel_command_state() const {
+    return channel_controller_ ? channel_controller_->result() : ChannelCommandState::IDLE;
+  }
 
   // Raw TX API (for WebSocket debugging/testing) — fire-and-forget via queue.
   [[nodiscard]] bool send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t channel,
@@ -175,6 +185,10 @@ class Elero : public Component, private RfTransportPort {
   // Unified device registry
   DeviceRegistry *registry_{nullptr};
   LearnInManager learn_in_;
+  ChannelCommandResult channel_result_{};
+  uint32_t channel_operation_id_{0};
+  void publish_channel_result_();
+  std::unique_ptr<ChannelController> channel_controller_;
 
   const char *version_{"unknown"};
 

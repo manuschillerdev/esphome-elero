@@ -1,11 +1,17 @@
 [tools]
-python = "3.11"
-node = "lts"
-pnpm = "latest"
-uv = "latest"
-cmake = "latest"
-gitleaks = "latest"
-"pipx:pre-commit" = "latest"
+python = "3.12.14"
+node = "24.14.0"
+pnpm = "10.32.1"
+uv = "0.12.5"
+# The legacy asdf CMake plugin damages macOS app-bundle signatures.
+"aqua:Kitware/CMake" = "4.2.3"
+gitleaks = "8.30.1"
+"pipx:pre-commit" = "4.5.1"
+
+[env]
+# Keep uv on the Python installed by mise, including in CI.
+UV_PYTHON_PREFERENCE = "only-system"
+UV_PYTHON_DOWNLOADS = "never"
 
 [vars]
 usb_port = "/dev/cu.usbmodem2101"
@@ -73,7 +79,9 @@ for cfg in tests/test.esp32-s3-ard.yaml \
            tests/test.esp32-ard.yaml \
            tests/test.esp32-minimal.yaml \
            tests/test.esp32-mqtt.yaml \
-           tests/test.esp32-nvs.yaml; do
+           tests/test.esp32-nvs.yaml \
+           tests/test.esp32-sx1262-idf.yaml \
+           tests/test.esp32-sx1276-idf.yaml; do
   echo "==> Compiling $cfg"
   uv run esphome compile "$cfg"
 done
@@ -186,3 +194,24 @@ run = """
 uv run esphome clean configs/config.lilygo-mqtt.yaml
 uv run esphome run configs/config.lilygo-mqtt.yaml --device {{vars.usb_port}}
 """
+
+# Optional frontend configurations use the same pinned ESPHome as all other builds.
+[tasks."compile:radio-only"]
+description = "Compile core-only firmware without frontend dependencies"
+run = "uv run esphome compile configs/config.radio-only.yaml"
+
+[tasks."compile:paper-mono"]
+description = "Compile standalone PaperMono without microSD or web server"
+run = "uv run esphome compile configs/config.paper-mono.yaml"
+
+[tasks."compile:paper-mono-sd"]
+description = "Compile PaperMono with optional microSD backup support"
+run = "uv run esphome -s paper_storage true -s paper_name paper-mono-sd compile configs/config.paper-mono.yaml"
+
+[tasks."compile:paper-mono-web"]
+description = "Compile PaperMono with web and Home Assistant native API"
+run = "uv run esphome compile configs/config.paper-mono-web.yaml"
+
+[tasks."compile:paper-mono-arduino"]
+description = "Compile PaperMono and optional storage on the Arduino framework"
+run = "uv run esphome -s paper_framework arduino -s paper_storage true -s paper_name paper-mono-arduino compile configs/config.paper-mono.yaml"

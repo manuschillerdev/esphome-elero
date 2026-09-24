@@ -185,7 +185,7 @@ class Sx1262Driver : public RadioDriver,
   // ── SX1262-specific pin setters ────────────────────────────────────────────
 
   void set_busy_pin(InternalGPIOPin *pin) { busy_pin_ = pin; }
-  void set_rst_pin(InternalGPIOPin *pin) { rst_pin_ = pin; }
+  void set_rst_pin(GPIOPin *pin) { rst_pin_ = pin; }
   void set_fem_pa_pin(InternalGPIOPin *pin) { fem_pa_pin_ = pin; }
   void set_fem_power_pin(InternalGPIOPin *pin) { fem_power_pin_ = pin; }
   void set_fem_enable_pin(InternalGPIOPin *pin) { fem_enable_pin_ = pin; }
@@ -195,6 +195,7 @@ class Sx1262Driver : public RadioDriver,
   void set_rf_switch(bool enable) { rf_switch_ = enable; }
   void set_pa_power(int8_t power) { pa_power_ = power; }
   void set_tcxo_voltage(float voltage) { tcxo_voltage_ = voltage; }
+  void set_regulator_ldo(bool ldo) { regulator_ldo_ = ldo; }
 
   // ── Diagnostics ────────────────────────────────────────────────────────────
 
@@ -271,7 +272,7 @@ class Sx1262Driver : public RadioDriver,
   // ── Pins ───────────────────────────────────────────────────────────────────
 
   InternalGPIOPin *busy_pin_{nullptr};
-  InternalGPIOPin *rst_pin_{nullptr};
+  GPIOPin *rst_pin_{nullptr};
   InternalGPIOPin *fem_pa_pin_{nullptr};    ///< FEM PA mode (GC1109 CPS: GPIO46, KCT8103L CTX: GPIO5)
   InternalGPIOPin *fem_power_pin_{nullptr}; ///< FEM LDO power (Heltec V4: GPIO7)
   InternalGPIOPin *fem_enable_pin_{nullptr};///< FEM chip enable (GC1109 CSD: GPIO2)
@@ -279,6 +280,7 @@ class Sx1262Driver : public RadioDriver,
   // ── Options ────────────────────────────────────────────────────────────────
 
   bool rf_switch_{false};   ///< Use DIO2 as RF switch control
+  bool regulator_ldo_{false};  ///< PaperMono uses LDO; retain DC-DC for existing boards.
   int8_t pa_power_{22};     ///< PA output power in dBm (default max for SX1262)
   float tcxo_voltage_{0.0f}; ///< TCXO voltage (0 = no TCXO, use crystal). Heltec boards: 1.8V
 

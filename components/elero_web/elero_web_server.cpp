@@ -1,4 +1,5 @@
 #include "elero_web_server.h"
+#include "esphome/components/elero_config/config_snapshot.h"
 #include "elero_web_ui.h"
 #include "../elero/elero_packet.h"
 #include "../elero/elero_strings.h"
@@ -417,17 +418,29 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 
       Device *dev = registry->find(addr);
       if (dev == nullptr) {
-        ESP_LOGW(TAG, "Command for unknown address 0x%06x", addr);
+        this->send_operation_result_(c, "cmd", {OperationStatus::REJECTED, "Device no longer exists"});
         return true;
       }
 
       uint8_t cmd_byte = elero_action_to_command(action_str);
       if (cmd_byte == packet::command::INVALID) {
-        ESP_LOGW(TAG, "Unknown action: %s", action_str);
+        this->send_operation_result_(c, "cmd", {OperationStatus::REJECTED, "Invalid command"});
         return true;
       }
 
-      this->dispatch_device_command_(*dev, cmd_byte);
+      this->send_operation_result_(c, "cmd", registry->command_device(*dev, cmd_byte));
+      return true;
+    }
+
+    if (type == "channel_cmd") {
+      const uint32_t remote = parse_hex32(root, "src_address");
+      const uint32_t channel = root["channel"] | 0U;
+      const auto command = elero_action_to_command(root["action"] | "");
+      if (channel == 0 || channel > 255) {
+        this->send_operation_result_(c, "channel_cmd", {OperationStatus::REJECTED, "Invalid channel"});
+      } else {
+        this->send_operation_result_(c, "channel_cmd", this->parent_->request_channel_command(remote, channel, command));
+      }
       return true;
     }
 
@@ -464,12 +477,12 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       if (registry != nullptr) {
         Device *dev = registry->find(dst_addr);
         if (dev != nullptr) {
-          this->dispatch_device_command_(*dev, raw_command);
+          this->send_operation_result_(c, "raw", registry->command_device(*dev, raw_command));
           return true;
         }
       }
 
-      // Unknown address → raw TX (blocking, debug only)
+      // Unknown address → raw TX queue (debug only).
       uint8_t payload_1 = parse_hex_or(root, "payload_1", packet::defaults::PAYLOAD_1);
       uint8_t payload_2 = parse_hex_or(root, "payload_2", packet::defaults::PAYLOAD_2);
       uint8_t type2_val = parse_hex_or(root, "type2", packet::defaults::TYPE2);
@@ -479,6 +492,8 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
           dst_addr, src_addr, channel, raw_command,
           payload_1, payload_2, msg_type, type2_val, hop);
       ESP_LOGI(TAG, "Raw TX to 0x%06x cmd=0x%02x: %s", dst_addr, raw_command, success ? "OK" : "FAIL");
+      this->send_operation_result_(c, "raw", success ? OperationResult{OperationStatus::QUEUED, "Command queued"}
+                                                    : OperationResult{OperationStatus::REJECTED, "Raw command rejected"});
       return true;
     }
 
@@ -697,122 +712,51 @@ std::string EleroWebServer::build_learn_in_state_json_() const {
 // Device Config Parser (shared by save/update)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-void EleroWebServer::dispatch_device_command_(Device &dev, uint8_t cmd_byte) {
-  auto *registry = this->parent_->get_registry();
-  if (registry == nullptr) {
-    ESP_LOGW(TAG, "No registry for command dispatch");
-    return;
-  }
+void EleroWebServer::send_operation_result_(struct mg_connection *c, const char *operation,
+                                            const OperationResult &result) {
+  // Retain the existing error envelope for current browser clients.
+  const auto data = json::build_json([&](JsonObject r) {
+    r["operation"] = operation;
+    r["operation_id"] = result.operation_id;
+    r["msg"] = result.message;
+    switch (result.status) {
+      case OperationStatus::APPLIED: r["status"] = "applied"; break;
+      case OperationStatus::QUEUED: r["status"] = "queued"; break;
+      case OperationStatus::REJECTED: r["status"] = "rejected"; break;
+      case OperationStatus::FAILED: r["status"] = "failed"; break;
+    }
+  });
+  this->ws_send(c, result.ok() ? "operation_result" : "error", data);
+}
 
-  if (dev.is_cover()) {
-    registry->command_cover(dev, cmd_byte);
-  } else if (dev.is_light()) {
-    registry->command_light(dev, cmd_byte);
-  } else {
-    (void) dev.sender.enqueue(cmd_byte);
-  }
-  ESP_LOGI(TAG, "Device TX to 0x%06x cmd=0x%02x", dev.config.dst_address, cmd_byte);
+void EleroWebServer::on_channel_command_result(const ChannelCommandResult &result) {
+  this->ws_broadcast("channel_command_result", json::build_json([&](JsonObject r) {
+    r["operation_id"] = result.operation_id;
+    r["remote"] = hex_str(result.remote);
+    r["channel"] = result.channel;
+    r["command"] = result.command;
+    switch (result.status) {
+      case TransmissionStatus::QUEUED: r["status"] = "queued"; break;
+      case TransmissionStatus::TRANSMITTED: r["status"] = "transmitted"; break;
+      case TransmissionStatus::FAILED: r["status"] = "failed"; break;
+      case TransmissionStatus::CANCELLED: r["status"] = "cancelled"; break;
+    }
+  }));
+}
+
+void EleroWebServer::on_hub_config_changed() {
+  if (!registry_) return;
+  this->ws_broadcast("hub_config", json::build_json([&](JsonObject r) {
+    r["name"] = registry_->hub_display_name();
+  }));
 }
 
 bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error) {
-  if (!parse_device_type(root["device_type"] | "", config.type)) {
-    error = "Invalid device_type";
-    return false;
-  }
-
-  uint32_t dst_addr = parse_hex32(root, "dst_address");
-  if (dst_addr == 0) {
-    error = "Missing dst_address";
-    return false;
-  }
-  config.dst_address = dst_addr;
-
-  const char *name = root["name"];
-  if (name != nullptr) {
-    config.set_name(name);
-  }
-
-  // Enabled flag (defaults to true if not specified)
-  config.set_enabled(root["enabled"] | true);
-
-  // RF params (covers and lights only)
-  if (!config.is_remote()) {
-    config.src_address = parse_hex32(root, "src_address");
-    if (root["channel"]) config.channel = root["channel"].as<uint8_t>();
-    config.hop = parse_hex_or(root, "hop", packet::defaults::HOP);
-    config.payload_1 = parse_hex_or(root, "payload_1", packet::defaults::PAYLOAD_1);
-    config.payload_2 = parse_hex_or(root, "payload_2", packet::defaults::PAYLOAD_2);
-    config.type_byte = parse_hex_or(root, "msg_type", packet::msg_type::COMMAND);
-    config.type2 = parse_hex_or(root, "type2", packet::defaults::TYPE2);
-
-    // Timing
-    if (root["open_duration_ms"].is<uint32_t>()) config.open_duration_ms = root["open_duration_ms"].as<uint32_t>();
-    if (root["close_duration_ms"].is<uint32_t>()) config.close_duration_ms = root["close_duration_ms"].as<uint32_t>();
-
-    if (config.is_cover()) {
-      config.supports_tilt = (root["supports_tilt"] | false) ? 1 : 0;
-    }
-    if (config.is_light()) {
-      if (root["dim_duration_ms"].is<uint32_t>()) config.dim_duration_ms = root["dim_duration_ms"].as<uint32_t>();
-    }
-  }
-
-  return true;
+  return config_snapshot::parse_device_config(root, config, error);
 }
 
 bool EleroWebServer::parse_group_config_(JsonObject root, NvsGroupConfig &config, std::string &error) {
-  const char *id = root["id"];
-  if (id == nullptr || id[0] == '\0') {
-    error = "Missing group id";
-    return false;
-  }
-  if (strlen(id) >= NVS_GROUP_ID_MAX) {
-    error = "Group id is too long";
-    return false;
-  }
-  config.set_id(id);
-
-  const char *name = root["name"];
-  if (name == nullptr || name[0] == '\0') {
-    error = "Missing group name";
-    return false;
-  }
-  if (strlen(name) >= NVS_NAME_MAX) {
-    error = "Group name is too long";
-    return false;
-  }
-  config.set_name(name);
-
-  if (!root["device_ids"].is<JsonArray>()) {
-    error = "Missing device_ids";
-    return false;
-  }
-  JsonArray ids = root["device_ids"].as<JsonArray>();
-  if (ids.size() < 2) {
-    error = "Group requires at least 2 devices";
-    return false;
-  }
-  if (ids.size() > NVS_GROUP_MAX_MEMBERS) {
-    error = "Too many group members";
-    return false;
-  }
-
-  uint8_t count = 0;
-  for (JsonVariant v : ids) {
-    uint32_t addr = 0;
-    if (v.is<const char *>()) {
-      addr = (uint32_t) strtoul(v.as<const char *>(), nullptr, 0);
-    } else {
-      addr = v.as<uint32_t>();
-    }
-    if (addr == 0) {
-      error = "Invalid device id";
-      return false;
-    }
-    config.device_ids[count++] = addr;
-  }
-  config.member_count = count;
-  return true;
+  return config_snapshot::parse_group_config(root, config, error);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -833,9 +777,7 @@ void EleroWebServer::handle_upsert_device_(struct mg_connection *c, JsonObject r
     return;
   }
 
-  if (registry->upsert(config) == nullptr) {
-    this->ws_send(c, "error", "{\"msg\":\"Failed to upsert device\"}");
-  }
+  this->send_operation_result_(c, "upsert_device", registry->save_device(config));
 }
 
 void EleroWebServer::handle_remove_device_(struct mg_connection *c, JsonObject root) {
@@ -857,9 +799,7 @@ void EleroWebServer::handle_remove_device_(struct mg_connection *c, JsonObject r
     return;
   }
 
-  if (!registry->remove(addr, type)) {
-    this->ws_send(c, "error", "{\"msg\":\"Failed to remove device\"}");
-  }
+  this->send_operation_result_(c, "remove_device", registry->delete_device(addr, type));
 }
 
 void EleroWebServer::handle_upsert_group_(struct mg_connection *c, JsonObject root) {
@@ -876,9 +816,7 @@ void EleroWebServer::handle_upsert_group_(struct mg_connection *c, JsonObject ro
     return;
   }
 
-  if (registry->upsert_group(config, &error) == nullptr) {
-    this->ws_send(c, "error", json::build_json([&](JsonObject r) { r["msg"] = error.empty() ? "Failed to upsert group" : error; }));
-  }
+  this->send_operation_result_(c, "upsert_group", registry->save_group(config));
 }
 
 void EleroWebServer::handle_remove_group_(struct mg_connection *c, JsonObject root) {
@@ -893,9 +831,7 @@ void EleroWebServer::handle_remove_group_(struct mg_connection *c, JsonObject ro
     this->ws_send(c, "error", "{\"msg\":\"Missing group id\"}");
     return;
   }
-  if (!registry->remove_group(id)) {
-    this->ws_send(c, "error", "{\"msg\":\"Failed to remove group\"}");
-  }
+  this->send_operation_result_(c, "remove_group", registry->delete_group(id));
 }
 
 void EleroWebServer::handle_group_command_(struct mg_connection *c, JsonObject root) {
@@ -920,15 +856,7 @@ void EleroWebServer::handle_group_command_(struct mg_connection *c, JsonObject r
     return;
   }
 
-  ESP_LOGI(TAG, "Group command request: id='%s' action='%s' cmd=0x%02x", id, action_str, cmd_byte);
-  std::string error;
-  if (!registry->command_saved_group(id, cmd_byte, &error)) {
-    const std::string msg = error.empty() ? "Failed to command group" : error;
-    ESP_LOGW(TAG, "Group command rejected for '%s': %s", id, msg.c_str());
-    this->ws_send(c, "error", json::build_json([&](JsonObject r) { r["msg"] = msg; }));
-    return;
-  }
-  ESP_LOGI(TAG, "Group command accepted: id='%s' action='%s'", id, action_str);
+  this->send_operation_result_(c, "group_cmd", registry->send_group_command(id, cmd_byte));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -938,77 +866,14 @@ void EleroWebServer::handle_group_command_(struct mg_connection *c, JsonObject r
 // Bump in lockstep with the `snapshot_version` const in
 // frontend/app/asyncapi.yaml (`ConfigSnapshot.snapshot_version`).
 // A drift makes every import fail with "Unsupported snapshot_version".
-constexpr uint8_t SNAPSHOT_VERSION = 2;
+constexpr uint8_t SNAPSHOT_VERSION = config_snapshot::VERSION;
 
 void EleroWebServer::build_device_snapshot_(const NvsDeviceConfig &cfg, JsonObject out) {
-  out["device_type"] = device_type_str(cfg.type);
-  out["dst_address"] = hex_str(cfg.dst_address);
-  out["name"] = cfg.name;
-  out["enabled"] = cfg.is_enabled();
-
-  if (!cfg.is_remote()) {
-    out["src_address"] = hex_str(cfg.src_address);
-    out["channel"] = cfg.channel;
-    out["hop"] = hex_str8(cfg.hop);
-    out["payload_1"] = hex_str8(cfg.payload_1);
-    out["payload_2"] = hex_str8(cfg.payload_2);
-    out["msg_type"] = hex_str8(cfg.type_byte);
-    out["type2"] = hex_str8(cfg.type2);
-  }
-  if (cfg.is_cover()) {
-    out["open_duration_ms"] = cfg.open_duration_ms;
-    out["close_duration_ms"] = cfg.close_duration_ms;
-    out["supports_tilt"] = cfg.supports_tilt != 0;
-    out["ha_device_class"] = cfg.ha_device_class;
-  }
-  if (cfg.is_light()) {
-    out["dim_duration_ms"] = cfg.dim_duration_ms;
-  }
+  config_snapshot::build_device(cfg, out);
 }
 
 std::string EleroWebServer::build_config_snapshot_json_() {
-  return json::build_json([this](JsonObject root) {
-    auto *registry = this->parent_->get_registry();
-
-    root["snapshot_version"] = SNAPSHOT_VERSION;
-    root["exported_at"] = millis();
-
-    JsonObject exporter = root["exporter"].to<JsonObject>();
-    exporter["device"] = App.get_name();
-    exporter["version"] = this->parent_->get_version();
-
-    JsonObject hub = root["hub"].to<JsonObject>();
-    // Only include the override if one is set; absence == "no override".
-    if (registry != nullptr) {
-      const std::string &display = registry->hub_display_name();
-      // We want the persisted *override*, not the effective name. The display
-      // name is override-or-default; if it equals the default, no override is set.
-      const std::string &def = registry->hub_default_name();
-      if (display != def) {
-        hub["name_override"] = display;
-      }
-    }
-
-    JsonArray devices = root["devices"].to<JsonArray>();
-    JsonArray groups = root["groups"].to<JsonArray>();
-    if (registry != nullptr) {
-      registry->for_each_active([&](const Device &dev) {
-        // Skip auto-discovered remotes that haven't been persisted yet.
-        if (dev.config.updated_at == 0) return;
-        JsonObject obj = devices.add<JsonObject>();
-        this->build_device_snapshot_(dev.config, obj);
-      });
-      registry->for_each_group([&](const NvsGroupConfig &group) {
-        JsonObject obj = groups.add<JsonObject>();
-        obj["id"] = group.id;
-        obj["name"] = group.name;
-        JsonArray ids = obj["device_ids"].to<JsonArray>();
-        for (uint8_t i = 0; i < group.member_count; ++i) {
-          ids.add(hex_str(group.device_ids[i]));
-        }
-      });
-    }
-  });
+  return config_snapshot::export_json(*this->parent_->get_registry(), this->parent_->get_version());
 }
 
 void EleroWebServer::handle_export_config_(struct mg_connection *c, JsonObject /*root*/) {
@@ -1019,132 +884,15 @@ void EleroWebServer::handle_export_config_(struct mg_connection *c, JsonObject /
 
 void EleroWebServer::handle_import_config_(struct mg_connection *c, JsonObject root) {
   auto *registry = this->parent_->get_registry();
-  if (registry == nullptr || !registry->is_nvs_enabled()) {
-    this->ws_send(c, "error", "{\"msg\":\"Import requires elero_nvs or elero_mqtt\"}");
-    return;
+  if (!registry || !registry->is_nvs_enabled()) {
+    this->ws_send(c, "error", "{\"msg\":\"Import requires NVS\"}"); return;
   }
-
-  if (!root["snapshot"].is<JsonObject>()) {
-    this->ws_send(c, "error", "{\"msg\":\"Missing 'snapshot' object\"}");
-    return;
+  JsonObject snapshot = root["snapshot"].as<JsonObject>();
+  auto version = snapshot["snapshot_version"] | 0;
+  if (snapshot.isNull() || version < 1 || version > config_snapshot::VERSION) {
+    this->ws_send(c, "error", "{\"msg\":\"Unsupported or missing snapshot\"}"); return;
   }
-  JsonObject snap = root["snapshot"].as<JsonObject>();
-
-  uint32_t snap_version = snap["snapshot_version"] | 0;
-  if (snap_version == 0 || snap_version > SNAPSHOT_VERSION) {
-    char buf[96];
-    snprintf(buf, sizeof(buf),
-             "{\"msg\":\"Unsupported snapshot_version %u (max %u)\"}",
-             (unsigned) snap_version, (unsigned) SNAPSHOT_VERSION);
-    this->ws_send(c, "error", buf);
-    return;
-  }
-
-  uint32_t added = 0;
-  uint32_t updated = 0;
-  uint32_t skipped = 0;
-  uint32_t groups_added = 0;
-  uint32_t groups_updated = 0;
-  uint32_t groups_skipped = 0;
-  bool hub_applied = false;
-
-  // Collect errors as a serialized JSON array (built incrementally to avoid
-  // building two ArduinoJson docs at once).
-  std::string errors_json = "[";
-  auto append_error = [&](int idx, const std::string &msg) {
-    if (errors_json.size() > 1) errors_json += ',';
-    std::string entry = json::build_json([&](JsonObject e) {
-      e["index"] = idx;
-      e["msg"] = msg;
-    });
-    errors_json += entry;
-  };
-
-  // Apply hub overrides (currently just name_override). set_hub_name_override
-  // returns false when the value matches what's already persisted — avoid
-  // claiming a no-op as a successful restore in the import_result toast.
-  if (snap["hub"].is<JsonObject>()) {
-    JsonObject hub_obj = snap["hub"].as<JsonObject>();
-    if (hub_obj["name_override"].is<const char *>()) {
-      const char *name = hub_obj["name_override"].as<const char *>();
-      hub_applied = registry->set_hub_name_override(name == nullptr ? "" : name);
-    }
-  }
-
-  // Apply each device through parse_device_config_ + upsert.
-  if (snap["devices"].is<JsonArray>()) {
-    JsonArray devs = snap["devices"].as<JsonArray>();
-    int idx = -1;
-    for (JsonVariant v : devs) {
-      ++idx;
-      if (!v.is<JsonObject>()) {
-        append_error(idx, "Device entry is not an object");
-        ++skipped;
-        continue;
-      }
-      JsonObject obj = v.as<JsonObject>();
-      NvsDeviceConfig cfg{};
-      std::string error;
-      if (!this->parse_device_config_(obj, cfg, error)) {
-        append_error(idx, error);
-        ++skipped;
-        continue;
-      }
-
-      bool was_existing = (registry->find(cfg.dst_address, cfg.type) != nullptr);
-      if (registry->upsert(cfg) == nullptr) {
-        append_error(idx, "No free slot");
-        ++skipped;
-        continue;
-      }
-      if (was_existing) ++updated; else ++added;
-    }
-  }
-
-  if (snap["groups"].is<JsonArray>()) {
-    JsonArray group_arr = snap["groups"].as<JsonArray>();
-    int idx = -1;
-    for (JsonVariant v : group_arr) {
-      ++idx;
-      if (!v.is<JsonObject>()) {
-        append_error(idx, "Group entry is not an object");
-        ++groups_skipped;
-        continue;
-      }
-      JsonObject obj = v.as<JsonObject>();
-      NvsGroupConfig cfg{};
-      std::string error;
-      if (!this->parse_group_config_(obj, cfg, error)) {
-        append_error(idx, error);
-        ++groups_skipped;
-        continue;
-      }
-      bool was_existing = (registry->find_group(cfg.id) != nullptr);
-      if (registry->upsert_group(cfg, &error) == nullptr) {
-        append_error(idx, error.empty() ? "Failed to upsert group" : error);
-        ++groups_skipped;
-        continue;
-      }
-      if (was_existing) ++groups_updated; else ++groups_added;
-    }
-  }
-
-  errors_json += "]";
-
-  std::string reply = json::build_json([&](JsonObject r) {
-    r["added"] = added;
-    r["updated"] = updated;
-    r["skipped"] = skipped;
-    r["groups_added"] = groups_added;
-    r["groups_updated"] = groups_updated;
-    r["groups_skipped"] = groups_skipped;
-    r["hub_applied"] = hub_applied;
-    r["errors"] = serialized(errors_json);
-  });
-  this->ws_send(c, "import_result", reply);
-  ESP_LOGI(TAG, "Import: %u added, %u updated, %u skipped, %u groups added, %u groups updated, %u groups skipped, hub_applied=%d",
-           (unsigned) added, (unsigned) updated, (unsigned) skipped,
-           (unsigned) groups_added, (unsigned) groups_updated, (unsigned) groups_skipped, hub_applied);
+  this->ws_send(c, "import_result", config_snapshot::import_json(*registry, snapshot));
 }
 
 void EleroWebServer::handle_set_hub_config_(struct mg_connection *c, JsonObject root) {
@@ -1155,14 +903,7 @@ void EleroWebServer::handle_set_hub_config_(struct mg_connection *c, JsonObject 
   }
   // `name`: empty/missing clears the override and falls back to the YAML default.
   const char *name = root["name"] | "";
-  registry->set_hub_name_override(name);
-
-  // Broadcast updated config to all clients so frontends refresh.
-  // Capture the name by value to keep the JSON build pure of registry lifetime.
-  std::string display_name = registry->hub_display_name();
-  this->ws_broadcast("hub_config", json::build_json([&display_name](JsonObject r) {
-    r["name"] = display_name;
-  }));
+  this->send_operation_result_(c, "set_hub_config", registry->save_hub_name(name));
 }
 
 void EleroWebServer::handle_learn_in_start_(struct mg_connection *c, JsonObject root) {

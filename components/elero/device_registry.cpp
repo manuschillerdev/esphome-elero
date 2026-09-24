@@ -9,6 +9,7 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/hal.h"
 #include <cstring>
+#include <algorithm>
 
 namespace esphome::elero {
 
@@ -60,21 +61,24 @@ void DeviceRegistry::set_default_hub_name(const std::string &name) {
     update_hub_display_name_();
 }
 
-bool DeviceRegistry::set_hub_name_override(const std::string &name) {
+bool DeviceRegistry::set_hub_name_override(const std::string &name, std::string *error) {
+    if (error) error->clear();
     std::string trimmed = name;
     // Cap to NVS field length (minus null terminator)
     if (trimmed.size() >= NVS_HUB_NAME_MAX) {
         trimmed.resize(NVS_HUB_NAME_MAX - 1);
     }
     if (trimmed == hub_name_override_) return false;
-    hub_name_override_ = trimmed;
     if (prefs_initialized_) {
         NvsHubConfig hub_cfg{};
-        hub_cfg.set_name(hub_name_override_.c_str());
+        hub_cfg.set_name(trimmed.c_str());
         if (!hub_prefs_.save(&hub_cfg)) {
             ESP_LOGW(TAG, "Failed to persist hub name to NVS");
+            if (error) *error = "Hub name save failed";
+            return false;
         }
     }
+    hub_name_override_ = trimmed;
     update_hub_display_name_();
     ESP_LOGI(TAG, "Hub display name set to '%s'", hub_display_name_.c_str());
     for (auto *a : adapters_) {
@@ -163,12 +167,26 @@ void DeviceRegistry::setup_adapters() {
 // CRUD
 // ═════════════════════════════════════════════════════════════════════════════
 
-Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
+Device *DeviceRegistry::upsert(const NvsDeviceConfig &config, std::string *error) {
+    if (error) error->clear();
+    if (!config.is_valid() || config.dst_address > 0xFFFFFF ||
+        (config.type != DeviceType::COVER && config.type != DeviceType::LIGHT && config.type != DeviceType::REMOTE) ||
+        config.src_address > 0xFFFFFF) {
+        ESP_LOGW(TAG, "Invalid device configuration at 0x%06x", config.dst_address);
+        if (error) *error = "Invalid device address or type";
+        return nullptr;
+    }
     // Try to find existing device with same address+type
     Device *existing = find(config.dst_address, config.type);
     if (existing) {
+        const auto previous = existing->config;
         update_device_config(*existing, config);
-        persist(*existing);
+        if (!persist(*existing)) {
+            update_device_config(*existing, previous);
+            if (error) *error = "Device persistence failed";
+            return nullptr;
+        }
+        existing->discovery_candidate = false;
         notify_config_changed_(*existing);
         ESP_LOGI(TAG, "Updated %s '%s' at 0x%06x",
                  device_type_str(config.type), config.name, config.dst_address);
@@ -178,14 +196,19 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
     // Find a free slot
     Device *slot = find_free_slot_();
     if (!slot) {
+        if (error) *error = "No free device slot";
         ESP_LOGE(TAG, "No free slot for %s at 0x%06x",
                  device_type_str(config.type), config.dst_address);
         return nullptr;
     }
 
     init_device(*slot, config);
+    if (!persist(*slot)) {
+        deactivate_device(*slot);
+        if (error) *error = "Device persistence failed";
+        return nullptr;
+    }
     if (config.type == DeviceType::COVER) assign_poll_stagger_();
-    persist(*slot);
     notify_added_(*slot);
     notify_state_changed_(*slot, millis());
     ESP_LOGI(TAG, "Added %s '%s' at 0x%06x (slot %zu)",
@@ -194,23 +217,53 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
     return slot;
 }
 
+void DeviceRegistry::discover_receiver_(const RfPacketInfo &pkt, uint32_t now) {
+    // Selector destinations are channel numbers; STATUS offset 6 is not a channel.
+    if (!pkt.crc_ok || !packet::is_command_packet(pkt.type) ||
+        pkt.dst == 0 || pkt.dst > 0xFFFFFF || pkt.src == 0 ||
+        pkt.src > 0xFFFFFF || pkt.dst == pkt.src || find(pkt.dst)) return;
+    auto *slot = find_free_slot_();
+    if (!slot) {
+        ESP_LOGW(TAG, "No free slot for discovered receiver 0x%06x", pkt.dst);
+        return;
+    }
+    NvsDeviceConfig discovered{};
+    discovered.dst_address = pkt.dst;
+    discovered.src_address = pkt.src;
+    discovered.channel = pkt.channel;
+    init_device(*slot, discovered);
+    slot->discovery_candidate = true;
+    assign_poll_stagger_();
+    notify_added_(*slot);
+    notify_state_changed_(*slot, now);
+    ESP_LOGI(TAG, "Discovered receiver 0x%06x via remote 0x%06x channel %u (unsaved)",
+             pkt.dst, pkt.src, pkt.channel);
+}
+
 bool DeviceRegistry::remove(uint32_t address, DeviceType type) {
     Device *dev = find(address, type);
     if (!dev) return false;
+    if (nvs_enabled_ && !prefs_initialized_) return false;
 
     ESP_LOGI(TAG, "Removing %s at 0x%06x", device_type_str(type), address);
-    notify_removed_(*dev);
+
+    // Remove references before the device. A failed save leaves the device
+    // available for retry; successfully pruned groups stay pruned.
+    if (!prune_device_from_groups_(address)) return false;
 
     // Clear NVS (only when persistence is enabled)
     if (nvs_enabled_ && prefs_initialized_) {
         size_t idx = slot_index(*dev);
         NvsDeviceConfig empty{};
         empty.version = 0;  // Mark as invalid
-        prefs_[idx].save(&empty);
+        if (!prefs_[idx].save(&empty)) {
+            ESP_LOGE(TAG, "Failed to delete device 0x%06x from NVS", address);
+            return false;
+        }
     }
 
+    notify_removed_(*dev);
     deactivate_device(*dev);
-    prune_device_from_groups_(address);
     return true;
 }
 
@@ -219,8 +272,11 @@ NvsGroupConfig *DeviceRegistry::upsert_group(const NvsGroupConfig &config, std::
 
     NvsGroupConfig *existing = find_group(config.id);
     if (existing != nullptr) {
+        if (!persist_group_(config, static_cast<size_t>(existing - groups_.data()))) {
+            if (error) *error = "Group persistence failed";
+            return nullptr;
+        }
         *existing = config;
-        persist_group_(*existing, static_cast<size_t>(existing - groups_.data()));
         notify_group_upserted_(*existing);
         ESP_LOGI(TAG, "Updated group '%s' (%s, %u members)",
                  existing->name, existing->id, existing->member_count);
@@ -234,8 +290,11 @@ NvsGroupConfig *DeviceRegistry::upsert_group(const NvsGroupConfig &config, std::
         return nullptr;
     }
 
+    if (!persist_group_(config, static_cast<size_t>(slot - groups_.data()))) {
+        if (error) *error = "Group persistence failed";
+        return nullptr;
+    }
     *slot = config;
-    persist_group_(*slot, static_cast<size_t>(slot - groups_.data()));
     notify_group_upserted_(*slot);
     ESP_LOGI(TAG, "Added group '%s' (%s, %u members)",
              slot->name, slot->id, slot->member_count);
@@ -249,8 +308,8 @@ bool DeviceRegistry::remove_group(const char *id) {
     char removed_id[NVS_GROUP_ID_MAX]{};
     strncpy(removed_id, group->id, NVS_GROUP_ID_MAX - 1);
     ESP_LOGI(TAG, "Removing group '%s'", removed_id);
+    if (!clear_group_slot_(*group)) return false;
     notify_group_removed_(removed_id);
-    clear_group_slot_(*group);
     return true;
 }
 
@@ -296,40 +355,43 @@ Device *DeviceRegistry::find(uint32_t address) {
 // COMMAND DISPATCH
 // ═════════════════════════════════════════════════════════════════════════════
 
-void DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte) {
-    if (!dev.is_cover()) return;
+bool DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte) {
+    if (!dev.is_cover()) return false;
 
     auto &cover = std::get<CoverDevice>(dev.logic);
     auto ctx = cover_context(dev.config);
     uint32_t now = millis();
+    bool queued = false;
 
     if (cmd_byte == packet::command::CHECK) {
-        request_check(dev);
-        return;
+        return request_check(dev);
     }
 
     if (cmd_byte == packet::command::STOP) {
         dev.sender.clear_queue();
-        (void) enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
+        queued = enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
                                 packet::msg_type::COMMAND,
                                 "command_cover(stop)");
         (void) enqueue_check_(dev, "command_cover(stop)");
+        if (!queued) return false;
         cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
         cover.target_position = cover_sm::NO_TARGET;
     } else {
-        if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
-        if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
-        bool move_queued = enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
+        queued = enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
                                             packet::msg_type::BUTTON,
                                             "command_cover(move)");
         (void) enqueue_check_(dev, "command_cover(move)");
+        if (!queued) return false;
+        if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
+        if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
         cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
-        if (move_queued) {
+        if (queued) {
             cover.poll.on_command_sent(now);
         }
     }
 
     notify_state_changed_(dev, now);
+    return queued;
 }
 
 void DeviceRegistry::set_cover_position(Device &dev, float target) {
@@ -367,8 +429,8 @@ void DeviceRegistry::set_cover_position(Device &dev, float target) {
     notify_state_changed_(dev, now);
 }
 
-void DeviceRegistry::command_cover_tilt(Device &dev) {
-    if (!dev.is_cover()) return;
+bool DeviceRegistry::command_cover_tilt(Device &dev) {
+    if (!dev.is_cover()) return false;
 
     auto &cover = std::get<CoverDevice>(dev.logic);
     auto ctx = cover_context(dev.config);
@@ -379,44 +441,52 @@ void DeviceRegistry::command_cover_tilt(Device &dev) {
                                         packet::msg_type::BUTTON,
                                         "command_cover_tilt");
     (void) enqueue_check_(dev, "command_cover_tilt");
+    if (!tilt_queued) return false;
     cover.state = cover_sm::on_command(cover.state, packet::command::TILT, now, ctx);
     if (tilt_queued) {
         cover.poll.on_command_sent(now);
     }
 
     notify_state_changed_(dev, now);
+    return tilt_queued;
 }
 
-void DeviceRegistry::command_light(Device &dev, uint8_t cmd_byte) {
-    if (!dev.is_light()) return;
+bool DeviceRegistry::command_light(Device &dev, uint8_t cmd_byte) {
+    if (!dev.is_light()) return false;
 
     auto &light = std::get<LightDevice>(dev.logic);
     auto ctx = light_context(dev.config);
     uint32_t now = millis();
+    bool queued = false;
+    const auto previous_state = light.state;
 
     if (cmd_byte == packet::command::CHECK) {
-        request_check(dev);
-        return;
+        return request_check(dev);
     }
 
     if (cmd_byte == packet::command::DOWN) {
         light.state = light_sm::on_turn_off(light.state);
         dev.sender.clear_queue();
-        (void) enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
+        queued = enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
                                 packet::msg_type::BUTTON,
                                 "command_light(off)");
     } else if (cmd_byte == packet::command::UP) {
         light.state = light_sm::on_turn_on(light.state, now, ctx);
-        (void) enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
+        queued = enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
                                 packet::msg_type::BUTTON,
                                 "command_light(on)");
     } else {
-        (void) enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
+        queued = enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
                                 packet::msg_type::BUTTON,
                                 "command_light(other)");
     }
 
+    if (!queued) {
+        light.state = previous_state;
+        return false;
+    }
     notify_state_changed_(dev, now);
+    return queued;
 }
 
 void DeviceRegistry::set_light_brightness(Device &dev, float brightness) {
@@ -462,10 +532,10 @@ void DeviceRegistry::set_light_brightness(Device &dev, float brightness) {
     notify_state_changed_(dev, now);
 }
 
-void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t cmd_byte) {
+bool DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t cmd_byte) {
     if (count < 2 || count > packet::GROUP_MAX_DESTS || devices == nullptr) {
         ESP_LOGW(TAG, "command_group: invalid count %zu (need 2..%d)", count, packet::GROUP_MAX_DESTS);
-        return;
+        return false;
     }
 
     DeviceType group_type = devices[0] != nullptr ? devices[0]->config.type : DeviceType::COVER;
@@ -473,24 +543,25 @@ void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
     for (size_t i = 0; i < count; ++i) {
         if (devices[i] == nullptr || !devices[i]->active || devices[i]->is_remote()) {
             ESP_LOGW(TAG, "command_group: device[%zu] is not an active controllable device", i);
-            return;
+            return false;
         }
         if (devices[i]->config.type != group_type) {
             ESP_LOGW(TAG, "command_group: device[%zu] has mixed type", i);
-            return;
+            return false;
         }
         if (devices[i]->config.src_address != src_addr) {
             ESP_LOGW(TAG, "command_group: device[%zu] has different src_address (0x%06x vs 0x%06x)",
                      i, devices[i]->config.src_address, src_addr);
-            return;
+            return false;
         }
     }
 
     if (cmd_byte == packet::command::CHECK) {
+        bool queued = true;
         for (size_t i = 0; i < count; ++i) {
-            request_check(*devices[i]);
+            queued = request_check(*devices[i]) && queued;
         }
-        return;
+        return queued;
     }
 
     // Build the group command on the first device's sender.
@@ -517,7 +588,7 @@ void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
         for (size_t i = 0; i < packet::GROUP_MAX_DESTS; ++i) {
             cmd.dest_channels[i] = prev_dest_channels[i];
         }
-        return;
+        return false;
     }
     if (group_type == DeviceType::COVER) {
         for (size_t i = 0; i < count; ++i) {
@@ -568,6 +639,7 @@ void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
                  }
                  return buf;
              }());
+    return true;
 }
 
 bool DeviceRegistry::command_saved_group(const char *id, uint8_t cmd_byte, std::string *error) {
@@ -627,12 +699,21 @@ bool DeviceRegistry::command_saved_group(const char *id, uint8_t cmd_byte, std::
         if (count == 1) {
             Device &dev = *bucket_devices[0];
             if (dev.is_cover()) {
-                command_cover(dev, cmd_byte);
+                if (!command_cover(dev, cmd_byte)) {
+                    if (error) *error = "Command queue full; earlier group members may be queued";
+                    return false;
+                }
             } else if (dev.is_light()) {
-                command_light(dev, cmd_byte);
+                if (!command_light(dev, cmd_byte)) {
+                    if (error) *error = "Command queue full; earlier group members may be queued";
+                    return false;
+                }
             }
         } else {
-            command_group(bucket_devices, count, cmd_byte);
+            if (!command_group(bucket_devices, count, cmd_byte)) {
+                if (error) *error = "Command queue full; earlier group members may be queued";
+                return false;
+            }
         }
     }
 
@@ -641,13 +722,14 @@ bool DeviceRegistry::command_saved_group(const char *id, uint8_t cmd_byte, std::
     return true;
 }
 
-void DeviceRegistry::request_check(Device &dev) {
-    if (!dev.active) return;
+bool DeviceRegistry::request_check(Device &dev) {
+    if (!dev.active) return false;
     bool queued = enqueue_check_(dev, "request_check");
     if (queued && dev.is_cover()) {
         auto &cover = std::get<CoverDevice>(dev.logic);
         cover.poll.on_poll_sent(millis());
     }
+    return queued;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -655,6 +737,8 @@ void DeviceRegistry::request_check(Device &dev) {
 // ═════════════════════════════════════════════════════════════════════════════
 
 void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
+    // Discovery is core policy, never a side effect of an adapter's RF callback.
+    if (receiver_discovery_enabled_) discover_receiver_(pkt, now);
     // Notify all adapters of raw RF packet (web UI needs this)
     notify_rf_packet_(pkt);
 
@@ -789,7 +873,7 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
     // 2. Poll if due — single packet suffices (blind is mains-powered, always
     //    listening). If missed, retry via normal poll interval.
     bool moving = cover_sm::is_moving(cover.state);
-    if (cover.poll.should_poll(now, moving)) {
+    if (!dev.discovery_candidate && cover.poll.should_poll(now, moving)) {
         if (enqueue_check_(dev, "loop_cover(poll)")) {
             cover.poll.on_poll_sent(now);
         }
@@ -797,7 +881,7 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
 
     // 3. Post-stop verification — after Stopping cooldown expires, verify the
     //    blind's actual resting position (frozen estimate may drift).
-    if (state_type_changed && was_stopping && std::holds_alternative<cover_sm::Idle>(cover.state)) {
+    if (!dev.discovery_candidate && state_type_changed && was_stopping && std::holds_alternative<cover_sm::Idle>(cover.state)) {
         if (enqueue_check_(dev, "loop_cover(post_stop_check)")) {
             cover.poll.on_poll_sent(now);
         }
@@ -906,21 +990,32 @@ size_t DeviceRegistry::count_groups() const {
 // PERSISTENCE
 // ═════════════════════════════════════════════════════════════════════════════
 
-void DeviceRegistry::persist(Device &dev, size_t slot_idx) {
-    if (!prefs_initialized_ || slot_idx >= MAX_DEVICES) return;
-    dev.config.updated_at = millis();
-    prefs_[slot_idx].save(&dev.config);
+bool DeviceRegistry::persist(Device &dev, size_t slot_idx) {
+    if (!nvs_enabled_) return true;
+    if (!prefs_initialized_ || slot_idx >= MAX_DEVICES) return false;
+    auto config = dev.config;
+    config.updated_at = std::max(uint32_t{1}, millis());
+    if (!prefs_[slot_idx].save(&config)) {
+        ESP_LOGE(TAG, "Failed to persist device 0x%06x", config.dst_address);
+        return false;
+    }
+    dev.config.updated_at = config.updated_at;
+    dev.discovery_candidate = false;
+    return true;
 }
 
-void DeviceRegistry::persist(Device &dev) {
-    persist(dev, slot_index(dev));
+bool DeviceRegistry::persist(Device &dev) {
+    return persist(dev, slot_index(dev));
 }
 
-void DeviceRegistry::persist_group_(const NvsGroupConfig &group, size_t slot_idx) {
-    if (!prefs_initialized_ || slot_idx >= MAX_GROUPS) return;
+bool DeviceRegistry::persist_group_(const NvsGroupConfig &group, size_t slot_idx) {
+    if (!nvs_enabled_) return true;
+    if (!prefs_initialized_ || slot_idx >= MAX_GROUPS) return false;
     if (!group_prefs_[slot_idx].save(&group)) {
         ESP_LOGW(TAG, "Failed to persist group '%s'", group.id);
+        return false;
     }
+    return true;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -999,20 +1094,26 @@ bool DeviceRegistry::validate_group_(const NvsGroupConfig &config, std::string *
     return true;
 }
 
-void DeviceRegistry::clear_group_slot_(NvsGroupConfig &group) {
+bool DeviceRegistry::clear_group_slot_(NvsGroupConfig &group) {
     size_t idx = static_cast<size_t>(&group - groups_.data());
     NvsGroupConfig empty{};
     empty.version = 0;
-    if (prefs_initialized_ && idx < MAX_GROUPS) {
-        group_prefs_[idx].save(&empty);
+    if (nvs_enabled_) {
+        if (!prefs_initialized_ || idx >= MAX_GROUPS) return false;
+        if (!group_prefs_[idx].save(&empty)) {
+            ESP_LOGE(TAG, "Failed to delete group '%s' from NVS", group.id);
+            return false;
+        }
     }
     group = empty;
+    return true;
 }
 
-void DeviceRegistry::prune_device_from_groups_(uint32_t address) {
+bool DeviceRegistry::prune_device_from_groups_(uint32_t address) {
     for (auto &group : groups_) {
         if (!group.is_valid()) continue;
 
+        NvsGroupConfig updated = group;
         bool changed = false;
         uint8_t write = 0;
         for (uint8_t read = 0; read < group.member_count; ++read) {
@@ -1020,25 +1121,27 @@ void DeviceRegistry::prune_device_from_groups_(uint32_t address) {
                 changed = true;
                 continue;
             }
-            group.device_ids[write++] = group.device_ids[read];
+            updated.device_ids[write++] = group.device_ids[read];
         }
         if (!changed) continue;
 
         for (uint8_t i = write; i < group.member_count; ++i) {
-            group.device_ids[i] = 0;
+            updated.device_ids[i] = 0;
         }
-        group.member_count = write;
+        updated.member_count = write;
 
-        if (group.member_count < 2) {
+        if (updated.member_count < 2) {
             char removed_id[NVS_GROUP_ID_MAX]{};
             strncpy(removed_id, group.id, NVS_GROUP_ID_MAX - 1);
+            if (!clear_group_slot_(group)) return false;
             notify_group_removed_(removed_id);
-            clear_group_slot_(group);
         } else {
-            persist_group_(group, static_cast<size_t>(&group - groups_.data()));
+            if (!persist_group_(updated, static_cast<size_t>(&group - groups_.data()))) return false;
+            group = updated;
             notify_group_upserted_(group);
         }
     }
+    return true;
 }
 
 size_t DeviceRegistry::slot_index(const Device &dev) const {

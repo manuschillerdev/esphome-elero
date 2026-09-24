@@ -57,6 +57,7 @@ No additional parameters required. The CC1101 is the default radio.
 | `rf_switch` | Boolean | No | `false` | Use DIO2 as RF switch control |
 | `pa_power` | Integer (-3 to 22) | No | `22` | TX output power in dBm |
 | `tcxo_voltage` | Float (1.6-3.3) | No | - | TCXO voltage via DIO3 (omit if using crystal) |
+| `regulator_ldo` | Boolean | No | `false` | Select LDO regulation instead of DC-DC; PaperMono uses `true` |
 
 ```yaml
 elero:
@@ -93,6 +94,32 @@ elero:
 | Alternative 868 MHz | `0xc0` | `0x71` | `0x21` | Most common alternative |
 
 ---
+
+## PaperMono native frontend: `elero_paper`
+
+This frontend and its `paper_mono` board support are opt-in. The core and web server
+never enable them. Use [the standalone configuration](../configs/config.paper-mono.yaml)
+for the board's fixed pin mapping, and see [the integration guide](PAPER_MONO.md)
+for optional web/HA integration and module ownership.
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `board_id` | Yes | — | ID of the `paper_mono` board support component |
+| `font_id`, `title_font_id` | Yes | — | Body and heading fonts |
+| `spi_id`, `cs_pin`, `dc_pin`, `busy_pin` | Yes | — | Display SPI bus and control pins |
+| `elero_id`, `registry_id` | No | Resolved by ESPHome | Hub and registry to observe |
+| `storage` | No | `false` | Include optional microSD JSON backup/restore |
+
+The frontend enables registry NVS persistence and passive receiver discovery. It
+does not enable Wi-Fi, HTTP, MQTT, or the native API. Board support requires an
+ESP32-S3 and fixes the I²C expander address to `0x4F`. Its GPIO provider supports
+only output PYG10, the radio reset pin.
+
+The web and SD workflows share the internal `elero_config` component. If you use
+an explicit `external_components.components` allowlist, include this dependency
+when enabling either workflow. The PaperMono example omits the allowlist so
+internal dependencies resolve automatically; making components available does
+not enable them. See the integration guide's module table for restricted lists.
 
 ## Adding devices (no YAML)
 

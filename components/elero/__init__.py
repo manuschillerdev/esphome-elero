@@ -37,6 +37,7 @@ CONF_RST_PIN = "rst_pin"
 CONF_RF_SWITCH = "rf_switch"
 CONF_PA_POWER = "pa_power"
 CONF_TCXO_VOLTAGE = "tcxo_voltage"
+CONF_REGULATOR_LDO = "regulator_ldo"
 CONF_FEM_PA_PIN = "fem_pa_pin"
 CONF_FEM_POWER_PIN = "fem_power_pin"
 CONF_FEM_ENABLE_PIN = "fem_enable_pin"
@@ -103,6 +104,7 @@ CONFIG_SCHEMA = cv.All(
             # Schema max=22 for SX1262; SX1276 validator narrows to max=20
             cv.Optional(CONF_PA_POWER): cv.int_range(min=-3, max=22),
             cv.Optional(CONF_TCXO_VOLTAGE): cv.float_range(min=1.6, max=3.3),
+            cv.Optional(CONF_REGULATOR_LDO, default=False): cv.boolean,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -148,6 +150,7 @@ async def to_code(config):
 
         # SX1262-specific options
         cg.add(driver.set_rf_switch(config[CONF_RF_SWITCH]))
+        cg.add(driver.set_regulator_ldo(config[CONF_REGULATOR_LDO]))
         cg.add(driver.set_pa_power(config.get(CONF_PA_POWER, 22)))
         if CONF_TCXO_VOLTAGE in config:
             cg.add(driver.set_tcxo_voltage(config[CONF_TCXO_VOLTAGE]))

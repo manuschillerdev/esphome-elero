@@ -4,6 +4,10 @@ import {ImportError} from './ImportError';
  */
 interface ImportResult {
   /**
+   * Whether final flash sync succeeded. Errors include any sync failure.
+   */
+  'persisted'?: boolean;
+  /**
    * Devices created (no prior `(type, dst_address)` match).
    */
   'added': number;
