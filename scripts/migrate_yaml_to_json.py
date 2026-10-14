@@ -118,15 +118,20 @@ def convert_cover(entry: dict[str, Any]) -> dict[str, Any]:
         "open_duration_ms": parse_duration_ms(entry.get("open_duration", 0)),
         "close_duration_ms": parse_duration_ms(entry.get("close_duration", 0)),
         "supports_tilt": bool(entry.get("supports_tilt", False)),
-        "ha_device_class": DEVICE_CLASS_MAP.get(
-            str(entry.get("device_class", "shutter")).lower(), 0
-        ),
+        "ha_device_class": DEVICE_CLASS_MAP.get(str(entry.get("device_class", "shutter")).lower(), 0),
         "hop": _byte_or_default(entry, "hop", DEFAULTS["hop"]),
         "payload_1": _byte_or_default(entry, "payload_1", DEFAULTS["payload_1"]),
         "payload_2": _byte_or_default(entry, "payload_2", DEFAULTS["payload_2"]),
         "msg_type": _byte_or_default(entry, "type", DEFAULTS["msg_type"]),
         "type2": _byte_or_default(entry, "type2", DEFAULTS["type2"]),
     }
+    for key in ("command_up", "command_down", "command_stop", "command_check", "command_tilt"):
+        if key in entry:
+            raw = entry[key]
+            value = int(raw, 0) if isinstance(raw, str) else int(raw)
+            if not 0 <= value <= 255:
+                raise ValueError(f"{key} must be a byte (0..255), got {raw!r}")
+            out[key] = to_hex_byte(value)
     return out
 
 
@@ -195,7 +200,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="Legacy ESPHome YAML to migrate")
     parser.add_argument(
-        "-o", "--output", type=Path,
+        "-o",
+        "--output",
+        type=Path,
         help="Output JSON path (default: <input>.backup.json)",
     )
     args = parser.parse_args(argv)
@@ -216,8 +223,7 @@ def main(argv: list[str] | None = None) -> int:
 
     out_path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
     print(
-        f"Wrote {out_path} ({len(snapshot['devices'])} device"
-        f"{'s' if len(snapshot['devices']) != 1 else ''})",
+        f"Wrote {out_path} ({len(snapshot['devices'])} device{'s' if len(snapshot['devices']) != 1 else ''})",
     )
     return 0
 

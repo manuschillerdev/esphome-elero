@@ -6,6 +6,52 @@
 
 namespace esphome::elero::packet {
 
+namespace {
+
+size_t build_single_selector_packet_(uint8_t type, uint8_t counter, uint32_t src_addr,
+                                     uint8_t channel, uint8_t command, uint8_t type2,
+                                     uint8_t hop, uint8_t *out_buf) {
+  memset(out_buf, 0, button::MSG_LENGTH + 1);
+
+  // Header fields
+  out_buf[pkt_offset::LENGTH] = button::MSG_LENGTH;
+  out_buf[pkt_offset::COUNTER] = counter;
+  out_buf[pkt_offset::TYPE] = type;
+  out_buf[pkt_offset::TYPE2] = type2;
+  out_buf[pkt_offset::HOP] = hop;
+  out_buf[pkt_offset::SYS] = TX_SYS_ADDR;
+  out_buf[pkt_offset::CHANNEL] = channel;
+
+  // Addresses (all same for direct selector packets)
+  write_addr(&out_buf[pkt_offset::SRC_ADDR], src_addr);
+  write_addr(&out_buf[pkt_offset::BWD_ADDR], src_addr);
+  write_addr(&out_buf[pkt_offset::FWD_ADDR], src_addr);
+
+  // Destination count + one-byte selector destination
+  out_buf[pkt_offset::NUM_DESTS] = TX_DEST_COUNT;
+  out_buf[btn_offset::CHANNEL_DEST] = channel;
+  out_buf[btn_offset::ZERO_BYTE] = 0x00;
+  out_buf[btn_offset::FIXED_03] = 0x03;
+
+  // Build encrypted section at offset 20
+  uint8_t *enc = &out_buf[btn_offset::CRYPTO_CODE];
+  uint16_t code = calc_crypto_code(counter);
+  enc[payload_offset::CRYPTO_HIGH] = (code >> 8) & 0xFF;
+  enc[payload_offset::CRYPTO_LOW] = code & 0xFF;
+  enc[payload_offset::COMMAND] = command;
+  enc[payload_offset::COMMAND2] = 0;
+  enc[4] = 0;
+  enc[5] = 0;
+  enc[payload_offset::STATE] = 0;
+  enc[payload_offset::PARITY] = 0;
+
+  protocol::msg_encode(enc);
+
+  return button::MSG_LENGTH + 1;
+}
+
+}  // namespace
+
 ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   ParseResult r;
 
@@ -46,24 +92,29 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   r.num_dests = raw[pkt_offset::NUM_DESTS];
 
   // Validate destination count
-  if (r.num_dests > MAX_DESTINATIONS) {
+  if (r.num_dests > GROUP_MAX_DESTS) {
     r.reject_reason = "too_many_dests";
     return r;
   }
 
-  // Calculate destination length based on message type
-  if (r.type > msg_type::ADDR_3BYTE_THRESHOLD) {
-    // 3-byte addresses (command/status packets)
+  // Calculate destination length from the explicit packet envelope shape.
+  if (uses_three_byte_address_envelope(r.type)) {
+    if (r.num_dests > ELERO_MAX_ADDRESS_DESTS) {
+      r.reject_reason = "dests_len_too_long";
+      return r;
+    }
     r.dests_len = r.num_dests * ADDR_SIZE;
     if (raw_len >= pkt_offset::FIRST_DEST + ADDR_SIZE) {
       r.dst_addr = extract_addr(&raw[pkt_offset::FIRST_DEST]);
     }
-  } else {
-    // 1-byte addresses (button packets)
+  } else if (uses_one_byte_selector_envelope(r.type)) {
     r.dests_len = r.num_dests;
     if (raw_len >= pkt_offset::FIRST_DEST + 1) {
       r.dst_addr = raw[pkt_offset::FIRST_DEST];
     }
+  } else {
+    r.reject_reason = "unsupported_type";
+    return r;
   }
 
   // Sanity check: payload access bounds
@@ -92,6 +143,12 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   }
 
   // Extract RSSI and LQI (appended by CC1101 after packet data)
+  if (uses_three_byte_address_envelope(r.type)) {
+    for (uint8_t i = 0; i < r.num_dests; ++i) {
+      r.dst_addrs[i] = extract_addr(&raw[pkt_offset::FIRST_DEST + i * ADDR_SIZE]);
+    }
+  }
+
   r.rssi_raw = raw[r.length + 1];  // +1 because length byte is at [0]
   r.rssi = calc_rssi(r.rssi_raw);
   r.lqi = raw[r.length + CC1101_APPEND_SIZE] & cc1101_status::LQI_MASK;
@@ -105,7 +162,7 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   memcpy(r.payload, payload_buf, 10);
 
   // Extract command/state based on packet type
-  if (is_command_packet(r.type)) {
+  if (carries_command(r.type)) {
     r.command = r.payload[payload_offset::COMMAND];
   } else if (is_status_packet(r.type)) {
     r.state = r.payload[payload_offset::STATE];
@@ -161,60 +218,24 @@ size_t build_tx_packet(const TxParams& params, uint8_t* out_buf) {
 }
 
 size_t build_button_packet(const ButtonTxParams& params, uint8_t* out_buf) {
-  // Clear buffer
-  memset(out_buf, 0, button::MSG_LENGTH + 1);
+  return build_single_selector_packet_(msg_type::BUTTON, params.counter, params.src_addr,
+                                       params.channel, params.command, params.type2,
+                                       params.hop, out_buf);
+}
 
-  // Header fields
-  out_buf[pkt_offset::LENGTH] = button::MSG_LENGTH;
-  out_buf[pkt_offset::COUNTER] = params.counter;
-  out_buf[pkt_offset::TYPE] = msg_type::BUTTON;
-  out_buf[pkt_offset::TYPE2] = params.type2;
-  out_buf[pkt_offset::HOP] = params.hop;
-  out_buf[pkt_offset::SYS] = TX_SYS_ADDR;
-
-  out_buf[pkt_offset::CHANNEL] = params.channel;
-
-  // Addresses (all same for direct button press)
-  write_addr(&out_buf[pkt_offset::SRC_ADDR], params.src_addr);
-  write_addr(&out_buf[pkt_offset::BWD_ADDR], params.src_addr);
-  write_addr(&out_buf[pkt_offset::FWD_ADDR], params.src_addr);
-
-  // Destination count + channel-based destination (not address)
-  out_buf[pkt_offset::NUM_DESTS] = TX_DEST_COUNT;
-  out_buf[btn_offset::CHANNEL_DEST] = params.channel;
-  out_buf[btn_offset::ZERO_BYTE] = 0x00;
-  out_buf[btn_offset::FIXED_03] = 0x03;
-
-  // Build encrypted section at offset 20
-  uint8_t *enc = &out_buf[btn_offset::CRYPTO_CODE];
-  uint16_t code = calc_crypto_code(params.counter);
-  enc[payload_offset::CRYPTO_HIGH] = (code >> 8) & 0xFF;
-  enc[payload_offset::CRYPTO_LOW] = code & 0xFF;
-  enc[payload_offset::COMMAND] = params.command;
-  enc[payload_offset::COMMAND2] = 0;
-  enc[4] = 0;
-  enc[5] = 0;
-  enc[payload_offset::STATE] = 0;
-  enc[payload_offset::PARITY] = 0;
-
-  // Encrypt the 8-byte section in-place
-  protocol::msg_encode(enc);
-
-  return button::MSG_LENGTH + 1;
+size_t build_program_packet(const ProgramTxParams& params, uint8_t* out_buf) {
+  return build_single_selector_packet_(msg_type::PROGRAM, params.counter, params.src_addr,
+                                       params.channel, params.command, params.type2,
+                                       params.hop, out_buf);
 }
 
 size_t build_group_button_packet(const GroupButtonTxParams& params, uint8_t* out_buf) {
   // Validate: num_dests must be >= 2 (otherwise use single-dest build_button_packet)
-  if (params.num_dests < 2 || params.dest_channels == nullptr) {
+  if (params.num_dests < 2 || params.num_dests > GROUP_MAX_DESTS || params.dest_channels == nullptr) {
     return 0;
   }
 
-  // Validate: resulting packet must fit in TX FIFO
-  // TX buffer = 1 (length byte) + packet_length = 1 + 26 + N
-  uint8_t packet_length = button::GROUP_BASE_LENGTH + params.num_dests;
-  if (static_cast<size_t>(packet_length) + 1 > FIFO_LENGTH) {
-    return 0;
-  }
+  const uint8_t packet_length = button::GROUP_BASE_LENGTH + params.num_dests;
 
   // Clear buffer
   memset(out_buf, 0, static_cast<size_t>(packet_length) + 1);
@@ -343,6 +364,53 @@ CoverStateResult map_cover_state(uint8_t elero_state) {
   }
 
   return r;
+}
+
+size_t build_command_packet(const EleroCommand &cmd, uint8_t *out_buf) {
+  if (cmd.num_dests > GROUP_MAX_DESTS) return 0;
+  if (cmd.type == packet::msg_type::BUTTON && cmd.num_dests > 1) {
+    // Group 0x44: multi-dest button packet
+    packet::GroupButtonTxParams params;
+    params.counter = cmd.counter;
+    params.src_addr = cmd.src_addr;
+    params.command = cmd.payload[4];
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    params.num_dests = cmd.num_dests;
+    params.dest_channels = cmd.dest_channels;
+    return packet::build_group_button_packet(params, out_buf);
+  } else if (cmd.type == packet::msg_type::PROGRAM) {
+    packet::ProgramTxParams params;
+    params.counter = cmd.counter;
+    params.src_addr = cmd.src_addr;
+    params.channel = cmd.channel;
+    params.command = cmd.payload[4];
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    return packet::build_program_packet(params, out_buf);
+  } else if (cmd.type == packet::msg_type::BUTTON) {
+    packet::ButtonTxParams params;
+    params.counter = cmd.counter;
+    params.src_addr = cmd.src_addr;
+    params.channel = cmd.channel;
+    params.command = cmd.payload[4];
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    return packet::build_button_packet(params, out_buf);
+  } else {
+    packet::TxParams params;
+    params.counter = cmd.counter;
+    params.dst_addr = cmd.dst_addr;
+    params.src_addr = cmd.src_addr;
+    params.channel = cmd.channel;
+    params.type = cmd.type;
+    params.type2 = cmd.type2;
+    params.hop = cmd.hop;
+    params.command = cmd.payload[4];
+    params.payload_1 = cmd.payload[0];
+    params.payload_2 = cmd.payload[1];
+    return packet::build_tx_packet(params, out_buf);
+  }
 }
 
 }  // namespace esphome::elero::packet

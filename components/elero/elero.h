@@ -1,5 +1,7 @@
 #pragma once
 
+#include "rf_transport.h"
+
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/preferences.h"
@@ -42,10 +44,12 @@ struct RfPacketInfo {
   int64_t decoded_at_us{0};  ///< esp_timer_get_time() when decode completed (us, for latency tracking)
   uint32_t src;           ///< Source address (remote for commands, blind for status)
   uint32_t dst;           ///< Destination address (blind for commands, remote for status)
+  uint8_t num_address_dests{0};
+  uint32_t dst_addrs[packet::ELERO_MAX_ADDRESS_DESTS]{};
   uint8_t channel;
   uint8_t type;           ///< Message type byte (0x6a=command, 0xca=status, etc.)
   uint8_t type2;          ///< Secondary type byte
-  uint8_t command;        ///< Command byte (for command packets)
+  uint8_t command;        ///< Command byte (for command/selector packets)
   uint8_t state;          ///< State byte (for status packets)
   uint8_t cnt;            ///< Rolling counter value from packet
   float rssi;
@@ -59,27 +63,6 @@ struct RfPacketInfo {
 
 // String conversion declarations (elero_state_to_string, etc.) are in elero_strings.h
 
-// ─── RF Task IPC Structs ─────────────────────────────────────────────────────
-
-/// Request from main loop -> RF task (via tx_queue).
-/// Uses a union to minimize queue item size (~50 bytes).
-struct RfTaskRequest {
-  enum class Type : uint8_t { TX, REINIT_FREQ } type;
-  TxClient *client{nullptr};  ///< TX: completion callback target (stable ptr on Device)
-  union {
-    EleroCommand cmd;                            ///< TX: command to transmit
-    struct { uint8_t f2, f1, f0; } freq;         ///< REINIT_FREQ: new frequency registers
-  };
-
-  RfTaskRequest() : type(Type::TX), client(nullptr), cmd{} {}
-};
-
-/// Result from RF task -> main loop (via tx_done_queue).
-struct TxResult {
-  TxClient *client{nullptr};  ///< nullptr for fire-and-forget (raw TX)
-  bool success{false};
-};
-
 }  // namespace elero
 }  // namespace esphome
 
@@ -90,7 +73,7 @@ static_assert(sizeof(esphome::elero::RfPacketInfo::payload) == sizeof(esphome::e
 namespace esphome {
 namespace elero {
 
-class Elero : public Component {
+class Elero : public Component, private RfTransportPort {
  public:
   void setup() override;
   void loop() override;
@@ -104,7 +87,7 @@ class Elero : public Component {
   void dispatch_packet(const RfPacketInfo &pkt);
 
   // Non-blocking TX API for CommandSender.
-  // Posts command to RF task queue. Returns true if queued, false if queue full.
+  // Posts command to RF task queue. Returns false for unsupported group size or a full queue.
   // Completion is notified asynchronously via TxClient::on_tx_complete() on Core 1.
   [[nodiscard]] bool request_tx(TxClient *client, const EleroCommand &cmd);
 
@@ -169,8 +152,9 @@ class Elero : public Component {
  private:
   // ─── Protocol-level methods (stay on Elero — not hardware) ─────────────────
   [[nodiscard]] optional<RfPacketInfo> decode_packet(const uint8_t *buf, size_t buf_len);
-  void build_tx_packet_(const EleroCommand &cmd);  // Build packet in msg_tx_
-  void decode_fifo_packets_(size_t fifo_count);  // Parse multiple packets from FIFO buffer
+  bool take_request(RfTaskRequest &request) override;
+  bool publish_completion(const TxResult &result) override;
+  void receive_frame(const uint8_t *frame, size_t size) override;
 
   // ─── RF task entry point ───────────────────────────────────────────────────
 #ifdef USE_ESP32
@@ -181,12 +165,7 @@ class Elero : public Component {
   std::atomic<bool> rx_ready_{false};   ///< ISR→RF task: RX packet available
   std::atomic<bool> tx_done_{false};    ///< ISR→RF task: TX transmission complete
 
-  // ─── RF task-exclusive state (never accessed from main loop after setup) ───
-  TxClient *tx_owner_{nullptr};        ///< Current TX owner (for completion callback)
-  uint8_t msg_rx_[CC1101_FIFO_LENGTH]; ///< RX FIFO buffer (RF task only)
-  uint8_t msg_tx_[CC1101_FIFO_LENGTH]; ///< TX packet buffer (RF task only)
-
-  // ─── Atomic state (written by RF task, read by main loop) ──────────────────
+  // Latest accepted frequency request (Core 1); safe to read across cores.
   std::atomic<uint8_t> freq0_{defaults::FREQ0};
   std::atomic<uint8_t> freq1_{defaults::FREQ1};
   std::atomic<uint8_t> freq2_{defaults::FREQ2};

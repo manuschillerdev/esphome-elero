@@ -87,6 +87,21 @@ struct RemoteStateSnapshot {
     float    rssi;
 };
 
+// Derived membership state, shared by every output adapter. Integer positions
+// keep group publishing at the same one-percent resolution as device caches.
+struct GroupStateSnapshot {
+    bool valid{false};
+    DeviceType type{DeviceType::COVER};
+    bool supports_position{false};
+    int position_pct{0};
+    cover_sm::Operation operation{cover_sm::Operation::IDLE};
+    bool is_on{false};
+    bool operator==(const GroupStateSnapshot &) const = default;
+#ifdef ELERO_HAS_JSON
+    void to_json(JsonObject obj) const;
+#endif
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SHARED HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════

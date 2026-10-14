@@ -29,6 +29,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 # ─── Duration parsing ────────────────────────────────────────────────────────
 
+
 class TestParseDurationMs:
     def test_none_returns_zero(self):
         assert mig.parse_duration_ms(None) == 0
@@ -57,6 +58,7 @@ class TestParseDurationMs:
 
 # ─── Address / byte normalization ────────────────────────────────────────────
 
+
 class TestAddressNormalization:
     def test_hex_string(self):
         assert mig.to_hex_address("0xa831e5") == "0xa831e5"
@@ -72,6 +74,7 @@ class TestAddressNormalization:
 
 
 # ─── Cover conversion ────────────────────────────────────────────────────────
+
 
 def _minimal_cover() -> dict:
     return {
@@ -136,6 +139,7 @@ class TestConvertCover:
 
 # ─── Light conversion ────────────────────────────────────────────────────────
 
+
 def _minimal_light() -> dict:
     return {
         "platform": "elero",
@@ -161,10 +165,12 @@ class TestConvertLight:
 
 # ─── End-to-end snapshot build ───────────────────────────────────────────────
 
+
 class TestBuildSnapshot:
     def test_fixture_round_trip(self, tmp_path):
         with (FIXTURES / "legacy_mixed.yaml").open("r", encoding="utf-8") as f:
             import yaml
+
             doc = yaml.safe_load(f)
         snap = mig.build_snapshot(doc)
 
@@ -181,10 +187,7 @@ class TestBuildSnapshot:
         assert snap["hub"]["name_override"] == "Living Room Hub"
 
         # Spot-check one cover end-to-end: payload defaults + parsed open_duration
-        living = next(
-            d for d in snap["devices"]
-            if d["device_type"] == "cover" and d["dst_address"] == "0xa831e5"
-        )
+        living = next(d for d in snap["devices"] if d["device_type"] == "cover" and d["dst_address"] == "0xa831e5")
         assert living["open_duration_ms"] == 25_000
         assert living["close_duration_ms"] == 22_000
         assert living["supports_tilt"] is True
@@ -208,6 +211,7 @@ class TestBuildSnapshot:
 
 
 # ─── CLI smoke ───────────────────────────────────────────────────────────────
+
 
 class TestCli:
     def test_cli_writes_output(self, tmp_path, capsys):

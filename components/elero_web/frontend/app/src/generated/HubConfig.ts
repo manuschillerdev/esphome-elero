@@ -39,4 +39,4 @@ interface HubConfig {
    */
   'default_src_address': string;
 }
-export { HubConfig };
+export type { HubConfig };

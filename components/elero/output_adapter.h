@@ -18,6 +18,7 @@ namespace esphome::elero {
 struct RfPacketInfo;  // Forward declaration (defined in elero.h)
 
 class DeviceRegistry;  // Forward declaration
+struct GroupStateSnapshot;
 
 class OutputAdapter {
  public:
@@ -53,6 +54,9 @@ class OutputAdapter {
 
     /// A saved group was removed.
     virtual void on_group_removed(const char *id) {}
+
+    /// Member-derived group state changed; registry owns computation and diff.
+    virtual void on_group_state_changed(const NvsGroupConfig &group, const GroupStateSnapshot &state) {}
 
     /// Hub-level config changed (e.g., display name override). Adapters that
     /// embed the hub name in published metadata (MQTT discovery device block,

@@ -91,10 +91,16 @@ class RadioDriver {
   // ── RX (called from RF task only) ──────────────────────────────────────────
 
   /// Check if the radio has data available (FIFO non-empty).
-  /// Reads the IRQ flag but does NOT clear it (caller clears after read_fifo).
+  /// May poll hardware to recover missed/coalesced IRQs. The hub consumes its
+  /// ISR flag before read_fifo; the driver owns hardware IRQ acknowledgment.
   virtual bool has_data() = 0;
 
-  /// Read raw bytes from the RX FIFO.
+  /// A bounded RX capture is in progress. Defer queued TX/frequency changes
+  /// until it completes or times out, so a command cannot truncate a response.
+  virtual bool receiving() const { return false; }
+
+  /// Read complete received frames, including the length and RSSI/LQI trailer.
+  /// Incomplete frames remain owned by the driver; callers need no reassembly.
   /// Handles overflow detection internally (returns 0 on overflow).
   /// @param buf Output buffer
   /// @param max_len Maximum bytes to read

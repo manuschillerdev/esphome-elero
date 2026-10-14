@@ -4,7 +4,7 @@ import type {
   StateChangedData, FreqConfig, HubMode, HubConfig, HubConfigEventData, RadioConfig,
   BlindConfig, LightConfig, RemoteConfig, GroupConfig as WireGroupConfig, GroupRemovedData,
   RfStateName,
-  ConfigSnapshot, ImportResult, LearnInStateData,
+  ConfigSnapshot, ImportResult, LearnInStateData, GroupStateData,
 } from '@/generated'
 
 // Re-export generated types used by components
@@ -15,8 +15,10 @@ export type GroupConfig = WireGroupConfig & { updated_at: number | null }
 
 export const msg_type = {
   BUTTON: '0x44',
+  BUTTON_GROUP: '0x45',
   COMMAND: '0x6a',
   COMMAND_ALT: '0x69',
+  PROGRAM: '0x70',
   STATUS: '0xca',
   STATUS_ALT: '0xc9',
 } as const
@@ -28,6 +30,9 @@ export const command = {
   TILT: '0x24',
   DOWN: '0x40',
   INTERMEDIATE: '0x44',
+  PROGRAM: '0x80',
+  PROGRAM_GROUP: '0x81',
+  PROGRAM_TARGET: '0x84',
 } as const
 
 /// Hex byte → RfStateName (from AsyncAPI spec). Single source of truth for
@@ -102,6 +107,11 @@ export function isButtonPacket(pkt: RfData): boolean {
   return pkt.type?.toLowerCase() === msg_type.BUTTON
 }
 
+export function isSelectorPacket(pkt: RfData): boolean {
+  const t = pkt.type?.toLowerCase()
+  return t === msg_type.BUTTON || t === msg_type.BUTTON_GROUP || t === msg_type.PROGRAM
+}
+
 export function isMovingState(raw: string | undefined): boolean {
   const name = resolveStateName(raw)
   return name === 'start_moving_up' || name === 'start_moving_down' ||
@@ -123,7 +133,20 @@ export interface DevicePairing {
   channel: number
 }
 
-export interface Device {
+type CoverCommandBytes = Required<Pick<BlindConfig,
+  'command_up' | 'command_down' | 'command_stop' | 'command_check' | 'command_tilt'>>
+
+function coverCommandBytes(config: Partial<CoverCommandBytes>): CoverCommandBytes {
+  return {
+    command_up: config.command_up ?? command.UP,
+    command_down: config.command_down ?? command.DOWN,
+    command_stop: config.command_stop ?? command.STOP,
+    command_check: config.command_check ?? command.CHECK,
+    command_tilt: config.command_tilt ?? command.TILT,
+  }
+}
+
+export interface Device extends CoverCommandBytes {
   address: string
   type: DeviceType
   updated_at: number | null  // non-null = saved (server-confirmed), null = unsaved
@@ -225,6 +248,7 @@ function mergePairings(...sources: Array<DevicePairing[] | undefined>): DevicePa
 
 function makeDevice(partial: Partial<Device> & { address: string; type: DeviceType }): Device {
   return {
+    ...coverCommandBytes(partial),
     updated_at: null,
     enabled: true,
     channel: 0,
@@ -242,6 +266,7 @@ function makeDevice(partial: Partial<Device> & { address: string; type: DeviceTy
 
 function blindToDevice(b: BlindConfig): Device {
   return makeDevice({
+    ...coverCommandBytes(b),
     address: b.address, type: 'cover', updated_at: b.updated_at || null, enabled: b.enabled,
     name: b.name, channel: b.channel, remote: b.remote, pairings: makePairings(b.remote, b.channel),
     open_ms: b.open_ms, close_ms: b.close_ms, supports_tilt: b.supports_tilt,
@@ -347,17 +372,19 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
   }
 
   if (t === msg_type.COMMAND || t === msg_type.COMMAND_ALT) {
-    const target = (next ?? devs).get(pkt.dst)
     const pairing = makePairings(pkt.src, pkt.channel)
-    if (!target) {
-      mut().set(pkt.dst, makeDevice({ address: pkt.dst, type: 'cover', remote: pkt.src, channel: pkt.channel, pairings: pairing }))
-    } else if (target.type !== 'remote') {
-      mut().set(pkt.dst, {
-        ...target,
-        remote: target.remote || pkt.src,
-        channel: target.remote ? target.channel : pkt.channel,
-        pairings: mergePairings(target.pairings, pairing),
-      })
+    for (const address of pkt.destinations?.length ? pkt.destinations : [pkt.dst]) {
+      const target = (next ?? devs).get(address)
+      if (!target) {
+        mut().set(address, makeDevice({ address, type: 'cover', remote: pkt.src, channel: pkt.channel, pairings: pairing }))
+      } else if (target.type !== 'remote') {
+        mut().set(address, {
+          ...target,
+          remote: target.remote || pkt.src,
+          channel: target.remote ? target.channel : pkt.channel,
+          pairings: mergePairings(target.pairings, pairing),
+        })
+      }
     }
     if (!(next ?? devs).has(pkt.src)) mut().set(pkt.src, makeDevice({ address: pkt.src, type: 'remote' }))
   } else if (t === msg_type.STATUS || t === msg_type.STATUS_ALT) {
@@ -371,7 +398,7 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
     }
     // Do NOT create devices from status packets — byte offset 6 is not the RF channel.
     // Discovery happens from COMMAND packets only (which carry correct channel).
-  } else if (t === msg_type.BUTTON) {
+  } else if (isSelectorPacket(pkt)) {
     if (!devs.has(pkt.src)) mut().set(pkt.src, makeDevice({ address: pkt.src, type: 'remote' }))
   }
 
@@ -397,6 +424,7 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
   const next = new Map(devices.value)
 
   const device = makeDevice({
+    ...coverCommandBytes(data),
     address: data.address,
     type: data.device_type,
     updated_at: data.updated_at || null,
@@ -460,6 +488,14 @@ export function onLearnInState(data: LearnInStateData) {
 export function onGroupUpserted(data: WireGroupConfig) {
   const next = new Map(groups.value)
   next.set(data.id, groupToApp(data))
+  groups.value = next
+}
+
+export function onGroupStateChanged(state: GroupStateData) {
+  const group = groups.value.get(state.id)
+  if (!group) return;
+  const next = new Map(groups.value)
+  next.set(state.id, { ...group, state })
   groups.value = next
 }
 

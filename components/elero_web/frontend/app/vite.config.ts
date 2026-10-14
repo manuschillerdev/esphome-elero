@@ -22,6 +22,8 @@ function eleroGzipHeader(): Plugin {
 
       const html = readFileSync(htmlPath)
       const gz = gzipSync(html, { level: 9 })
+      // Normalize gzip's OS byte to "unknown" for identical macOS/Linux builds.
+      gz[9] = 255
 
       const bytes = Array.from(gz).map((b) => `0x${b.toString(16).padStart(2, '0')}`)
       // Format: 16 bytes per line

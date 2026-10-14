@@ -58,6 +58,12 @@ const char *elero_command_to_string(uint8_t command) {
       return "DOWN";
     case packet::command::INTERMEDIATE:
       return "INTERMEDIATE";
+    case packet::command::PROGRAM:
+      return "PROGRAM";
+    case packet::command::PROGRAM_GROUP:
+      return "PROGRAM_GROUP";
+    case packet::command::PROGRAM_TARGET:
+      return "PROGRAM_TARGET";
     default:
       return "UNKNOWN";
   }

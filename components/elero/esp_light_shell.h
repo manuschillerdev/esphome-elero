@@ -58,6 +58,7 @@ class EspLightShell : public light::LightOutput, public Component {
     if (device_ && device_->active) {
       sync_and_publish(state_change::ALL);
     }
+    initialized_ = true;
   }
 
   // ── ESPHome Light interface ────────────────────────────────
@@ -73,8 +74,11 @@ class EspLightShell : public light::LightOutput, public Component {
     return traits;
   }
 
-  void write_state(light::LightState *state) override {
-    if (!device_ || !device_->is_light() || !registry_ || ignore_write_state_) return;
+  // Queue user intent synchronously. Deferred writes are unnecessary for an RF
+  // adapter and can echo reports or lose commands when an RF report arrives
+  // between LightCall::perform() and the next LightState loop.
+  void update_state(light::LightState *state) override {
+    if (!initialized_ || !device_ || !device_->is_light() || !registry_) return;
 
     float brightness;
     state->current_values_as_brightness(&brightness);
@@ -87,20 +91,24 @@ class EspLightShell : public light::LightOutput, public Component {
     }
   }
 
+  void write_state(light::LightState *) override {}
+
   void sync_and_publish(uint16_t changes) {
     if (!device_ || !device_->is_light() || !light_state_) return;
     const auto &pub = std::get<LightDevice>(device_->logic).published;
 
     if (changes & state_change::BRIGHTNESS) {
-      ignore_write_state_ = true;
-      auto call = light_state_->make_call();
-      call.set_state(pub.is_on);
       auto ctx = light_context(device_->config);
-      if (pub.is_on && light_sm::supports_brightness(ctx)) {
-        call.set_brightness(static_cast<float>(pub.brightness_pct) / PERCENT_SCALE);
-      }
-      call.perform();
-      ignore_write_state_ = false;
+      const float brightness = light_sm::supports_brightness(ctx)
+          ? static_cast<float>(pub.brightness_pct) / PERCENT_SCALE : 1.0f;
+      // Reports publish existing registry state directly. They do not schedule
+      // output writes, cancel pending user calls, or reset active transformers.
+      auto values = light_state_->remote_values;
+      values.set_state(pub.is_on);
+      if (pub.is_on) values.set_brightness(brightness);
+      light_state_->remote_values = values;
+      light_state_->current_values = values;
+      light_state_->publish_state();
     }
 
 #ifdef USE_SENSOR
@@ -116,7 +124,7 @@ class EspLightShell : public light::LightOutput, public Component {
   DeviceRegistry *registry_{nullptr};
   Device *device_{nullptr};
   light::LightState *light_state_{nullptr};
-  bool ignore_write_state_{false};
+  bool initialized_{false};  ///< Ignore LightState's boot restore before binding publishes registry state.
 
 #ifdef USE_SENSOR
   sensor::Sensor *rssi_sensor_{nullptr};

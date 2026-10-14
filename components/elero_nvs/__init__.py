@@ -12,6 +12,7 @@ NvsAdapter = elero_ns.class_("NvsAdapter", cg.Component, OutputAdapter)
 NvsLightState = elero_ns.class_("NvsLightState", cg.Component)
 # Keep in sync with DeviceRegistry::MAX_DEVICES.
 MAX_DEVICES = 48
+MAX_GROUPS = 16
 _LIGHT_SLOT_IDS = [f"light_slot_{i}_id" for i in range(MAX_DEVICES)]
 
 CONF_NVS_ADAPTER_ID = "nvs_adapter_id"
@@ -46,6 +47,8 @@ async def to_code(config):
         for _ in range(MAX_DEVICES):
             CORE.register_platform_component("cover", None)
             CORE.register_platform_component("light", None)
+        for _ in range(MAX_GROUPS):
+            CORE.register_platform_component("cover", None)
 
         adapter = cg.new_Pvariable(config[CONF_NVS_ADAPTER_ID])
         cg.add(adapter.set_registry(registry))

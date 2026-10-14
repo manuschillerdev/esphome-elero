@@ -9,4 +9,4 @@ interface ImportError {
    */
   'msg': string;
 }
-export { ImportError };
+export type { ImportError };

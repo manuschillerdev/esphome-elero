@@ -49,6 +49,7 @@ class MqttAdapter : public OutputAdapter {
     void on_rf_packet(const RfPacketInfo &pkt) override {}  // MQTT doesn't forward raw RF
     void on_group_upserted(const NvsGroupConfig &group) override;
     void on_group_removed(const char *id) override;
+    void on_group_state_changed(const NvsGroupConfig &group, const GroupStateSnapshot &state) override;
     void on_hub_config_changed() override;
 
  private:

@@ -1,6 +1,7 @@
 /// @file device_registry.cpp
 /// @brief DeviceRegistry implementation — CRUD, NVS, RF dispatch, loop, observer notification.
 
+#include <cinttypes>
 #include "device_registry.h"
 #include "state_snapshot.h"
 #include "elero.h"
@@ -9,7 +10,7 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/hal.h"
 #include <cstring>
-#include <cinttypes>
+#include <cmath>
 
 namespace esphome::elero {
 
@@ -18,7 +19,7 @@ static const char *const TAG = "elero.registry";
 bool DeviceRegistry::enqueue_or_warn_(Device &dev, uint8_t cmd_byte,
                                       uint8_t packets, uint8_t type,
                                       const char *context) {
-    if (dev.sender.enqueue(cmd_byte, packets, type)) {
+    if (dev.sender.enqueue(dev.config.wire_command(cmd_byte), packets, type)) {
         return true;
     }
 
@@ -494,6 +495,18 @@ void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
         return;
     }
 
+    // A shared selector packet carries one command byte. Mixed motor variants
+    // need their individual TX paths even when they share a remote address.
+    for (size_t i = 1; i < count; ++i) {
+        if (devices[i]->config.wire_command(cmd_byte) != devices[0]->config.wire_command(cmd_byte)) {
+            for (size_t j = 0; j < count; ++j) {
+                if (devices[j]->is_cover()) command_cover(*devices[j], cmd_byte);
+                else command_light(*devices[j], cmd_byte);
+            }
+            return;
+        }
+    }
+
     // Build the group command on the first device's sender.
     // Set multi-dest fields so build_tx_packet_ dispatches to build_group_button_packet.
     Device &lead = *devices[0];
@@ -555,7 +568,7 @@ void DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
 
     // num_dests is auto-cleared by CommandSender::advance_queue_() after the
     // group button entry drains. The CHECK commands queued above use
-    // type=COMMAND (0x6a) — build_tx_packet_ only checks num_dests for
+    // type=COMMAND (0x6a) — build_command_packet only uses selector destinations for
     // BUTTON type, so CHECKs are safe regardless of timing.
 
     ESP_LOGI(TAG, "Group command 0x%02x via remote 0x%06" PRIx32 " to %zu %s devices (channels: %s)",
@@ -589,8 +602,8 @@ bool DeviceRegistry::command_saved_group(const char *id, uint8_t cmd_byte, std::
 
     for (uint8_t i = 0; i < group->member_count; ++i) {
         Device *dev = find(group->device_ids[i]);
-        if (dev == nullptr || dev->is_remote()) {
-            if (error != nullptr) *error = "Group contains unknown or non-controllable device";
+        if (dev == nullptr || dev->is_remote() || !dev->config.is_enabled()) {
+            if (error != nullptr) *error = "Group contains unknown, disabled or non-controllable device";
             return false;
         }
         members[i] = dev;
@@ -668,9 +681,9 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
             dev->rf.last_state_raw = pkt.state;
             dispatch_status_(*dev, pkt.state, now);
         }
-    } else if (packet::is_command_packet(pkt.type)) {
-        // Remote commands are passive — we only auto-discover the remote.
-        // The blind's status response (via dispatch_status_) handles state.
+    } else if (packet::carries_command(pkt.type)) {
+        // Remote commands/selector actions are passive — auto-discover the remote.
+        // The blind's status response (via dispatch_status_) handles device state.
         track_remote_(pkt, now);
     }
 }
@@ -732,7 +745,7 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
     cfg.type = DeviceType::REMOTE;
     cfg.dst_address = pkt.src;
     cfg.channel = pkt.channel;
-    snprintf(cfg.name, NVS_NAME_MAX, DEFAULT_REMOTE_NAME_FMT, static_cast<unsigned int>(pkt.src));
+    snprintf(cfg.name, NVS_NAME_MAX, DEFAULT_REMOTE_NAME_FMT, pkt.src);
 
     Device *slot = find_free_slot_();
     if (!slot) {
@@ -771,6 +784,8 @@ void DeviceRegistry::loop(uint32_t now) {
             [](RemoteDevice &) {},
         }, dev.logic);
     }
+
+    notify_group_states_(now);
 
     // Drive adapter loops (MQTT reconnect, etc.)
     for (auto *a : adapters_) {
@@ -950,7 +965,7 @@ bool DeviceRegistry::validate_group_(const NvsGroupConfig &config, std::string *
 
     if (config.id[0] == '\0') return fail("Missing group id");
     if (config.name[0] == '\0') return fail("Missing group name");
-    if (config.member_count < 2) return fail("Group requires at least 2 devices");
+    if (config.member_count == 0) return fail("Group requires at least 1 device");
     if (config.member_count > NVS_GROUP_MAX_MEMBERS) return fail("Too many group members");
 
     DeviceType derived_type = DeviceType::REMOTE;
@@ -1030,7 +1045,7 @@ void DeviceRegistry::prune_device_from_groups_(uint32_t address) {
         }
         group.member_count = write;
 
-        if (group.member_count < 2) {
+        if (group.member_count == 0) {
             char removed_id[NVS_GROUP_ID_MAX]{};
             strncpy(removed_id, group.id, NVS_GROUP_ID_MAX - 1);
             notify_group_removed_(removed_id);
@@ -1090,14 +1105,81 @@ void DeviceRegistry::notify_rf_packet_(const RfPacketInfo &pkt) {
 
 void DeviceRegistry::notify_group_upserted_(const NvsGroupConfig &group) {
     for (auto *a : adapters_) a->on_group_upserted(group);
+    notify_group_states_(millis(), true);
 }
 
 void DeviceRegistry::notify_group_removed_(const char *id) {
     for (auto *a : adapters_) a->on_group_removed(id);
 }
 
+GroupStateSnapshot DeviceRegistry::group_snapshot(const NvsGroupConfig &group, uint32_t now) const {
+    GroupStateSnapshot state;
+    if (!group.is_valid()) return state;
+    float position_sum = 0.0f;
+    bool all_position = true;
+    bool opening = false, closing = false;
+    for (uint8_t i = 0; i < group.member_count; ++i) {
+        const Device *member = nullptr;
+        for (const auto &dev : slots_) {
+            if (dev.active && dev.config.dst_address == group.device_ids[i]) {
+                member = &dev;
+                break;
+            }
+        }
+        if (member == nullptr || member->is_remote() || !member->config.is_enabled()) return {};
+        if (i == 0) state.type = member->type();
+        else if (member->type() != state.type) return {};
+        if (member->is_cover()) {
+            const auto snapshot = compute_cover_snapshot(*member, now);
+            position_sum += snapshot.position;
+            all_position &= cover_sm::has_position_tracking(cover_context(member->config));
+            opening |= snapshot.operation == cover_sm::Operation::OPENING;
+            closing |= snapshot.operation == cover_sm::Operation::CLOSING;
+        } else {
+            const auto snapshot = compute_light_snapshot(*member, now);
+            position_sum += snapshot.brightness;
+            state.is_on |= snapshot.is_on;
+            all_position = false;
+        }
+    }
+    state.valid = true;
+    state.supports_position = all_position;
+    state.position_pct = static_cast<int>(std::lround(position_sum * PERCENT_SCALE / group.member_count));
+    state.operation = opening ? cover_sm::Operation::OPENING
+                             : closing ? cover_sm::Operation::CLOSING : cover_sm::Operation::IDLE;
+    return state;
+}
+
+bool DeviceRegistry::set_group_position(const char *id, float target, std::string *error) {
+    const auto *group = find_group(id);
+    if (group == nullptr || !group_snapshot(*group, millis()).supports_position ||
+        !std::isfinite(target) || target < 0.0f || target > 1.0f) {
+        if (error != nullptr) *error = "Group position unavailable or invalid";
+        ESP_LOGW(TAG, "Group position rejected for '%s'", id != nullptr ? id : "<null>");
+        return false;
+    }
+    for (uint8_t i = 0; i < group->member_count; ++i) {
+        set_cover_position(*find(group->device_ids[i]), target);
+    }
+    return true;
+}
+
+void DeviceRegistry::notify_group_states_(uint32_t now, bool force) {
+    for (size_t i = 0; i < groups_.size(); ++i) {
+        if (!groups_[i].is_valid()) {
+            group_published_[i] = {};
+            continue;
+        }
+        const auto snapshot = group_snapshot(groups_[i], now);
+        if (!force && snapshot == group_published_[i]) continue;
+        group_published_[i] = snapshot;
+        for (auto *adapter : adapters_) adapter->on_group_state_changed(groups_[i], snapshot);
+    }
+}
+
 void DeviceRegistry::force_republish_all() {
     uint32_t now = millis();
+    notify_group_states_(now, true);
     for (auto &dev : slots_) {
         if (!dev.active) continue;
         // Skip devices we've never heard from via RF — their FSM state is

@@ -5,4 +5,4 @@
  * - Lights: on, off, stop, check, dim_up, dim_down
  */
 type DeviceAction = "up" | "down" | "open" | "close" | "stop" | "check" | "tilt" | "on" | "off" | "dim_up" | "dim_down" | "int";
-export { DeviceAction };
+export type { DeviceAction };

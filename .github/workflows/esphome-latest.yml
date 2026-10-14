@@ -1,0 +1,43 @@
+name: Nightly ESPHome Compatibility
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+# Test reporting creates check runs.
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: esphome-latest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  latest-esphome:
+    name: Resolve Latest Stable ESPHome
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.latest.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: python uv
+
+      - name: Install Python dependencies
+        run: mise exec python uv -- uv sync --locked
+
+      - name: Resolve latest stable release
+        id: latest
+        run: mise exec python uv -- uv run --locked .github/scripts/latest_esphome.py
+
+  compatibility:
+    name: Check ESPHome ${{ needs.latest-esphome.outputs.version }}
+    needs: latest-esphome
+    uses: ./.github/workflows/ci.yml
+    with:
+      esphome_version: ${{ needs.latest-esphome.outputs.version }}

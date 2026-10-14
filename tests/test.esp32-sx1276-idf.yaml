@@ -12,8 +12,6 @@ esp32:
 logger:
   level: DEBUG
 
-api:
-
 wifi:
   ssid: "test-network"
   password: ""

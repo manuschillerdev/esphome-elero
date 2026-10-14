@@ -12,4 +12,4 @@ interface SetHubConfigPayload {
    */
   'name': string;
 }
-export { SetHubConfigPayload };
+export type { SetHubConfigPayload };

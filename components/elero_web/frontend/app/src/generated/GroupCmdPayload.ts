@@ -17,4 +17,4 @@ interface GroupCmdPayload {
    */
   'action': DeviceAction;
 }
-export { GroupCmdPayload };
+export type { GroupCmdPayload };

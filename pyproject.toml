@@ -8,8 +8,9 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-    "esphome==2026.8.2",
+    "esphome==2026.9.0",
     "ruff>=0.11",
+    "ty>=0.0.1",
     "pytest>=8.0",
     # PlatformIO ESP32 build deps (pioarduino builder imports these unconditionally)
     "littlefs-python>=0.17.1",
@@ -18,7 +19,11 @@ dev = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
+
+[tool.ty.environment]
+# Tests load these modules via sys.path; ESPHome loads components as packages.
+extra-paths = ["scripts", "typings"]
 
 [tool.ruff.lint]
 select = [

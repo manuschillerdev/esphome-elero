@@ -1,3 +1,4 @@
+<!-- See RADIO_FRAMING.md for current shared Semtech TX sequencing and RX framing. -->
 # State Machine Documentation
 
 This document describes the state machines in esphome-elero. Each state, transition, guard condition, and error handling path is documented to match the implementation and test cases.
@@ -181,7 +182,7 @@ stateDiagram-v2
     WAIT_DELAY --> WAIT_DELAY: delay not elapsed
     WAIT_DELAY --> TX_PENDING: delay elapsed && request_tx() succeeds
     WAIT_DELAY --> WAIT_DELAY: request_tx() fails (radio busy)
-    WAIT_DELAY --> IDLE: queue empty (after cancel+timeout)
+    WAIT_DELAY --> IDLE: queue empty
 
     %% ─── TX_PENDING ─────────────────────────────────────────────────────────────
     %% Success paths
@@ -193,9 +194,6 @@ stateDiagram-v2
     TX_PENDING --> WAIT_DELAY: on_tx_complete(false) && retries < 3\nbackoff: 10ms << retries (cap 400ms)
     TX_PENDING --> IDLE: on_tx_complete(false) && retries >= 3\ndrop command
 
-    %% Timeout paths with exponential backoff
-    TX_PENDING --> WAIT_DELAY: timeout > 500ms && retries < 3\nbackoff: 10ms << retries (cap 400ms)
-    TX_PENDING --> IDLE: timeout > 500ms && retries >= 3\ndrop command
 
     %% Cancellation
     TX_PENDING --> IDLE: cancelled (via clear_queue)
@@ -208,17 +206,15 @@ stateDiagram-v2
 | `IDLE` | `enqueue()` called | `WAIT_DELAY` | Add command to queue (collapse duplicates) |
 | `IDLE` | `process_queue()` && queue empty | `IDLE` | Return immediately |
 | `WAIT_DELAY` | elapsed < required delay | `WAIT_DELAY` | Return (waiting) |
-| `WAIT_DELAY` | queue empty | `IDLE` | Clear cancelled_ flag |
-| `WAIT_DELAY` | delay elapsed && `request_tx()` succeeds | `TX_PENDING` | Record tx_start_time_ |
+| `WAIT_DELAY` | queue empty | `IDLE` | No work remains |
+| `WAIT_DELAY` | delay elapsed && `request_tx()` succeeds | `TX_PENDING` | Wait for transport completion |
 | `WAIT_DELAY` | delay elapsed && `request_tx()` fails | `WAIT_DELAY` | Radio busy, retry next loop |
 | `TX_PENDING` | `on_tx_complete(true)` && send_packets < 3 | `WAIT_DELAY` | Increment send_packets_ |
 | `TX_PENDING` | `on_tx_complete(true)` && send_packets == 3 | -> `advance_queue_()` | Reset counters, pop queue |
 | `TX_PENDING` | `on_tx_complete(false)` && retries < 3 | `WAIT_DELAY` | Increment retries, **exponential backoff** |
 | `TX_PENDING` | `on_tx_complete(false)` && retries >= 3 | -> `advance_queue_()` | Log error, drop command |
-| `TX_PENDING` | cancelled_ == true | `IDLE` | Clear cancelled_, reset counters |
-| `TX_PENDING` | timeout (500ms) && retries < 3 | `WAIT_DELAY` | Increment retries, **exponential backoff** |
-| `TX_PENDING` | timeout (500ms) && retries >= 3 | -> `advance_queue_()` | Log error, drop command |
-| `TX_PENDING` | stale callback (state != TX_PENDING) | (ignored) | Return immediately |
+| Any | `clear_queue()` | `IDLE` | Invalidate attempt, clear queue and counters |
+| Any | stale/duplicate attempt ID | (ignored) | Reject before callback |
 
 ### Command Collapsing (`enqueue`)
 
@@ -258,7 +254,7 @@ uint32_t backoff_ms = packet::button::INTER_PACKET_MS << shift;  // 10 << shift
 if (backoff_ms > packet::timing::MAX_BACKOFF_MS) backoff_ms = packet::timing::MAX_BACKOFF_MS;  // 400
 ```
 
-The backoff is applied by adjusting `last_tx_time_` forward: `last_tx_time_ = now + backoff_ms - INTER_PACKET_MS`, so the standard inter-packet delay check in WAIT_DELAY naturally enforces the full backoff period.
+The sender sets `next_attempt_ms_ = now + backoff_ms`; WAIT_DELAY waits until that deadline. Queue waiting itself consumes no retries. Hardware timeouts arrive through failed driver completions.
 
 ### `advance_queue_()` Helper
 
@@ -276,14 +272,13 @@ Called to cancel all pending commands (e.g., STOP supersedes movement):
 2. Reset `send_packets_ = 0`
 3. Reset `send_retries_ = 0`
 4. Reset `last_tx_time_ = 0`
-5. If state == `TX_PENDING`: set `cancelled_ = true` (TX in flight, can't abort from Core 1)
-6. Else: set state = `IDLE`
+5. If state == `TX_PENDING`, advance the message counter
+6. Invalidate the attempt ID and set state = `IDLE`; queued RF work may still finish, but its callback cannot affect a replacement command
 
 ### Constants
 
 ```cpp
 // From command_sender.h — references packet constants in elero_packet.h
-TX_PENDING_TIMEOUT_MS = packet::timing::TX_PENDING_TIMEOUT  // 500ms — watchdog for hub callback
 
 // From elero_packet.h — actual values used by CommandSender
 packet::button::PACKETS = 3            // Packets per button command (enqueue default)
@@ -322,11 +317,11 @@ packet::timing::MAX_BACKOFF_MS = 400    // Max single backoff delay (ms)
 | Radio busy | Stay in WAIT_DELAY, retry next loop | `RetriesWhenRadioBusy` |
 | TX failure | Retry with exponential backoff | `ExponentialBackoffOnRetry` |
 | Max retries exceeded | Drop command, advance queue | `DropsCommandAfterMaxRetries` |
-| Cancel during TX | Set cancelled_, ignore callback | `ClearQueueDuringTx` |
-| Cancel + timeout race | Empty queue check in WAIT_DELAY | `ClearQueueDuringTx_TimeoutRecovery` |
-| Stale callback after timeout | State guard rejects | `StaleCallbackAfterTimeoutIsIgnored` |
-| Hub never calls back | 500ms timeout watchdog | `TimeoutInTxPending_TriggersRetry` |
-| Timeout + max retries | Drop command | `TimeoutInTxPending_DropsAfterMaxRetries` |
+| Cancel during TX | Invalidate attempt, release logical ownership | `ClearQueueDuringTx` |
+| Cancel then replace | Old completion cannot consume replacement | `CancelledCommandCannotDiscardReplacementCompletion` |
+| Duplicate completion | Attempt ID rejects | `DuplicateCallbackAfterHardwareFailureIsIgnored` |
+| Completion queue full | Retain result and pause TX admission | `CompletionBurstRetainsNinthResultUntilMainLoopDrains` |
+| Hardware failure + max retries | Drop command | `HardwareFailuresDropAfterMaxRetries` |
 
 ---
 

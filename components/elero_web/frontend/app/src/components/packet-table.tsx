@@ -3,11 +3,11 @@ import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 import { type Column } from './ui/data-table'
 import { Blinds, Lightbulb, Copy, CheckCircle2, RemoteControl } from './icons'
 import {
-  isStatusPacket, isCommandPacket, isButtonPacket,
-  getMsgTypeLabel, getCommandLabel, getStateLabel,
+  isStatusPacket, isCommandPacket, isSelectorPacket,
+  getMsgTypeLabel, getCommandLabel, getStateLabel, showToast,
   type RfPacketWithTimestamp, type AppDeviceType,
 } from '@/store'
-import { cn } from '@/lib/utils'
+import { cn, copyText } from '@/lib/utils'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -31,9 +31,14 @@ export function CopyPacketBtn({ pkt }: { pkt: RfPacketWithTimestamp }) {
 
   const onClick = () => {
     const { received_at: _, ...rest } = pkt as unknown as Record<string, unknown>
-    void navigator.clipboard.writeText(JSON.stringify(rest, null, 2))
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 1500)
+    void copyText(JSON.stringify(rest, null, 2)).then((ok) => {
+      if (!ok) {
+        showToast('error', 'Could not copy the packet — the browser blocked clipboard access')
+        return
+      }
+      copied.value = true
+      setTimeout(() => { copied.value = false }, 1500)
+    })
   }
 
   return (
@@ -114,8 +119,8 @@ export function buildFullColumns(
     },
     {
       key: 'command', label: 'Command', sortable: true, filter: 'select',
-      value: (pkt) => (isCommandPacket(pkt) || isButtonPacket(pkt)) ? getCommandLabel(pkt.command) : '',
-      render: (pkt) => <span className="text-muted-foreground">{(isCommandPacket(pkt) || isButtonPacket(pkt)) ? getCommandLabel(pkt.command) : '-'}</span>,
+      value: (pkt) => (isCommandPacket(pkt) || isSelectorPacket(pkt)) ? getCommandLabel(pkt.command) : '',
+      render: (pkt) => <span className="text-muted-foreground">{(isCommandPacket(pkt) || isSelectorPacket(pkt)) ? getCommandLabel(pkt.command) : '-'}</span>,
     },
     {
       key: 'state', label: 'State', sortable: true, filter: 'select',
@@ -160,12 +165,12 @@ export function buildCompactColumns(
       key: 'detail', label: 'Detail', sortable: true,
       value: (pkt) => {
         if (isStatusPacket(pkt)) return getStateLabel(pkt.state)
-        if (isCommandPacket(pkt) || isButtonPacket(pkt)) return getCommandLabel(pkt.command)
+        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return getCommandLabel(pkt.command)
         return ''
       },
       render: (pkt) => {
         if (isStatusPacket(pkt)) return <span className="text-muted-foreground">{getStateLabel(pkt.state)}</span>
-        if (isCommandPacket(pkt) || isButtonPacket(pkt)) return <span className="text-muted-foreground">{getCommandLabel(pkt.command)}</span>
+        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return <span className="text-muted-foreground">{getCommandLabel(pkt.command)}</span>
         return <span className="text-muted-foreground">-</span>
       },
     },

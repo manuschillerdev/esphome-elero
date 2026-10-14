@@ -19,7 +19,6 @@ Project-local pi skills live in `.pi/skills/`.
 | `/skill:sx1262-driver` | **Always** when modifying SX1262 driver code, debugging TX/RX, or radio config |
 | `/skill:modern-cpp` | **Always** when writing or reviewing C++ code |
 | `/skill:esp32-development` | **Always** when writing C++ code (ISRs, memory, FreeRTOS, SPI) |
-| `/skill:review-quality-gates` | Before reviewing PRs, refactors, or new features |
 
 > **Important:** Before writing C++ code, load `/skill:modern-cpp` and `/skill:esp32-development`.
 > Before touching RF protocol code (`elero.cpp` TX/RX, packet handling), load `/skill:elero-protocol`.

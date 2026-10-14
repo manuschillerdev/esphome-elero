@@ -30,6 +30,3 @@ components/elero_web/frontend/app/dist/
 # Mongoose (downloaded at build time by elero_web component)
 components/elero_web/mongoose.c
 components/elero_web/mongoose.h
-
-# The generated frontend header is tracked so GitHub external-component
-# installs work without a separate release asset. Rebuild after frontend edits.

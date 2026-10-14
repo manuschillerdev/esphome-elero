@@ -5,4 +5,4 @@
 interface RestartPayload {
   'type': 'restart';
 }
-export { RestartPayload };
+export type { RestartPayload };

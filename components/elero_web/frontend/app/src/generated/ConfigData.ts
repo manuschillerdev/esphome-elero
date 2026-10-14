@@ -30,4 +30,4 @@ interface ConfigData {
    */
   'groups': GroupConfig[];
 }
-export { ConfigData };
+export type { ConfigData };

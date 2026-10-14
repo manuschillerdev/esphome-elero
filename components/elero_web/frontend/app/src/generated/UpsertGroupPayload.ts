@@ -16,4 +16,4 @@ interface UpsertGroupPayload {
   'name': string;
   'device_ids': string[];
 }
-export { UpsertGroupPayload };
+export type { UpsertGroupPayload };

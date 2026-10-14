@@ -2,7 +2,7 @@ import type { CmdPayload, RawPayload, UpsertDevicePayload, RemoveDevicePayload, 
 import {
   setConnected, setDevices, addRfPacket,
   onDeviceUpserted, onDeviceRemoved, onStateChanged, onHubConfig,
-  onConfigSnapshot, onImportResult, onLearnInState, onGroupUpserted, onGroupRemoved,
+  onConfigSnapshot, onImportResult, onLearnInState, onGroupUpserted, onGroupRemoved, onGroupStateChanged,
   devices, showToast,
   type Device,
 } from './store'
@@ -57,6 +57,8 @@ export function initWs() {
       onGroupUpserted(data as GroupConfig)
     } else if (event === 'group_removed') {
       onGroupRemoved(data as GroupRemovedData)
+    } else if (event === 'group_state_changed') {
+      onGroupStateChanged(data)
     } else if (event === 'hub_config') {
       onHubConfig(data as HubConfigEventData)
     } else if (event === 'config_snapshot') {
@@ -103,6 +105,11 @@ export function sendUpsertDevice(device: Device) {
     close_duration_ms: device.close_ms,
     supports_tilt: device.supports_tilt,
     dim_duration_ms: device.dim_ms,
+    ...(device.type === 'cover' ? {
+      command_up: device.command_up, command_down: device.command_down,
+      command_stop: device.command_stop, command_check: device.command_check,
+      command_tilt: device.command_tilt,
+    } : {}),
   }
   send(payload)
 }

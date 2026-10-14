@@ -3,7 +3,7 @@
 esphome:
   name: lilygo-lora32
   friendly_name: LilyGO Elero
-  min_version: 2026.8.2
+  min_version: 2026.9.0
 
 esp32:
   board: esp32dev

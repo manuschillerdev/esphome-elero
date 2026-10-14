@@ -77,5 +77,25 @@ interface DeviceSnapshot {
    * @example 0x00
    */
   'type2'?: string;
+  /**
+   * Per-cover RF command byte; defaults to 0x20.
+   */
+  'command_up'?: string;
+  /**
+   * Per-cover RF command byte; defaults to 0x40.
+   */
+  'command_down'?: string;
+  /**
+   * Per-cover RF command byte; defaults to 0x10.
+   */
+  'command_stop'?: string;
+  /**
+   * Per-cover RF command byte; defaults to 0x00.
+   */
+  'command_check'?: string;
+  /**
+   * Per-cover RF command byte; defaults to 0x24.
+   */
+  'command_tilt'?: string;
 }
-export { DeviceSnapshot };
+export type { DeviceSnapshot };
