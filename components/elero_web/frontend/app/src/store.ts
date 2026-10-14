@@ -1,4 +1,6 @@
 import { signal, computed, batch } from '@preact/signals'
+import { formatFrequency } from './lib/protocol'
+export { getStateLabel, parseFreq } from './lib/protocol'
 import type {
   ConfigData, RfData, DeviceType, CrudEventData, DeviceUpsertedData,
   StateChangedData, FreqConfig, HubMode, HubConfig, HubConfigEventData, RadioConfig,
@@ -63,9 +65,6 @@ export function resolveStateName(raw: string | undefined): RfStateName | undefin
   return STATE_HEX[raw.toLowerCase()] ?? (raw as RfStateName)
 }
 
-const STATE_LABELS: Record<string, string> = Object.fromEntries(
-  Object.entries(STATE_HEX).map(([, name]) => [name, name.toUpperCase()])
-)
 const COMMAND_LABELS: Record<string, string> = Object.fromEntries(
   Object.entries(command).map(([k, v]) => [v, k])
 )
@@ -76,12 +75,6 @@ const MSG_TYPE_LABELS: Record<string, string> = Object.fromEntries(
 // ─── Packet Helpers ──────────────────────────────────────────────────────────
 
 export type RfPacketWithTimestamp = RfData & { received_at?: number }
-
-export function getStateLabel(state: string | undefined): string {
-  if (!state) return 'UNKNOWN'
-  const name = resolveStateName(state)
-  return (name && STATE_LABELS[name]) ?? state
-}
 
 export function getCommandLabel(hexCmd: string | undefined): string {
   if (!hexCmd) return ''
@@ -116,12 +109,6 @@ export function isMovingState(raw: string | undefined): boolean {
   const name = resolveStateName(raw)
   return name === 'start_moving_up' || name === 'start_moving_down' ||
          name === 'moving_up' || name === 'moving_down'
-}
-
-export function parseFreq(val: number | string | undefined, defaultVal: number): number {
-  if (val === undefined) return defaultVal
-  if (typeof val === 'number') return val
-  return parseInt(val, 16) || defaultVal
 }
 
 // ─── Device Types ────────────────────────────────────────────────────────────
@@ -180,6 +167,8 @@ export const radio = signal<RadioConfig>({
   rx_sensitivity: -104,
   freq: { freq0: '0x7a', freq1: '0x71', freq2: '0x21' },
 })
+
+export const configuredFrequency = computed(() => formatFrequency(radio.value.freq))
 
 export const devices = signal<Map<string, Device>>(new Map())
 

@@ -183,7 +183,7 @@ elero_web:
 
 **Features:**
 - **Devices tab** — add, edit, remove blinds/lights/remotes.
-- **Hub tab** — display name override, frequency presets, raw TX, **Backup & Restore**.
+- **Hub tab** — display name override, read-only radio frequency with advanced diagnostics, raw TX, **Backup & Restore**. Set `freq0`, `freq1`, and `freq2` in YAML, then rebuild and flash to change the radio frequency.
 - **Packets tab** — live RF traffic.
 - **Logs** — ESPHome `elero.*` logs in real time.
 

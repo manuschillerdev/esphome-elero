@@ -83,7 +83,7 @@ export function HaStateCell({ device }: { device: Device }) {
 
 export function RfStateCell({ device }: { device: Device }) {
   const status = device.lastStatus as Record<string, unknown> | null
-  const rfState = getStateLabel(status?.state as string | undefined)
+  const rfState = getStateLabel(status?.state as string | undefined, device.type)
   return (
     <span className="text-[10px] text-muted-foreground">{rfState}</span>
   )
