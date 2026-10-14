@@ -10,7 +10,6 @@ This repository has been migrated from Claude-specific agent files to Pi-compati
 - `.pi/skills/esp32-development/`
 - `.pi/skills/elero-protocol/`
 - `.pi/skills/sx1262-driver/`
-- `.pi/skills/review-quality-gates/`
 
 Use them via `/skill:<name>`.
 
