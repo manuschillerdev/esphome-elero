@@ -1,4 +1,5 @@
 import { Radio } from './icons'
+import { configuredFrequency, connected } from '@/store'
 
 export function DiscoveryBanner() {
   return (
@@ -9,7 +10,7 @@ export function DiscoveryBanner() {
           <Radio className="relative size-4 text-muted-foreground" />
         </span>
         <h3 className="text-xs font-semibold text-foreground">
-          RF Discovery — listening on 868 MHz
+          RF Discovery — {connected.value ? 'listening on' : 'configured for'} {configuredFrequency.value}
         </h3>
       </div>
       <p className="text-[11px] leading-relaxed text-muted-foreground">

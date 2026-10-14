@@ -15,6 +15,25 @@ Node.js, pnpm, or a separate frontend download. Frontend contributors must rebui
 and commit `components/elero_web/elero_web_ui.h` alongside source changes;
 CI verifies that the generated header matches the source.
 
+## Frontend mock development
+
+In `components/elero_web/frontend/app`, run `mise exec node pnpm -- pnpm mock`
+and `mise exec node pnpm -- pnpm dev` in separate terminals. Open
+`http://localhost:3000`; Vite proxies `/elero/ws` to the mock on port 8080.
+The mock validates commands and outgoing events against `asyncapi.yaml` and shares
+one device model across clients. CRUD, groups, backup/restore, learn-in, movement,
+dimming, errors, and restart are simulated. Configuration survives a simulated
+restart and resets when the mock process exits. RF `raw` bytes are diagnostic
+placeholders; motor timing and radio reliability still require hardware testing.
+
+For remote activity and fault scenarios, enter newline-delimited JSON in the mock
+terminal, for example `{"address":"0x333238","action":"up"}` or
+`{"address":"0x333238","state":"blocking","rssi":-85}`. The `state` field accepts
+any documented RF state name. Learn-in normally completes each transmission step
+in 300 ms; start the mock with `MOCK_LEARN_IN_FAILURE=1` to simulate failure, or
+send a short `session_timeout_ms` to exercise timeout. `MOCK_PORT` changes the
+standalone server port; the default Vite proxy expects 8080.
+
 ## Quick Start
 
 ### 1. Choose your hardware

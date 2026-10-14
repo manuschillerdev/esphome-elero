@@ -8,18 +8,8 @@ import { Send, Info, Download, Upload } from './icons'
 import { RfPackets } from './rf-packets'
 import { LearnInPanel } from './learn-in-panel'
 import { cn } from '@/lib/utils'
-import { hub, radio, devices, filterCounts, parseFreq, showToast } from '@/store'
+import { hub, radio, configuredFrequency, devices, filterCounts, parseFreq, showToast } from '@/store'
 import { sendRawCommand, sendSetHubConfig, sendExportConfig, sendImportConfig } from '@/ws'
-
-// ─── Frequency Presets ──────────────────────────────────────────────────────
-
-const FREQ_PRESETS = [
-  { label: '868 MHz EU (Elero default)', freq2: 0x21, freq1: 0x71, freq0: 0x7a },
-  { label: '868.95 MHz EU (Elero alt)',  freq2: 0x21, freq1: 0x71, freq0: 0xc0 },
-  { label: '433.92 MHz ISM',             freq2: 0x10, freq1: 0xb1, freq0: 0x3b },
-  { label: '315.00 MHz',                 freq2: 0x0c, freq1: 0x1d, freq0: 0x89 },
-  { label: '903.00 MHz US ISM',          freq2: 0x22, freq1: 0xb6, freq0: 0x27 },
-] as const
 
 // ─── Command Presets ────────────────────────────────────────────────────────
 
@@ -34,23 +24,13 @@ const COMMAND_PRESETS = [
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function calcFreqMHz(f2: number, f1: number, f0: number): string {
-  return ((f2 * 256 * 256 + f1 * 256 + f0) * 26000000 / (1 << 16) / 1000000).toFixed(3)
-}
-
 const isValidHex = (s: string) => /^0x[0-9a-fA-F]+$/.test(s)
 
 // ─── Hub Info Card ──────────────────────────────────────────────────────────
 
 function HubInfoCard() {
   const { device, name } = hub.value
-  const freq = radio.value.freq
   const counts = filterCounts.value
-
-  const f2 = parseFreq(freq.freq2, 0x21)
-  const f1 = parseFreq(freq.freq1, 0x71)
-  const f0 = parseFreq(freq.freq0, 0x7a)
-  const calculatedFreq = `${calcFreqMHz(f2, f1, f0)} MHz`
 
   // Local edit buffer — re-synced from the server value whenever it changes
   // (initial mount, our own Save round-trip, or a peer client renaming the hub).
@@ -77,7 +57,7 @@ function HubInfoCard() {
         <Stat label="Device" value={device || '-'} />
         <Stat label="Covers" value={String(counts.covers)} />
         <Stat label="Lights" value={String(counts.lights)} />
-        <Stat label="Frequency" value={calculatedFreq} />
+        <Stat label="Frequency" value={configuredFrequency.value} />
       </div>
       <div className="border-t border-border px-5 py-4">
         <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -122,81 +102,40 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function FrequencyCard() {
   const freq = radio.value.freq
-  const configF2 = parseFreq(freq.freq2, 0x21)
-  const configF1 = parseFreq(freq.freq1, 0x71)
-  const configF0 = parseFreq(freq.freq0, 0x7a)
-
-  const selectedIdx = useSignal(-1) // -1 = use config values
-  const active = selectedIdx.value >= 0 ? FREQ_PRESETS[selectedIdx.value] : null
-  const f0 = active?.freq0 ?? configF0
-  const f1 = active?.freq1 ?? configF1
-  const f2 = active?.freq2 ?? configF2
-  const calculatedFreq = `${calcFreqMHz(f2, f1, f0)} MHz`
-  const isChanged = active && (f0 !== configF0 || f1 !== configF1 || f2 !== configF2)
-
-  // Match config against presets for the dropdown default
-  const configPresetIdx = FREQ_PRESETS.findIndex(
-    (p) => p.freq2 === configF2 && p.freq1 === configF1 && p.freq0 === configF0
-  )
-  const dropdownValue = selectedIdx.value >= 0 ? String(selectedIdx.value) : (configPresetIdx >= 0 ? String(configPresetIdx) : '')
+  const f2 = parseFreq(freq.freq2, 0x21)
+  const f1 = parseFreq(freq.freq1, 0x71)
+  const f0 = parseFreq(freq.freq0, 0x7a)
 
   return (
     <Card className="gap-0 overflow-hidden p-0">
       <div className="flex items-center justify-between border-b border-border px-5 py-4">
         <div>
-          <h2 className="text-sm font-semibold text-card-foreground">CC1101 Frequency</h2>
-          <p className="text-xs text-muted-foreground">Select a frequency preset to apply at runtime</p>
+          <h2 className="text-sm font-semibold text-card-foreground">Radio frequency</h2>
+          <p className="text-xs text-muted-foreground">Configured in YAML. Rebuild and flash to change.</p>
         </div>
-        <Badge variant="secondary" className="font-mono text-xs">{calculatedFreq}</Badge>
+        <Badge variant="secondary" className="font-mono text-xs">{configuredFrequency.value}</Badge>
       </div>
 
-      {/* Preset dropdown */}
-      <div className="px-5 py-4">
-        <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          Frequency Preset
-        </label>
-        <select
-          value={dropdownValue}
-          onChange={(e) => {
-            const val = (e.target as HTMLSelectElement).value
-            selectedIdx.value = val === '' ? -1 : parseInt(val)
-          }}
-          className="h-8 w-full max-w-sm appearance-none rounded-md border border-input bg-background bg-[length:16px_16px] bg-[right_4px_center] bg-no-repeat pl-3 pr-6 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-          style={{ backgroundImage: selectChevronBg }}
-        >
-          {configPresetIdx < 0 && <option value="">Custom ({calcFreqMHz(configF2, configF1, configF0)} MHz)</option>}
-          {FREQ_PRESETS.map((preset, i) => {
-            const freqStr = calcFreqMHz(preset.freq2, preset.freq1, preset.freq0)
-            return (
-              <option key={i} value={String(i)}>
-                {preset.label} — {freqStr} MHz
-              </option>
-            )
-          })}
-        </select>
-        {isChanged && (
-          <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
-            Runtime frequency change not yet supported — requires a server-side handler for <code className="rounded bg-muted px-1">reinit_frequency()</code>.
-          </p>
-        )}
-      </div>
-
-      {/* Register values */}
-      <div className="grid grid-cols-3 gap-4 border-t border-border px-5 py-4">
-        <FreqRegister name="FREQ0" reg="0x0F" value={f0} />
-        <FreqRegister name="FREQ1" reg="0x0E" value={f1} />
-        <FreqRegister name="FREQ2" reg="0x0D" value={f2} />
-      </div>
+      <details className="px-5 py-4">
+        <summary className="cursor-pointer text-xs font-medium text-muted-foreground">Advanced diagnostics</summary>
+        <p className="mt-3 text-xs text-muted-foreground">
+          YAML frequency values in the shared CC1101 format, also used by SX1262 and SX1276.
+        </p>
+        <div className="mt-3 grid grid-cols-3 gap-4">
+          <FreqRegister name="freq0" value={f0} />
+          <FreqRegister name="freq1" value={f1} />
+          <FreqRegister name="freq2" value={f2} />
+        </div>
+      </details>
     </Card>
   )
 }
 
-function FreqRegister({ name, reg, value }: { name: string; reg: string; value: number }) {
+function FreqRegister({ name, value }: { name: string; value: number }) {
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
         <span className="text-xs font-medium text-foreground">{name}</span>
-        <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[10px]">{reg}</Badge>
       </div>
       <code className="h-8 flex items-center rounded-md border border-input bg-muted/50 px-2 font-mono text-sm text-muted-foreground">
         0x{value.toString(16).padStart(2, '0')}

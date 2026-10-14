@@ -57,6 +57,8 @@ channels:
         $ref: "#/components/messages/configEvent"
       rfEvent:
         $ref: "#/components/messages/rfEvent"
+      logEvent:
+        $ref: "#/components/messages/logEvent"
       deviceUpsertedEvent:
         $ref: "#/components/messages/deviceUpsertedEvent"
       deviceRemovedEvent:
@@ -111,6 +113,14 @@ channels:
         $ref: "#/components/messages/learnInCancelMessage"
 
 operations:
+  receiveLog:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive Elero component logs
+    messages:
+      - $ref: "#/channels/eleroWs/messages/logEvent"
+
   receiveGroupState:
     action: receive
     channel:
@@ -393,6 +403,12 @@ operations:
 
 components:
   messages:
+    logEvent:
+      name: log
+      title: Elero component log
+      payload:
+        $ref: "#/components/schemas/LogEventEnvelope"
+
     groupStateEvent:
       name: group_state_changed
       title: Group state changed
@@ -616,6 +632,36 @@ components:
         $ref: "#/components/schemas/LearnInCancelPayload"
 
   schemas:
+    LogEventEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: log
+        data:
+          $ref: "#/components/schemas/LogData"
+
+    LogData:
+      type: object
+      additionalProperties: false
+      required: [t, level, tag, msg]
+      description: Elero-related ESPHome logs, with ANSI escapes removed.
+      properties:
+        t:
+          type: integer
+          description: Milliseconds since gateway boot.
+        level:
+          type: integer
+          description: ESPHome numeric log level.
+        tag:
+          type: string
+          description: Component tag beginning with elero.
+        msg:
+          type: string
+          description: Log message without ANSI escape sequences.
+
     GroupStateEnvelope:
       type: object
       required: [event, data]

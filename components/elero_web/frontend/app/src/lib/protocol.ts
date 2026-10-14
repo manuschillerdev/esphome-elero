@@ -1,4 +1,4 @@
-import type { RfData, RfStateName } from '@/generated'
+import type { DeviceType, FreqConfig, RfData, RfStateName } from '@/generated'
 
 // ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
 
@@ -69,9 +69,15 @@ const MSG_TYPE_LABELS: Record<string, string> = Object.fromEntries(
   Object.entries(msg_type).map(([k, v]) => [v, k])
 )
 
-export function getStateLabel(state: string | undefined): string {
+export function getStateLabel(state: string | undefined, deviceType?: DeviceType): string {
   if (!state) return 'UNKNOWN'
   const name = resolveStateName(state)
+  // The 0x0f byte means tilt for covers and off for lights. Preserve the wire
+  // value and interpret it only when the device type is known.
+  if (deviceType === 'light') {
+    if (name === 'bottom_tilt' || state === 'off') return 'OFF'
+    if (name === 'light_on' || state === 'on') return 'ON'
+  }
   return (name && STATE_LABELS[name]) ?? state
 }
 
@@ -117,7 +123,15 @@ export function isMovingState(raw: string | undefined): boolean {
 export function parseFreq(val: number | string | undefined, defaultVal: number): number {
   if (val === undefined) return defaultVal
   if (typeof val === 'number') return val
-  return parseInt(val, 16) || defaultVal
+  const parsed = parseInt(val, 16)
+  return Number.isFinite(parsed) ? parsed : defaultVal
+}
+
+/** All drivers accept this CC1101-format word with a 26 MHz reference. */
+export function formatFrequency(freq: FreqConfig): string {
+  const word = parseFreq(freq.freq2, 0x21) * 65536
+    + parseFreq(freq.freq1, 0x71) * 256 + parseFreq(freq.freq0, 0x7a)
+  return `${(word * 26 / 65536).toFixed(3)} MHz`
 }
 
 export type RfPacketWithTimestamp = RfData & { received_at?: number }
