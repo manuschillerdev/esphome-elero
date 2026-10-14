@@ -88,6 +88,36 @@ jobs:
       - name: Compile ${{ matrix.test }}
         run: mise exec python uv -- bash .github/scripts/uv-run.sh esphome compile tests/${{ matrix.test }}.yaml
 
+  fresh-install:
+    name: Fresh Git Installation
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ESPHOME_VERSION: ${{ inputs.esphome_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: python uv aqua:Kitware/CMake
+
+      - name: Install Python dependencies
+        run: mise exec python uv -- uv sync --locked
+
+      - name: Report ESPHome version under test
+        run: mise exec python uv -- bash .github/scripts/uv-run.sh esphome version
+
+      # Exercise ESPHome's Git loader without building or injecting UI assets.
+      - name: Compile from a fresh Git external component
+        env:
+          COMPONENT_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}.git
+          COMPONENT_REF: ${{ github.sha }}
+        run: |
+          mise exec python uv aqua:Kitware/CMake -- bash .github/scripts/uv-run.sh esphome \
+            -s component_repository "$COMPONENT_REPOSITORY" \
+            -s component_ref "$COMPONENT_REF" \
+            compile tests/test.fresh-install.yaml
+
   # Unit tests for protocol layer
   unit-tests:
     name: Unit Tests
