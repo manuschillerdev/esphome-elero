@@ -31,22 +31,12 @@ class EspLightShell : public light::LightOutput, public Component {
  public:
   float get_setup_priority() const override { return setup_priority::DATA - 1.0f; }
 
-  // ── Config setters (called by Python codegen) ──────────────
+  // ── Binding (called by NvsAdapter at construction time) ──
   void set_registry(DeviceRegistry *r) { registry_ = r; }
-  void set_dst_address(uint32_t v) { cfg_.dst_address = v; }
-  void set_src_address(uint32_t v) { cfg_.src_address = v; }
-  void set_channel(uint8_t v) { cfg_.channel = v; }
-  void set_hop(uint8_t v) { cfg_.hop = v; }
-  void set_payload_1(uint8_t v) { cfg_.payload_1 = v; }
-  void set_payload_2(uint8_t v) { cfg_.payload_2 = v; }
-  void set_type(uint8_t v) { cfg_.type_byte = v; }
-  void set_type2(uint8_t v) { cfg_.type2 = v; }
-  void set_dim_duration(uint32_t v) { cfg_.dim_duration_ms = v; }
+  void set_device(Device *d) { device_ = d; }
   void set_light_state(light::LightState *s) { light_state_ = s; }
-  void set_device_name(const char *n) { cfg_.set_name(n); }
-  void set_slot_index(int idx) { slot_index_ = idx; }  ///< NVS mode: bind to pre-restored slot
 
-  // ── Sensor setters (published from sync_and_publish_ via snapshot) ──
+  // ── Sensor setters (published from sync_and_publish via snapshot) ──
 #ifdef USE_SENSOR
   void set_rssi_sensor(sensor::Sensor *s) { rssi_sensor_ = s; }
 #endif
@@ -59,38 +49,22 @@ class EspLightShell : public light::LightOutput, public Component {
 
   // ── ESPHome Component lifecycle ────────────────────────────
   void setup() override {
-    if (!registry_) return;
-    if (slot_index_ >= 0) {
-      // NVS mode: bind to pre-restored registry slot
-      device_ = registry_->slot(static_cast<size_t>(slot_index_));
-    } else {
-      // Native mode: register device from config
-      cfg_.type = DeviceType::LIGHT;
-      device_ = registry_->register_device(cfg_);
-    }
 #ifdef USE_BUTTON
     if (refresh_button_ && device_) {
       refresh_button_->set_device(device_);
       refresh_button_->set_registry(registry_);
     }
 #endif
-  }
-
-  void loop() override {
-    if (!device_ || !device_->active) return;
-    // No initial_published_ needed here — ESPHome LightState defaults to "off",
-    // which is a valid state. Covers need it because cover::Cover starts as "Unknown".
-    if (device_->last_notify_ms > last_published_ms_) {
-      sync_and_publish_(device_->last_changes);
-      last_published_ms_ = device_->last_notify_ms;
+    if (device_ && device_->active) {
+      sync_and_publish(state_change::ALL);
     }
+    initialized_ = true;
   }
 
   // ── ESPHome Light interface ────────────────────────────────
   light::LightTraits get_traits() override {
     auto traits = light::LightTraits();
-    // Use device config when bound (NVS mode), fall back to local cfg_ (native mode)
-    const auto &cfg = (device_ && device_->active) ? device_->config : cfg_;
+    const auto &cfg = device_->config;
     auto ctx = light_context(cfg);
     traits.set_supported_color_modes({
         light_sm::supports_brightness(ctx)
@@ -100,8 +74,11 @@ class EspLightShell : public light::LightOutput, public Component {
     return traits;
   }
 
-  void write_state(light::LightState *state) override {
-    if (!device_ || !device_->is_light() || !registry_ || ignore_write_state_) return;
+  // Queue user intent synchronously. Deferred writes are unnecessary for an RF
+  // adapter and can echo reports or lose commands when an RF report arrives
+  // between LightCall::perform() and the next LightState loop.
+  void update_state(light::LightState *state) override {
+    if (!initialized_ || !device_ || !device_->is_light() || !registry_) return;
 
     float brightness;
     state->current_values_as_brightness(&brightness);
@@ -114,21 +91,24 @@ class EspLightShell : public light::LightOutput, public Component {
     }
   }
 
- private:
-  void sync_and_publish_(uint16_t changes) {
+  void write_state(light::LightState *) override {}
+
+  void sync_and_publish(uint16_t changes) {
     if (!device_ || !device_->is_light() || !light_state_) return;
     const auto &pub = std::get<LightDevice>(device_->logic).published;
 
     if (changes & state_change::BRIGHTNESS) {
-      ignore_write_state_ = true;
-      auto call = light_state_->make_call();
-      call.set_state(pub.is_on);
       auto ctx = light_context(device_->config);
-      if (pub.is_on && light_sm::supports_brightness(ctx)) {
-        call.set_brightness(static_cast<float>(pub.brightness_pct) / PERCENT_SCALE);
-      }
-      call.perform();
-      ignore_write_state_ = false;
+      const float brightness = light_sm::supports_brightness(ctx)
+          ? static_cast<float>(pub.brightness_pct) / PERCENT_SCALE : 1.0f;
+      // Reports publish existing registry state directly. They do not schedule
+      // output writes, cancel pending user calls, or reset active transformers.
+      auto values = light_state_->remote_values;
+      values.set_state(pub.is_on);
+      if (pub.is_on) values.set_brightness(brightness);
+      light_state_->remote_values = values;
+      light_state_->current_values = values;
+      light_state_->publish_state();
     }
 
 #ifdef USE_SENSOR
@@ -141,13 +121,10 @@ class EspLightShell : public light::LightOutput, public Component {
 #endif
   }
 
-  NvsDeviceConfig cfg_{};
   DeviceRegistry *registry_{nullptr};
   Device *device_{nullptr};
   light::LightState *light_state_{nullptr};
-  uint32_t last_published_ms_{0};
-  bool ignore_write_state_{false};
-  int slot_index_{-1};  ///< -1 = native mode, >=0 = NVS mode
+  bool initialized_{false};  ///< Ignore LightState's boot restore before binding publishes registry state.
 
 #ifdef USE_SENSOR
   sensor::Sensor *rssi_sensor_{nullptr};

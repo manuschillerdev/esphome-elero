@@ -1,0 +1,38 @@
+# Legacy YAML fixture for migration script tests.
+# Contains cover, light, and an unrelated platform entry that must be ignored.
+
+esphome:
+  name: legacy-test
+
+elero_mqtt:
+  topic_prefix: elero
+  discovery_prefix: homeassistant
+  device_name: "Living Room Hub"
+
+cover:
+  - platform: elero
+    name: "Living Room Blind"
+    dst_address: 0xa831e5
+    src_address: 0xf0d008
+    channel: 4
+    open_duration: 25s
+    close_duration: 22s
+    supports_tilt: true
+    device_class: blind
+  - platform: elero
+    name: "Patio Awning"
+    dst_address: 0x123456
+    src_address: 0xf0d008
+    channel: 5
+    device_class: awning
+  - platform: template  # not an elero entry — must be skipped
+    name: "Fake"
+
+light:
+  - platform: elero
+    name: "Patio Light"
+    dst_address: 0xc41a2b
+    src_address: 0xd51e03
+    channel: 3
+    dim_duration: 5s
+    payload_2: 0x05  # custom override

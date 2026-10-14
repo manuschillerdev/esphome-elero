@@ -9,6 +9,7 @@
 
 #include "radio_driver.h"
 #include "cc1101.h"
+#include "cc1101_tx_fsm.h"
 #include "elero_packet.h"
 #include "esphome/core/component.h"
 #include "esphome/components/spi/spi.h"
@@ -34,20 +35,6 @@ class SpiTransaction {
   CC1101Driver *driver_;
 };
 
-/// TX state machine states (internal to driver).
-enum class TxState : uint8_t {
-  IDLE,     ///< Radio in RX, waiting for TX request
-  PREPARE,  ///< SIDLE -> SFTX -> LOAD_FIFO -> STX -> poll TX (synchronous, ~1ms)
-  WAIT_TX,  ///< Wait for GDO0 or MARCSTATE==IDLE fallback (50ms timeout)
-  RECOVER,  ///< Flush -> check -> reset+init if stuck -> verify radio alive
-};
-
-struct TxContext {
-  TxState state{TxState::IDLE};
-  uint32_t state_enter_time{0};
-
-  static constexpr uint32_t STATE_TIMEOUT_MS = 50;
-};
 
 /// CC1101 radio driver implementation.
 ///
@@ -55,8 +42,11 @@ struct TxContext {
 /// All SPI operations are encapsulated here — the Elero hub never touches hardware.
 class CC1101Driver : public RadioDriver,
                      public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                                           spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ> {
+                                           spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ>,
+                     public Cc1101TxFsmOwner {
  public:
+  CC1101Driver();
+
   // ── RadioDriver interface ──────────────────────────────────────────────────
 
   bool init() override;
@@ -67,6 +57,7 @@ class CC1101Driver : public RadioDriver,
   void abort_tx() override;
 
   bool has_data() override;
+  bool receiving() const override { return rx_packet_length_ != 0; }
   size_t read_fifo(uint8_t *buf, size_t max_len) override;
 
   RadioHealth check_health() override;
@@ -76,6 +67,17 @@ class CC1101Driver : public RadioDriver,
   void dump_config() override;
   const char *radio_name() const override { return "cc1101"; }
   int rx_sensitivity_dbm() const override { return -104; }
+
+  // ── Internal TX FSM hooks ──────────────────────────────────────────────────
+
+  bool tx_prepare_for_fsm() override;
+  Cc1101TxPhaseResult tx_wait_started_for_fsm() override;
+  Cc1101TxPhaseResult tx_wait_done_for_fsm() override;
+  Cc1101TxPhaseResult tx_return_to_rx_for_fsm() override;
+  void tx_on_state_enter_for_fsm(Cc1101TxState state, uint32_t now) override;
+  void tx_set_terminal_result_for_fsm(Cc1101TxTerminalResult result) override;
+  void tx_set_mode_for_fsm(RadioMode mode) override;
+  void tx_recover_for_fsm() override;
 
   // ── Configuration setters ──────────────────────────────────────────────────
 
@@ -110,19 +112,32 @@ class CC1101Driver : public RadioDriver,
 
   // ── Radio control ──────────────────────────────────────────────────────────
 
-  void flush_and_rx();
-  void finalize_tx_success_();
-  void init_registers();
-  void handle_tx_state_(uint32_t now);
-  void recover_radio_();
-  void check_radio_health_();
+  [[nodiscard]] bool flush_and_rx();
+  [[nodiscard]] bool init_registers();
+  void clear_recovery_failures_();
+
 
   // ── TX state machine ───────────────────────────────────────────────────────
 
-  TxContext tx_ctx_;
-  bool tx_pending_success_{false};
+  enum class TxDoneCheckResult : uint8_t {
+    Pending,
+    Succeeded,
+    FailedTxBytesNotEmpty,
+    FailedTimeout,
+  };
+
+  [[nodiscard]] TxDoneCheckResult tx_check_done_result_();
+
+  Cc1101TxFsm tx_fsm_;
+  Cc1101TxTerminalResult tx_terminal_result_{Cc1101TxTerminalResult::None};
+  uint32_t tx_state_enter_time_{0};
+  uint8_t tx_verify_retry_count_{0};
   uint8_t tx_buf_[CC1101_FIFO_LENGTH];  ///< Copy of packet for TX
-  size_t tx_len_{0};                     ///< Length of data in tx_buf_
+  uint8_t rx_packet_length_{0};  ///< Consumed length byte; body stays in hardware until complete.
+  uint32_t rx_packet_started_ms_{0};
+  static constexpr uint32_t RX_PACKET_TIMEOUT_MS = 20;
+
+  size_t tx_len_{0};                    ///< Length of data in tx_buf_
 
   // ── Frequency registers ────────────────────────────────────────────────────
 
@@ -134,14 +149,17 @@ class CC1101Driver : public RadioDriver,
 
   uint32_t last_radio_check_ms_{0};
 
-  // ── Recovery escalation ────────────────────────────────────────────────────
-  // Tracks recovery frequency to escalate: flush → reset → mark_failed.
-  static constexpr uint32_t RECOVERY_WINDOW_MS = 60000;    ///< Window for counting recoveries
-  static constexpr uint8_t RECOVERIES_BEFORE_RESET = 3;    ///< Flush attempts before full reset
-  static constexpr uint8_t RESETS_BEFORE_FAILED = 3;       ///< Resets before marking component failed
-  uint32_t recovery_window_start_ms_{0};
-  uint8_t recoveries_in_window_{0};
-  uint8_t resets_in_window_{0};
+  // ── TX timing / recovery escalation ───────────────────────────────────────
+
+  static constexpr uint8_t TX_START_PROOF_POLLS = 20;
+  static constexpr uint32_t TX_DONE_TIMEOUT_MS = 50;
+  static constexpr uint32_t RX_READY_TIMEOUT_MS = 25;
+
+  // Consecutive failures escalate: flush → reset → failed; success clears both.
+  static constexpr uint8_t RECOVERIES_BEFORE_RESET = 3;
+  static constexpr uint8_t RESETS_BEFORE_FAILED = 3;
+  uint8_t failed_recoveries_{0};
+  uint8_t failed_resets_{0};
 
   // ── Stats (atomic — incremented on Core 0, read from Core 1) ───────────────
 

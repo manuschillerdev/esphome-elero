@@ -6,45 +6,38 @@ spi:
   mosi_pin: GPIO23
   miso_pin: GPIO19
 
+# Elero RF hub (CC1101 868 MHz default)
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
+  # 868.95 MHz Elero alt — most newer motors. Use 0x7a for 868.35 MHz.
   freq0: 0xc0
   freq1: 0x71
   freq2: 0x21
 
-cover:
-  - platform: elero
-    dst_address: 0xa831e5     # Blind address (destination of our commands)
-    channel: 4
-    src_address: 0xf0d008     # Our emulated remote address (source of our commands)
-    name: Schlafzimmer
-    open_duration: 25s
-    close_duration: 22s
+# Pick exactly ONE output adapter:
+#
+# `elero_nvs:`  → ESPHome native API. Devices live in NVS, surfaced as
+#                  cover/light entities at boot. After adding/removing devices
+#                  via the web UI, reboot once so HA sees the changes.
+#
+# `elero_mqtt:` → MQTT HA discovery. Devices live in NVS, published over MQTT.
+#                  Add/remove devices in the web UI — HA picks them up immediately.
 
-# Light - Elero light receiver (on/off or dimmable)
-light:
-  - platform: elero
-    dst_address: 0xc41a2b     # Light address (destination of our commands)
-    channel: 6
-    src_address: 0xf0d008     # Our emulated remote address (source of our commands)
-    name: "Wohnzimmerlicht"
-    # dim_duration: 5s    # Uncomment for brightness/dimming support
+elero_nvs:
 
-# Sensors (RSSI, status, problem, command_source, problem_type) are auto-created
-# by each cover/light block when auto_sensors: true (the default).
-# No standalone sensor: or text_sensor: platform: elero blocks are needed.
-
-# HTTP server (auto-loaded by elero_web; no default ESPHome UI, only /elero is served)
-# Do NOT use web_server: here — it would re-enable the unwanted default UI at /
+# Web UI: device management, RF discovery, backup & restore.
+# After flashing, open http://<host>/elero → Hub → Add device, or:
+#   1. Run the migration script on your old YAML:
+#        uv run scripts/migrate_yaml_to_json.py old.yaml -o backup.json
+#   2. Hub → Backup & Restore → Restore from backup → backup.json
 web_server_base:
   port: 80
 
 elero_web:
   id: elero_web_ui
 
-# Home Assistant switch to enable / disable the web UI at runtime.
-# When off, all /elero routes return 503 and no RF state is served.
+# Optional: HA switch to disable the web UI at runtime.
 switch:
   - platform: elero_web
     name: "Elero Web UI"

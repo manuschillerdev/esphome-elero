@@ -66,7 +66,7 @@ class RadioDriver {
   }
 
   /// Current half-duplex mode. RX when idle, TX during transmission.
-  [[nodiscard]] RadioMode mode() const { return mode_; }
+  [[nodiscard]] RadioMode mode() const { return mode_.load(std::memory_order_acquire); }
 
   /// True if the radio has exhausted recovery attempts and is permanently failed.
   [[nodiscard]] bool failed() const { return failed_; }
@@ -91,10 +91,16 @@ class RadioDriver {
   // ── RX (called from RF task only) ──────────────────────────────────────────
 
   /// Check if the radio has data available (FIFO non-empty).
-  /// Reads the IRQ flag but does NOT clear it (caller clears after read_fifo).
+  /// May poll hardware to recover missed/coalesced IRQs. The hub consumes its
+  /// ISR flag before read_fifo; the driver owns hardware IRQ acknowledgment.
   virtual bool has_data() = 0;
 
-  /// Read raw bytes from the RX FIFO.
+  /// A bounded RX capture is in progress. Defer queued TX/frequency changes
+  /// until it completes or times out, so a command cannot truncate a response.
+  virtual bool receiving() const { return false; }
+
+  /// Read complete received frames, including the length and RSSI/LQI trailer.
+  /// Incomplete frames remain owned by the driver; callers need no reassembly.
   /// Handles overflow detection internally (returns 0 on overflow).
   /// @param buf Output buffer
   /// @param max_len Maximum bytes to read
@@ -134,7 +140,7 @@ class RadioDriver {
   virtual bool irq_rising_edge() const { return false; }  // CC1101 default
 
  protected:
-  RadioMode mode_{RadioMode::RX};
+  std::atomic<RadioMode> mode_{RadioMode::RX};
   bool failed_{false};                    ///< Set when recovery is exhausted
   std::atomic<bool> *rx_ready_{nullptr};  ///< ISR sets when RX packet available
   std::atomic<bool> *tx_done_{nullptr};   ///< ISR sets when TX transmission complete

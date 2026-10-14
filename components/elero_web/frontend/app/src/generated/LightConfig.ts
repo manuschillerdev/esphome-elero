@@ -58,4 +58,4 @@ interface LightConfig {
    */
   'last_seen'?: number;
 }
-export { LightConfig };
+export type { LightConfig };

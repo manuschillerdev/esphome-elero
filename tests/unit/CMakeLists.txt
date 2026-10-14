@@ -29,6 +29,8 @@ set(ELERO_COVER_SM_SRC ${COMPONENTS_DIR}/elero/cover_sm.cpp)
 set(ELERO_LIGHT_SM_SRC ${COMPONENTS_DIR}/elero/light_sm.cpp)
 set(ELERO_STATE_SNAPSHOT_SRC ${COMPONENTS_DIR}/elero/state_snapshot.cpp)
 set(ELERO_REGISTRY_SRC ${COMPONENTS_DIR}/elero/device_registry.cpp)
+set(ELERO_LEARN_IN_SRC ${COMPONENTS_DIR}/elero/learn_in_manager.cpp)
+set(ELERO_SEMTECH_TX_FSM_SRC ${COMPONENTS_DIR}/elero/semtech_tx_fsm.cpp)
 
 # Test executable: Real packet vectors (uses elero_packet.cpp)
 add_executable(test_packet_vectors
@@ -107,9 +109,26 @@ add_executable(test_device_registry
   ${ELERO_PACKET_SRC}
   ${ELERO_STRINGS_SRC}
   ${ELERO_TIME_PROVIDER_SRC}
+  ${ELERO_LEARN_IN_SRC}
 )
 target_compile_definitions(test_device_registry PRIVATE UNIT_TEST)
 target_link_libraries(test_device_registry GTest::gtest_main)
+
+# Group button packet building (0x44 multi-dest TX)
+add_executable(test_group_packet
+  test_group_packet.cpp
+  ${ELERO_PACKET_SRC}
+)
+target_link_libraries(test_group_packet GTest::gtest_main)
+
+# Learn-in manager (provisioning TX flow)
+add_executable(test_learn_in_manager
+  test_learn_in_manager.cpp
+  ${ELERO_LEARN_IN_SRC}
+  ${ELERO_TIME_PROVIDER_SRC}
+)
+target_compile_definitions(test_learn_in_manager PRIVATE UNIT_TEST)
+target_link_libraries(test_learn_in_manager GTest::gtest_main)
 
 # CC1101-compatible CRC-16 and PN9 whitening (pure functions, used by SX1262/SX1276 drivers)
 add_executable(test_cc1101_compat
@@ -117,16 +136,51 @@ add_executable(test_cc1101_compat
 )
 target_link_libraries(test_cc1101_compat GTest::gtest_main)
 
+# CC1101 TX FSM orchestration (phase ownership, recovery, abort semantics)
+add_executable(test_cc1101_tx_fsm
+  test_cc1101_tx_fsm.cpp
+  ${COMPONENTS_DIR}/elero/cc1101_tx_fsm.cpp
+)
+target_link_libraries(test_cc1101_tx_fsm GTest::gtest_main)
+
+# CC1101 TX helper semantics (fallback success, strict TXBYTES, RX restore)
+add_executable(test_cc1101_driver_tx
+  test_cc1101_driver_tx.cpp
+  ${ELERO_PACKET_SRC}
+)
+target_compile_definitions(test_cc1101_driver_tx PRIVATE UNIT_TEST)
+target_link_libraries(test_cc1101_driver_tx GTest::gtest_main)
+
 # Frequency register conversion: CC1101 → SX1262/SX1276 (pure math, no hardware deps)
 add_executable(test_freq_conversion
   test_freq_conversion.cpp
 )
 target_link_libraries(test_freq_conversion GTest::gtest_main)
 
+# Shared Semtech sequencing and production driver behavior.
+add_executable(test_semtech_tx_fsm test_semtech_tx_fsm.cpp ${ELERO_SEMTECH_TX_FSM_SRC})
+target_link_libraries(test_semtech_tx_fsm GTest::gtest_main)
+foreach(chip sx1262 sx1276)
+  add_executable(test_${chip}_driver test_${chip}_driver.cpp ${ELERO_PACKET_SRC})
+  target_compile_definitions(test_${chip}_driver PRIVATE UNIT_TEST)
+  target_link_libraries(test_${chip}_driver GTest::gtest_main)
+endforeach()
+
+add_executable(test_rf_transport test_rf_transport.cpp
+  ${COMPONENTS_DIR}/elero/rf_transport.cpp ${ELERO_PACKET_SRC} ${ELERO_TIME_PROVIDER_SRC})
+target_compile_definitions(test_rf_transport PRIVATE UNIT_TEST)
+target_link_libraries(test_rf_transport GTest::gtest_main)
+
 # Discover all tests
 include(GoogleTest)
+gtest_discover_tests(test_rf_transport)
 gtest_discover_tests(test_cc1101_compat)
+gtest_discover_tests(test_cc1101_tx_fsm)
+gtest_discover_tests(test_cc1101_driver_tx)
 gtest_discover_tests(test_freq_conversion)
+gtest_discover_tests(test_semtech_tx_fsm)
+gtest_discover_tests(test_sx1262_driver)
+gtest_discover_tests(test_sx1276_driver)
 gtest_discover_tests(test_packet_vectors)
 gtest_discover_tests(test_command_sender)
 gtest_discover_tests(test_golden_vectors)
@@ -136,15 +190,18 @@ gtest_discover_tests(test_string_functions)
 gtest_discover_tests(test_cover_sm)
 gtest_discover_tests(test_light_sm)
 gtest_discover_tests(test_poll_timer)
+gtest_discover_tests(test_group_packet)
+gtest_discover_tests(test_learn_in_manager)
 gtest_discover_tests(test_device_registry)
 
 # All test targets
 set(ALL_TEST_TARGETS
-  test_cc1101_compat test_freq_conversion
+  test_rf_transport test_cc1101_compat test_cc1101_tx_fsm test_cc1101_driver_tx
+  test_freq_conversion test_semtech_tx_fsm test_sx1262_driver test_sx1276_driver
   test_packet_vectors test_command_sender test_golden_vectors
   test_encryption_vectors test_parse_roundtrip test_string_functions
   test_cover_sm test_light_sm test_poll_timer
-  test_device_registry
+  test_group_packet test_learn_in_manager test_device_registry
 )
 
 # Combined target for running all tests

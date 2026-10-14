@@ -9,4 +9,4 @@
  *   0x0f=bottom_tilt, 0x10=light_on
  */
 type RfStateName = "unknown" | "top" | "bottom" | "intermediate" | "tilt" | "blocking" | "overheated" | "timeout" | "start_moving_up" | "start_moving_down" | "moving_up" | "moving_down" | "stopped" | "top_tilt" | "bottom_tilt" | "light_on";
-export { RfStateName };
+export type { RfStateName };

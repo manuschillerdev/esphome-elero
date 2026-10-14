@@ -31,7 +31,9 @@ class MqttAdapter : public OutputAdapter {
 
     void set_topic_prefix(const std::string &prefix) { ctx_.topic_prefix = prefix; }
     void set_discovery_prefix(const std::string &prefix) { ctx_.discovery_prefix = prefix; }
-    void set_device_name(const std::string &name) { ctx_.device_name = name; }
+    /// YAML-configured default hub name. Forwarded to the registry which may
+    /// override it with a value persisted in NVS.
+    void set_device_name(const std::string &name) { default_device_name_ = name; }
 
     // ═════════════════════════════════════════════════════════════════════════
     // OUTPUT ADAPTER INTERFACE
@@ -45,6 +47,10 @@ class MqttAdapter : public OutputAdapter {
     void on_state_changed(const Device &dev, uint16_t changes) override;
     void on_config_changed(const Device &dev) override;
     void on_rf_packet(const RfPacketInfo &pkt) override {}  // MQTT doesn't forward raw RF
+    void on_group_upserted(const NvsGroupConfig &group) override;
+    void on_group_removed(const char *id) override;
+    void on_group_state_changed(const NvsGroupConfig &group, const GroupStateSnapshot &state) override;
+    void on_hub_config_changed() override;
 
  private:
     // ── Cover helpers ──
@@ -60,6 +66,13 @@ class MqttAdapter : public OutputAdapter {
     // ── Remote helpers ──
     void publish_remote_discovery_(const Device &dev);
     void publish_remote_state_(const Device &dev);
+
+    // ── Group helpers ──
+    bool group_type_(const NvsGroupConfig &group, DeviceType *type) const;
+    void publish_group_discovery_(const NvsGroupConfig &group);
+    void publish_group_attributes_(const NvsGroupConfig &group);
+    void subscribe_group_commands_(const NvsGroupConfig &group);
+    void remove_group_discovery_(const char *id);
 
     // ── Shared helpers ──
     void remove_all_discovery_(const Device &dev);
@@ -80,6 +93,7 @@ class MqttAdapter : public OutputAdapter {
     EspHomeMqttAdapter mqtt_adapter_;
     bool mqtt_was_connected_{false};
     DeviceRegistry *registry_{nullptr};
+    std::string default_device_name_;  ///< YAML default (forwarded to registry in setup)
 
     // ── Stale cleanup state ──
     enum class CleanupState : uint8_t { IDLE, COLLECTING, DONE };

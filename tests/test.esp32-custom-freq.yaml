@@ -44,11 +44,4 @@ elero:
   freq1: 0x71
   freq2: 0x21
 
-cover:
-  - platform: elero
-    dst_address: 0xa831e5
-    channel: 4
-    src_address: 0xf0d008
-    name: "Cover Alt Freq"
-    open_duration: 25s
-    close_duration: 22s
+elero_nvs:

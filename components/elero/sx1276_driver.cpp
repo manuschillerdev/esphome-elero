@@ -1,3 +1,4 @@
+#include <cinttypes>
 #include "sx1276_driver.h"
 #include "cc1101_compat.h"
 #include "esphome/core/log.h"
@@ -8,6 +9,16 @@ namespace esphome {
 namespace elero {
 
 static const char *const TAG = "elero.sx1276";
+
+namespace {
+
+[[nodiscard]] bool IsRxReadyForOperation(uint8_t mode, uint8_t irq1,
+                                         uint8_t irq2) {
+  return mode == sx1276::MODE_RX && (irq1 & sx1276::IRQ1_PLL_LOCK) &&
+         !(irq2 & sx1276::IRQ2_FIFO_OVERRUN);
+}
+
+}  // namespace
 
 // ─── RadioDriver Interface ─────────────��──────────────────────────────────
 
@@ -35,7 +46,7 @@ bool Sx1276Driver::init() {
   }
 
   // Enter standby for configuration
-  this->set_standby_();
+  if (!this->set_standby_()) return false;
 
   // Configure FSK modulation + packet format
   this->configure_fsk_();
@@ -47,24 +58,19 @@ bool Sx1276Driver::init() {
   this->set_pa_config_();
 
   // Configure DIO mapping for RX
-  this->set_dio_for_rx_();
+  this->configure_dio_();
 
   // Flush FIFO and enter RX
   this->flush_fifo_();
   this->set_rx_();
 
-  // Verify mode
-  uint8_t mode = this->read_reg_(sx1276::REG_OP_MODE);
-  uint8_t irq1 = this->read_reg_(sx1276::REG_IRQ_FLAGS1);
-  ESP_LOGI(TAG, "SX1276 init: opmode=0x%02x irq1=0x%02x (ModeReady=%d)",
-           mode, irq1, (irq1 & sx1276::IRQ1_MODE_READY) ? 1 : 0);
-
-  if (!(irq1 & sx1276::IRQ1_MODE_READY)) {
-    ESP_LOGE(TAG, "SX1276 not ready after init!");
+  if (!this->wait_rx_ready_()) {
+    ESP_LOGE(TAG, "SX1276 receiver not ready after init");
+    return false;
   }
 
   uint32_t freq_reg = this->freq_reg_from_cc1101_regs_();
-  ESP_LOGI(TAG, "SX1276 initialized, FSK mode, freq_reg=0x%06x, version=0x%02x",
+  ESP_LOGI(TAG, "SX1276 initialized, FSK mode, freq_reg=0x%06" PRIx32 ", version=0x%02x",
            freq_reg, version);
 
   return true;
@@ -82,191 +88,111 @@ void Sx1276Driver::reset() {
 }
 
 bool Sx1276Driver::load_and_transmit(const uint8_t *pkt_buf, size_t len) {
-  if (this->tx_in_progress_) {
+  if (!this->tx_fsm_.is_idle()) {
+    ESP_LOGW(TAG, "TX start rejected: FSM busy");
     return false;
   }
 
-  // Hub provides: [length_byte | data...] (unwhitened CC1101 format).
-  // CC1101 receivers expect: whitened(length + data + CRC16).
-  // 1. Copy raw packet
-  // 2. Compute CC1101 CRC-16 over the raw bytes
-  // 3. Append 2 CRC bytes
-  // 4. IBM PN9 whiten everything (length + data + CRC)
-  // 5. Transmit
-  uint8_t data_len = pkt_buf[0];
-  size_t raw_total = 1 + data_len;       // length byte + payload
-  size_t tx_total = raw_total + 2;       // + 2 CRC bytes
-
-  uint8_t tx_buf[sx1276::FIFO_SIZE];
-  if (tx_total > sizeof(tx_buf)) {
+  if (pkt_buf == nullptr || len == 0 || len > sizeof(this->tx_buf_)) {
+    ESP_LOGW(TAG, "TX start rejected: invalid buffer ptr=%p len=%u", pkt_buf,
+             static_cast<unsigned>(len));
     return false;
   }
-  memcpy(tx_buf, pkt_buf, raw_total);
 
-  // CC1101 CRC-16 over length byte + data bytes
-  uint16_t crc = cc1101_crc16(tx_buf, raw_total);
-  tx_buf[raw_total] = static_cast<uint8_t>(crc >> 8);      // CRC MSB first
-  tx_buf[raw_total + 1] = static_cast<uint8_t>(crc & 0xFF);
+  memcpy(this->tx_buf_, pkt_buf, len);
+  this->tx_len_ = len;
 
-  ESP_LOGD(TAG, "TX raw [%d]: %s", static_cast<int>(tx_total),
-           format_hex_pretty(tx_buf, tx_total).c_str());
-
-  // IBM PN9 whiten everything (length + data + CRC)
-  cc1101_pn9_whiten(tx_buf, tx_total);
-
-  // Enter standby for FIFO access
-  this->set_standby_();
-
-  // Set payload length for TX
-  this->write_reg_(sx1276::REG_PAYLOAD_LENGTH, static_cast<uint8_t>(tx_total));
-
-  // Flush FIFO (clear any stale data)
-  this->flush_fifo_();
-
-  // Load FIFO via burst write
-  this->write_burst_(sx1276::REG_FIFO, tx_buf, tx_total);
-
-  // Configure DIO0 for PacketSent
-  this->set_dio_for_tx_();
-
-  // Clear IRQ flags
-  this->read_reg_(sx1276::REG_IRQ_FLAGS1);
-  this->read_reg_(sx1276::REG_IRQ_FLAGS2);
-
-  // Clear atomic TX done flag before TX
-  if (this->tx_done_) {
-    this->tx_done_->store(false, std::memory_order_release);
+  uint32_t now = millis();
+  if (!this->tx_fsm_.Start(now)) {
+    ESP_LOGW(TAG, "TX start rejected: FSM refused start");
+    return false;
   }
 
-  // Enter TX mode
-  this->RadioDriver::mode_ = RadioMode::TX;
-  this->set_mode_(sx1276::MODE_TX);
-
-  this->tx_in_progress_ = true;
-  this->tx_start_ms_ = millis();
-  this->tx_pending_success_ = false;
+  // Preserve the RadioDriver contract: load_and_transmit() performs the
+  // synchronous prepare phase and returns false on immediate hardware failure.
+  this->tx_fsm_.Poll(now);
+  if (this->tx_fsm_.is_idle()) {
+    return this->tx_terminal_result_ == SemtechTxTerminalResult::Success;
+  }
 
   return true;
 }
 
 TxPollResult Sx1276Driver::poll_tx() {
-  if (!this->tx_in_progress_) {
-    return this->tx_pending_success_ ? TxPollResult::SUCCESS : TxPollResult::FAILED;
+  if (this->tx_fsm_.is_idle()) {
+    return this->tx_terminal_result_ == SemtechTxTerminalResult::Success
+               ? TxPollResult::SUCCESS
+               : TxPollResult::FAILED;
   }
 
-  // Check DIO0 interrupt (PacketSent in TX mode)
-  bool irq_fired = this->tx_done_ && this->tx_done_->load(std::memory_order_acquire);
-  if (irq_fired) {
-    // Verify PacketSent flag
-    uint8_t irq2 = this->read_reg_(sx1276::REG_IRQ_FLAGS2);
-    if (irq2 & sx1276::IRQ2_PACKET_SENT) {
-      ESP_LOGD(TAG, "TX done irq2=0x%02x elapsed=%ums", irq2,
-               millis() - this->tx_start_ms_);
-      this->tx_in_progress_ = false;
-      this->tx_pending_success_ = true;
-      this->restore_rx_();
-      return TxPollResult::SUCCESS;
-    }
+  this->tx_fsm_.Poll(millis());
+  if (!this->tx_fsm_.is_idle()) {
+    return TxPollResult::PENDING;
   }
 
-  // Also check register directly as fallback (in case IRQ was missed)
-  uint8_t irq2 = this->read_reg_(sx1276::REG_IRQ_FLAGS2);
-  if (irq2 & sx1276::IRQ2_PACKET_SENT) {
-    ESP_LOGD(TAG, "TX done (poll fallback) irq2=0x%02x", irq2);
-    this->tx_in_progress_ = false;
-    this->tx_pending_success_ = true;
-    this->restore_rx_();
-    return TxPollResult::SUCCESS;
-  }
-
-  // Timeout check
-  if (millis() - this->tx_start_ms_ > TX_TIMEOUT_MS) {
-    ESP_LOGE(TAG, "TX timeout after %ums", TX_TIMEOUT_MS);
-    this->tx_in_progress_ = false;
-    this->tx_pending_success_ = false;
-    this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
-    this->set_standby_();
-    this->restore_rx_();
-    return TxPollResult::FAILED;
-  }
-
-  return TxPollResult::PENDING;
+  return this->tx_terminal_result_ == SemtechTxTerminalResult::Success
+             ? TxPollResult::SUCCESS
+             : TxPollResult::FAILED;
 }
 
 void Sx1276Driver::abort_tx() {
-  if (this->tx_in_progress_) {
-    this->tx_in_progress_ = false;
-    this->tx_pending_success_ = false;
-    this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
-  }
-  this->set_standby_();
-  this->restore_rx_();
+  this->tx_fsm_.Abort(millis());
 }
 
 bool Sx1276Driver::has_data() {
-  if (this->RadioDriver::mode_ != RadioMode::RX) return false;
-  return this->rx_ready_ != nullptr && this->rx_ready_->load(std::memory_order_acquire);
+  if (this->RadioDriver::mode() != RadioMode::RX) return false;
+  if (this->rx_capture_active_) return true;
+  // DIO0 signals PayloadReady only. Poll SyncAddressMatch to capture short
+  // frames too, without requiring another board-specific interrupt pin.
+  return (this->read_reg_(sx1276::REG_IRQ_FLAGS1) & sx1276::IRQ1_SYNC_ADDRESS_MATCH) ||
+         (this->read_reg_(sx1276::REG_IRQ_FLAGS2) &
+          (sx1276::IRQ2_PAYLOAD_READY | sx1276::IRQ2_FIFO_OVERRUN));
 }
 
 size_t Sx1276Driver::read_fifo(uint8_t *buf, size_t max_len) {
-  // Check PayloadReady flag
-  uint8_t irq2 = this->read_reg_(sx1276::REG_IRQ_FLAGS2);
-
-  if (irq2 & sx1276::IRQ2_FIFO_OVERRUN) {
-    // FIFO overflow — flush and recover
-    ESP_LOGW(TAG, "FIFO overrun detected");
-    this->stat_fifo_overflows_.fetch_add(1, std::memory_order_relaxed);
-    this->flush_fifo_();
-    // Re-enter RX (overrun stops reception)
-    this->set_rx_();
+  if (!this->rx_capture_active_) {
+    const uint8_t irq2 = this->read_reg_(sx1276::REG_IRQ_FLAGS2);
+    if (irq2 & sx1276::IRQ2_FIFO_OVERRUN) {
+      this->stat_fifo_overflows_.fetch_add(1, std::memory_order_relaxed);
+      if (this->set_standby_()) this->restore_rx_();
+      else this->recover();
+      return 0;
+    }
+    if (!(irq2 & sx1276::IRQ2_PAYLOAD_READY) &&
+        !(this->read_reg_(sx1276::REG_IRQ_FLAGS1) & sx1276::IRQ1_SYNC_ADDRESS_MATCH)) return 0;
+    this->rx_capture_rssi_ = this->read_reg_(sx1276::REG_RSSI_VALUE);
+    this->rx_capture_active_ = true;
+    this->rx_capture_started_ms_ = millis();
+    if (!(irq2 & sx1276::IRQ2_PAYLOAD_READY)) return 0;
+  } else if (millis() - this->rx_capture_started_ms_ < RX_CAPTURE_MS) {
     return 0;
   }
 
-  if (!(irq2 & sx1276::IRQ2_PAYLOAD_READY)) {
+  const uint8_t rssi = this->rx_capture_rssi_;
+  if (!this->set_standby_()) {
+    this->recover();
     return 0;
   }
-
-  // Read fixed-length payload from FIFO
-  uint8_t raw[sx1276::RX_FIXED_LEN];
-  this->read_burst_(sx1276::REG_FIFO, raw, sx1276::RX_FIXED_LEN);
-
-  // Log raw buffer
-  ESP_LOGD(TAG, "RX raw [%d]: %s", sx1276::RX_FIXED_LEN,
-           format_hex_pretty(raw, sx1276::RX_FIXED_LEN).c_str());
-
-  // Apply CC1101 IBM PN9 de-whitening in software.
-  // The SX1276 hardware whitening is incompatible with CC1101 PN9.
-  cc1101_pn9_whiten(raw, sx1276::RX_FIXED_LEN);
-
-  // First de-whitened byte = Elero packet length.
-  uint8_t pkt_len = raw[0];
-
-  if (pkt_len < 0x1B || pkt_len > 0x1E) {
-    ESP_LOGD(TAG, "bad length 0x%02x after de-whiten", raw[0]);
+  uint8_t raw[sx1276::RX_FIXED_LEN]{};
+  size_t count = 0;
+  // FIFO has no byte-count register. Stop at FifoEmpty rather than reading
+  // fabricated padding after a short or truncated transmission.
+  while (count < sizeof(raw) &&
+         !(this->read_reg_(sx1276::REG_IRQ_FLAGS2) & sx1276::IRQ2_FIFO_EMPTY)) {
+    this->read_burst_(sx1276::REG_FIFO, raw + count, 1);
+    ++count;
+  }
+  this->restore_rx_();
+  cc1101_pn9_whiten(raw, count);
+  if (!cc1101_frame_valid(raw, count)) {
+    ESP_LOGD(TAG, "RX frame rejected: invalid length or CRC");
     return 0;
   }
-
-  // Hub format: [length | data... | RSSI | LQI|CRC_OK]
-  size_t total = 1 + pkt_len + 2;
-  if (total > max_len || (1 + pkt_len) > sx1276::RX_FIXED_LEN) {
-    return 0;
-  }
-
-  buf[0] = pkt_len;
-  memcpy(buf + 1, raw + 1, pkt_len);
-
-  // Read RSSI (available while in RX or immediately after PayloadReady)
-  uint8_t rssi_raw = this->read_reg_(sx1276::REG_RSSI_VALUE);
-  // SX1276:  rssi_dbm = -rssi_raw / 2  (HF port, >862 MHz)
-  // CC1101:  rssi_dbm = cc1101_byte / 2 - 74   (if cc1101_byte < 128)
-  //          rssi_dbm = (cc1101_byte - 256) / 2 - 74  (if cc1101_byte >= 128)
-  // Equating: cc1101_byte = -rssi_raw + 148
-  // Example:  rssi_raw=200 → -100 dBm → cc1101_byte=-52 → +256=204 → (204-256)/2-74=-100 dBm ✓
-  int cc1101_rssi = -static_cast<int>(rssi_raw) + 148;
-  if (cc1101_rssi < 0) cc1101_rssi += 256;
-  buf[1 + pkt_len] = static_cast<uint8_t>(cc1101_rssi);
-  buf[1 + pkt_len + 1] = 0x80;  // LQI=0, CRC_OK=1
-
+  const size_t total = raw[0] + 3u;
+  if (buf == nullptr || total > max_len) return 0;
+  memcpy(buf, raw, total - 2);
+  buf[total - 2] = static_cast<uint8_t>(148 - static_cast<int>(rssi));
+  buf[total - 1] = 0x80;  // Software CRC verified; LQI unavailable.
   return total;
 }
 
@@ -294,11 +220,8 @@ RadioHealth Sx1276Driver::check_health() {
   // RX with PLL locked — healthy
   if (current_mode == sx1276::MODE_RX) {
     if (!(irq1 & sx1276::IRQ1_PLL_LOCK)) {
-      // PLL lost lock while in RX — radio is deaf. Temperature swings or
-      // XOSC drift can cause this transiently. Recovery will re-enter RX
-      // which re-acquires PLL.
+      // PLL lost lock while in RX mode — radio is deaf until recovery.
       ESP_LOGW(TAG, "Radio watchdog: PLL lock lost in RX mode");
-      this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
       return RadioHealth::STUCK;
     }
     return RadioHealth::OK;
@@ -314,36 +237,28 @@ RadioHealth Sx1276Driver::check_health() {
   }
 
   // Stuck in standby or sleep — needs recovery
-  ESP_LOGW(TAG, "Radio watchdog: mode=0x%02x, expected RX (0x%02x)", current_mode, sx1276::MODE_RX);
-  this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
+  ESP_LOGW(TAG, "Radio watchdog: mode=0x%02x, expected RX (0x%02x)", current_mode,
+           sx1276::MODE_RX);
   return RadioHealth::STUCK;
 }
 
 void Sx1276Driver::recover() {
+  this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
+
   ESP_LOGW(TAG, "recover: re-entering RX mode");
-  this->set_standby_();
+  this->rx_capture_active_ = false;
+  if (this->rx_ready_) this->rx_ready_->store(false, std::memory_order_release);
+  if (this->tx_done_) this->tx_done_->store(false, std::memory_order_release);
 
-  // Clear IRQ flags
-  if (this->rx_ready_) {
-    this->rx_ready_->store(false, std::memory_order_release);
-  }
-  if (this->tx_done_) {
-    this->tx_done_->store(false, std::memory_order_release);
-  }
-
-  // Restore RX config (also flushes FIFO, clearing overrun flag)
-  this->restore_rx_();
-
-  // Verify recovery
-  uint8_t irq1 = this->read_reg_(sx1276::REG_IRQ_FLAGS1);
-  if (irq1 & sx1276::IRQ1_MODE_READY) {
-    return;  // Recovery succeeded
+  if (this->set_standby_()) {
+    this->restore_rx_();
+    if (this->wait_rx_ready_()) return;
   }
 
-  // Escalate: full hardware reset + re-init
-  ESP_LOGE(TAG, "recover: soft recovery failed (irq1=0x%02x), doing full reset", irq1);
-  this->reset();
-  this->init();
+  ESP_LOGE(TAG, "recover: soft recovery failed, doing full reset");
+  if (!this->init()) {
+    this->failed_ = true;
+  }
 }
 
 void Sx1276Driver::set_frequency_regs(uint8_t f2, uint8_t f1, uint8_t f0) {
@@ -351,10 +266,141 @@ void Sx1276Driver::set_frequency_regs(uint8_t f2, uint8_t f1, uint8_t f0) {
   this->freq1_ = f1;
   this->freq0_ = f0;
 
-  this->set_standby_();
+  if (!this->set_standby_()) {
+    this->recover();
+    return;
+  }
   this->set_frequency_();
   this->restore_rx_();
+  if (!this->wait_rx_ready_()) this->recover();
   ESP_LOGI(TAG, "SX1276 re-initialised: freq2=0x%02x freq1=0x%02x freq0=0x%02x", f2, f1, f0);
+}
+
+bool Sx1276Driver::tx_prepare_for_fsm() {
+  if (this->tx_len_ == 0) {
+    ESP_LOGW(TAG, "Prepare: no buffered packet");
+    return false;
+  }
+
+  uint8_t data_len = this->tx_buf_[0];
+  size_t raw_total = static_cast<size_t>(data_len) + 1;
+  if (raw_total != this->tx_len_) {
+    ESP_LOGW(TAG, "Prepare: buffered len mismatch pkt=%u buf=%u", data_len,
+             static_cast<unsigned>(this->tx_len_));
+    return false;
+  }
+
+  size_t tx_total = raw_total + 2;
+  if (tx_total > sizeof(this->tx_buf_)) {
+    ESP_LOGW(TAG, "Prepare: tx_total=%u exceeds buffer",
+             static_cast<unsigned>(tx_total));
+    return false;
+  }
+
+  uint16_t crc = cc1101_crc16(this->tx_buf_, raw_total);
+  this->tx_buf_[raw_total] = static_cast<uint8_t>(crc >> 8);
+  this->tx_buf_[raw_total + 1] = static_cast<uint8_t>(crc & 0xFF);
+
+  ESP_LOGD(TAG, "TX raw [%d]: %s", static_cast<int>(tx_total),
+           format_hex_pretty(this->tx_buf_, tx_total).c_str());
+
+  cc1101_pn9_whiten(this->tx_buf_, tx_total);
+
+  if (!this->set_standby_()) return false;
+  this->write_reg_(sx1276::REG_PAYLOAD_LENGTH, static_cast<uint8_t>(tx_total));
+  this->flush_fifo_();
+  this->write_burst_(sx1276::REG_FIFO, this->tx_buf_, tx_total);
+  this->configure_dio_();
+  this->read_reg_(sx1276::REG_IRQ_FLAGS1);
+  this->read_reg_(sx1276::REG_IRQ_FLAGS2);
+
+  if (this->tx_done_) {
+    this->tx_done_->store(false, std::memory_order_release);
+  }
+
+  this->RadioDriver::mode_.store(RadioMode::TX, std::memory_order_release);
+  this->set_mode_(sx1276::MODE_TX);
+  return true;
+}
+
+SemtechTxPhaseResult Sx1276Driver::tx_wait_done_for_fsm() {
+  bool irq_fired = this->tx_done_ && this->tx_done_->load(std::memory_order_acquire);
+  if (irq_fired) {
+    uint8_t irq2 = this->read_reg_(sx1276::REG_IRQ_FLAGS2);
+    if (irq2 & sx1276::IRQ2_PACKET_SENT) {
+      ESP_LOGD(TAG, "TX done irq2=0x%02x elapsed=%" PRIu32 "ms", irq2,
+               millis() - this->phase_started_ms_);
+      if (this->tx_done_) {
+        this->tx_done_->store(false, std::memory_order_release);
+      }
+      return SemtechTxPhaseResult::Succeeded;
+    }
+  }
+
+  uint8_t irq2 = this->read_reg_(sx1276::REG_IRQ_FLAGS2);
+  if (irq2 & sx1276::IRQ2_PACKET_SENT) {
+    ESP_LOGD(TAG, "TX done (poll fallback) irq2=0x%02x", irq2);
+    if (this->tx_done_) {
+      this->tx_done_->store(false, std::memory_order_release);
+    }
+    return SemtechTxPhaseResult::Succeeded;
+  }
+
+  if (millis() - this->phase_started_ms_ > TX_TIMEOUT_MS) {
+    ESP_LOGE(TAG, "TX timeout after %" PRIu32 "ms", TX_TIMEOUT_MS);
+    return SemtechTxPhaseResult::Failed;
+  }
+
+  return SemtechTxPhaseResult::Pending;
+}
+
+bool Sx1276Driver::tx_return_to_rx_for_fsm() {
+  if (!this->set_standby_()) return false;
+  this->restore_rx_();
+  this->RadioDriver::mode_.store(RadioMode::RX, std::memory_order_release);
+  return true;
+}
+
+SemtechTxPhaseResult Sx1276Driver::tx_wait_rx_ready_for_fsm() {
+  // A received sync already proves RX was entered. A complete single capture
+  // may have returned the chip to standby before this TX phase is polled.
+  if (this->rx_capture_active_) return SemtechTxPhaseResult::Succeeded;
+
+  uint32_t elapsed = millis() - this->phase_started_ms_;
+  if (elapsed < RX_SETTLE_MS) {
+    return SemtechTxPhaseResult::Pending;
+  }
+
+  uint8_t opmode = this->read_reg_(sx1276::REG_OP_MODE) & sx1276::MODE_MASK;
+  uint8_t irq1 = this->read_reg_(sx1276::REG_IRQ_FLAGS1);
+  uint8_t irq2 = this->read_reg_(sx1276::REG_IRQ_FLAGS2);
+  if (IsRxReadyForOperation(opmode, irq1, irq2)) {
+    return SemtechTxPhaseResult::Succeeded;
+  }
+
+  if (elapsed <= RX_READY_TIMEOUT_MS) {
+    ESP_LOGD(TAG, "WaitRxReady: waiting for RX mode=0x%02x irq1=0x%02x irq2=0x%02x after %" PRIu32 "ms",
+             opmode, irq1, irq2, elapsed);
+    return SemtechTxPhaseResult::Pending;
+  }
+
+  ESP_LOGW(TAG, "WaitRxReady: RX restore timeout mode=0x%02x irq1=0x%02x irq2=0x%02x after %" PRIu32 "ms",
+           opmode, irq1, irq2, elapsed);
+  return SemtechTxPhaseResult::Failed;
+}
+
+void Sx1276Driver::tx_on_state_enter_for_fsm(SemtechTxState /*state*/, uint32_t now) {
+  this->phase_started_ms_ = now;
+}
+
+void Sx1276Driver::tx_set_terminal_result_for_fsm(SemtechTxTerminalResult result) {
+  this->tx_terminal_result_ = result;
+}
+
+void Sx1276Driver::tx_recover_for_fsm() {
+  this->stat_tx_recover_.fetch_add(1, std::memory_order_relaxed);
+
+  this->recover();
 }
 
 void Sx1276Driver::dump_config() {
@@ -408,23 +454,42 @@ void Sx1276Driver::set_mode_(uint8_t mode) {
   this->write_reg_(sx1276::REG_OP_MODE, reg);
 }
 
-void Sx1276Driver::set_mode_and_wait_(uint8_t mode) {
+bool Sx1276Driver::set_mode_and_wait_(uint8_t mode) {
   this->set_mode_(mode);
-  uint32_t start = millis();
-  while (!(this->read_reg_(sx1276::REG_IRQ_FLAGS1) & sx1276::IRQ1_MODE_READY)) {
-    if (millis() - start > sx1276::MODE_SWITCH_TIMEOUT_MS) {
-      ESP_LOGW(TAG, "Mode switch timeout (target=0x%02x)", mode);
-      return;
-    }
+  // Bound polls as well as elapsed time so failure cannot spin indefinitely.
+  const uint32_t start = millis();
+  for (unsigned poll = 0; poll < sx1276::MODE_SWITCH_TIMEOUT_MS * 10u; ++poll) {
+    const uint8_t irq1 = this->read_reg_(sx1276::REG_IRQ_FLAGS1);
+    if ((irq1 & sx1276::IRQ1_MODE_READY) &&
+        (this->read_reg_(sx1276::REG_OP_MODE) & sx1276::MODE_MASK) == mode) return true;
+    if (millis() - start >= sx1276::MODE_SWITCH_TIMEOUT_MS) break;
     delay_microseconds_safe(100);
   }
+  ESP_LOGW(TAG, "Mode switch timeout (target=0x%02x)", mode);
+  return false;
 }
 
-void Sx1276Driver::set_standby_() {
-  this->set_mode_and_wait_(sx1276::MODE_STANDBY);
+bool Sx1276Driver::set_standby_() {
+  return this->set_mode_and_wait_(sx1276::MODE_STANDBY);
+}
+
+bool Sx1276Driver::wait_rx_ready_() {
+  const uint32_t start = millis();
+  for (unsigned poll = 0; poll < RX_READY_TIMEOUT_MS * 10u; ++poll) {
+    const uint8_t mode = this->read_reg_(sx1276::REG_OP_MODE) & sx1276::MODE_MASK;
+    const uint8_t irq1 = this->read_reg_(sx1276::REG_IRQ_FLAGS1);
+    const uint8_t irq2 = this->read_reg_(sx1276::REG_IRQ_FLAGS2);
+    if (IsRxReadyForOperation(mode, irq1, irq2)) return true;
+    if (irq2 & sx1276::IRQ2_FIFO_OVERRUN) break;
+    if (millis() - start >= RX_READY_TIMEOUT_MS) break;
+    delay_microseconds_safe(100);
+  }
+  ESP_LOGW(TAG, "RX readiness timeout");
+  return false;
 }
 
 void Sx1276Driver::set_rx_() {
+  this->rx_capture_active_ = false;
   this->set_mode_(sx1276::MODE_RX);
 }
 
@@ -465,9 +530,9 @@ void Sx1276Driver::configure_fsk_() {
   this->write_reg_(sx1276::REG_PREAMBLE_DETECT, 0xAA);
 
   // ── Sync word config ──��───────────────────────────────────────────────
-  // AutoRestartRxMode=01 (wait for PLL), PreamblePolarity=0xAA, SyncOn=1, SyncSize=3 (4 bytes)
+  // AutoRestartRxMode=00 (software rearm after capture), PreamblePolarity=0xAA, SyncOn=1, SyncSize=3 (4 bytes)
   // CC1101 SYNC_MODE=011 uses a 32-bit sync word: D3 91 D3 91
-  this->write_reg_(sx1276::REG_SYNC_CONFIG, 0x53);  // AutoRestart=01, SyncOn=1, SyncSize=3 (4 bytes)
+  this->write_reg_(sx1276::REG_SYNC_CONFIG, 0x13);  // AutoRestart=00, SyncOn=1, SyncSize=3 (4 bytes)
   this->write_reg_(sx1276::REG_SYNC_VALUE1, 0xD3);
   this->write_reg_(sx1276::REG_SYNC_VALUE2, 0x91);
   this->write_reg_(sx1276::REG_SYNC_VALUE3, 0xD3);
@@ -490,14 +555,7 @@ void Sx1276Driver::configure_fsk_() {
 }
 
 void Sx1276Driver::set_frequency_() {
-  // CC1101: freq_hz = 26e6 * FREQ / 2^16
-  // SX1276: Frf = freq_hz / Fstep = freq_hz * 2^19 / 32e6
-  // Combined: Frf = FREQ * 26e6 * 2^19 / (2^16 * 32e6) = FREQ * 26 * 8 / 32 = FREQ * 6.5
-  // Use integer math: Frf = FREQ * 13 / 2
-  uint32_t cc1101_freq = (static_cast<uint32_t>(this->freq2_) << 16) |
-                          (static_cast<uint32_t>(this->freq1_) << 8) |
-                          static_cast<uint32_t>(this->freq0_);
-  uint32_t frf = static_cast<uint32_t>((static_cast<uint64_t>(cc1101_freq) * 13ULL) / 2ULL);
+  const uint32_t frf = this->freq_reg_from_cc1101_regs_();
 
   this->write_reg_(sx1276::REG_FRF_MSB, static_cast<uint8_t>((frf >> 16) & 0xFF));
   this->write_reg_(sx1276::REG_FRF_MID, static_cast<uint8_t>((frf >> 8) & 0xFF));
@@ -535,8 +593,8 @@ void Sx1276Driver::set_pa_config_() {
   this->write_reg_(sx1276::REG_PA_RAMP, 0x29);  // bits[6:5]=01 (BT=1.0 Gaussian), ramp=40us
 }
 
-void Sx1276Driver::set_dio_for_rx_() {
-  // DIO0 = PayloadReady (mapping 00 in RX = PayloadReady)
+void Sx1276Driver::configure_dio_() {
+  // DIO0 mapping 00 selects PayloadReady in RX and PacketSent in TX.
   // DIO1 = FifoLevel (mapping 00)
   // DIO2 = SyncAddress (mapping 11)
   // DIO3 = FifoEmpty (mapping 00)
@@ -547,22 +605,15 @@ void Sx1276Driver::set_dio_for_rx_() {
   this->write_reg_(sx1276::REG_DIO_MAPPING2, 0xF1);
 }
 
-void Sx1276Driver::set_dio_for_tx_() {
-  // DIO0 = PacketSent (mapping 00 in TX = PacketSent)
-  // Same register value as RX — DIO0 auto-selects based on TX/RX mode
-  this->write_reg_(sx1276::REG_DIO_MAPPING1, 0x0C);
-  this->write_reg_(sx1276::REG_DIO_MAPPING2, 0xF1);
-}
-
 void Sx1276Driver::flush_fifo_() {
   // Write 1 to FifoOverrun bit to clear FIFO (this also clears any overrun condition)
   this->write_reg_(sx1276::REG_IRQ_FLAGS2, sx1276::IRQ2_FIFO_OVERRUN);
 }
 
 void Sx1276Driver::restore_rx_() {
-  this->RadioDriver::mode_ = RadioMode::RX;
+  this->RadioDriver::mode_.store(RadioMode::RX, std::memory_order_release);
   this->write_reg_(sx1276::REG_PAYLOAD_LENGTH, sx1276::RX_FIXED_LEN);
-  this->set_dio_for_rx_();
+  this->configure_dio_();
   this->flush_fifo_();
   this->set_rx_();
 }

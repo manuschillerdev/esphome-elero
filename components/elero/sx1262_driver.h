@@ -4,11 +4,12 @@
 /// @brief SX1262 radio driver — implements RadioDriver for Semtech SX1262 868 MHz transceiver.
 ///
 /// Implements the same RadioDriver interface as CC1101Driver, configured for FSK mode
-/// matching the Elero protocol parameters (868.35 MHz, 2-FSK, ~9.6 kbaud).
+/// matching the Elero protocol parameters (868.35 MHz, GFSK, ~76.8 kbaud).
 /// All methods are called from the RF task (Core 0) only, except init() which
 /// is called once from setup() (Core 1) before the RF task starts.
 
 #include "radio_driver.h"
+#include "semtech_tx_fsm.h"
 #include "elero_packet.h"
 #include "esphome/core/component.h"
 #include "esphome/components/spi/spi.h"
@@ -24,6 +25,10 @@ namespace elero {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 namespace sx1262 {
+
+constexpr uint16_t ELERO_ERROR_PLL_LOCK = 1U << 6;
+constexpr uint16_t ELERO_ERROR_XOSC_START = 1U << 5;
+constexpr uint16_t ELERO_CRITICAL_ERRORS = ELERO_ERROR_PLL_LOCK | ELERO_ERROR_XOSC_START;
 
 // ── Operational commands ─────────────────────────────────────────────────────
 constexpr uint8_t SET_SLEEP = 0x84;
@@ -128,11 +133,9 @@ constexpr uint32_t FREQ_868_95 = 0x3648A666U;
 // SX1262 buffer size (shared 256-byte buffer, but Elero packets are max ~30 bytes)
 constexpr uint8_t MAX_PACKET_SIZE = 64;  // Match CC1101_FIFO_LENGTH for compatibility
 
-// Fixed RX length: Elero packets are 28-31 bytes (length byte + 27-30 data).
-// With 32-bit sync (D3 91 D3 91), the SX1262 strips the full sync word.
-// Buffer starts with the whitened payload. Use 32 to cover all packet sizes
-// (max: length 0x1E = 30 data + 1 length byte = 31, plus margin).
-constexpr uint8_t RX_FIXED_LEN = 32;
+// Capture capacity, not an assumed wire length. Sync starts a bounded receive
+// window; software validates the length and CRC before delivering a frame.
+constexpr uint8_t RX_FIXED_LEN = 64;
 
 // BUSY pin timeout
 constexpr uint32_t BUSY_TIMEOUT_MS = 20;
@@ -148,7 +151,8 @@ constexpr uint8_t PA_RAMP_200US = 0x04;
 /// All SPI operations are encapsulated here — the Elero hub never touches hardware.
 class Sx1262Driver : public RadioDriver,
                      public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                                           spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_8MHZ> {
+                                           spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_8MHZ>,
+                     public SemtechTxFsmOwner {
  public:
   // ── RadioDriver interface ──────────────────────────────────────────────────
 
@@ -160,6 +164,7 @@ class Sx1262Driver : public RadioDriver,
   void abort_tx() override;
 
   bool has_data() override;
+  bool receiving() const override { return rx_capture_active_; }
   size_t read_fifo(uint8_t *buf, size_t max_len) override;
 
   RadioHealth check_health() override;
@@ -198,43 +203,64 @@ class Sx1262Driver : public RadioDriver,
   uint32_t recover_count() const { return stat_tx_recover_.load(std::memory_order_relaxed); }
 
  private:
+  // Capture from sync for at most 8ms: 64 bytes at 76.8 kbaud plus tick margin.
+  // Short frames need not transmit padding or raise the fixed-length DONE IRQ.
+  bool rx_capture_active_{false};
+  uint32_t rx_capture_started_ms_{0};
+  uint8_t rx_capture_rssi_{0};
+  static constexpr uint32_t RX_CAPTURE_MS = 8;
   // ── SPI primitives ─────────────────────────────────────────────────────────
 
   /// Wait for BUSY pin to go LOW. Returns false on timeout (chip unresponsive).
   [[nodiscard]] bool wait_busy_();
-  bool write_opcode_(uint8_t opcode, const uint8_t *data, size_t len);
-  bool read_opcode_(uint8_t opcode, uint8_t *data, size_t len);
-  bool write_register_(uint16_t addr, const uint8_t *data, size_t len);
-  bool read_register_(uint16_t addr, uint8_t *data, size_t len);
-  bool write_fifo_(uint8_t offset, const uint8_t *data, size_t len);
-  bool read_fifo_(uint8_t offset, uint8_t *data, size_t len);
+  [[nodiscard]] bool write_opcode_(uint8_t opcode, const uint8_t *data, size_t len);
+  [[nodiscard]] bool read_opcode_(uint8_t opcode, uint8_t *data, size_t len);
+  [[nodiscard]] bool write_register_(uint16_t addr, const uint8_t *data, size_t len);
+  [[nodiscard]] bool read_register_(uint16_t addr, uint8_t *data, size_t len);
+  [[nodiscard]] bool write_fifo_(uint8_t offset, const uint8_t *data, size_t len);
+  [[nodiscard]] bool read_fifo_(uint8_t offset, uint8_t *data, size_t len);
 
   // ── Radio control ──────────────────────────────────────────────────────────
 
   /// Read chip_mode from GetStatus. Returns 0xFF on SPI failure.
   uint8_t read_chip_mode_();
   [[nodiscard]] bool set_standby_(uint8_t mode = sx1262::STDBY_RC);
-  void set_rx_();
-  void set_tx_();
-  void configure_fsk_();
-  void set_frequency_();
-  void set_pa_config_();
-  void set_dio_irq_for_rx_();
-  void set_dio_irq_for_tx_();
-  void clear_irq_status_();
-  void restore_rx_packet_params_();
-  void apply_errata_pa_clamping_();
-  void apply_errata_sensitivity_();
+  [[nodiscard]] bool set_rx_();
+  [[nodiscard]] bool set_tx_();
+  [[nodiscard]] bool configure_fsk_();
+  [[nodiscard]] bool set_frequency_();
+  [[nodiscard]] bool set_pa_config_();
+  [[nodiscard]] bool set_dio_irq_for_rx_();
+  [[nodiscard]] bool set_dio_irq_for_tx_();
+  [[nodiscard]] bool clear_irq_status_();
+  [[nodiscard]] bool restore_rx_packet_params_();
+  [[nodiscard]] bool restore_rx_();
+  [[nodiscard]] bool apply_errata_pa_clamping_();
+  [[nodiscard]] bool apply_errata_sensitivity_();
   void apply_pn9_(uint8_t *data, size_t len);
   uint32_t freq_reg_from_cc1101_regs_() const;
 
+  // ── SemtechTxFsmOwner hooks ────────────────────────────────────────────────
+
+  bool tx_prepare_for_fsm() override;
+  SemtechTxPhaseResult tx_wait_done_for_fsm() override;
+  bool tx_return_to_rx_for_fsm() override;
+  SemtechTxPhaseResult tx_wait_rx_ready_for_fsm() override;
+  void tx_on_state_enter_for_fsm(SemtechTxState state, uint32_t now) override;
+  void tx_set_terminal_result_for_fsm(SemtechTxTerminalResult result) override;
+  void tx_recover_for_fsm() override;
+
   // ── TX state ───────────────────────────────────────────────────────────────
 
-  bool tx_in_progress_{false};
-  uint32_t tx_start_ms_{0};
-  bool tx_pending_success_{false};
-
   static constexpr uint32_t TX_TIMEOUT_MS = 50;
+  static constexpr uint32_t RX_SETTLE_MS = 3;
+  static constexpr uint32_t RX_READY_TIMEOUT_MS = 25;
+
+  SemtechTxFsm tx_fsm_{*this};
+  SemtechTxTerminalResult tx_terminal_result_{SemtechTxTerminalResult::None};
+  uint32_t phase_started_ms_{0};
+  uint8_t tx_buf_[sx1262::MAX_PACKET_SIZE]{};
+  size_t tx_len_{0};
 
   // ── Frequency registers (CC1101 format for compatibility) ──────────────────
 
@@ -262,12 +288,8 @@ class Sx1262Driver : public RadioDriver,
 
   // ── Escalating recovery ───────────────────────────────────────────────────
 
-  static constexpr uint32_t RECOVERY_WINDOW_MS = 60000;    ///< 60s observation window
-  static constexpr uint8_t RECOVERIES_BEFORE_RESET = 3;    ///< Soft recoveries before RST pin reset
-  static constexpr uint8_t RESETS_BEFORE_FAILED = 3;       ///< RST resets before marking failed
-  uint32_t recovery_window_start_ms_{0};
-  uint8_t recoveries_in_window_{0};
-  uint8_t resets_in_window_{0};
+  static constexpr uint8_t RESETS_BEFORE_FAILED = 3;
+  uint8_t failed_resets_{0};  ///< Consecutive failed full recoveries
 
   // ── Stats (atomic — incremented on Core 0, read from Core 1) ───────────────
 

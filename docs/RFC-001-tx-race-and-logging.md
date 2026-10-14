@@ -323,7 +323,7 @@ cover:
 
 ### 2.6 Skill Documentation Update
 
-Update `.claude/skills/elero-protocol/skill.md`:
+Update `.pi/skills/elero-protocol/SKILL.md`:
 
 1. Split offset 3-5 into separate fields (not "header")
 2. Add "Protocol Ambiguities" section documenting `type2` and `hop` variations
@@ -387,7 +387,7 @@ Update `.claude/skills/elero-protocol/skill.md`:
 
 ### Phase 6: Skill Documentation
 
-1. Update packet format table in skill.md
+1. Update packet format table in `SKILL.md`
 2. Add Protocol Ambiguities section
 3. Add Communication Flows section
 
@@ -414,7 +414,7 @@ Update `.claude/skills/elero-protocol/skill.md`:
 | `components/elero/sensor/__init__.py` | Config renames |
 | `components/elero/text_sensor/__init__.py` | Config renames |
 | `components/elero_web/elero_web_server.cpp` | JSON field renames |
-| `.claude/skills/elero-protocol/skill.md` | Documentation updates |
+| `.pi/skills/elero-protocol/SKILL.md` | Documentation updates |
 | `example.yaml` | Config example updates |
 | `README.md` | Documentation updates |
 | `docs/CONFIGURATION.md` | Documentation updates |

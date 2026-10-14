@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cinttypes>
 #include "mqtt_publisher.h"
 #include "../elero/elero_strings.h"
 #include "esphome/components/json/json_util.h"
@@ -11,10 +12,10 @@
 namespace esphome {
 namespace elero {
 
-/// Format a uint32_t as "%06x" for MQTT topic construction (no "0x" prefix).
+/// Format a uint32_t as "%06" PRIx32 for MQTT topic construction (no "0x" prefix).
 [[nodiscard]] inline std::string addr_hex(uint32_t addr) {
   char buf[12];
-  snprintf(buf, sizeof(buf), "%06x", addr);
+  snprintf(buf, sizeof(buf), "%06" PRIx32, addr);
   return buf;
 }
 
@@ -78,6 +79,17 @@ struct MqttContext {
     return result;
   }
 
+  /// Build group state topic: {prefix}/group/{id}{suffix}
+  std::string group_topic(const char *id, const char *suffix) const {
+    std::string result;
+    result.reserve(topic_prefix.size() + strlen("/group/") + strlen(id) + strlen(suffix));
+    result += topic_prefix;
+    result += "/group/";
+    result += id;
+    result += suffix;
+    return result;
+  }
+
   /// Build object ID: {device_id}_{device_type}_{addr_hex}[_{suffix}]
   std::string object_id(DeviceType type, uint32_t addr, const char *suffix = nullptr) const {
     const char *type_str = device_type_str(type);
@@ -90,6 +102,18 @@ struct MqttContext {
     result += type_str;
     result += '_';
     result += hex;
+    if (suffix != nullptr) { result += '_'; result += suffix; }
+    return result;
+  }
+
+  /// Build group object ID: {device_id}_group_{id}[_{suffix}]
+  std::string group_object_id(const char *id, const char *suffix = nullptr) const {
+    std::string result;
+    result.reserve(device_id.size() + strlen("_group_") + strlen(id) +
+                   (suffix != nullptr ? 1 + strlen(suffix) : 0));
+    result += device_id;
+    result += "_group_";
+    result += id;
     if (suffix != nullptr) { result += '_'; result += suffix; }
     return result;
   }
@@ -148,11 +172,35 @@ struct MqttContext {
 
   // ── HA device/availability blocks ───────────────────────────
 
-  /// Add the standard HA device block to a discovery payload.
-  void add_device_block(JsonObject dev) const {
+  /// Add the hub device block (gateway sensor — parent device).
+  void add_hub_device_block(JsonObject dev) const {
     dev["identifiers"][0] = device_id;
     dev["name"] = device_name;
     dev["manufacturer"] = MANUFACTURER;
+    dev["model"] = "Gateway";
+  }
+
+  /// Add a per-blind device block (each Elero device is its own HA device,
+  /// linked to the hub via `via_device`). This is what removes the redundant
+  /// "Elero Gateway" prefix from entity names in HA's room/area views.
+  void add_child_device_block(JsonObject dev, DeviceType type, uint32_t addr,
+                               const char *name) const {
+    const char *type_str = device_type_str(type);
+    auto hex = addr_hex(addr);
+    std::string ident;
+    ident.reserve(device_id.size() + 1 + strlen(type_str) + 1 + hex.size());
+    ident += device_id;
+    ident += '_';
+    ident += type_str;
+    ident += '_';
+    ident += hex;
+    dev["identifiers"][0] = ident;
+    dev["name"] = name;
+    dev["manufacturer"] = MANUFACTURER;
+    dev["model"] = (type == DeviceType::COVER) ? "Cover"
+                  : (type == DeviceType::LIGHT) ? "Light"
+                                                : "Remote";
+    dev["via_device"] = device_id;
   }
 
   /// Add availability block so entities go unavailable when hub is offline.

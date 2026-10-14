@@ -23,7 +23,7 @@ namespace elero {
 /// WebSocket server - acts as RF bridge, log forwarder, and CRUD proxy
 /// Server → Client: config (on connect), rf (packets), log (ESPHome logs), crud events
 /// Client → Server: cmd (blind commands), raw (raw RF packets), upsert_device, remove_device
-class EleroWebServer : public Component, public OutputAdapter, public logger::LogListener {
+class EleroWebServer : public Component, public OutputAdapter {
  public:
   void setup() override;
   void loop() override;
@@ -46,9 +46,12 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
   void on_state_changed(const Device &dev, uint16_t changes) override;
   void on_config_changed(const Device &dev) override;
   void on_rf_packet(const RfPacketInfo &pkt) override;
+  void on_group_upserted(const NvsGroupConfig &group) override;
+  void on_group_removed(const char *id) override;
+  void on_group_state_changed(const NvsGroupConfig &group, const GroupStateSnapshot &state) override;
 
-  // LogListener interface - forward logs to WebSocket clients
-  void on_log(uint8_t level, const char *tag, const char *message, size_t message_len) override;
+  // Logger callback - forward logs to WebSocket clients
+  void on_log(uint8_t level, const char *tag, const char *message, size_t message_len);
 
  protected:
   Elero *parent_{nullptr};
@@ -80,17 +83,49 @@ class EleroWebServer : public Component, public OutputAdapter, public logger::Lo
   std::string build_config_json();
   std::string build_rf_json(const RfPacketInfo &pkt);
   std::string build_device_upserted_json_(const Device &dev);
+  std::string build_group_json_(const NvsGroupConfig &group) const;
+  std::string build_learn_in_state_json_() const;
 
   // Device CRUD handlers (MQTT mode)
   void handle_upsert_device_(struct mg_connection *c, JsonObject root);
   void handle_remove_device_(struct mg_connection *c, JsonObject root);
+  void handle_upsert_group_(struct mg_connection *c, JsonObject root);
+  void handle_remove_group_(struct mg_connection *c, JsonObject root);
+  void handle_group_command_(struct mg_connection *c, JsonObject root);
+
+  // Hub config handler (persisted display name override)
+  void handle_set_hub_config_(struct mg_connection *c, JsonObject root);
+
+  // Backup / restore handlers
+  void handle_export_config_(struct mg_connection *c, JsonObject root);
+  void handle_import_config_(struct mg_connection *c, JsonObject root);
+
+  // Learn-in handlers
+  void handle_learn_in_start_(struct mg_connection *c, JsonObject root);
+  void handle_learn_in_confirm_up_(struct mg_connection *c);
+  void handle_learn_in_confirm_down_(struct mg_connection *c);
+  void handle_learn_in_cancel_(struct mg_connection *c);
+
+  /// Serialize one device's NvsDeviceConfig into a `DeviceSnapshot` JSON object.
+  void build_device_snapshot_(const NvsDeviceConfig &cfg, JsonObject out);
+  static void build_cover_commands_(const NvsDeviceConfig &cfg, JsonObject out);
+  /// Build the full `ConfigSnapshot` envelope for the current registry state.
+  std::string build_config_snapshot_json_();
 
   /// Dispatch a command byte to a known device with proper FSM + follow-ups.
   /// This is the single low-level primitive — cmd handler calls into this.
   void dispatch_device_command_(Device &dev, uint8_t cmd_byte);
 
-  // Parse NvsDeviceConfig from JSON object
-  bool parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error);
+  // Parse NvsDeviceConfig / NvsGroupConfig from JSON objects
+  bool parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error,
+                            bool preserve_commands = false);
+  bool parse_group_config_(JsonObject root, NvsGroupConfig &config, std::string &error);
+
+  LearnInState last_learn_in_state_{LearnInState::IDLE};
+  bool last_learn_in_active_{false};
+  bool last_learn_in_busy_{false};
+  uint32_t last_learn_in_src_{0};
+  uint8_t last_learn_in_channel_{0};
 };
 
 }  // namespace elero

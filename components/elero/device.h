@@ -33,25 +33,6 @@ struct RfMeta {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMMAND SOURCE — tracks who issued the last command
-// ═══════════════════════════════════════════════════════════════════════════════
-
-enum class CommandSource : uint8_t {
-    UNKNOWN = 0,
-    HUB = 1,
-    REMOTE = 2,
-};
-
-inline constexpr const char *command_source_str(CommandSource src) {
-    switch (src) {
-        case CommandSource::UNKNOWN: return "unknown";
-        case CommandSource::HUB: return "hub";
-        case CommandSource::REMOTE: return "remote";
-    }
-    return "unknown";
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // TYPE-SPECIFIC DEVICE LOGIC (variant arms — must be movable!)
 // CommandSender is NOT here because TxClient is non-movable.
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -62,7 +43,6 @@ struct CoverDevice {
     float           target_position{cover_sm::NO_TARGET};  ///< NO_TARGET = no target, 0..1 = intermediate target
     cover_sm::Operation last_direction{cover_sm::Operation::OPENING};  ///< For toggle logic
     bool            tilted{false};
-    CommandSource   last_command_source{CommandSource::UNKNOWN};
 
     /// Last-published state cache. Registry diffs against this to detect changes.
     /// Defaults guarantee non-zero diff on first publish.
@@ -74,14 +54,12 @@ struct CoverDevice {
         bool tilted{false};
         bool is_problem{false};
         const char *problem_type{nullptr};
-        const char *command_source{nullptr};
         int rssi_rounded{-999};
     } published;
 };
 
 struct LightDevice {
     light_sm::State state{light_sm::Off{}};
-    CommandSource   last_command_source{CommandSource::UNKNOWN};
 
     /// Last-published state cache. Registry diffs against this to detect changes.
     struct Published {
@@ -90,7 +68,6 @@ struct LightDevice {
         const char *state_string{nullptr};
         bool is_problem{false};
         const char *problem_type{nullptr};
-        const char *command_source{nullptr};
         int rssi_rounded{-999};
     } published;
 };
@@ -99,6 +76,18 @@ struct RemoteDevice {
     uint8_t  last_command{0};
     uint32_t last_target{0};
     uint8_t  last_channel{0};
+
+    /// Last-published state cache. Registry diffs against this to detect changes.
+    /// Without dedup, every mesh-relayed echo of our own TX (which is indistinguishable
+    /// from the physical remote we impersonate at the src-address level) would trigger a
+    /// full publish — see docs/ELERO_GROUP_INVESTIGATION.md §8.1.
+    /// Sentinel defaults guarantee non-zero diff on first publish.
+    struct Published {
+        uint8_t  last_command{0xFF};
+        uint32_t last_target{0xFFFFFFFF};
+        uint8_t  last_channel{0xFF};
+        int      rssi_rounded{-999};
+    } published;
 };
 
 using DeviceLogic = std::variant<CoverDevice, LightDevice, RemoteDevice>;
@@ -113,8 +102,7 @@ struct Device {
     RfMeta          rf;                  ///< Shared RF metadata
     DeviceLogic     logic;               ///< Type-specific state (movable)
     CommandSender   sender;              ///< TX queue (non-movable, shared by covers/lights)
-    uint32_t        last_notify_ms{0};   ///< Throttle state change notifications
-    uint16_t        last_changes{0};     ///< What changed on last notify (for shell polling, set alongside last_notify_ms)
+    uint32_t        last_published_ms{0};///< Registry-side throttle for movement/dimming publishes
 
     [[nodiscard]] DeviceType type() const {
         static_assert(std::is_same_v<std::variant_alternative_t<0, DeviceLogic>, CoverDevice>);
@@ -173,7 +161,7 @@ inline void init_device(Device &dev, const NvsDeviceConfig &cfg) {
     dev.active = true;
     dev.config = cfg;
     dev.rf = {};
-    dev.last_notify_ms = 0;
+    dev.last_published_ms = 0;
 
     switch (cfg.type) {
         case DeviceType::COVER: {
@@ -198,9 +186,9 @@ inline void deactivate_device(Device &dev) {
     dev.active = false;
     dev.config = NvsDeviceConfig{};
     dev.rf = {};
+    dev.last_published_ms = 0;
     dev.logic = CoverDevice{};  // Reset variant to default
     dev.sender.clear_queue();
-    dev.last_notify_ms = 0;
 }
 
 /// Update a device's config without destroying state.

@@ -18,6 +18,7 @@ namespace esphome::elero {
 struct RfPacketInfo;  // Forward declaration (defined in elero.h)
 
 class DeviceRegistry;  // Forward declaration
+struct GroupStateSnapshot;
 
 class OutputAdapter {
  public:
@@ -46,6 +47,21 @@ class OutputAdapter {
     /// A raw RF packet was decoded (for web UI forwarding, logging, etc.).
     /// Not all adapters need this — default is no-op.
     virtual void on_rf_packet(const RfPacketInfo &pkt) {}
+
+    /// A saved group was created or updated. Adapters may expose this as a
+    /// virtual group entity backed by registry group command dispatch.
+    virtual void on_group_upserted(const NvsGroupConfig &group) {}
+
+    /// A saved group was removed.
+    virtual void on_group_removed(const char *id) {}
+
+    /// Member-derived group state changed; registry owns computation and diff.
+    virtual void on_group_state_changed(const NvsGroupConfig &group, const GroupStateSnapshot &state) {}
+
+    /// Hub-level config changed (e.g., display name override). Adapters that
+    /// embed the hub name in published metadata (MQTT discovery device block,
+    /// WebSocket config event) should re-publish.
+    virtual void on_hub_config_changed() {}
 };
 
 }  // namespace esphome::elero

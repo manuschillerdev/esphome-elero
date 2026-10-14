@@ -4,6 +4,7 @@
 /// Publishes HA discovery configs, state updates, and subscribes to command topics.
 /// Reads all state from Device structs via the DeviceRegistry — no old entity classes.
 
+#include <cinttypes>
 #include "mqtt_adapter.h"
 #include "../elero/device.h"
 #include "../elero/device_registry.h"
@@ -30,6 +31,19 @@ static const char *const LIGHT_STATE_OPTIONS[] = {
     "stopped", "blocking", "overheated", "timeout", "unknown",
 };
 
+static uint8_t mqtt_payload_to_command(const char *payload, DeviceType type) {
+    if (payload == nullptr) return packet::command::INVALID;
+    if (type == DeviceType::LIGHT) {
+        if (strcmp(payload, action::ON) == 0 || strcmp(payload, ha_state::ON) == 0) {
+            return packet::command::UP;
+        }
+        if (strcmp(payload, action::OFF) == 0 || strcmp(payload, ha_state::OFF) == 0) {
+            return packet::command::DOWN;
+        }
+    }
+    return elero_action_to_command(payload);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // LIFECYCLE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -39,6 +53,11 @@ void MqttAdapter::setup(DeviceRegistry &registry) {
     ctx_.mqtt = &mqtt_adapter_;
     ctx_.device_id = App.get_name();
 
+    // Hand the YAML default to the registry; effective name combines that with
+    // the NVS override (loaded during init_preferences()).
+    registry.set_default_hub_name(default_device_name_);
+    ctx_.device_name = registry.hub_display_name();
+
     ESP_LOGD(TAG, "MQTT adapter setup: prefix=%s, discovery=%s, device=%s",
              ctx_.topic_prefix.c_str(), ctx_.discovery_prefix.c_str(),
              ctx_.device_name.c_str());
@@ -47,6 +66,19 @@ void MqttAdapter::setup(DeviceRegistry &registry) {
         start_stale_collection_();
         mqtt_was_connected_ = true;
     }
+}
+
+void MqttAdapter::on_hub_config_changed() {
+    if (registry_ == nullptr) return;
+    ctx_.device_name = registry_->hub_display_name();
+    if (!ctx_.mqtt->is_connected()) return;
+
+    // Gateway-level entities embed the hub name; child device discoveries link
+    // via stable `via_device` identifiers and do not need republishing here.
+    publish_gateway_discovery_();
+    registry_->for_each_group([this](const NvsGroupConfig &group) {
+        publish_group_discovery_(group);
+    });
 }
 
 void MqttAdapter::loop() {
@@ -124,7 +156,7 @@ void MqttAdapter::remove_all_discovery_(const Device &dev) {
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr));
     }
 
-    ESP_LOGD(TAG, "Removed discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Removed discovery for 0x%06" PRIx32, addr);
 }
 
 void MqttAdapter::on_state_changed(const Device &dev, uint16_t changes) {
@@ -143,6 +175,15 @@ void MqttAdapter::on_state_changed(const Device &dev, uint16_t changes) {
 
 void MqttAdapter::on_config_changed(const Device &dev) {
     if (!ctx_.mqtt->is_connected()) return;
+    registry_->for_each_group([&](const NvsGroupConfig &group) {
+        for (uint8_t i = 0; i < group.member_count; ++i) {
+            if (group.device_ids[i] == dev.config.dst_address) {
+                publish_group_discovery_(group);
+                subscribe_group_commands_(group);
+                break;
+            }
+        }
+    });
 
     if (!dev.config.is_enabled()) {
         // Device was disabled — unpublish its discovery
@@ -159,6 +200,38 @@ void MqttAdapter::on_config_changed(const Device &dev) {
     }
 }
 
+void MqttAdapter::on_group_upserted(const NvsGroupConfig &group) {
+    if (!ctx_.mqtt->is_connected()) return;
+    remove_group_discovery_(group.id);
+    publish_group_discovery_(group);
+    subscribe_group_commands_(group);
+    publish_gateway_state_();
+}
+
+void MqttAdapter::on_group_removed(const char *id) {
+    if (!ctx_.mqtt->is_connected()) return;
+    remove_group_discovery_(id);
+    publish_gateway_state_();
+}
+
+void MqttAdapter::on_group_state_changed(const NvsGroupConfig &group, const GroupStateSnapshot &state) {
+    if (!ctx_.mqtt->is_connected()) return;
+    ctx_.mqtt->publish(ctx_.group_topic(group.id, mqtt_topic::STATUS).c_str(), state.valid ? "online" : "offline", true);
+    if (!state.valid) return;
+    if (state.type == DeviceType::COVER) {
+        const char *value = state.operation == cover_sm::Operation::OPENING ? "opening"
+            : state.operation == cover_sm::Operation::CLOSING ? "closing"
+            : state.position_pct == 0 ? "closed" : "open";
+        ctx_.mqtt->publish(ctx_.group_topic(group.id, mqtt_topic::STATE).c_str(), value, true);
+        if (state.supports_position) {
+            const auto position = std::to_string(state.position_pct);
+            ctx_.mqtt->publish(ctx_.group_topic(group.id, mqtt_topic::POSITION).c_str(), position.c_str(), true);
+        }
+    } else {
+        ctx_.mqtt->publish(ctx_.group_topic(group.id, mqtt_topic::STATE).c_str(), state.is_on ? "ON" : "OFF", true);
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // COVER
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -168,9 +241,11 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
     auto oid = ctx_.object_id(DeviceType::COVER, addr);
     bool tilt = dev.config.supports_tilt != 0;
 
-    // Cover entity
+    // Primary entity uses the configured device name directly. Avoid HA's
+    // device-name prefix so dashboard cards stay short.
     std::string payload = json::build_json([&](JsonObject root) {
         root["name"] = dev.config.name;
+        root["has_entity_name"] = false;
         root["unique_id"] = oid;
         root["command_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::SET);
         root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::STATE);
@@ -193,14 +268,15 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
         }
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
+        ctx_.add_child_device_block(device, DeviceType::COVER, addr, dev.config.name);
     });
     ctx_.publish_discovery(ha_discovery::COVER, oid, payload);
 
     // RSSI sensor
     auto rssi_oid = ctx_.object_id(DeviceType::COVER, addr, "rssi");
     std::string rssi_payload = json::build_json([&](JsonObject root) {
-        root["name"] = std::string(dev.config.name) + " RSSI";
+        root["name"] = "RSSI";
+        root["has_entity_name"] = true;
         root["unique_id"] = rssi_oid;
         root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::RSSI);
         root["unit_of_measurement"] = "dBm";
@@ -209,14 +285,15 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
         root["entity_category"] = "diagnostic";
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
+        ctx_.add_child_device_block(device, DeviceType::COVER, addr, dev.config.name);
     });
     ctx_.publish_discovery(ha_discovery::SENSOR, rssi_oid, rssi_payload);
 
     // Blind state sensor (enum)
     auto state_oid = ctx_.object_id(DeviceType::COVER, addr, "state");
     std::string state_payload = json::build_json([&](JsonObject root) {
-        root["name"] = std::string(dev.config.name) + " State";
+        root["name"] = "State";
+        root["has_entity_name"] = true;
         root["unique_id"] = state_oid;
         root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::DEVICE_STATE);
         root["device_class"] = "enum";
@@ -226,25 +303,26 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
         for (auto *s : COVER_STATE_OPTIONS) opts.add(s);
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
+        ctx_.add_child_device_block(device, DeviceType::COVER, addr, dev.config.name);
     });
     ctx_.publish_discovery(ha_discovery::SENSOR, state_oid, state_payload);
 
     // Problem binary_sensor
     auto problem_oid = ctx_.object_id(DeviceType::COVER, addr, "problem");
     std::string problem_payload = json::build_json([&](JsonObject root) {
-        root["name"] = std::string(dev.config.name) + " Problem";
+        root["name"] = "Problem";
+        root["has_entity_name"] = true;
         root["unique_id"] = problem_oid;
         root["state_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::PROBLEM);
         root["device_class"] = "problem";
         root["entity_category"] = "diagnostic";
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
+        ctx_.add_child_device_block(device, DeviceType::COVER, addr, dev.config.name);
     });
     ctx_.publish_discovery(ha_discovery::BINARY_SENSOR, problem_oid, problem_payload);
 
-    ESP_LOGD(TAG, "Published cover discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Published cover discovery for 0x%06" PRIx32, addr);
 }
 
 void MqttAdapter::publish_cover_state_(const Device &dev, uint16_t changes) {
@@ -284,9 +362,8 @@ void MqttAdapter::publish_cover_state_(const Device &dev, uint16_t changes) {
         ++topics;
     }
 
-    if (changes & (state_change::COMMAND_SOURCE | state_change::PROBLEM | state_change::TILT)) {
+    if (changes & (state_change::PROBLEM | state_change::TILT)) {
         std::string attrs = json::build_json([&](JsonObject root) {
-            root["command_source"] = pub.command_source;
             root["tilted"] = pub.tilted;
             root["device_class"] = ha_cover_class_str(static_cast<HaCoverClass>(dev.config.ha_device_class));
             root["problem_type"] = pub.problem_type;
@@ -300,7 +377,7 @@ void MqttAdapter::publish_cover_state_(const Device &dev, uint16_t changes) {
         ++topics;
     }
 
-    ESP_LOGV(TAG, "cover 0x%06x: %d topics (pos=%d ha=%s state=%s rssi=%d)",
+    ESP_LOGV(TAG, "cover 0x%06" PRIx32 ": %d topics (pos=%d ha=%s state=%s rssi=%d)",
              addr, topics, pub.position_pct, pub.ha_state, pub.state_string, pub.rssi_rounded);
 }
 
@@ -339,7 +416,7 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
             registry_->command_cover_tilt(*d);
         });
 
-    ESP_LOGD(TAG, "Subscribed to cover commands for 0x%06x", addr);
+    ESP_LOGD(TAG, "Subscribed to cover commands for 0x%06" PRIx32, addr);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -351,9 +428,11 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
     auto oid = ctx_.object_id(DeviceType::LIGHT, addr);
     bool has_brightness = dev.config.dim_duration_ms > 0;
 
-    // Light entity
+    // Primary entity uses the configured device name directly. Avoid HA's
+    // device-name prefix so dashboard cards stay short.
     std::string payload = json::build_json([&](JsonObject root) {
         root["name"] = dev.config.name;
+        root["has_entity_name"] = false;
         root["unique_id"] = oid;
         root["schema"] = "json";
         root["command_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::SET);
@@ -365,14 +444,15 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
         root["json_attributes_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::ATTRIBUTES);
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
+        ctx_.add_child_device_block(device, DeviceType::LIGHT, addr, dev.config.name);
     });
     ctx_.publish_discovery(ha_discovery::LIGHT, oid, payload);
 
     // RSSI sensor
     auto rssi_oid = ctx_.object_id(DeviceType::LIGHT, addr, "rssi");
     std::string rssi_payload = json::build_json([&](JsonObject root) {
-        root["name"] = std::string(dev.config.name) + " RSSI";
+        root["name"] = "RSSI";
+        root["has_entity_name"] = true;
         root["unique_id"] = rssi_oid;
         root["state_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::RSSI);
         root["unit_of_measurement"] = "dBm";
@@ -381,14 +461,15 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
         root["entity_category"] = "diagnostic";
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
+        ctx_.add_child_device_block(device, DeviceType::LIGHT, addr, dev.config.name);
     });
     ctx_.publish_discovery(ha_discovery::SENSOR, rssi_oid, rssi_payload);
 
     // Light state sensor (enum)
     auto state_oid = ctx_.object_id(DeviceType::LIGHT, addr, "state");
     std::string state_payload = json::build_json([&](JsonObject root) {
-        root["name"] = std::string(dev.config.name) + " State";
+        root["name"] = "State";
+        root["has_entity_name"] = true;
         root["unique_id"] = state_oid;
         root["state_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::DEVICE_STATE);
         root["device_class"] = "enum";
@@ -398,25 +479,26 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
         for (auto *s : LIGHT_STATE_OPTIONS) opts.add(s);
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
+        ctx_.add_child_device_block(device, DeviceType::LIGHT, addr, dev.config.name);
     });
     ctx_.publish_discovery(ha_discovery::SENSOR, state_oid, state_payload);
 
     // Problem binary_sensor
     auto problem_oid = ctx_.object_id(DeviceType::LIGHT, addr, "problem");
     std::string problem_payload = json::build_json([&](JsonObject root) {
-        root["name"] = std::string(dev.config.name) + " Problem";
+        root["name"] = "Problem";
+        root["has_entity_name"] = true;
         root["unique_id"] = problem_oid;
         root["state_topic"] = ctx_.topic(DeviceType::LIGHT, addr, mqtt_topic::PROBLEM);
         root["device_class"] = "problem";
         root["entity_category"] = "diagnostic";
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
+        ctx_.add_child_device_block(device, DeviceType::LIGHT, addr, dev.config.name);
     });
     ctx_.publish_discovery(ha_discovery::BINARY_SENSOR, problem_oid, problem_payload);
 
-    ESP_LOGD(TAG, "Published light discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Published light discovery for 0x%06" PRIx32, addr);
 }
 
 void MqttAdapter::publish_light_state_(const Device &dev, uint16_t changes) {
@@ -449,15 +531,14 @@ void MqttAdapter::publish_light_state_(const Device &dev, uint16_t changes) {
         ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::PROBLEM, pub.is_problem ? ha_state::ON : ha_state::OFF, false);
     }
 
-    if (changes & (state_change::COMMAND_SOURCE | state_change::PROBLEM)) {
+    if (changes & state_change::PROBLEM) {
         std::string attrs = json::build_json([&](JsonObject root) {
-            root["command_source"] = pub.command_source;
             root["problem_type"] = pub.problem_type;
         });
         ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::ATTRIBUTES, attrs, false);
     }
 
-    ESP_LOGV(TAG, "light 0x%06x: on=%d bri=%d state=%s rssi=%d",
+    ESP_LOGV(TAG, "light 0x%06" PRIx32 ": on=%d bri=%d state=%s rssi=%d",
              addr, pub.is_on, pub.brightness_pct, pub.state_string, pub.rssi_rounded);
 }
 
@@ -498,7 +579,7 @@ void MqttAdapter::subscribe_light_commands_(const Device &dev) {
             }
         });
 
-    ESP_LOGD(TAG, "Subscribed to light commands for 0x%06x", addr);
+    ESP_LOGD(TAG, "Subscribed to light commands for 0x%06" PRIx32, addr);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -512,6 +593,7 @@ void MqttAdapter::publish_remote_discovery_(const Device &dev) {
 
     std::string payload = json::build_json([&](JsonObject root) {
         root["name"] = dev.config.name;
+        root["has_entity_name"] = false;
         root["unique_id"] = oid;
         root["state_topic"] = st;
         root["value_template"] = "{{ value_json.rssi }}";
@@ -521,11 +603,11 @@ void MqttAdapter::publish_remote_discovery_(const Device &dev) {
         root["json_attributes_template"] = "{{ value_json | tojson }}";
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
+        ctx_.add_child_device_block(device, DeviceType::REMOTE, addr, dev.config.name);
     });
     ctx_.publish_discovery(ha_discovery::SENSOR, oid, payload);
 
-    ESP_LOGD(TAG, "Published remote discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Published remote discovery for 0x%06" PRIx32, addr);
 }
 
 void MqttAdapter::publish_remote_state_(const Device &dev) {
@@ -547,6 +629,161 @@ void MqttAdapter::publish_remote_state_(const Device &dev) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// GROUPS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bool MqttAdapter::group_type_(const NvsGroupConfig &group, DeviceType *type) const {
+    if (registry_ == nullptr || !group.is_valid()) return false;
+
+    bool found = false;
+    DeviceType derived = DeviceType::REMOTE;
+    for (uint8_t i = 0; i < group.member_count; ++i) {
+        Device *dev = registry_->find(group.device_ids[i]);
+        if (dev == nullptr || dev->is_remote() || !dev->active) return false;
+        if (!found) {
+            derived = dev->config.type;
+            found = true;
+        } else if (dev->config.type != derived) {
+            return false;
+        }
+    }
+
+    if (type != nullptr) *type = derived;
+    return found && (derived == DeviceType::COVER || derived == DeviceType::LIGHT);
+}
+
+void MqttAdapter::publish_group_discovery_(const NvsGroupConfig &group) {
+    DeviceType type = DeviceType::COVER;
+    if (!group_type_(group, &type)) {
+        ESP_LOGW(TAG, "Skipping group discovery for '%s': invalid members", group.id);
+        return;
+    }
+
+    const auto oid = ctx_.group_object_id(group.id);
+    const auto command_topic = ctx_.group_topic(group.id, mqtt_topic::SET);
+    const auto attributes_topic = ctx_.group_topic(group.id, mqtt_topic::ATTRIBUTES);
+    const auto snapshot = registry_->group_snapshot(group, millis());
+
+    std::string payload = json::build_json([&](JsonObject root) {
+        root["name"] = group.name;
+        root["has_entity_name"] = false;
+        root["unique_id"] = oid;
+        root["command_topic"] = command_topic;
+        root["state_topic"] = ctx_.group_topic(group.id, mqtt_topic::STATE);
+        root["json_attributes_topic"] = attributes_topic;
+        if (type == DeviceType::COVER) {
+            root["payload_open"] = action::OPEN;
+            root["payload_close"] = action::CLOSE;
+            root["payload_stop"] = action::STOP;
+            if (snapshot.supports_position) {
+                root["position_topic"] = ctx_.group_topic(group.id, mqtt_topic::POSITION);
+                root["set_position_topic"] = ctx_.group_topic(group.id, mqtt_topic::SET_POSITION);
+                root["position_open"] = 100;
+                root["position_closed"] = 0;
+            }
+            Device *first = registry_ != nullptr ? registry_->find(group.device_ids[0]) : nullptr;
+            if (first != nullptr) {
+                root["device_class"] = ha_cover_class_str(static_cast<HaCoverClass>(first->config.ha_device_class));
+            }
+        } else {
+            root["payload_on"] = action::UP;
+            root["payload_off"] = action::DOWN;
+            root["state_on"] = "ON";
+            root["state_off"] = "OFF";
+        }
+        ctx_.add_availability(root);
+        const std::string hub_availability = root["availability_topic"].as<std::string>();
+        root.remove("availability_topic");
+        auto availability = root["availability"].to<JsonArray>();
+        availability.add<JsonObject>()["topic"] = hub_availability;
+        availability.add<JsonObject>()["topic"] = ctx_.group_topic(group.id, mqtt_topic::STATUS);
+        root["availability_mode"] = "all";
+        JsonObject device = root["device"].to<JsonObject>();
+        ctx_.add_hub_device_block(device);
+    });
+
+    ctx_.publish_discovery(type == DeviceType::COVER ? ha_discovery::COVER : ha_discovery::LIGHT,
+                           oid, payload);
+    publish_group_attributes_(group);
+    on_group_state_changed(group, snapshot);
+    ESP_LOGD(TAG, "Published %s group discovery for '%s'", device_type_str(type), group.id);
+}
+
+void MqttAdapter::publish_group_attributes_(const NvsGroupConfig &group) {
+    DeviceType type = DeviceType::COVER;
+    if (!group_type_(group, &type)) return;
+
+    std::string payload = json::build_json([&](JsonObject root) {
+        root["elero_kind"] = "group";
+        root["device_type"] = device_type_str(type);
+        root["member_count"] = static_cast<int>(group.member_count);
+        auto ids = root["member_device_ids"].to<JsonArray>();
+        auto names = root["member_names"].to<JsonArray>();
+        for (uint8_t i = 0; i < group.member_count; ++i) {
+            ids.add(hex_str(group.device_ids[i]));
+            Device *dev = registry_ != nullptr ? registry_->find(group.device_ids[i]) : nullptr;
+            names.add(dev != nullptr ? dev->config.name : "");
+        }
+    });
+
+    ctx_.mqtt->publish(ctx_.group_topic(group.id, mqtt_topic::ATTRIBUTES).c_str(),
+                       payload.c_str(), true);
+}
+
+void MqttAdapter::subscribe_group_commands_(const NvsGroupConfig &group) {
+    DeviceType type = DeviceType::COVER;
+    if (!group_type_(group, &type)) return;
+
+    const std::string id = group.id;
+    ctx_.mqtt->unsubscribe(ctx_.group_topic(group.id, mqtt_topic::SET).c_str());
+    ctx_.mqtt->unsubscribe(ctx_.group_topic(group.id, mqtt_topic::SET_POSITION).c_str());
+    if (registry_->group_snapshot(group, millis()).supports_position) {
+        ctx_.mqtt->subscribe(ctx_.group_topic(group.id, mqtt_topic::SET_POSITION).c_str(),
+            [this, id](const char *, const char *payload) {
+                char *end = nullptr;
+                const float value = payload != nullptr ? strtof(payload, &end) : -1.0f;
+                if (payload == nullptr || end == payload || *end != '\0' ||
+                    !registry_->set_group_position(id.c_str(), value / PERCENT_SCALE)) {
+                    ESP_LOGW(TAG, "Invalid group position for '%s'", id.c_str());
+                }
+            });
+    }
+    ctx_.mqtt->subscribe(ctx_.group_topic(group.id, mqtt_topic::SET).c_str(),
+        [this, id, type](const char *, const char *payload) {
+            if (registry_ == nullptr) return;
+
+            uint8_t cmd_byte = mqtt_payload_to_command(payload, type);
+            if (cmd_byte == packet::command::INVALID) {
+                ESP_LOGW(TAG, "Unknown group action for '%s': %s", id.c_str(), payload != nullptr ? payload : "<null>");
+                return;
+            }
+
+            std::string error;
+            if (!registry_->command_saved_group(id.c_str(), cmd_byte, &error)) {
+                ESP_LOGW(TAG, "Group command failed for '%s': %s", id.c_str(),
+                         error.empty() ? "unknown error" : error.c_str());
+            }
+        });
+
+    ESP_LOGD(TAG, "Subscribed to group commands for '%s'", group.id);
+}
+
+void MqttAdapter::remove_group_discovery_(const char *id) {
+    if (id == nullptr || id[0] == '\0') return;
+
+    ctx_.mqtt->unsubscribe(ctx_.group_topic(id, mqtt_topic::SET).c_str());
+    ctx_.mqtt->unsubscribe(ctx_.group_topic(id, mqtt_topic::SET_POSITION).c_str());
+    const auto oid = ctx_.group_object_id(id);
+    ctx_.remove_discovery(ha_discovery::COVER, oid);
+    ctx_.remove_discovery(ha_discovery::LIGHT, oid);
+    ctx_.mqtt->publish(ctx_.group_topic(id, mqtt_topic::ATTRIBUTES).c_str(), "", true);
+    ctx_.mqtt->publish(ctx_.group_topic(id, mqtt_topic::STATE).c_str(), "", true);
+    ctx_.mqtt->publish(ctx_.group_topic(id, mqtt_topic::POSITION).c_str(), "", true);
+    ctx_.mqtt->publish(ctx_.group_topic(id, mqtt_topic::STATUS).c_str(), "", true);
+    ESP_LOGD(TAG, "Removed group discovery for '%s'", id);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SHARED HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -559,7 +796,8 @@ void MqttAdapter::publish_gateway_discovery_() {
     auto st = ctx_.topic_prefix + "/gateway/state";
 
     std::string payload = json::build_json([&](JsonObject root) {
-        root["name"] = "Gateway";
+        root["name"] = "Active devices";
+        root["has_entity_name"] = true;
         root["unique_id"] = oid;
         root["object_id"] = oid;
         root["state_topic"] = st;
@@ -571,7 +809,7 @@ void MqttAdapter::publish_gateway_discovery_() {
         root["json_attributes_template"] = "{{ value_json | tojson }}";
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
-        ctx_.add_device_block(device);
+        ctx_.add_hub_device_block(device);
     });
 
     ctx_.mqtt->publish(
@@ -585,12 +823,14 @@ void MqttAdapter::publish_gateway_state_() {
     size_t covers = registry_->count_active(DeviceType::COVER);
     size_t lights = registry_->count_active(DeviceType::LIGHT);
     size_t remotes = registry_->count_active(DeviceType::REMOTE);
+    size_t groups = registry_->count_groups();
 
     std::string payload = json::build_json([&](JsonObject root) {
         root["active_devices"] = static_cast<int>(covers + lights + remotes);
         root["covers"] = static_cast<int>(covers);
         root["lights"] = static_cast<int>(lights);
         root["remotes"] = static_cast<int>(remotes);
+        root["groups"] = static_cast<int>(groups);
     });
 
     ctx_.mqtt->publish(
@@ -621,7 +861,9 @@ void MqttAdapter::start_stale_collection_() {
                     JsonArray ids = dev["identifiers"];
                     if (ids.isNull() || ids.size() == 0) return false;
                     const char *id = ids[0];
-                    return id != nullptr && device_id == id;
+                    if (id == nullptr) return false;
+                    std::string ident = id;
+                    return ident == device_id || ident.rfind(device_id + "_", 0) == 0;
                 });
                 if (is_ours) {
                     collected_topics_.emplace_back(topic);
@@ -696,6 +938,13 @@ void MqttAdapter::collect_expected_topics_(std::vector<std::string> &out) const 
             out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr)));
         }
     });
+
+    registry_->for_each_group([&](const NvsGroupConfig &group) {
+        DeviceType type = DeviceType::COVER;
+        if (!group_type_(group, &type)) return;
+        out.push_back(ctx_.discovery_topic(type == DeviceType::COVER ? ha_discovery::COVER : ha_discovery::LIGHT,
+                                           ctx_.group_object_id(group.id)));
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -718,6 +967,11 @@ void MqttAdapter::republish_all_() {
         } else if (dev.is_remote()) {
             publish_remote_discovery_(dev);
         }
+    });
+
+    registry_->for_each_group([this](const NvsGroupConfig &group) {
+        publish_group_discovery_(group);
+        subscribe_group_commands_(group);
     });
 
     // Force full state republish through the registry's snapshot→diff→notify pipeline.

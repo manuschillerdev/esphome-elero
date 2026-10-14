@@ -19,4 +19,4 @@ interface FreqConfig {
    */
   'freq0': string;
 }
-export { FreqConfig };
+export type { FreqConfig };

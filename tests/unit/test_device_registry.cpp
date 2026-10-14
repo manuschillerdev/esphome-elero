@@ -6,7 +6,7 @@
 ///
 /// ## What is NOT testable on host (requires ESP32 + CC1101 hardware):
 ///
-/// - RF task loop (rf_task_func_) — FreeRTOS task on Core 0, real SPI
+/// - FreeRTOS scheduling and real SPI timing (transport orchestration is host-tested)
 /// - ISR → atomic flag → task notification wakeup timing
 /// - Cross-core queue backpressure (rx_queue full, tx_done_queue ordering)
 /// - drain_fifo_() — real CC1101 FIFO burst reads, multi-packet parsing from wire
@@ -88,6 +88,9 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &) {
     return true;
 }
 
+bool Elero::take_request(RfTaskRequest &) { return false; }
+bool Elero::publish_completion(const TxResult &) { return false; }
+void Elero::receive_frame(const uint8_t *, size_t) {}
 void Elero::setup() {}
 void Elero::loop() {}
 void Elero::dump_config() {}
@@ -129,6 +132,15 @@ struct MockAdapter : public OutputAdapter {
     void on_rf_packet(const RfPacketInfo &) override {
         rf_packets++;
     }
+    void on_hub_config_changed() override {
+        hub_config_changed++;
+    }
+    void on_group_upserted(const NvsGroupConfig &group) override {
+        group_upserted.push_back(group.id);
+    }
+    void on_group_removed(const char *id) override {
+        group_removed.push_back(id == nullptr ? "" : id);
+    }
 
     std::vector<uint32_t> added;
     std::vector<uint32_t> removed;
@@ -136,10 +148,15 @@ struct MockAdapter : public OutputAdapter {
     std::vector<uint16_t> last_changes;
     std::vector<uint32_t> config_changed;
     int rf_packets{0};
+    int hub_config_changed{0};
+    std::vector<std::string> group_upserted;
+    std::vector<std::string> group_removed;
 
     void clear() {
         added.clear(); removed.clear(); state_changed.clear();
-        last_changes.clear(); config_changed.clear(); rf_packets = 0;
+        last_changes.clear(); config_changed.clear();
+        group_upserted.clear(); group_removed.clear();
+        rf_packets = 0; hub_config_changed = 0;
     }
 };
 
@@ -170,6 +187,18 @@ static NvsDeviceConfig make_light_config(uint32_t addr, const char *name = "Test
     return cfg;
 }
 
+static NvsGroupConfig make_group_config(const char *id, const char *name, std::initializer_list<uint32_t> members) {
+    NvsGroupConfig cfg{};
+    cfg.set_id(id);
+    cfg.set_name(name);
+    cfg.member_count = static_cast<uint8_t>(members.size());
+    size_t idx = 0;
+    for (uint32_t member : members) {
+        cfg.device_ids[idx++] = member;
+    }
+    return cfg;
+}
+
 static RfPacketInfo make_status_pkt(uint32_t src, uint8_t state_byte, float rssi = -50.0f) {
     RfPacketInfo pkt{};
     pkt.timestamp_ms = esphome::millis();
@@ -189,6 +218,18 @@ static RfPacketInfo make_command_pkt(uint32_t src, uint32_t dst, uint8_t cmd) {
     pkt.type = pkt::msg_type::COMMAND;
     pkt.command = cmd;
     pkt.channel = 4;
+    pkt.rssi = -55.0f;
+    return pkt;
+}
+
+static RfPacketInfo make_selector_pkt(uint32_t src, uint8_t channel, uint8_t type, uint8_t cmd) {
+    RfPacketInfo pkt{};
+    pkt.timestamp_ms = esphome::millis();
+    pkt.src = src;
+    pkt.dst = channel;
+    pkt.type = type;
+    pkt.command = cmd;
+    pkt.channel = channel;
     pkt.rssi = -55.0f;
     return pkt;
 }
@@ -216,11 +257,11 @@ class DeviceRegistryTest : public ::testing::Test {
     }
 
     Device *add_cover(uint32_t addr = 0xA831E5) {
-        return registry_.register_device(make_cover_config(addr));
+        return registry_.upsert(make_cover_config(addr));
     }
 
     Device *add_light(uint32_t addr = 0xC41A2B) {
-        return registry_.register_device(make_light_config(addr));
+        return registry_.upsert(make_light_config(addr));
     }
 };
 
@@ -228,10 +269,11 @@ class DeviceRegistryTest : public ::testing::Test {
 // CRUD — only non-trivial paths
 // ═══════════════════════════════════════════════════════════════════════════════
 
-TEST_F(DeviceRegistryTest, RegisterDuplicate_UpdatesConfigInPlace) {
+TEST_F(DeviceRegistryTest, UpsertDuplicate_UpdatesConfigInPlace) {
     auto *dev1 = add_cover(0xA831E5);
+    adapter_.clear();
     auto cfg2 = make_cover_config(0xA831E5, "Updated Cover");
-    auto *dev2 = registry_.register_device(cfg2);
+    auto *dev2 = registry_.upsert(cfg2);
     EXPECT_EQ(dev1, dev2);  // Same slot, not a new allocation
     EXPECT_STREQ(dev2->config.name, "Updated Cover");
     EXPECT_EQ(registry_.count_active(), 1u);
@@ -250,15 +292,9 @@ TEST_F(DeviceRegistryTest, Remove_NotifiesBeforeDeactivation) {
 
 TEST_F(DeviceRegistryTest, SlotExhaustion_ReturnsNull) {
     for (uint32_t i = 0; i < DeviceRegistry::MAX_DEVICES; ++i) {
-        ASSERT_NE(registry_.register_device(make_cover_config(0x100000 + i)), nullptr);
+        ASSERT_NE(registry_.upsert(make_cover_config(0x100000 + i)), nullptr);
     }
-    EXPECT_EQ(registry_.register_device(make_cover_config(0xFFFFFF)), nullptr);
-}
-
-TEST_F(DeviceRegistryTest, RegisterDevice_RejectsWhenNvsEnabled) {
-    registry_.set_nvs_enabled(true);
-    EXPECT_EQ(registry_.register_device(make_cover_config(0xA831E5)), nullptr);
-    EXPECT_EQ(registry_.count_active(), 0u);
+    EXPECT_EQ(registry_.upsert(make_cover_config(0xFFFFFF)), nullptr);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -369,7 +405,7 @@ TEST_F(DeviceRegistryTest, SetPosition_NoDurations_Rejected) {
     auto cfg = make_cover_config(0xA831E5);
     cfg.open_duration_ms = 0;
     cfg.close_duration_ms = 0;
-    auto *dev = registry_.register_device(cfg);
+    auto *dev = registry_.upsert(cfg);
     adapter_.clear();
 
     registry_.set_cover_position(*dev, 0.5f);
@@ -414,7 +450,7 @@ TEST_F(DeviceRegistryTest, SetBrightness_PartialStartsDimming) {
 TEST_F(DeviceRegistryTest, SetBrightness_NoDimSupport_InstantOn) {
     auto cfg = make_light_config(0xC41A2B);
     cfg.dim_duration_ms = 0;
-    auto *dev = registry_.register_device(cfg);
+    auto *dev = registry_.upsert(cfg);
 
     registry_.set_light_brightness(*dev, 0.5f);
 
@@ -509,16 +545,6 @@ TEST_F(DeviceRegistryTest, RfCommand_DiscoversRemoteEphemerally) {
     EXPECT_EQ(remote->config.updated_at, 0u);
 }
 
-TEST_F(DeviceRegistryTest, RfCommand_NativeMode_NoDiscovery) {
-    // NVS disabled = native mode = devices come from YAML only
-    add_cover(0xA831E5);
-    adapter_.clear();
-
-    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP),
-                           mock_time_.millis());
-    EXPECT_EQ(registry_.find(0xBBBBBB, DeviceType::REMOTE), nullptr);
-}
-
 TEST_F(DeviceRegistryTest, RfCommand_UpdatesExistingRemote) {
     add_cover(0xA831E5);
     registry_.set_nvs_enabled(true);
@@ -535,6 +561,58 @@ TEST_F(DeviceRegistryTest, RfCommand_UpdatesExistingRemote) {
     EXPECT_EQ(adapter_.added.size(), 0u);
     auto &rd = std::get<RemoteDevice>(registry_.find(0xBBBBBB, DeviceType::REMOTE)->logic);
     EXPECT_EQ(rd.last_command, pkt::command::DOWN);
+}
+
+TEST_F(DeviceRegistryTest, RfSelectorProgram_DiscoversRemote) {
+    registry_.set_nvs_enabled(true);
+    adapter_.clear();
+
+    registry_.on_rf_packet(make_selector_pkt(0xBBBBBB, 5, pkt::msg_type::PROGRAM,
+                                             pkt::command::PROGRAM),
+                           mock_time_.millis());
+
+    ASSERT_EQ(adapter_.added.size(), 1u);
+    auto *remote = registry_.find(0xBBBBBB, DeviceType::REMOTE);
+    ASSERT_NE(remote, nullptr);
+    auto &rd = std::get<RemoteDevice>(remote->logic);
+    EXPECT_EQ(rd.last_command, pkt::command::PROGRAM);
+    EXPECT_EQ(rd.last_target, 5u);
+    EXPECT_EQ(rd.last_channel, 5);
+}
+
+// Regression: before RemoteDevice::Published was introduced, every packet from a
+// tracked remote fired a full state-change publish (changes = ALL), so mesh-relayed
+// echoes of our own TX caused a publish storm. See ELERO_GROUP_INVESTIGATION.md §8.1.
+// Now: identical repeated packets must be deduped to zero notifications.
+TEST_F(DeviceRegistryTest, RfCommand_IdenticalRemotePacket_DedupedToNoPublish) {
+    add_cover(0xA831E5);
+    registry_.set_nvs_enabled(true);
+
+    // First packet: discovery + initial notify (snapshot vs sentinel defaults diffs everything)
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP),
+                           mock_time_.millis());
+    adapter_.clear();
+
+    // Identical second packet: same command, target, channel, RSSI bucket → zero notifications
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP),
+                           mock_time_.millis());
+
+    EXPECT_EQ(adapter_.state_changed.size(), 0u)
+        << "Identical remote packet must not fire a publish (dedup regression)";
+}
+
+TEST_F(DeviceRegistryTest, RfCommand_ChangedRemoteField_Publishes) {
+    add_cover(0xA831E5);
+    registry_.set_nvs_enabled(true);
+
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::UP),
+                           mock_time_.millis());
+    adapter_.clear();
+
+    // Changed command byte → must publish
+    registry_.on_rf_packet(make_command_pkt(0xBBBBBB, 0xA831E5, pkt::command::DOWN),
+                           mock_time_.millis());
+    EXPECT_EQ(adapter_.state_changed.size(), 1u);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -617,7 +695,6 @@ TEST(DiffCoverTest, FirstDiff_DefaultPublished_ReturnsAllFlags) {
         .problem_type = "none",
         .rssi = -50.0f,
         .state_string = "bottom",
-        .command_source = "unknown",
         .device_class = "shutter",
     };
 
@@ -628,7 +705,6 @@ TEST(DiffCoverTest, FirstDiff_DefaultPublished_ReturnsAllFlags) {
     EXPECT_NE(changes & state_change::HA_STATE, 0);
     EXPECT_NE(changes & state_change::STATE_STRING, 0);
     EXPECT_NE(changes & state_change::RSSI, 0);
-    EXPECT_NE(changes & state_change::COMMAND_SOURCE, 0);
     EXPECT_NE(changes & state_change::PROBLEM, 0);
 }
 
@@ -636,14 +712,13 @@ TEST(DiffCoverTest, IdenticalSnapshot_ReturnsZero) {
     CoverDevice::Published pub{};
     CoverStateSnapshot snap{
         .position = 0.5f,
-        .ha_state = "stopped",
+        .ha_state = "open",
         .operation = cover_sm::Operation::IDLE,
         .tilted = false,
         .is_problem = false,
         .problem_type = "none",
         .rssi = -40.0f,
         .state_string = "intermediate",
-        .command_source = "hub",
         .device_class = "shutter",
     };
 
@@ -659,14 +734,13 @@ TEST(DiffCoverTest, SingleFieldChange_ReturnsOnlyThatFlag) {
     CoverDevice::Published pub{};
     CoverStateSnapshot snap{
         .position = 0.5f,
-        .ha_state = "stopped",
+        .ha_state = "open",
         .operation = cover_sm::Operation::IDLE,
         .tilted = false,
         .is_problem = false,
         .problem_type = "none",
         .rssi = -40.0f,
         .state_string = "intermediate",
-        .command_source = "hub",
         .device_class = "shutter",
     };
 
@@ -693,7 +767,6 @@ TEST(DiffCoverTest, RssiRounding_SameRounded_NoFlag) {
         .problem_type = "none",
         .rssi = -40.3f,
         .state_string = "bottom",
-        .command_source = "hub",
         .device_class = "shutter",
     };
 
@@ -716,14 +789,12 @@ TEST(DiffLightTest, FirstDiff_DefaultPublished_ReturnsAllFlags) {
         .problem_type = "none",
         .rssi = -50.0f,
         .state_string = "bottom",
-        .command_source = "unknown",
     };
 
     uint16_t changes = diff_and_update_light(snap, pub);
 
     EXPECT_NE(changes & state_change::RSSI, 0);
     EXPECT_NE(changes & state_change::STATE_STRING, 0);
-    EXPECT_NE(changes & state_change::COMMAND_SOURCE, 0);
     EXPECT_NE(changes & state_change::PROBLEM, 0);
 }
 
@@ -736,7 +807,6 @@ TEST(DiffLightTest, IdenticalSnapshot_ReturnsZero) {
         .problem_type = "none",
         .rssi = -45.0f,
         .state_string = "on",
-        .command_source = "hub",
     };
 
     diff_and_update_light(snap, pub);
@@ -754,7 +824,6 @@ TEST(DiffLightTest, BrightnessChange_ReturnsBrightnessFlag) {
         .problem_type = "none",
         .rssi = -45.0f,
         .state_string = "on",
-        .command_source = "hub",
     };
 
     diff_and_update_light(snap, pub);
@@ -764,4 +833,355 @@ TEST(DiffLightTest, BrightnessChange_ReturnsBrightnessFlag) {
 
     EXPECT_NE(changes & state_change::BRIGHTNESS, 0);
     EXPECT_EQ(changes & ~state_change::BRIGHTNESS, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// command_group() — multi-dest 0x44
+// ═══════════════════════════════════════════════════════════════════════════════
+
+static NvsDeviceConfig make_cover_config_ch(uint32_t addr, uint8_t channel,
+                                             uint32_t src = 0xF0D008,
+                                             const char *name = "Cover") {
+    NvsDeviceConfig cfg{};
+    cfg.type = DeviceType::COVER;
+    cfg.dst_address = addr;
+    cfg.src_address = src;
+    cfg.channel = channel;
+    cfg.open_duration_ms = 10000;
+    cfg.close_duration_ms = 10000;
+    strncpy(cfg.name, name, NVS_NAME_MAX - 1);
+    return cfg;
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_TwoCovers_EnqueuesAndNotifies) {
+    auto *dev1 = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = registry_.upsert(make_cover_config_ch(0xA00002, 3));
+    ASSERT_NE(dev1, nullptr);
+    ASSERT_NE(dev2, nullptr);
+    adapter_.clear();
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::UP);
+
+    // Both devices should have state_changed notifications
+    EXPECT_GE(adapter_.state_changed.size(), 2u);
+
+    // Lead device should have the group command queued
+    EXPECT_TRUE(dev1->sender.has_pending_commands());
+
+    // Each device should have a CHECK queued
+    EXPECT_TRUE(dev2->sender.has_pending_commands());
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_UpdatesFSMs) {
+    auto *dev1 = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = registry_.upsert(make_cover_config_ch(0xA00002, 3));
+    adapter_.clear();
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::DOWN);
+
+    // Both covers should be in Closing state
+    auto &cover1 = std::get<CoverDevice>(dev1->logic);
+    auto &cover2 = std::get<CoverDevice>(dev2->logic);
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Closing>(cover1.state));
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Closing>(cover2.state));
+    EXPECT_EQ(cover1.last_direction, cover_sm::Operation::CLOSING);
+    EXPECT_EQ(cover2.last_direction, cover_sm::Operation::CLOSING);
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_StopClearsTarget) {
+    auto *dev1 = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = registry_.upsert(make_cover_config_ch(0xA00002, 3));
+
+    // First start movement
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::UP);
+
+    // Then stop
+    adapter_.clear();
+    registry_.command_group(devs, 2, pkt::command::STOP);
+
+    auto &cover1 = std::get<CoverDevice>(dev1->logic);
+    auto &cover2 = std::get<CoverDevice>(dev2->logic);
+    EXPECT_EQ(cover1.target_position, cover_sm::NO_TARGET);
+    EXPECT_EQ(cover2.target_position, cover_sm::NO_TARGET);
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_SetsGroupFieldsOnLeadSender) {
+    auto *dev1 = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = registry_.upsert(make_cover_config_ch(0xA00002, 3));
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::UP);
+
+    // Lead sender's command template should have group fields set
+    const auto &cmd = dev1->sender.command();
+    EXPECT_EQ(cmd.num_dests, 2);
+    EXPECT_EQ(cmd.dest_channels[0], 1);
+    EXPECT_EQ(cmd.dest_channels[1], 3);
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_EnqueueFailureRestoresTemplate) {
+    auto *dev1 = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = registry_.upsert(make_cover_config_ch(0xA00002, 3));
+    ASSERT_NE(dev1, nullptr);
+    ASSERT_NE(dev2, nullptr);
+
+    auto &cmd = dev1->sender.command();
+    cmd.num_dests = 7;
+    cmd.dest_channels[0] = 9;
+    cmd.dest_channels[1] = 11;
+
+    for (int i = 0; i < pkt::limits::MAX_COMMAND_QUEUE; ++i) {
+        uint8_t queued = (i % 2 == 0) ? pkt::command::UP : pkt::command::DOWN;
+        ASSERT_TRUE(dev1->sender.enqueue(queued));
+    }
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::STOP);
+
+    EXPECT_EQ(cmd.num_dests, 7);
+    EXPECT_EQ(cmd.dest_channels[0], 9);
+    EXPECT_EQ(cmd.dest_channels[1], 11);
+    EXPECT_EQ(dev2->sender.queue_size(), 0u);
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_NumDestsAutoCleared) {
+    // Test the mechanism directly: CommandSender::advance_queue_() clears num_dests.
+    // We use a deferred-completion mock because process_queue sets TX_PENDING
+    // AFTER request_tx returns — synchronous on_tx_complete would be overwritten.
+    CommandSender sender;
+    auto &cmd = sender.command();
+    cmd.src_addr = 0xF0D008;
+    cmd.dst_addr = 0xA00001;
+    cmd.channel = 1;
+    cmd.type = pkt::msg_type::BUTTON;
+
+    // Simulate what command_group does: set group fields, enqueue
+    cmd.num_dests = 2;
+    cmd.dest_channels[0] = 1;
+    cmd.dest_channels[1] = 3;
+    (void) sender.enqueue(pkt::command::UP, pkt::button::PACKETS, pkt::msg_type::BUTTON);
+
+    EXPECT_EQ(cmd.num_dests, 2);  // Still set while queued
+
+    // Mock hub that defers on_tx_complete to the next tick
+    struct DeferredHub {
+        TxClient *pending{nullptr};
+        bool request_tx(TxClient *client, const EleroCommand &) {
+            pending = client;
+            return true;
+        }
+        void complete() {
+            if (pending) { pending->on_tx_complete(true); pending = nullptr; }
+        }
+    } mock_hub;
+
+    // Drain the queue: each cycle = process_queue (sends) + complete + advance time
+    for (int i = 0; i < 20; ++i) {
+        mock_time_.advance(15);
+        sender.process_queue(mock_time_.millis(), &mock_hub, "test");
+        mock_hub.complete();
+        if (!sender.has_pending_commands() &&
+            sender.state() == CommandSender::State::IDLE) break;
+    }
+
+    EXPECT_EQ(sender.state(), CommandSender::State::IDLE);
+    EXPECT_FALSE(sender.has_pending_commands());
+    EXPECT_EQ(sender.command().num_dests, 0);
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_RejectsCountBelow2) {
+    auto *dev1 = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    adapter_.clear();
+
+    Device *devs[] = {dev1};
+    registry_.command_group(devs, 1, pkt::command::UP);
+
+    // Should not have notified anything
+    EXPECT_TRUE(adapter_.state_changed.empty());
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_RejectsNullDevices) {
+    adapter_.clear();
+    registry_.command_group(nullptr, 2, pkt::command::UP);
+    EXPECT_TRUE(adapter_.state_changed.empty());
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_RejectsMixedSrcAddress) {
+    auto *dev1 = registry_.upsert(make_cover_config_ch(0xA00001, 1, 0xF0D008));
+    auto *dev2 = registry_.upsert(make_cover_config_ch(0xA00002, 3, 0xDEAD00));
+    adapter_.clear();
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::UP);
+
+    // Should reject — different src_address
+    EXPECT_TRUE(adapter_.state_changed.empty());
+}
+
+TEST_F(DeviceRegistryTest, CommandGroup_RejectsLightDevice) {
+    auto *dev1 = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *dev2 = add_light(0xC41A2B);
+    adapter_.clear();
+
+    Device *devs[] = {dev1, dev2};
+    registry_.command_group(devs, 2, pkt::command::UP);
+
+    // Should reject — dev2 is not a cover
+    EXPECT_TRUE(adapter_.state_changed.empty());
+}
+
+TEST_F(DeviceRegistryTest, UpsertGroup_AcceptsSameTypeDeviceIds) {
+    ASSERT_NE(registry_.upsert(make_cover_config_ch(0xA00001, 1)), nullptr);
+    ASSERT_NE(registry_.upsert(make_cover_config_ch(0xA00002, 3)), nullptr);
+
+    auto group = make_group_config("grp_test", "Test Group", {0xA00001, 0xA00002});
+    std::string error;
+    auto *saved = registry_.upsert_group(group, &error);
+
+    ASSERT_NE(saved, nullptr) << error;
+    EXPECT_EQ(registry_.count_groups(), 1u);
+    EXPECT_STREQ(saved->id, "grp_test");
+    EXPECT_EQ(saved->member_count, 2);
+    ASSERT_EQ(adapter_.group_upserted.size(), 1u);
+    EXPECT_EQ(adapter_.group_upserted[0], "grp_test");
+}
+
+TEST_F(DeviceRegistryTest, UpsertGroup_RejectsMixedDeviceTypes) {
+    ASSERT_NE(registry_.upsert(make_cover_config(0xA00001)), nullptr);
+    ASSERT_NE(registry_.upsert(make_light_config(0xB00002)), nullptr);
+
+    auto group = make_group_config("grp_mixed", "Mixed", {0xA00001, 0xB00002});
+    std::string error;
+
+    EXPECT_EQ(registry_.upsert_group(group, &error), nullptr);
+    EXPECT_EQ(registry_.count_groups(), 0u);
+    EXPECT_NE(error.find("mix"), std::string::npos);
+}
+
+TEST_F(DeviceRegistryTest, CommandSavedGroup_PartitionsByRemote) {
+    auto cfg1 = make_cover_config_ch(0xA00001, 1);
+    cfg1.src_address = 0x111111;
+    auto cfg2 = make_cover_config_ch(0xA00002, 3);
+    cfg2.src_address = 0x111111;
+    auto cfg3 = make_cover_config_ch(0xA00003, 5);
+    cfg3.src_address = 0x222222;
+    auto *dev1 = registry_.upsert(cfg1);
+    auto *dev2 = registry_.upsert(cfg2);
+    auto *dev3 = registry_.upsert(cfg3);
+    ASSERT_NE(dev1, nullptr);
+    ASSERT_NE(dev2, nullptr);
+    ASSERT_NE(dev3, nullptr);
+
+    auto group = make_group_config("grp_multi", "Multi", {0xA00001, 0xA00002, 0xA00003});
+    std::string error;
+    ASSERT_NE(registry_.upsert_group(group, &error), nullptr) << error;
+    adapter_.clear();
+
+    EXPECT_TRUE(registry_.command_saved_group("grp_multi", pkt::command::UP, &error)) << error;
+
+    EXPECT_EQ(dev1->sender.command().num_dests, 2);
+    EXPECT_EQ(dev1->sender.command().dest_channels[0], 1);
+    EXPECT_EQ(dev1->sender.command().dest_channels[1], 3);
+    EXPECT_EQ(dev3->sender.command().num_dests, 0);
+    EXPECT_GE(adapter_.state_changed.size(), 3u);
+}
+
+TEST_F(DeviceRegistryTest, RemoveDevice_PrunesSavedGroups) {
+    ASSERT_NE(registry_.upsert(make_cover_config_ch(0xA00001, 1)), nullptr);
+    ASSERT_NE(registry_.upsert(make_cover_config_ch(0xA00002, 3)), nullptr);
+    ASSERT_NE(registry_.upsert(make_cover_config_ch(0xA00003, 5)), nullptr);
+    auto group = make_group_config("grp_prune", "Prune", {0xA00001, 0xA00002, 0xA00003});
+    std::string error;
+    ASSERT_NE(registry_.upsert_group(group, &error), nullptr) << error;
+    adapter_.clear();
+
+    EXPECT_TRUE(registry_.remove(0xA00003, DeviceType::COVER));
+
+    const auto *saved = registry_.find_group("grp_prune");
+    ASSERT_NE(saved, nullptr);
+    EXPECT_EQ(saved->member_count, 2);
+    ASSERT_EQ(adapter_.group_upserted.size(), 1u);
+    EXPECT_EQ(adapter_.group_upserted[0], "grp_prune");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Hub name override (NvsHubConfig)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_F(DeviceRegistryTest, HubName_DefaultUsedWhenNoOverride) {
+    registry_.set_default_hub_name("Elero Gateway");
+    EXPECT_EQ(registry_.hub_display_name(), "Elero Gateway");
+}
+
+TEST_F(DeviceRegistryTest, HubName_OverrideTakesPrecedenceOverDefault) {
+    registry_.set_default_hub_name("Elero Gateway");
+    registry_.init_preferences();  // Activate NVS persistence path
+    adapter_.clear();
+
+    EXPECT_TRUE(registry_.set_hub_name_override("Living Room"));
+    EXPECT_EQ(registry_.hub_display_name(), "Living Room");
+    EXPECT_EQ(adapter_.hub_config_changed, 1);
+}
+
+TEST_F(DeviceRegistryTest, HubName_EmptyOverrideFallsBackToDefault) {
+    registry_.set_default_hub_name("Elero Gateway");
+    registry_.init_preferences();
+    registry_.set_hub_name_override("Living Room");
+    adapter_.clear();
+
+    EXPECT_TRUE(registry_.set_hub_name_override(""));
+    EXPECT_EQ(registry_.hub_display_name(), "Elero Gateway");
+    EXPECT_EQ(adapter_.hub_config_changed, 1);
+}
+
+TEST_F(DeviceRegistryTest, HubName_IdenticalOverrideIsNoOp) {
+    registry_.set_default_hub_name("Elero Gateway");
+    registry_.init_preferences();
+    registry_.set_hub_name_override("Living Room");
+    adapter_.clear();
+
+    EXPECT_FALSE(registry_.set_hub_name_override("Living Room"));
+    EXPECT_EQ(adapter_.hub_config_changed, 0);  // No notification on no-op
+}
+
+TEST_F(DeviceRegistryTest, HubName_TruncatedToNvsBufferSize) {
+    registry_.init_preferences();
+    // 40 chars, NVS_HUB_NAME_MAX = 32 → max payload 31 chars + NUL.
+    std::string long_name(40, 'A');
+    EXPECT_TRUE(registry_.set_hub_name_override(long_name));
+    EXPECT_EQ(registry_.hub_display_name().size(), NVS_HUB_NAME_MAX - 1);
+    EXPECT_EQ(registry_.hub_display_name(), std::string(NVS_HUB_NAME_MAX - 1, 'A'));
+}
+
+TEST_F(DeviceRegistryTest, HubName_SetDefaultDoesNotOverrideExistingOverride) {
+    registry_.init_preferences();
+    registry_.set_hub_name_override("Living Room");
+
+    // YAML default arrives later (e.g. set_default_hub_name called during adapter setup
+    // after init_preferences has already loaded the override from NVS).
+    registry_.set_default_hub_name("Elero Gateway");
+    EXPECT_EQ(registry_.hub_display_name(), "Living Room");
+}
+
+// hub_default_name() / has_hub_name_override() are used by export_config to
+// decide whether to include `hub.name_override` in the snapshot envelope.
+TEST_F(DeviceRegistryTest, HubName_DefaultNameAccessor) {
+    registry_.set_default_hub_name("Elero Gateway");
+    EXPECT_EQ(registry_.hub_default_name(), "Elero Gateway");
+    EXPECT_FALSE(registry_.has_hub_name_override());
+}
+
+TEST_F(DeviceRegistryTest, HubName_HasOverrideReflectsState) {
+    registry_.set_default_hub_name("Elero Gateway");
+    registry_.init_preferences();
+    EXPECT_FALSE(registry_.has_hub_name_override());
+
+    registry_.set_hub_name_override("Living Room");
+    EXPECT_TRUE(registry_.has_hub_name_override());
+
+    registry_.set_hub_name_override("");
+    EXPECT_FALSE(registry_.has_hub_name_override());
 }

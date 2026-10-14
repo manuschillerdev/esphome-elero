@@ -1,4 +1,4 @@
-# ESPHome compile test: ESP32 with native API (same CC1101 config as MQTT test)
+# ESPHome compile test: ESP32 with native API + NVS-managed devices
 substitutions:
   spi_clk: GPIO18
   spi_mosi: GPIO23
@@ -38,23 +38,8 @@ elero:
   cs_pin: ${spi_cs}
   gdo0_pin: ${gdo0_pin}
 
-cover:
-  - platform: elero
-    dst_address: 0xa831e5
-    channel: 4
-    src_address: 0xf0d008
-    name: "Test Cover"
-    open_duration: 25s
-    close_duration: 22s
-    supports_tilt: true
-
-light:
-  - platform: elero
-    dst_address: 0xc41a2b
-    channel: 6
-    src_address: 0xf0d008
-    name: "Test Light"
-    dim_duration: 5s
+# Native API + NVS device persistence
+elero_nvs:
 
 elero_web:
   port: 80

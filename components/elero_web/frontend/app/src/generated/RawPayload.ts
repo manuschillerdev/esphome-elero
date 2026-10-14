@@ -47,4 +47,4 @@ interface RawPayload {
    */
   'hop'?: string;
 }
-export { RawPayload };
+export type { RawPayload };

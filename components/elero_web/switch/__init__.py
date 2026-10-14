@@ -1,7 +1,8 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import switch
-from esphome.components.elero_web import (
+
+from .. import (
     CONF_ELERO_WEB_ID,
     EleroWebServer,
     elero_ns,

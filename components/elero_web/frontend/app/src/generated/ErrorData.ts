@@ -6,4 +6,4 @@ interface ErrorData {
    */
   'msg': string;
 }
-export { ErrorData };
+export type { ErrorData };

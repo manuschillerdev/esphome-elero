@@ -1,20 +1,24 @@
 import { signal, computed, batch } from '@preact/signals'
 import type {
   ConfigData, RfData, DeviceType, CrudEventData, DeviceUpsertedData,
-  StateChangedData, FreqConfig, HubMode, HubConfig, RadioConfig,
-  BlindConfig, LightConfig, RemoteConfig,
+  StateChangedData, FreqConfig, HubMode, HubConfig, HubConfigEventData, RadioConfig,
+  BlindConfig, LightConfig, RemoteConfig, GroupConfig as WireGroupConfig, GroupRemovedData,
   RfStateName,
+  ConfigSnapshot, ImportResult, LearnInStateData, GroupStateData,
 } from '@/generated'
 
 // Re-export generated types used by components
-export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, HubConfig, RadioConfig, CrudEventData, DeviceUpsertedData, StateChangedData, RfStateName }
+export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, HubConfig, RadioConfig, CrudEventData, DeviceUpsertedData, StateChangedData, RfStateName, LearnInStateData }
+export type GroupConfig = WireGroupConfig & { updated_at: number | null }
 
 // ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
 
 export const msg_type = {
   BUTTON: '0x44',
+  BUTTON_GROUP: '0x45',
   COMMAND: '0x6a',
   COMMAND_ALT: '0x69',
+  PROGRAM: '0x70',
   STATUS: '0xca',
   STATUS_ALT: '0xc9',
 } as const
@@ -26,6 +30,9 @@ export const command = {
   TILT: '0x24',
   DOWN: '0x40',
   INTERMEDIATE: '0x44',
+  PROGRAM: '0x80',
+  PROGRAM_GROUP: '0x81',
+  PROGRAM_TARGET: '0x84',
 } as const
 
 /// Hex byte → RfStateName (from AsyncAPI spec). Single source of truth for
@@ -100,6 +107,11 @@ export function isButtonPacket(pkt: RfData): boolean {
   return pkt.type?.toLowerCase() === msg_type.BUTTON
 }
 
+export function isSelectorPacket(pkt: RfData): boolean {
+  const t = pkt.type?.toLowerCase()
+  return t === msg_type.BUTTON || t === msg_type.BUTTON_GROUP || t === msg_type.PROGRAM
+}
+
 export function isMovingState(raw: string | undefined): boolean {
   const name = resolveStateName(raw)
   return name === 'start_moving_up' || name === 'start_moving_down' ||
@@ -116,24 +128,38 @@ export function parseFreq(val: number | string | undefined, defaultVal: number):
 
 export type AppDeviceType = 'cover' | 'light' | 'remote' | 'unknown'
 
-export interface Device {
+export interface DevicePairing {
+  remote: string
+  channel: number
+}
+
+type CoverCommandBytes = Required<Pick<BlindConfig,
+  'command_up' | 'command_down' | 'command_stop' | 'command_check' | 'command_tilt'>>
+
+function coverCommandBytes(config: Partial<CoverCommandBytes>): CoverCommandBytes {
+  return {
+    command_up: config.command_up ?? command.UP,
+    command_down: config.command_down ?? command.DOWN,
+    command_stop: config.command_stop ?? command.STOP,
+    command_check: config.command_check ?? command.CHECK,
+    command_tilt: config.command_tilt ?? command.TILT,
+  }
+}
+
+export interface Device extends CoverCommandBytes {
   address: string
   type: DeviceType
   updated_at: number | null  // non-null = saved (server-confirmed), null = unsaved
   enabled: boolean
   channel: number
   remote: string
+  pairings: DevicePairing[]
   name: string
   open_ms: number
   close_ms: number
   supports_tilt: boolean
   dim_ms: number
   lastStatus: RfPacketWithTimestamp | null
-}
-
-export interface DeviceGroup {
-  remote: Device
-  devices: Device[]
 }
 
 // ─── Primary Signals ────────────────────────────────────────────────────────
@@ -145,6 +171,8 @@ export const hub = signal<HubConfig>({
   version: '',
   mode: 'native',
   crud: false,
+  name: '',
+  default_src_address: '0x000001',
 })
 
 export const radio = signal<RadioConfig>({
@@ -155,50 +183,24 @@ export const radio = signal<RadioConfig>({
 
 export const devices = signal<Map<string, Device>>(new Map())
 
+export const groups = signal<Map<string, GroupConfig>>(new Map())
+
 export const rfPackets = signal<RfPacketWithTimestamp[]>([])
 
-/// True when NVS config has changed and a reboot is needed to apply in HA (native_nvs mode)
+/// True when NVS config has changed and a reboot is needed to apply in HA (native mode)
 export const rebootNeeded = signal(false)
 
-export type StatusFilter = 'all' | 'saved' | 'unsaved'
-export type DeviceTypeFilter = 'all' | 'covers' | 'lights'
-export type ActiveTab = 'devices' | 'packets' | 'hub'
+export const learnIn = signal<LearnInStateData>({
+  state: 'idle',
+  active: false,
+  busy: false,
+})
 
-export interface Filters {
-  status: StatusFilter
-  deviceType: DeviceTypeFilter
-  rf: string
-}
+export type ActiveTab = 'manage' | 'packets' | 'hub'
 
-const DEFAULT_FILTERS: Filters = { status: 'all', deviceType: 'all', rf: '' }
-
-export const activeTab = signal<ActiveTab>('devices')
-export const filters = signal<Filters>(DEFAULT_FILTERS)
+export const activeTab = signal<ActiveTab>('manage')
 
 // ─── Computed (auto-tracked, auto-memoized) ─────────────────────────────────
-
-export const deviceGroups = computed<DeviceGroup[]>(() => {
-  const devs = devices.value
-  const { status, deviceType } = filters.value
-  const groups = new Map<string, Device[]>()
-  for (const d of devs.values()) {
-    if (d.type === 'remote') continue
-    if (status === 'saved' && d.updated_at === null) continue
-    if (status === 'unsaved' && d.updated_at !== null) continue
-    if (deviceType === 'covers' && d.type !== 'cover') continue
-    if (deviceType === 'lights' && d.type !== 'light') continue
-    const key = d.remote || 'unknown'
-    const arr = groups.get(key)
-    if (arr) arr.push(d)
-    else groups.set(key, [d])
-  }
-  return [...groups]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([addr, items]) => ({
-      remote: devs.get(addr) ?? makeDevice({ address: addr, type: 'remote' }),
-      devices: items.sort((a, b) => a.address.localeCompare(b.address)),
-    }))
-})
 
 export const filterCounts = computed(() => {
   let saved = 0, unsaved = 0, covers = 0, lights = 0
@@ -225,12 +227,33 @@ export const deviceTypeMap = computed<Record<string, AppDeviceType>>(() => {
 
 // ─── Device Factories ────────────────────────────────────────────────────────
 
+function makePairings(remote: string | undefined, channel: number | undefined): DevicePairing[] {
+  return remote ? [{ remote, channel: channel ?? 0 }] : []
+}
+
+function mergePairings(...sources: Array<DevicePairing[] | undefined>): DevicePairing[] {
+  const result: DevicePairing[] = []
+  const seen = new Set<string>()
+  for (const source of sources) {
+    for (const pairing of source ?? []) {
+      if (!pairing.remote) continue
+      const key = `${pairing.remote}:${pairing.channel}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(pairing)
+    }
+  }
+  return result
+}
+
 function makeDevice(partial: Partial<Device> & { address: string; type: DeviceType }): Device {
   return {
+    ...coverCommandBytes(partial),
     updated_at: null,
     enabled: true,
     channel: 0,
     remote: '',
+    pairings: [],
     name: '',
     open_ms: 0,
     close_ms: 0,
@@ -243,8 +266,9 @@ function makeDevice(partial: Partial<Device> & { address: string; type: DeviceTy
 
 function blindToDevice(b: BlindConfig): Device {
   return makeDevice({
+    ...coverCommandBytes(b),
     address: b.address, type: 'cover', updated_at: b.updated_at || null, enabled: b.enabled,
-    name: b.name, channel: b.channel, remote: b.remote,
+    name: b.name, channel: b.channel, remote: b.remote, pairings: makePairings(b.remote, b.channel),
     open_ms: b.open_ms, close_ms: b.close_ms, supports_tilt: b.supports_tilt,
     lastStatus: b.state && b.state !== '0x00'
       ? { state: b.state, rssi: b.rssi } as RfPacketWithTimestamp
@@ -255,7 +279,7 @@ function blindToDevice(b: BlindConfig): Device {
 function lightToDevice(l: LightConfig): Device {
   return makeDevice({
     address: l.address, type: 'light', updated_at: l.updated_at || null, enabled: l.enabled,
-    name: l.name, channel: l.channel, remote: l.remote, dim_ms: l.dim_ms,
+    name: l.name, channel: l.channel, remote: l.remote, pairings: makePairings(l.remote, l.channel), dim_ms: l.dim_ms,
     lastStatus: l.state && l.state !== '0x00'
       ? { state: l.state, rssi: l.rssi } as RfPacketWithTimestamp
       : null,
@@ -266,6 +290,10 @@ function remoteToDevice(r: RemoteConfig): Device {
   return makeDevice({
     address: r.address, type: 'remote', updated_at: r.updated_at || null, name: r.name,
   })
+}
+
+function groupToApp(group: WireGroupConfig, updated_at: number | null = Date.now()): GroupConfig {
+  return { ...group, updated_at }
 }
 
 // ─── Actions ─────────────────────────────────────────────────────────────────
@@ -279,12 +307,26 @@ export function setDevices(data: ConfigData) {
   for (const b of data.blinds) {
     const device = blindToDevice(b)
     const existing = next.get(b.address)
-    next.set(b.address, { ...device, lastStatus: existing?.lastStatus ?? device.lastStatus })
+    next.set(b.address, {
+      ...existing,
+      ...device,
+      remote: existing?.remote || device.remote,
+      channel: existing?.remote ? existing.channel : device.channel,
+      pairings: mergePairings(existing?.pairings, device.pairings),
+      lastStatus: existing?.lastStatus ?? device.lastStatus,
+    })
   }
   for (const l of data.lights) {
     const device = lightToDevice(l)
     const existing = next.get(l.address)
-    next.set(l.address, { ...device, lastStatus: existing?.lastStatus ?? device.lastStatus })
+    next.set(l.address, {
+      ...existing,
+      ...device,
+      remote: existing?.remote || device.remote,
+      channel: existing?.remote ? existing.channel : device.channel,
+      pairings: mergePairings(existing?.pairings, device.pairings),
+      lastStatus: existing?.lastStatus ?? device.lastStatus,
+    })
   }
   for (const r of data.remotes ?? []) {
     const existing = next.get(r.address)
@@ -300,8 +342,10 @@ export function setDevices(data: ConfigData) {
   }
   batch(() => {
     devices.value = next
+    groups.value = new Map((data.groups ?? []).map((group) => [group.id, groupToApp(group)]))
     hub.value = data.hub
     radio.value = data.radio
+    learnIn.value = { state: 'idle', active: false, busy: false }
   })
 }
 
@@ -309,7 +353,11 @@ export function updateDevice(address: string, updates: Partial<Device>) {
   const d = devices.value.get(address)
   if (!d) return
   const next = new Map(devices.value)
-  next.set(address, { ...d, updated_at: null, ...updates })
+  const updated = { ...d, updated_at: null, ...updates }
+  if ('remote' in updates || 'channel' in updates) {
+    updated.pairings = mergePairings(d.pairings, makePairings(updated.remote, updated.channel))
+  }
+  next.set(address, updated)
   devices.value = next
 }
 
@@ -324,7 +372,20 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
   }
 
   if (t === msg_type.COMMAND || t === msg_type.COMMAND_ALT) {
-    if (!devs.has(pkt.dst)) mut().set(pkt.dst, makeDevice({ address: pkt.dst, type: 'cover', remote: pkt.src, channel: pkt.channel }))
+    const pairing = makePairings(pkt.src, pkt.channel)
+    for (const address of pkt.destinations?.length ? pkt.destinations : [pkt.dst]) {
+      const target = (next ?? devs).get(address)
+      if (!target) {
+        mut().set(address, makeDevice({ address, type: 'cover', remote: pkt.src, channel: pkt.channel, pairings: pairing }))
+      } else if (target.type !== 'remote') {
+        mut().set(address, {
+          ...target,
+          remote: target.remote || pkt.src,
+          channel: target.remote ? target.channel : pkt.channel,
+          pairings: mergePairings(target.pairings, pairing),
+        })
+      }
+    }
     if (!(next ?? devs).has(pkt.src)) mut().set(pkt.src, makeDevice({ address: pkt.src, type: 'remote' }))
   } else if (t === msg_type.STATUS || t === msg_type.STATUS_ALT) {
     const existing = (next ?? devs).get(pkt.src)
@@ -337,7 +398,7 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
     }
     // Do NOT create devices from status packets — byte offset 6 is not the RF channel.
     // Discovery happens from COMMAND packets only (which carry correct channel).
-  } else if (t === msg_type.BUTTON) {
+  } else if (isSelectorPacket(pkt)) {
     if (!devs.has(pkt.src)) mut().set(pkt.src, makeDevice({ address: pkt.src, type: 'remote' }))
   }
 
@@ -362,7 +423,8 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
   const existing = devices.value.get(data.address)
   const next = new Map(devices.value)
 
-  next.set(data.address, makeDevice({
+  const device = makeDevice({
+    ...coverCommandBytes(data),
     address: data.address,
     type: data.device_type,
     updated_at: data.updated_at || null,
@@ -370,12 +432,18 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
     name: data.name ?? '',
     channel: data.channel ?? 0,
     remote: data.remote ?? '',
+    pairings: makePairings(data.remote, data.channel),
     open_ms: data.open_ms ?? 0,
     close_ms: data.close_ms ?? 0,
     supports_tilt: data.supports_tilt ?? false,
     dim_ms: data.dim_ms ?? 0,
     lastStatus: existing?.lastStatus ?? null,
-  }))
+  })
+
+  next.set(data.address, {
+    ...device,
+    pairings: mergePairings(existing?.pairings, device.pairings),
+  })
 
   // Ensure remote entry exists for non-remote devices
   if (data.device_type !== 'remote' && data.remote && !next.has(data.remote)) {
@@ -384,7 +452,7 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
 
   devices.value = next
 
-  if (hub.value.mode === 'native_nvs') {
+  if (hub.value.mode === 'native') {
     rebootNeeded.value = true
   }
 }
@@ -409,80 +477,125 @@ export function onStateChanged(data: StateChangedData) {
   devices.value = next
 }
 
+export function onHubConfig(data: HubConfigEventData) {
+  hub.value = { ...hub.value, name: data.name }
+}
+
+export function onLearnInState(data: LearnInStateData) {
+  learnIn.value = data
+}
+
+export function onGroupUpserted(data: WireGroupConfig) {
+  const next = new Map(groups.value)
+  next.set(data.id, groupToApp(data))
+  groups.value = next
+}
+
+export function onGroupStateChanged(state: GroupStateData) {
+  const group = groups.value.get(state.id)
+  if (!group) return;
+  const next = new Map(groups.value)
+  next.set(state.id, { ...group, state })
+  groups.value = next
+}
+
+export function onGroupRemoved(data: GroupRemovedData) {
+  const next = new Map(groups.value)
+  next.delete(data.id)
+  groups.value = next
+}
+
+export function updateGroup(id: string, updates: Partial<GroupConfig>) {
+  const group = groups.value.get(id)
+  if (!group) return
+  const next = new Map(groups.value)
+  next.set(id, { ...group, updated_at: null, ...updates })
+  groups.value = next
+}
+
+// ─── Toast (one-shot user feedback) ─────────────────────────────────────────
+
+export type ToastVariant = 'info' | 'success' | 'error'
+export interface Toast {
+  id: number
+  variant: ToastVariant
+  message: string
+}
+
+export const toast = signal<Toast | null>(null)
+let nextToastId = 1
+
+export function showToast(variant: ToastVariant, message: string) {
+  toast.value = { id: nextToastId++, variant, message }
+}
+
+export function dismissToast() {
+  toast.value = null
+}
+
+// ─── Backup / Restore ───────────────────────────────────────────────────────
+
+function snapshotFilename(snap: ConfigSnapshot): string {
+  const device = snap.exporter?.device || hub.value.device || 'elero-gateway'
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19)
+  return `${device}-backup-${stamp}.json`
+}
+
+export function onConfigSnapshot(snap: ConfigSnapshot) {
+  // Trigger a download via Blob + anchor click
+  const json = JSON.stringify(snap, null, 2)
+  const blob = new Blob([json], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = snapshotFilename(snap)
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  const groupCount = snap.groups?.length ?? 0
+  showToast('success', `Backup downloaded (${snap.devices.length} device${snap.devices.length === 1 ? '' : 's'}, ${groupCount} group${groupCount === 1 ? '' : 's'})`)
+}
+
+export function onImportResult(result: ImportResult) {
+  const total = result.added + result.updated + result.skipped + result.groups_added + result.groups_updated + result.groups_skipped
+  const parts: string[] = []
+  if (result.added > 0) parts.push(`${result.added} device${result.added === 1 ? '' : 's'} added`)
+  if (result.updated > 0) parts.push(`${result.updated} device${result.updated === 1 ? '' : 's'} updated`)
+  if (result.skipped > 0) parts.push(`${result.skipped} device${result.skipped === 1 ? '' : 's'} skipped`)
+  if (result.groups_added > 0) parts.push(`${result.groups_added} group${result.groups_added === 1 ? '' : 's'} added`)
+  if (result.groups_updated > 0) parts.push(`${result.groups_updated} group${result.groups_updated === 1 ? '' : 's'} updated`)
+  if (result.groups_skipped > 0) parts.push(`${result.groups_skipped} group${result.groups_skipped === 1 ? '' : 's'} skipped`)
+  if (result.hub_applied) parts.push('hub config restored')
+  const summary = parts.length > 0 ? parts.join(', ') : 'no changes'
+  if (result.errors.length > 0) {
+    const first = result.errors[0]
+    showToast('error', `Import: ${summary} — ${result.errors.length} error${result.errors.length === 1 ? '' : 's'} (e.g. #${first.index}: ${first.msg})`)
+  } else if (total === 0 && !result.hub_applied) {
+    showToast('info', 'Import: empty snapshot, nothing applied')
+  } else {
+    showToast('success', `Import: ${summary}`)
+  }
+}
+
 export function onDeviceRemoved({ address }: CrudEventData) {
   const next = new Map(devices.value)
   next.delete(address)
-  devices.value = next
+  const nextGroups = new Map<string, GroupConfig>()
+  for (const [id, group] of groups.value) {
+    const device_ids = group.device_ids.filter((deviceId) => deviceId !== address)
+    if (device_ids.length >= 2) nextGroups.set(id, { ...group, device_ids })
+  }
+  batch(() => {
+    devices.value = next
+    groups.value = nextGroups
+  })
 
-  if (hub.value.mode === 'native_nvs') {
+  if (hub.value.mode === 'native') {
     rebootNeeded.value = true
   }
 }
 
 export function setActiveTab(tab: ActiveTab) {
   activeTab.value = tab
-}
-
-export function setStatusFilter(status: StatusFilter) {
-  filters.value = { ...filters.value, status }
-}
-
-export function setDeviceTypeFilter(deviceType: DeviceTypeFilter) {
-  filters.value = { ...filters.value, deviceType }
-}
-
-export function setRfFilter(rf: string) {
-  filters.value = { ...filters.value, rf }
-}
-
-export function resetFilters() {
-  filters.value = DEFAULT_FILTERS
-}
-
-// ─── YAML Export ──────────────────────────────────────────────────────────────
-
-function formatDuration(ms: number): string {
-  if (ms >= 60000 && ms % 60000 === 0) return `${ms / 60000}min`
-  if (ms >= 1000 && ms % 1000 === 0) return `${ms / 1000}s`
-  return `${ms}ms`
-}
-
-function coverToYaml(d: Device): string {
-  return [
-    '  - platform: elero',
-    ...(d.name ? [`    name: "${d.name}"`] : []),
-    `    dst_address: ${d.address}`,
-    `    src_address: ${d.remote}`,
-    `    channel: ${d.channel}`,
-    ...(d.open_ms > 0 ? [`    open_duration: ${formatDuration(d.open_ms)}`] : []),
-    ...(d.close_ms > 0 ? [`    close_duration: ${formatDuration(d.close_ms)}`] : []),
-    ...(d.supports_tilt ? ['    supports_tilt: true'] : []),
-  ].join('\n')
-}
-
-function lightToYaml(d: Device): string {
-  return [
-    '  - platform: elero',
-    ...(d.name ? [`    name: "${d.name}"`] : []),
-    `    dst_address: ${d.address}`,
-    `    src_address: ${d.remote}`,
-    `    channel: ${d.channel}`,
-    ...(d.dim_ms > 0 ? [`    dim_duration: ${formatDuration(d.dim_ms)}`] : []),
-  ].join('\n')
-}
-
-export function exportYaml(): string {
-  const devs = [...devices.value.values()].filter(d => d.updated_at !== null)
-  const covers = devs.filter(d => d.type === 'cover')
-  const lights = devs.filter(d => d.type === 'light')
-  const sections: string[] = []
-
-  if (covers.length > 0) {
-    sections.push(['cover:', ...covers.map(coverToYaml)].join('\n'))
-  }
-  if (lights.length > 0) {
-    sections.push(['light:', ...lights.map(lightToYaml)].join('\n'))
-  }
-
-  return sections.join('\n\n') + '\n'
 }

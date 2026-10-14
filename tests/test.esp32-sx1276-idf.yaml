@@ -36,23 +36,7 @@ elero:
   freq1: 0x71
   freq2: 0x21
 
-cover:
-  - platform: elero
-    dst_address: 0xa831e5
-    channel: 4
-    src_address: 0xf0d008
-    name: "Test Cover"
-    open_duration: 25s
-    close_duration: 22s
-    supports_tilt: true
-
-light:
-  - platform: elero
-    dst_address: 0xc41a2b
-    channel: 6
-    src_address: 0xf0d008
-    name: "Test Light"
-    dim_duration: 5s
+elero_nvs:
 
 elero_web:
   port: 80

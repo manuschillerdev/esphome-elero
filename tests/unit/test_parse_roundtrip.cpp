@@ -31,6 +31,7 @@ struct RawPacketBuffer {
 static RawPacketBuffer build_parseable_packet(const TxParams& params, uint8_t rssi_raw = 100, uint8_t lqi_crc = 0x80) {
   RawPacketBuffer buf{};
   size_t pkt_len = build_tx_packet(params, buf.data);
+  (void) pkt_len;
 
   // parse_packet reads length from buf[0], then expects:
   //   buf[length+1] = RSSI
@@ -39,6 +40,21 @@ static RawPacketBuffer build_parseable_packet(const TxParams& params, uint8_t rs
   buf.data[length + 1] = rssi_raw;
   buf.data[length + 2] = lqi_crc;
   buf.len = length + 3;  // length byte + packet + RSSI + LQI
+
+  return buf;
+}
+
+static RawPacketBuffer build_parseable_program_packet(const ProgramTxParams& params,
+                                                      uint8_t rssi_raw = 100,
+                                                      uint8_t lqi_crc = 0x80) {
+  RawPacketBuffer buf{};
+  size_t pkt_len = build_program_packet(params, buf.data);
+  (void) pkt_len;
+
+  uint8_t length = buf.data[0];
+  buf.data[length + 1] = rssi_raw;
+  buf.data[length + 2] = lqi_crc;
+  buf.len = length + 3;
 
   return buf;
 }
@@ -266,8 +282,7 @@ TEST(ValidPacketParsing, LqiExtracted) {
 // =============================================================================
 
 TEST(ButtonPacket, ParsesWithOneByteAddressing) {
-  // Button packets use type 0x44 which is <= ADDR_3BYTE_THRESHOLD (0x60)
-  // This means destinations use 1-byte addresses instead of 3-byte
+  // Button packets use the one-byte selector envelope instead of 3-byte addresses.
 
   // Build a minimal valid button packet
   uint8_t raw[34] = {0};
@@ -327,9 +342,140 @@ TEST(ButtonPacket, TypeCheckFunctions) {
   EXPECT_FALSE(is_button_packet(msg_type::COMMAND));
   EXPECT_FALSE(is_button_packet(msg_type::STATUS));
 
-  // Button type (0x44) is NOT a command or status packet
+  // Button type (0x44) is NOT a targeted command or status packet,
+  // but it does carry a decrypted command byte.
   EXPECT_FALSE(is_command_packet(msg_type::BUTTON));
   EXPECT_FALSE(is_status_packet(msg_type::BUTTON));
+  EXPECT_TRUE(uses_one_byte_selector_envelope(msg_type::BUTTON));
+  EXPECT_TRUE(carries_command(msg_type::BUTTON));
+}
+
+// =============================================================================
+// PROGRAM/P PACKETS: selector and targeted variants
+// =============================================================================
+
+TEST(ProgramPacketBuilding, BuildsCanonicalSingleChannelP) {
+  ProgramTxParams params;
+  params.counter = 7;
+  params.src_addr = 0x17A753;
+  params.channel = 5;
+
+  uint8_t buf[FIFO_LENGTH] = {0};
+  size_t len = build_program_packet(params, buf);
+
+  EXPECT_EQ(len, static_cast<size_t>(program::MSG_LENGTH + 1));
+  EXPECT_EQ(buf[pkt_offset::LENGTH], program::MSG_LENGTH);
+  EXPECT_EQ(buf[pkt_offset::COUNTER], 7);
+  EXPECT_EQ(buf[pkt_offset::TYPE], msg_type::PROGRAM);
+  EXPECT_EQ(buf[pkt_offset::TYPE2], program::TYPE2);
+  EXPECT_EQ(buf[pkt_offset::HOP], program::HOP);
+  EXPECT_EQ(buf[pkt_offset::SYS], TX_SYS_ADDR);
+  EXPECT_EQ(buf[pkt_offset::CHANNEL], 5);
+  EXPECT_EQ(extract_addr(&buf[pkt_offset::SRC_ADDR]), 0x17A753u);
+  EXPECT_EQ(extract_addr(&buf[pkt_offset::BWD_ADDR]), 0x17A753u);
+  EXPECT_EQ(extract_addr(&buf[pkt_offset::FWD_ADDR]), 0x17A753u);
+  EXPECT_EQ(buf[pkt_offset::NUM_DESTS], TX_DEST_COUNT);
+  EXPECT_EQ(buf[btn_offset::CHANNEL_DEST], 5);
+  EXPECT_EQ(buf[btn_offset::ZERO_BYTE], 0x00);
+  EXPECT_EQ(buf[btn_offset::FIXED_03], 0x03);
+
+  uint8_t payload[8];
+  memcpy(payload, &buf[btn_offset::CRYPTO_CODE], sizeof(payload));
+  protocol::msg_decode(payload);
+  EXPECT_EQ(payload[payload_offset::COMMAND], command::PROGRAM);
+}
+
+TEST(ProgramPacketParsing, ParsesCanonicalSingleChannelP) {
+  ProgramTxParams params;
+  params.counter = 3;
+  params.src_addr = 0x17A753;
+  params.channel = 9;
+
+  auto raw = build_parseable_program_packet(params);
+  auto result = parse_packet(raw.data, raw.len);
+
+  ASSERT_TRUE(result.valid) << "reject_reason: " << (result.reject_reason ? result.reject_reason : "null");
+  EXPECT_EQ(result.type, msg_type::PROGRAM);
+  EXPECT_EQ(result.type2, program::TYPE2);
+  EXPECT_EQ(result.hop, program::HOP);
+  EXPECT_EQ(result.dests_len, 1);
+  EXPECT_EQ(result.dst_addr, 9u);
+  EXPECT_EQ(result.command, command::PROGRAM);
+  EXPECT_TRUE(is_program_packet(result.type));
+  EXPECT_TRUE(uses_one_byte_selector_envelope(result.type));
+  EXPECT_TRUE(carries_command(result.type));
+}
+
+TEST(ProgramPacketParsing, ParsesGroupSelectorPVariant) {
+  uint8_t raw[FIFO_LENGTH] = {0};
+  constexpr uint8_t kDestCount = 3;
+  const uint8_t dests[kDestCount] = {1, 3, 7};
+  constexpr uint8_t kCounter = 12;
+  uint8_t length = button::GROUP_BASE_LENGTH + kDestCount;
+
+  raw[pkt_offset::LENGTH] = length;
+  raw[pkt_offset::COUNTER] = kCounter;
+  raw[pkt_offset::TYPE] = msg_type::BUTTON_GROUP;
+  raw[pkt_offset::TYPE2] = button::TYPE2;
+  raw[pkt_offset::HOP] = 0x15;
+  raw[pkt_offset::SYS] = TX_SYS_ADDR;
+  raw[pkt_offset::CHANNEL] = button::GROUP_CHANNEL;
+  write_addr(&raw[pkt_offset::SRC_ADDR], 0x17A753);
+  write_addr(&raw[pkt_offset::BWD_ADDR], 0x17A753);
+  write_addr(&raw[pkt_offset::FWD_ADDR], 0x17A753);
+  raw[pkt_offset::NUM_DESTS] = kDestCount;
+  memcpy(&raw[pkt_offset::FIRST_DEST], dests, sizeof(dests));
+
+  size_t payload_start = pkt_offset::FIRST_DEST + kDestCount;
+  raw[payload_start] = defaults::PAYLOAD_1;
+  raw[payload_start + 1] = defaults::PAYLOAD_2;
+
+  uint16_t code = calc_crypto_code(kCounter);
+  uint8_t payload[8] = {
+    static_cast<uint8_t>((code >> 8) & 0xFF),
+    static_cast<uint8_t>(code & 0xFF),
+    command::PROGRAM_GROUP, 0x00, 0x00, 0x00, 0x00, 0x00,
+  };
+  protocol::msg_encode(payload);
+  memcpy(&raw[payload_start + 2], payload, sizeof(payload));
+
+  raw[length + 1] = 0x64;
+  raw[length + 2] = 0x80;
+  auto result = parse_packet(raw, length + 3);
+
+  ASSERT_TRUE(result.valid) << "reject_reason: " << (result.reject_reason ? result.reject_reason : "null");
+  EXPECT_EQ(result.type, msg_type::BUTTON_GROUP);
+  EXPECT_EQ(result.dests_len, kDestCount);
+  EXPECT_EQ(result.dst_addr, 1u);
+  EXPECT_EQ(result.command, command::PROGRAM_GROUP);
+  EXPECT_TRUE(uses_one_byte_selector_envelope(result.type));
+  EXPECT_TRUE(carries_command(result.type));
+}
+
+TEST(ProgramPacketParsing, ParsesTargetedPVariants) {
+  const uint8_t types[] = {msg_type::COMMAND, msg_type::COMMAND_ALT};
+
+  for (uint8_t type : types) {
+    SCOPED_TRACE("type: 0x" + std::to_string(type));
+
+    TxParams params;
+    params.counter = 9;
+    params.type = type;
+    params.src_addr = 0x17A753;
+    params.dst_addr = 0x803238;
+    params.channel = 5;
+    params.command = command::PROGRAM_TARGET;
+
+    auto raw = build_parseable_packet(params);
+    auto result = parse_packet(raw.data, raw.len);
+
+    ASSERT_TRUE(result.valid) << "reject_reason: " << (result.reject_reason ? result.reject_reason : "null");
+    EXPECT_EQ(result.type, type);
+    EXPECT_EQ(result.dst_addr, 0x803238u);
+    EXPECT_EQ(result.command, command::PROGRAM_TARGET);
+    EXPECT_TRUE(uses_three_byte_address_envelope(result.type));
+    EXPECT_TRUE(carries_command(result.type));
+  }
 }
 
 // =============================================================================

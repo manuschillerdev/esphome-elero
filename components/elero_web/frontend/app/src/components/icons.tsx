@@ -244,6 +244,16 @@ export function Download(props: IconProps) {
   )
 }
 
+export function Upload(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" x2="12" y1="3" y2="15" />
+    </svg>
+  )
+}
+
 export function FileText(props: IconProps) {
   return (
     <svg {...defaultProps} {...props}>
@@ -327,6 +337,52 @@ export function Power(props: IconProps) {
     <svg {...defaultProps} {...props}>
       <path d="M12 2v10" />
       <path d="M18.4 6.6a9 9 0 1 1-12.77.04" />
+    </svg>
+  )
+}
+
+// Multi-blind group icon — two stacked blinds
+export function Users(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  )
+}
+
+export function ChevronRight(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  )
+}
+
+export function Search(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  )
+}
+
+export function X(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  )
+}
+
+export function Check(props: IconProps) {
+  return (
+    <svg {...defaultProps} {...props}>
+      <path d="M20 6 9 17l-5-5" />
     </svg>
   )
 }

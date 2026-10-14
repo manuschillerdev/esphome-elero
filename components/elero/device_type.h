@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cinttypes>
 #include <cstdint>
 
 namespace esphome {
@@ -14,10 +15,12 @@ enum class DeviceType : uint8_t {
     REMOTE = 2,
 };
 
+/// Hub operating mode — selects which adapter publishes to Home Assistant.
+/// Devices always live in NVS (RFC-002); the only difference between modes
+/// is the wire format used to surface them to HA.
 enum class HubMode : uint8_t {
-    NATIVE = 0,
-    MQTT = 1,
-    NATIVE_NVS = 2,
+    NATIVE = 0,   ///< ESPHome native API + NvsAdapter
+    MQTT   = 1,   ///< MQTT HA discovery via MqttAdapter
 };
 
 /// String representation of DeviceType (for JSON, logs, web API).
@@ -34,8 +37,7 @@ inline constexpr const char *device_type_str(DeviceType t) {
 inline constexpr const char *hub_mode_str(HubMode m) {
     switch (m) {
         case HubMode::NATIVE: return "native";
-        case HubMode::MQTT: return "mqtt";
-        case HubMode::NATIVE_NVS: return "native_nvs";
+        case HubMode::MQTT:   return "mqtt";
     }
     return "native";  // Unreachable — satisfies -Wreturn-type without default
 }
@@ -65,7 +67,7 @@ inline constexpr const char *ha_cover_class_str(HaCoverClass v) {
 }
 
 /// Default name format for auto-discovered remotes.
-inline constexpr const char *DEFAULT_REMOTE_NAME_FMT = "Remote 0x%06x";
+inline constexpr const char *DEFAULT_REMOTE_NAME_FMT = "Remote 0x%06" PRIx32;
 
 }  // namespace elero
 }  // namespace esphome

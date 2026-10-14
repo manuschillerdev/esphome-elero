@@ -2,7 +2,7 @@ asyncapi: 3.0.0
 
 info:
   title: Elero WebSocket API
-  version: 1.0.0
+  version: 2.0.0
   description: |
     Real-time WebSocket interface for the esphome-elero gateway.
 
@@ -29,12 +29,11 @@ info:
     ## Operating Modes
 
     The `mode` field in the `config` event indicates the operating mode:
-    - `native` — devices defined in YAML (read-only, no CRUD)
-    - `mqtt` — devices stored in NVS, managed via MQTT HA discovery
-    - `native_nvs` — devices stored in NVS, managed via ESPHome native API
+    - `native` — devices stored in NVS, surfaced via ESPHome native API
+    - `mqtt`   — devices stored in NVS, surfaced via MQTT HA discovery
 
-    CRUD operations (`upsert_device`, `remove_device`) are only available
-    when `crud` is `true` in the config event (mqtt and native_nvs modes).
+    CRUD operations (`upsert_device`, `remove_device`, `import_config`) are
+    always available — every mode persists devices in NVS.
 
 servers:
   device:
@@ -62,6 +61,12 @@ channels:
         $ref: "#/components/messages/deviceUpsertedEvent"
       deviceRemovedEvent:
         $ref: "#/components/messages/deviceRemovedEvent"
+      groupUpsertedEvent:
+        $ref: "#/components/messages/groupUpsertedEvent"
+      groupRemovedEvent:
+        $ref: "#/components/messages/groupRemovedEvent"
+      groupStateEvent:
+        $ref: "#/components/messages/groupStateEvent"
       stateChangedEvent:
         $ref: "#/components/messages/stateChangedEvent"
       errorEvent:
@@ -74,10 +79,46 @@ channels:
         $ref: "#/components/messages/upsertDeviceMessage"
       removeDeviceMessage:
         $ref: "#/components/messages/removeDeviceMessage"
+      upsertGroupMessage:
+        $ref: "#/components/messages/upsertGroupMessage"
+      removeGroupMessage:
+        $ref: "#/components/messages/removeGroupMessage"
+      groupCmdMessage:
+        $ref: "#/components/messages/groupCmdMessage"
       restartMessage:
         $ref: "#/components/messages/restartMessage"
+      setHubConfigMessage:
+        $ref: "#/components/messages/setHubConfigMessage"
+      hubConfigEvent:
+        $ref: "#/components/messages/hubConfigEvent"
+      exportConfigMessage:
+        $ref: "#/components/messages/exportConfigMessage"
+      configSnapshotEvent:
+        $ref: "#/components/messages/configSnapshotEvent"
+      importConfigMessage:
+        $ref: "#/components/messages/importConfigMessage"
+      importResultEvent:
+        $ref: "#/components/messages/importResultEvent"
+      learnInStateEvent:
+        $ref: "#/components/messages/learnInStateEvent"
+      learnInStartMessage:
+        $ref: "#/components/messages/learnInStartMessage"
+      learnInConfirmUpMessage:
+        $ref: "#/components/messages/learnInConfirmUpMessage"
+      learnInConfirmDownMessage:
+        $ref: "#/components/messages/learnInConfirmDownMessage"
+      learnInCancelMessage:
+        $ref: "#/components/messages/learnInCancelMessage"
 
 operations:
+  receiveGroupState:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive member-derived group state changes
+    messages:
+      - $ref: "#/channels/eleroWs/messages/groupStateEvent"
+
   receiveConfig:
     action: receive
     channel:
@@ -113,6 +154,24 @@ operations:
     description: Broadcast when a device is removed from NVS (CRUD modes only).
     messages:
       - $ref: "#/channels/eleroWs/messages/deviceRemovedEvent"
+
+  receiveGroupUpserted:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive group upserted notification
+    description: Broadcast when a saved group is created or updated in NVS.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/groupUpsertedEvent"
+
+  receiveGroupRemoved:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive group removed notification
+    description: Broadcast when a saved group is removed from NVS.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/groupRemovedEvent"
 
   receiveStateChanged:
     action: receive
@@ -174,6 +233,39 @@ operations:
     messages:
       - $ref: "#/channels/eleroWs/messages/removeDeviceMessage"
 
+  sendUpsertGroup:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Create or update a saved group in NVS
+    description: |
+      Available only when `crud` is `true` in the config event. The backend
+      validates that `device_ids` resolve to existing non-remote devices and
+      that all resolved devices have the same derived type.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/upsertGroupMessage"
+
+  sendRemoveGroup:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Remove a saved group from NVS
+    description: Available only when `crud` is `true` in the config event.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/removeGroupMessage"
+
+  sendGroupCmd:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Send an action to all members of a saved group
+    description: |
+      Backend resolves the group, derives the common member type, partitions
+      members by registered remote/src address, and emits one RF group command
+      per remote bucket. Incoming RF/status handling remains per-device.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/groupCmdMessage"
+
   sendRestart:
     action: send
     channel:
@@ -185,8 +277,128 @@ operations:
     messages:
       - $ref: "#/channels/eleroWs/messages/restartMessage"
 
+  sendSetHubConfig:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Update hub-level config (e.g., display name override)
+    description: |
+      Persists the hub display name to NVS. An empty `name` clears the override
+      and falls back to the YAML-configured default. Server broadcasts a
+      `hub_config` event with the effective name after applying.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/setHubConfigMessage"
+
+  receiveHubConfig:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive hub-config change notification
+    description: Broadcast when the hub display name override changes.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/hubConfigEvent"
+
+  sendExportConfig:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Request a full configuration snapshot for backup
+    description: |
+      Server replies (to the requesting client only) with a `config_snapshot`
+      event containing the versioned JSON envelope (hub overrides + every active
+      device). Intended for download to a local file by the client.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/exportConfigMessage"
+
+  receiveConfigSnapshot:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive a configuration snapshot
+    description: Sent in response to `export_config`. Contains the full backup envelope.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/configSnapshotEvent"
+
+  sendImportConfig:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Restore devices and hub overrides from a snapshot
+    description: |
+      Validates the snapshot envelope version, then `upsert`s each device and
+      applies hub-level overrides. Existing devices with the same `(type, dst_address)`
+      are updated in place. Server replies with an `import_result` event summary.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/importConfigMessage"
+
+  receiveImportResult:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive import operation summary
+    description: Sent in response to `import_config`. Reports added/updated/skipped counts and per-entry errors.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/importResultEvent"
+
+  receiveLearnInState:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive learn-in session state updates
+    description: |
+      Broadcast when the backend learn-in session changes state. This is a thin
+      domain event from the C++ backend; clients use it to drive onboarding UX.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/learnInStateEvent"
+
+  sendLearnInStart:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Start a learn-in session
+    description: |
+      Starts the backend learn-in state machine using the given virtual remote
+      source address and channel. The backend sends the canonical single-channel
+      programming/P packet; frontends remain responsible for instructing the user
+      to power-cycle the motor before calling this.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/learnInStartMessage"
+
+  sendLearnInConfirmUp:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Confirm the upward learn-in step
+    description: Sent when the user observes the motor moving upward during learn-in.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/learnInConfirmUpMessage"
+
+  sendLearnInConfirmDown:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Confirm the downward learn-in step
+    description: Sent when the user observes the motor moving downward during learn-in.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/learnInConfirmDownMessage"
+
+  sendLearnInCancel:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Cancel the active learn-in session
+    description: Cancels the backend learn-in session, if any.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/learnInCancelMessage"
+
 components:
   messages:
+    groupStateEvent:
+      name: group_state_changed
+      title: Group state changed
+      payload:
+        $ref: "#/components/schemas/GroupStateEnvelope"
+
     configEvent:
       name: config
       title: Configuration Event
@@ -218,6 +430,22 @@ components:
       contentType: application/json
       payload:
         $ref: "#/components/schemas/CrudEventEnvelope"
+
+    groupUpsertedEvent:
+      name: group_upserted
+      title: Group Upserted Event
+      summary: A saved group was created or updated in NVS
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/GroupUpsertedEnvelope"
+
+    groupRemovedEvent:
+      name: group_removed
+      title: Group Removed Event
+      summary: A saved group was removed from NVS
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/GroupRemovedEnvelope"
 
     stateChangedEvent:
       name: state_changed
@@ -267,6 +495,30 @@ components:
       payload:
         $ref: "#/components/schemas/RemoveDevicePayload"
 
+    upsertGroupMessage:
+      name: upsert_group
+      title: Upsert Group Message
+      summary: Create or update a saved group in NVS storage
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/UpsertGroupPayload"
+
+    removeGroupMessage:
+      name: remove_group
+      title: Remove Group Message
+      summary: Remove a saved group from NVS storage
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RemoveGroupPayload"
+
+    groupCmdMessage:
+      name: group_cmd
+      title: Group Command Message
+      summary: Send an action to all members of a saved group
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/GroupCmdPayload"
+
     restartMessage:
       name: restart
       title: Restart Message
@@ -275,7 +527,128 @@ components:
       payload:
         $ref: "#/components/schemas/RestartPayload"
 
+    setHubConfigMessage:
+      name: set_hub_config
+      title: Set Hub Config Message
+      summary: Update hub-level settings (display name override)
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/SetHubConfigPayload"
+
+    hubConfigEvent:
+      name: hub_config
+      title: Hub Config Event
+      summary: Hub-level config changed (e.g., display name)
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/HubConfigEventEnvelope"
+
+    exportConfigMessage:
+      name: export_config
+      title: Export Config Message
+      summary: Request a configuration snapshot
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/ExportConfigPayload"
+
+    configSnapshotEvent:
+      name: config_snapshot
+      title: Config Snapshot Event
+      summary: Versioned snapshot of hub overrides and all active devices
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/ConfigSnapshotEventEnvelope"
+
+    importConfigMessage:
+      name: import_config
+      title: Import Config Message
+      summary: Restore devices and hub overrides from a snapshot
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/ImportConfigPayload"
+
+    importResultEvent:
+      name: import_result
+      title: Import Result Event
+      summary: Summary of an import operation (added/updated/skipped + per-entry errors)
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/ImportResultEventEnvelope"
+
+    learnInStateEvent:
+      name: learn_in_state
+      title: Learn-In State Event
+      summary: Current backend learn-in session state
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LearnInStateEventEnvelope"
+
+    learnInStartMessage:
+      name: learn_in_start
+      title: Learn-In Start Message
+      summary: Start a backend learn-in session
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LearnInStartPayload"
+
+    learnInConfirmUpMessage:
+      name: learn_in_confirm_up
+      title: Learn-In Confirm Up Message
+      summary: Confirm the upward learn-in movement step
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LearnInConfirmUpPayload"
+
+    learnInConfirmDownMessage:
+      name: learn_in_confirm_down
+      title: Learn-In Confirm Down Message
+      summary: Confirm the downward learn-in movement step
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LearnInConfirmDownPayload"
+
+    learnInCancelMessage:
+      name: learn_in_cancel
+      title: Learn-In Cancel Message
+      summary: Cancel the active backend learn-in session
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LearnInCancelPayload"
+
   schemas:
+    GroupStateEnvelope:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: group_state_changed
+        data:
+          $ref: "#/components/schemas/GroupStateData"
+
+    GroupStateData:
+      type: object
+      additionalProperties: false
+      required: [id, available, device_type, supports_position, position, operation, is_on]
+      properties:
+        id:
+          type: string
+        available:
+          type: boolean
+        device_type:
+          $ref: "#/components/schemas/DeviceType"
+        supports_position:
+          type: boolean
+        position:
+          type: number
+          minimum: 0
+          maximum: 1
+        operation:
+          type: string
+          enum: [idle, opening, closing]
+        is_on:
+          type: boolean
+
     # ── Server → Client Envelopes ──
 
     ConfigEventEnvelope:
@@ -324,6 +697,30 @@ components:
         data:
           $ref: "#/components/schemas/CrudEventData"
 
+    GroupUpsertedEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      description: Envelope for group_upserted events.
+      properties:
+        event:
+          type: string
+          const: group_upserted
+        data:
+          $ref: "#/components/schemas/GroupConfig"
+
+    GroupRemovedEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      description: Envelope for group_removed events.
+      properties:
+        event:
+          type: string
+          const: group_removed
+        data:
+          $ref: "#/components/schemas/GroupRemovedData"
+
     StateChangedEnvelope:
       type: object
       additionalProperties: false
@@ -346,12 +743,23 @@ components:
         data:
           $ref: "#/components/schemas/ErrorData"
 
+    LearnInStateEventEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: learn_in_state
+        data:
+          $ref: "#/components/schemas/LearnInStateData"
+
     # ── Server → Client Data ──
 
     ConfigData:
       type: object
       additionalProperties: false
-      required: [hub, radio, blinds, lights, remotes]
+      required: [hub, radio, blinds, lights, remotes, groups]
       properties:
         hub:
           $ref: "#/components/schemas/HubConfig"
@@ -372,11 +780,16 @@ components:
           description: Known remote controls. In native mode, derived from cover/light src_address. In NVS modes, includes auto-discovered remotes.
           items:
             $ref: "#/components/schemas/RemoteConfig"
+        groups:
+          type: array
+          description: Saved device groups. Group device ids reference stable device address ids from blinds/lights.
+          items:
+            $ref: "#/components/schemas/GroupConfig"
 
     HubConfig:
       type: object
       additionalProperties: false
-      required: [device, version, mode, crud]
+      required: [device, version, mode, crud, name, default_src_address]
       description: Gateway identity and operating mode
       properties:
         device:
@@ -392,6 +805,20 @@ components:
         crud:
           type: boolean
           description: Whether CRUD operations (upsert_device, remove_device) are supported
+        name:
+          type: string
+          description: |
+            Hub display name shown in Home Assistant (gateway device block) and in the web UI.
+            Defaults to the YAML-configured value (`elero_mqtt.device_name`); can be overridden
+            at runtime and persisted to NVS via `set_hub_config`.
+          examples: ["Elero Gateway", "Living Room Hub"]
+        default_src_address:
+          type: string
+          description: |
+            Deterministic default 3-byte virtual remote/source address derived from the hub's
+            hardware MAC address. Used as the default learn-in remote identity unless the user
+            overrides it or restores a backup onto different hardware.
+          examples: ["0xb42f01"]
 
     RadioConfig:
       type: object
@@ -489,6 +916,26 @@ components:
           type: integer
           description: Timestamp (millis()) of last RF packet from this blind
           examples: [408]
+        command_up:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x20.
+        command_down:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x40.
+        command_stop:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x10.
+        command_check:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x00.
+        command_tilt:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x24.
 
     LightConfig:
       type: object
@@ -561,6 +1008,50 @@ components:
           description: Timestamp (millis()) when last persisted to NVS (0 = derived from config)
           examples: [1234567]
 
+    GroupConfig:
+      type: object
+      additionalProperties: false
+      required: [id, name, device_ids]
+      description: |
+        Saved group metadata. Groups are not devices and do not store a device
+        type; the backend derives and validates the common member type from the
+        referenced device ids. Device ids are stable 3-byte device addresses.
+      properties:
+        state:
+          $ref: "#/components/schemas/GroupStateData"
+        id:
+          type: string
+          minLength: 1
+          maxLength: 23
+          description: Stable group id persisted in NVS.
+          examples: ["grp_living_k8x2p1"]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 23
+          description: Display name.
+          examples: ["Living Room"]
+        device_ids:
+          type: array
+          minItems: 1
+          maxItems: 48
+          uniqueItems: true
+          description: Stable device address ids. All must resolve to existing covers or all to existing lights.
+          items:
+            type: string
+            description: 3-byte device address (hex string)
+            examples: ["0xa831e5"]
+
+    GroupRemovedData:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id:
+          type: string
+          description: Removed group id.
+          examples: ["grp_living_k8x2p1"]
+
     RfData:
       type: object
       additionalProperties: false
@@ -578,6 +1069,12 @@ components:
           type: string
           description: Destination address (hex string). Blind for commands, remote for status.
           examples: ["0xb42f01"]
+        destinations:
+          type: array
+          description: All 24-bit destinations for addressed packets. Empty for selector envelopes.
+          maxItems: 10
+          items:
+            type: string
         channel:
           type: integer
           description: RF channel
@@ -586,9 +1083,11 @@ components:
           type: string
           description: |
             Message type byte (hex string):
-            - `0x44` — button press/release (broadcast)
+            - `0x44` — button press/release selector packet
+            - `0x45` — group/central selector packet
             - `0x6a` — targeted command to blind
             - `0x69` — alternate command format
+            - `0x70` — single-channel programming/P selector packet
             - `0xca` — status response from blind
             - `0xc9` — alternate status format
           examples: ["0xca"]
@@ -599,13 +1098,16 @@ components:
         command:
           type: string
           description: |
-            Command byte (hex string, for command packets):
+            Command byte (hex string, for command/selector packets):
             - `0x00` — check (request status)
             - `0x10` — stop
             - `0x20` — up/open
             - `0x24` — tilt
             - `0x40` — down/close
             - `0x44` — intermediate position
+            - `0x80` — programming/P selector action
+            - `0x81` — programming/P group selector action
+            - `0x84` — programming/P targeted action
           examples: ["0x20"]
         state:
           type: string
@@ -700,6 +1202,26 @@ components:
           type: integer
           description: Timestamp (millis()) when the device was last persisted to NVS. Non-zero means the device is server-confirmed.
           examples: [1234567]
+        command_up:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x20.
+        command_down:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x40.
+        command_stop:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x10.
+        command_check:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x00.
+        command_tilt:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x24.
 
     CrudEventData:
       type: object
@@ -783,6 +1305,29 @@ components:
           description: Human-readable error message
           examples: ["Missing dst_address", "CRUD not supported in native mode"]
 
+    LearnInStateData:
+      type: object
+      additionalProperties: false
+      required: [state, active, busy]
+      description: Thin snapshot of the backend learn-in session.
+      properties:
+        state:
+          $ref: "#/components/schemas/LearnInState"
+        active:
+          type: boolean
+          description: True while a learn-in session is logically in progress.
+        busy:
+          type: boolean
+          description: True while RF transmissions for the current learn-in step are pending.
+        src_address:
+          type: string
+          description: Virtual remote source address for the current session, if any.
+          examples: ["0x17a753"]
+        channel:
+          type: integer
+          description: RF channel for the current session, if any.
+          examples: [5]
+
     # ── Client → Server Payloads ──
 
     CmdPayload:
@@ -844,6 +1389,59 @@ components:
           type: string
           description: Hop count byte (hex string, default 0x0a)
           examples: ["0x0a"]
+
+    LearnInStartPayload:
+      type: object
+      additionalProperties: false
+      required: [type, src_address, channel]
+      description: |
+        Starts a backend learn-in session. The frontend must already have guided
+        the user through the required power-cycle of the target motor.
+      properties:
+        type:
+          type: string
+          const: learn_in_start
+        src_address:
+          type: string
+          description: 3-byte virtual remote/source address (hex string)
+          examples: ["0x17a753"]
+        channel:
+          type: integer
+          description: RF channel to learn in
+          minimum: 1
+          maximum: 255
+          examples: [5]
+        session_timeout_ms:
+          type: integer
+          description: Learn-in session timeout in milliseconds (default 300000)
+          examples: [300000]
+
+    LearnInConfirmUpPayload:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: learn_in_confirm_up
+
+    LearnInConfirmDownPayload:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: learn_in_confirm_down
+
+    LearnInCancelPayload:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: learn_in_cancel
 
     UpsertDevicePayload:
       type: object
@@ -915,6 +1513,26 @@ components:
           type: boolean
           description: Whether the cover supports tilt (cover only, default false)
           default: false
+        command_up:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x20.
+        command_down:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x40.
+        command_stop:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x10.
+        command_check:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x00.
+        command_tilt:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x24.
 
     RemoveDevicePayload:
       type: object
@@ -934,6 +1552,69 @@ components:
         device_type:
           $ref: "#/components/schemas/DeviceType"
 
+    UpsertGroupPayload:
+      type: object
+      additionalProperties: false
+      required: [type, id, name, device_ids]
+      description: |
+        Create or update a saved group in NVS. The backend validates that all
+        `device_ids` resolve to existing non-remote devices and that the
+        resolved devices are either all covers or all lights.
+      properties:
+        type:
+          type: string
+          const: upsert_group
+        id:
+          type: string
+          minLength: 1
+          maxLength: 23
+          description: Stable group id.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 23
+          description: Display name.
+        device_ids:
+          type: array
+          minItems: 1
+          maxItems: 48
+          uniqueItems: true
+          items:
+            type: string
+            description: Stable device address id (hex string).
+            examples: ["0xa831e5"]
+
+    RemoveGroupPayload:
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      description: Remove a saved group from NVS.
+      properties:
+        type:
+          type: string
+          const: remove_group
+        id:
+          type: string
+          description: Group id.
+
+    GroupCmdPayload:
+      type: object
+      additionalProperties: false
+      required: [type, id, action]
+      description: |
+        Send an action to a saved group. Backend derives the common member type,
+        partitions members by remote/src address, and emits one RF group command
+        per remote bucket.
+      properties:
+        type:
+          type: string
+          const: group_cmd
+        id:
+          type: string
+          description: Group id.
+        action:
+          $ref: "#/components/schemas/DeviceAction"
+
     RestartPayload:
       type: object
       additionalProperties: false
@@ -943,6 +1624,289 @@ components:
         type:
           type: string
           const: restart
+
+    SetHubConfigPayload:
+      type: object
+      additionalProperties: false
+      required: [type, name]
+      description: |
+        Update hub-level settings. Currently only the display name override is
+        configurable. An empty `name` clears the override and falls back to the
+        YAML-configured default.
+      properties:
+        type:
+          type: string
+          const: set_hub_config
+        name:
+          type: string
+          description: New hub display name. Empty string clears the override.
+          maxLength: 31
+          examples: ["Living Room Hub"]
+
+    HubConfigEventEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: hub_config
+        data:
+          $ref: "#/components/schemas/HubConfigEventData"
+
+    HubConfigEventData:
+      type: object
+      additionalProperties: false
+      required: [name]
+      description: Hub-level config snapshot after an update.
+      properties:
+        name:
+          type: string
+          description: Effective hub display name (override or YAML default).
+          examples: ["Elero Gateway"]
+
+    # ── Backup / Restore Snapshot ──
+
+    ExportConfigPayload:
+      type: object
+      additionalProperties: false
+      required: [type]
+      description: Trigger a backup snapshot. The server replies (to the requesting client only) with a `config_snapshot` event.
+      properties:
+        type:
+          type: string
+          const: export_config
+
+    ConfigSnapshotEventEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: config_snapshot
+        data:
+          $ref: "#/components/schemas/ConfigSnapshot"
+
+    ConfigSnapshot:
+      type: object
+      additionalProperties: false
+      required: [snapshot_version, exported_at, exporter, hub, devices, groups]
+      description: |
+        Versioned configuration backup. `snapshot_version` is bumped on
+        breaking schema changes; the import handler rejects unknown versions.
+      properties:
+        snapshot_version:
+          type: integer
+          description: |
+            Snapshot envelope version (currently 2). Must match the C++
+            `SNAPSHOT_VERSION` const in `components/elero_web/elero_web_server.cpp` —
+            the import handler rejects newer values it doesn't recognise.
+          examples: [2]
+        exported_at:
+          type: integer
+          description: Timestamp (millis() since boot on the source device) when exported.
+          examples: [1715000000000]
+        exporter:
+          $ref: "#/components/schemas/SnapshotExporter"
+        hub:
+          $ref: "#/components/schemas/HubSnapshot"
+        devices:
+          type: array
+          description: All active devices, in slot order.
+          items:
+            $ref: "#/components/schemas/DeviceSnapshot"
+        groups:
+          type: array
+          description: Saved groups.
+          items:
+            $ref: "#/components/schemas/GroupConfig"
+
+    SnapshotExporter:
+      type: object
+      additionalProperties: false
+      required: [device, version]
+      description: Identification of the device that produced the snapshot.
+      properties:
+        device:
+          type: string
+          description: Source device name (`esphome.name`).
+          examples: ["elero-gateway"]
+        version:
+          type: string
+          description: Source component version string.
+          examples: ["0.10.0"]
+
+    HubSnapshot:
+      type: object
+      additionalProperties: false
+      description: Hub-level overrides to restore. All fields optional.
+      properties:
+        name_override:
+          type: string
+          description: |
+            Persisted hub display name override. Empty string clears the
+            override and falls back to the YAML default.
+          examples: ["Living Room Hub"]
+
+    DeviceSnapshot:
+      type: object
+      additionalProperties: false
+      required: [device_type, dst_address]
+      description: |
+        One device. Mirrors `NvsDeviceConfig` fields. Address fields are
+        hex strings (e.g., "0xa831e5"); the import handler accepts both
+        hex strings and decimal integers for backward compatibility.
+      properties:
+        device_type:
+          $ref: "#/components/schemas/DeviceType"
+        dst_address:
+          type: string
+          examples: ["0xa831e5"]
+        src_address:
+          type: string
+          description: Source/remote address (covers and lights only).
+          examples: ["0xb42f01"]
+        channel:
+          type: integer
+          description: RF channel (covers and lights only).
+          examples: [5]
+        name:
+          type: string
+          examples: ["Living Room Blind"]
+        enabled:
+          type: boolean
+          default: true
+        open_duration_ms:
+          type: integer
+          description: Cover open duration in ms (0 = position tracking disabled).
+          examples: [25000]
+        close_duration_ms:
+          type: integer
+          description: Cover close duration in ms (0 = position tracking disabled).
+          examples: [22000]
+        dim_duration_ms:
+          type: integer
+          description: Light dim duration in ms (0 = on/off only).
+          examples: [5000]
+        supports_tilt:
+          type: boolean
+          description: Cover supports tilt.
+        ha_device_class:
+          type: integer
+          description: HaCoverClass enum value (cover only). 0 = shutter.
+          examples: [0]
+        hop:
+          type: string
+          description: Hop count byte (hex string, default "0x0a").
+          examples: ["0x0a"]
+        payload_1:
+          type: string
+          description: Payload byte 1 (hex string, default "0x00").
+          examples: ["0x00"]
+        payload_2:
+          type: string
+          description: Payload byte 2 (hex string, default "0x04").
+          examples: ["0x04"]
+        msg_type:
+          type: string
+          description: Message type byte (hex string, default "0x6a").
+          examples: ["0x6a"]
+        type2:
+          type: string
+          description: Secondary type byte (hex string, default "0x00").
+          examples: ["0x00"]
+        command_up:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x20.
+        command_down:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x40.
+        command_stop:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x10.
+        command_check:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x00.
+        command_tilt:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x24.
+
+    ImportConfigPayload:
+      type: object
+      additionalProperties: false
+      required: [type, snapshot]
+      description: |
+        Restore from a snapshot. Existing devices with the same
+        `(device_type, dst_address)` are updated in place; new devices
+        are added. Hub overrides (e.g., `name_override`) are applied if present.
+      properties:
+        type:
+          type: string
+          const: import_config
+        snapshot:
+          $ref: "#/components/schemas/ConfigSnapshot"
+
+    ImportResultEventEnvelope:
+      type: object
+      additionalProperties: false
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: import_result
+        data:
+          $ref: "#/components/schemas/ImportResult"
+
+    ImportResult:
+      type: object
+      additionalProperties: false
+      required: [added, updated, skipped, groups_added, groups_updated, groups_skipped, errors]
+      description: Summary of one import operation.
+      properties:
+        added:
+          type: integer
+          description: Devices created (no prior `(type, dst_address)` match).
+        updated:
+          type: integer
+          description: Devices updated in place.
+        skipped:
+          type: integer
+          description: Devices not applied (errored or no free slot).
+        groups_added:
+          type: integer
+          description: Groups created.
+        groups_updated:
+          type: integer
+          description: Groups updated in place.
+        groups_skipped:
+          type: integer
+          description: Groups not applied.
+        hub_applied:
+          type: boolean
+          description: Whether hub-level overrides were applied.
+        errors:
+          type: array
+          description: Per-entry errors. Empty on full success.
+          items:
+            $ref: "#/components/schemas/ImportError"
+
+    ImportError:
+      type: object
+      additionalProperties: false
+      required: [index, msg]
+      properties:
+        index:
+          type: integer
+          description: 0-based index into `snapshot.devices` (-1 for envelope-level errors).
+        msg:
+          type: string
+          description: Human-readable error message.
 
     # ── Shared Enums ──
 
@@ -963,8 +1927,17 @@ components:
 
     HubMode:
       type: string
-      enum: [native, mqtt, native_nvs]
-      description: Operating mode of the hub
+      enum: [native, mqtt]
+      description: |
+        Operating mode of the hub. Devices always live in NVS (RFC-002);
+        the mode only selects how they're surfaced to Home Assistant:
+          - `native` — ESPHome native API (NvsAdapter creates entities at boot)
+          - `mqtt`   — MQTT HA discovery (MqttAdapter publishes topics)
+
+    LearnInState:
+      type: string
+      enum: [idle, programming, wait_up, confirming_up, wait_down, confirming_down, complete, failed, cancelled, timed_out]
+      description: Backend learn-in session state.
 
     DeviceAction:
       type: string

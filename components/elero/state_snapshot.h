@@ -32,8 +32,8 @@ constexpr uint16_t TILT           = 1 << 3;
 constexpr uint16_t PROBLEM        = 1 << 4;
 constexpr uint16_t RSSI           = 1 << 5;
 constexpr uint16_t STATE_STRING   = 1 << 6;
-constexpr uint16_t COMMAND_SOURCE = 1 << 7;
-constexpr uint16_t BRIGHTNESS     = 1 << 8;  ///< light: on/off or brightness changed
+constexpr uint16_t BRIGHTNESS     = 1 << 7;  ///< light: on/off or brightness changed
+constexpr uint16_t REMOTE_ACTIVITY = 1 << 8; ///< remote: command/target/channel changed
 constexpr uint16_t ALL            = 0xFFFF;   ///< Force-publish everything (reconnect, initial)
 }  // namespace state_change
 
@@ -50,7 +50,6 @@ struct CoverStateSnapshot {
     const char *problem_type;    ///< "blocking"/"overheated"/"timeout"/PROBLEM_TYPE_NONE
     float rssi;
     const char *state_string;    ///< Raw elero state name ("top", "moving_up", etc.)
-    const char *command_source;  ///< "hub"/"remote"/"unknown"
     const char *device_class;    ///< "shutter"/"blind"/"awning"/etc.
 
 #ifdef ELERO_HAS_JSON
@@ -70,10 +69,35 @@ struct LightStateSnapshot {
     const char *problem_type;
     float rssi;
     const char *state_string;
-    const char *command_source;
 
 #ifdef ELERO_HAS_JSON
     /// Write snapshot fields to a JSON object. Caller adds identity/config fields.
+    void to_json(JsonObject obj) const;
+#endif
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REMOTE SNAPSHOT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct RemoteStateSnapshot {
+    uint8_t  last_command;
+    uint32_t last_target;
+    uint8_t  last_channel;
+    float    rssi;
+};
+
+// Derived membership state, shared by every output adapter. Integer positions
+// keep group publishing at the same one-percent resolution as device caches.
+struct GroupStateSnapshot {
+    bool valid{false};
+    DeviceType type{DeviceType::COVER};
+    bool supports_position{false};
+    int position_pct{0};
+    cover_sm::Operation operation{cover_sm::Operation::IDLE};
+    bool is_on{false};
+    bool operator==(const GroupStateSnapshot &) const = default;
+#ifdef ELERO_HAS_JSON
     void to_json(JsonObject obj) const;
 #endif
 };
@@ -134,6 +158,9 @@ CoverStateSnapshot compute_cover_snapshot(const Device &dev, uint32_t now);
 /// Compute a light state snapshot from a Device. Single source of truth.
 LightStateSnapshot compute_light_snapshot(const Device &dev, uint32_t now);
 
+/// Compute a remote state snapshot from a Device. Single source of truth.
+RemoteStateSnapshot compute_remote_snapshot(const Device &dev);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DIFF FUNCTIONS — compare snapshot against Published cache, return change flags
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -149,6 +176,10 @@ uint16_t diff_and_update_cover(const CoverStateSnapshot &snap, CoverDevice::Publ
 /// Compare light snapshot against Published cache. Returns bitmask of changed fields.
 /// Updates cache for changed fields.
 uint16_t diff_and_update_light(const LightStateSnapshot &snap, LightDevice::Published &pub);
+
+/// Compare remote snapshot against Published cache. Returns bitmask of changed fields.
+/// Updates cache for changed fields.
+uint16_t diff_and_update_remote(const RemoteStateSnapshot &snap, RemoteDevice::Published &pub);
 
 }  // namespace elero
 }  // namespace esphome

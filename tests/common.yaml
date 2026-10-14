@@ -1,5 +1,6 @@
-# Common test configuration for esphome-elero compile tests
-# Platform-specific tests include this file and add their own esphome: section
+# Common test configuration for esphome-elero compile tests.
+# Devices are no longer YAML-defined — see RFC-002 (NVS-only).
+# Platform-specific tests include this file and add their own esphome: block.
 
 external_components:
   - source:
@@ -20,26 +21,9 @@ elero:
   freq1: 0x71
   freq2: 0x21
 
-# Cover platform test
-cover:
-  - platform: elero
-    dst_address: 0xa831e5
-    channel: 4
-    src_address: 0xf0d008
-    name: "Test Cover"
-    open_duration: 25s
-    close_duration: 22s
-    supports_tilt: true
+# Native ESPHome API + NVS device persistence (default test mode)
+elero_nvs:
 
-# Light platform test
-light:
-  - platform: elero
-    dst_address: 0xc41a2b
-    channel: 6
-    src_address: 0xf0d008
-    name: "Test Light"
-    dim_duration: 5s
-
-# Elero web UI (Mongoose-based, no external dependencies)
+# Web UI for device management, RF discovery, and backup/restore
 elero_web:
   port: 80

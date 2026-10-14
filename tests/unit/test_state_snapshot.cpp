@@ -156,7 +156,7 @@ TEST(CoverSnapshot, NoProblemForNormalState) {
     auto snap = elero::compute_cover_snapshot(dev, 5000);
 
     EXPECT_FALSE(snap.is_problem);
-    EXPECT_EQ(snap.problem_type, nullptr);
+    EXPECT_STREQ(snap.problem_type, elero::PROBLEM_TYPE_NONE);
 }
 
 TEST(CoverSnapshot, TiltedFlag) {
@@ -166,24 +166,6 @@ TEST(CoverSnapshot, TiltedFlag) {
 
     auto snap = elero::compute_cover_snapshot(dev, 5000);
     EXPECT_TRUE(snap.tilted);
-}
-
-TEST(CoverSnapshot, CommandSourceHub) {
-    auto dev = make_cover_device();
-    auto &cover = std::get<elero::CoverDevice>(dev.logic);
-    cover.last_command_source = elero::CommandSource::HUB;
-
-    auto snap = elero::compute_cover_snapshot(dev, 5000);
-    EXPECT_STREQ(snap.command_source, "hub");
-}
-
-TEST(CoverSnapshot, CommandSourceRemote) {
-    auto dev = make_cover_device();
-    auto &cover = std::get<elero::CoverDevice>(dev.logic);
-    cover.last_command_source = elero::CommandSource::REMOTE;
-
-    auto snap = elero::compute_cover_snapshot(dev, 5000);
-    EXPECT_STREQ(snap.command_source, "remote");
 }
 
 TEST(CoverSnapshot, DeviceClassDefault) {
@@ -209,13 +191,6 @@ TEST(CoverSnapshot, RssiPassthrough) {
     auto dev = make_cover_device(sm::POSITION_CLOSED, 0, -75.5f);
     auto snap = elero::compute_cover_snapshot(dev, 5000);
     EXPECT_FLOAT_EQ(snap.rssi, -75.5f);
-}
-
-TEST(CoverSnapshot, LastSeenPassthrough) {
-    auto dev = make_cover_device();
-    dev.rf.last_seen_ms = 42000;
-    auto snap = elero::compute_cover_snapshot(dev, 50000);
-    EXPECT_EQ(snap.last_seen_ms, 42000u);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -251,7 +226,7 @@ TEST(LightSnapshot, NoProblem) {
     auto snap = elero::compute_light_snapshot(dev, 5000);
 
     EXPECT_FALSE(snap.is_problem);
-    EXPECT_EQ(snap.problem_type, nullptr);
+    EXPECT_STREQ(snap.problem_type, elero::PROBLEM_TYPE_NONE);
 }
 
 TEST(LightSnapshot, RssiPassthrough) {

@@ -34,7 +34,7 @@ This guide walks you through the complete setup of the Elero component step by s
 ### Tools
 
 - Computer with a USB port
-- Python 3.9+ installed
+- ESPHome 2026.9.0 or newer; local builds use Python 3.12 through mise
 - Internet access
 
 ---
@@ -81,14 +81,21 @@ Connect the ESP32 to your computer via USB. The driver should install automatica
 3. Install and start
 4. Open the ESPHome Dashboard
 
+Use ESPHome 2026.9.0 or newer. The current development configuration uses
+`github://manuschillerdev/esphome-elero@dev` as its external component source.
+The component bundles its web UI, so a Git installation does not need Node.js,
+pnpm, or a separate `elero_web_ui.h` release download. For a local checkout,
+follow [the compatibility guide](ESPHOME-COMPATIBILITY.md).
+
 ### Option B: ESPHome CLI (Command Line)
 
 ```bash
-# Python and pip must be installed
-pip install esphome
+# In a local checkout, install the pinned runtimes and dependencies.
+mise install
+mise exec -- uv sync --locked
 
 # Verify it works
-esphome version
+mise exec -- uv run esphome version
 ```
 
 ---
@@ -130,7 +137,7 @@ ota:
 
 # External Elero component
 external_components:
-  - source: github://manuschillerdev/esphome-elero
+  - source: github://manuschillerdev/esphome-elero@dev
 
 # SPI bus
 spi:
@@ -155,7 +162,7 @@ elero_web:
 **Via CLI:**
 ```bash
 # Initial flash over USB
-esphome run elero-blinds.yaml
+mise exec -- uv run esphome run elero-blinds.yaml
 ```
 
 **Via Dashboard:**
@@ -197,28 +204,30 @@ Flash again and test. Common combinations:
 
 ---
 
-## 5. Finding Blind Addresses
+## 5. Discovering Blind Addresses
 
 Open the web UI at `http://<device-ip>/elero`:
 
-1. Operate your physical Elero remote control (Up/Down/Stop)
-2. The web UI shows all received RF packets in real time
-3. Addresses not already in the configuration are marked as "Discovered"
-4. Copy the displayed values into your configuration
+1. Operate your physical Elero remote control (Up/Down/Stop).
+2. The web UI shows all received RF packets in real time.
+3. Newly seen blind/remote addresses appear as "Discovered" entries.
+4. Click **Save** on each device you want HA to control. They're persisted
+   to NVS and surfaced via your chosen output adapter.
 
-The key fields from the RF packets:
+The key fields from the RF packets (these are filled in automatically when
+you save a discovered device):
 
-| Field | YAML Parameter | Description |
-|-------|----------------|-------------|
-| `src` | `remote_address` | Address of the remote control |
-| `dst` | `blind_address` | Address of the blind |
-| `ch` | `channel` | RF channel |
+| RF field | NVS field | Description |
+|---|---|---|
+| `src` | `src_address` | Address of the remote control |
+| `dst` | `dst_address` | Address of the blind |
+| `ch`  | `channel`     | RF channel |
 
 ---
 
 ## 6. Final Configuration
 
-Insert the discovered values into your configuration:
+Devices are no longer YAML-defined — only the hub and the output adapter live in YAML:
 
 ```yaml
 esphome:
@@ -248,7 +257,7 @@ ota:
     password: !secret ota_password
 
 external_components:
-  - source: github://manuschillerdev/esphome-elero
+  - source: github://manuschillerdev/esphome-elero@dev
 
 spi:
   clk_pin: GPIO18
@@ -262,31 +271,24 @@ elero:
   freq1: 0x71
   freq2: 0x21
 
-# ── Blinds ──
-cover:
-  - platform: elero
-    name: "Schlafzimmer"
-    blind_address: 0xa831e5
-    channel: 4
-    remote_address: 0xf0d008
-    open_duration: 25s        # For position tracking (optional)
-    close_duration: 22s       # For position tracking (optional)
+# ── Output adapter (pick exactly one) ──
+elero_nvs:        # ESPHome native API + NVS device persistence
+# elero_mqtt:     # Or: MQTT HA discovery (requires `mqtt:` + broker)
 
-# Diagnostic sensors (RSSI, status, problem, etc.) are created automatically
-# by auto_sensors: true (the default) in each cover/light block.
-
-# ── Web UI ──
+# ── Web UI (device CRUD, RF discovery, backup/restore) ──
 web_server_base:
   port: 80
 
 elero_web:
 ```
 
-Flash the final configuration:
+Flash:
 
 ```bash
-esphome run elero-blinds.yaml
+mise exec -- uv run esphome run elero-blinds.yaml
 ```
+
+After it boots, open `http://<device-ip>/elero` and add your blinds via the UI.
 
 ---
 
@@ -311,54 +313,28 @@ If the device is not found automatically:
 
 ### Verify Entities
 
-After adding the device, the following entities are available:
+After adding a device through the web UI, the following entities appear in HA (names derived from the device's `name` field):
 
-- `cover.schlafzimmer` - Blind control
-- `sensor.schlafzimmer_rssi` - Signal strength
-- `text_sensor.schlafzimmer_status` - Status text
+- `cover.<name>` — Blind control
+- `sensor.<name>_rssi` — Signal strength
+- `text_sensor.<name>_status` — Status text
+
+> **Native API mode** (`elero_nvs:`): adding/removing devices via the web UI requires a reboot for HA to see them — the UI prompts you. **MQTT mode** (`elero_mqtt:`): HA picks up changes immediately.
 
 ---
 
 ## 8. Adding Multiple Blinds
 
-Add another cover entry for each additional blind:
+Just repeat the discovery + save flow in the web UI for each blind. The device automatically staggers polling requests (5-second offset per blind) to avoid RF collisions, and the 48-slot NVS pool is large enough for all reasonable households.
 
-```yaml
-cover:
-  - platform: elero
-    name: "Schlafzimmer"
-    blind_address: 0xa831e5
-    channel: 4
-    remote_address: 0xf0d008
-    open_duration: 25s
-    close_duration: 22s
-
-  - platform: elero
-    name: "Wohnzimmer Links"
-    blind_address: 0xb912f3
-    channel: 5
-    remote_address: 0xf0d008
-    open_duration: 30s
-    close_duration: 27s
-
-  - platform: elero
-    name: "Wohnzimmer Rechts"
-    blind_address: 0xc4a7d2
-    channel: 6
-    remote_address: 0xf0d008
-    open_duration: 30s
-    close_duration: 27s
-
-# Diagnostic sensors (RSSI, status, problem, etc.) are created automatically
-# by the cover/light blocks (auto_sensors: true is the default).
-```
-
-> **Note:** The component automatically staggers polling requests (5-second offset per blind) to avoid collisions on the RF channel.
+To migrate from older versions where blinds were defined in YAML, see [`MIGRATION-yaml-to-nvs.md`](MIGRATION-yaml-to-nvs.md).
 
 ---
 
 ## Next Steps
 
-- [Configuration Reference](CONFIGURATION.md) - All parameters in detail
+- [Configuration Reference](CONFIGURATION.md) - YAML parameters in detail
+- [Backup &amp; Restore](BACKUP-RESTORE.md) - Save your device list, restore after a chip swap
+- [Migration from YAML](MIGRATION-yaml-to-nvs.md) - Upgrade from pre-0.11.0
 - [Example Configurations](examples/) - Templates for various scenarios
 - [README](../README.md) - Overview and troubleshooting

@@ -1,6 +1,12 @@
 # State Reporting: RF to Home Assistant
 
-How device state flows from RF packets through the firmware to Home Assistant entities. Covers all three operating modes (Native, MQTT, Native+NVS) and the unified snapshot layer that ensures consistency.
+How device state flows from RF packets through the firmware to Home Assistant entities. Covers both operating modes (Native API + NVS, MQTT) and the unified snapshot layer that keeps them consistent.
+
+> **Mode legend used below:**
+> - **Native Mode** = `elero_nvs:` adapter — `NvsAdapter` instantiates `EspCoverShell` / `EspLightShell` at boot from NVS-restored slots; entities are surfaced via the ESPHome native API.
+> - **MQTT Mode** = `elero_mqtt:` adapter — `MqttAdapter` publishes HA discovery + state topics.
+>
+> Both modes always have NVS persistence enabled (RFC-002). Devices are added at runtime through the web UI or restored from a [JSON backup](BACKUP-RESTORE.md).
 
 ---
 
@@ -14,15 +20,13 @@ How device state flows from RF packets through the firmware to Home Assistant en
 | Operation | `cover` | `COVER_OPERATION_*` enum | `/state` (opening/closing/open/closed/stopped) | **Consistent** — native maps enum, MQTT uses `ha_state` string |
 | Device class | `cover` | ESPHome traits | Discovery `device_class` + `/attributes` | **Consistent** |
 | Tilt | `cover` | `cover.tilt` (0.0/1.0) | `/tilt_state` (0/100) | **Consistent** — both binary via snapshot |
-| RSSI | `sensor` | Auto-sensor `{name} RSSI` | Discovery `sensor/{id}_rssi` | **Consistent** |
-| Blind State | `text_sensor` | Auto-sensor `{name} Status` | Discovery `sensor/{id}_state` | **Consistent** |
-| Problem | `binary_sensor` | Auto-sensor `{name} Problem` | Discovery `binary_sensor/{id}_problem` | **Consistent** |
-| Command Source | `text_sensor` | Auto-sensor `{name} Command Source` | `/attributes` JSON | **Consistent** — native as entity, MQTT as attribute |
-| Problem Type | `text_sensor` | Auto-sensor `{name} Problem Type` | `/attributes` JSON | **Consistent** — native as entity, MQTT as attribute |
+| RSSI | `sensor` | Not surfaced as an HA entity | Discovery `sensor/{id}_rssi` | **Gap** — see "Diagnostic sensors" below |
+| Blind State | `text_sensor` | Not surfaced as an HA entity | Discovery `sensor/{id}_state` | **Gap** |
+| Problem | `binary_sensor` | Not surfaced as an HA entity | Discovery `binary_sensor/{id}_problem` | **Gap** |
+| Command Source | `text_sensor` | Not surfaced as an HA entity | `/attributes` JSON | **Gap** |
+| Problem Type | `text_sensor` | Not surfaced as an HA entity | `/attributes` JSON | **Gap** |
 
-**`auto_sensors` (default `true`)** automatically creates all diagnostic sensors alongside each cover entity. Set `auto_sensors: false` to disable.
-
-**Implementation note:** RSSI, Status, and Problem sensors are published via the hub's address-keyed sensor maps (direct path from `dispatch_packet()` using `is_problem_state()` from `state_snapshot.h`). Command Source and Problem Type are published from `EspCoverShell::sync_and_publish_()` using snapshot data. Both paths derive from the same underlying `Device` state.
+**Diagnostic sensors in native mode (post RFC-002).** With YAML-defined devices removed, the auto-sensor codegen path in the deleted `components/elero/cover/__init__.py` is gone too. `NvsAdapter` currently only registers the cover entity itself — the per-device RSSI / Status / Problem / Command Source / Problem Type sensors are not created. The data is still computed in the snapshot layer and is visible via the web UI's Devices tab (and via MQTT when `elero_mqtt:` is configured); only the ESPHome native-API surface is missing them. Restoring parity requires teaching `NvsAdapter` to register sensors per slot at boot — tracked as a follow-up.
 
 ### Light
 
@@ -30,20 +34,20 @@ How device state flows from RF packets through the firmware to Home Assistant en
 |------|---------|-------------|-----------|--------|
 | On/Off | `light` | `light::LightState.is_on()` | `{"state":"ON"/"OFF"}` | **Consistent** |
 | Brightness | `light` | `light::LightState.brightness` (0.0–1.0) | `{"brightness": 0–100}` | **Consistent** — same snapshot, different scale |
-| RSSI | `sensor` | Auto-sensor `{name} RSSI` | Discovery `sensor/{id}_rssi` | **Consistent** |
-| Status | `text_sensor` | Auto-sensor `{name} Status` | Discovery `sensor/{id}_state` | **Consistent** |
-| Problem | `binary_sensor` | Not exposed | Discovery `binary_sensor/{id}_problem` + `/problem` | **Gap** — native lights don't auto-generate problem sensor |
-| Command Source | — | Not exposed | `/attributes` JSON | **Gap** — tracked in `LightDevice` but not surfaced natively |
-| Problem Type | — | Not exposed | `/attributes` JSON | **Gap** — same |
+| RSSI | `sensor` | Not surfaced as an HA entity | Discovery `sensor/{id}_rssi` | **Gap** — see "Diagnostic sensors" above |
+| Status | `text_sensor` | Not surfaced as an HA entity | Discovery `sensor/{id}_state` | **Gap** |
+| Problem | `binary_sensor` | Not surfaced as an HA entity | Discovery `binary_sensor/{id}_problem` + `/problem` | **Gap** |
+| Command Source | — | Not surfaced as an HA entity | `/attributes` JSON | **Gap** |
+| Problem Type | — | Not surfaced as an HA entity | `/attributes` JSON | **Gap** |
 
-### Remote (MQTT mode only)
+### Remote
 
 | Data | HA Type | Native Mode | MQTT Mode | Parity |
 |------|---------|-------------|-----------|--------|
-| RSSI | `sensor` | N/A (remotes not tracked in native) | Discovery `sensor/{id}` | N/A |
-| Attributes | json_attributes | N/A | address, last_command, last_target, last_channel | N/A |
+| RSSI | `sensor` | Not surfaced as an HA entity | Discovery `sensor/{id}` | **Gap** — registry tracks remotes in both modes; only MqttAdapter publishes them |
+| Attributes | json_attributes | — | address, last_command, last_target, last_channel | **Gap** — same |
 
-Remotes are only auto-discovered in NVS-enabled modes (MQTT, Native+NVS). Native mode doesn't track remotes.
+Remotes are auto-discovered from observed RF command packets in both modes. Auto-discovered entries stay ephemeral (`updated_at == 0`) and are excluded from MQTT discovery topics and from backup snapshots until you click **Save** in the web UI. Native mode doesn't surface remotes as HA entities; the data is visible only via the web UI's Devices tab.
 
 ---
 
@@ -126,7 +130,7 @@ All other RF state bytes → `is_problem = false`, `problem_type = PROBLEM_TYPE_
 
 ### What's consistent
 
-All data that both modes expose produces identical values from the same source:
+The cover/light primary entity exposes the same derived values in both modes — every adapter reads the same snapshot computed by the registry:
 
 | Data | Source | Why identical |
 |------|--------|---------------|
@@ -134,22 +138,18 @@ All data that both modes expose produces identical values from the same source:
 | Cover operation/ha_state | `cover_sm::operation()` | Same snapshot |
 | Cover tilt | `CoverDevice::tilted` | Same flag, set in `dispatch_status_()` |
 | Cover device_class | `NvsDeviceConfig::ha_device_class` | Same config field |
-| Cover RSSI | `rf.last_rssi` | Hub sensor map (native) / snapshot (MQTT) — same value |
-| Cover blind state | `elero_state_to_string()` | Hub sensor map (native) / snapshot (MQTT) — same function |
-| Cover problem | `is_problem_state()` | Hub sensor map calls it directly, MQTT reads snapshot — same function |
-| Cover command_source | `CoverDevice::last_command_source` | Shell text_sensor (native) / attributes JSON (MQTT) |
-| Cover problem_type | `problem_type_str()` | Shell text_sensor (native) / attributes JSON (MQTT) |
 | Light on/off | `light_sm::is_on()` | Both call `compute_light_snapshot()` |
 | Light brightness | `light_sm::brightness()` | Same snapshot |
-| Light RSSI | `rf.last_rssi` | Hub sensor map (native) / snapshot (MQTT) |
-| Light status | `elero_state_to_string()` | Hub sensor map (native) / snapshot (MQTT) |
+
+Diagnostic data (RSSI, raw blind state, problem flag, command source) is computed identically in both modes via the snapshot layer. The difference is whether it's *surfaced* to HA — see "Known gaps" below.
 
 ### Known gaps
 
 | Gap | Reason | Severity |
 |-----|--------|----------|
-| Light problem/command_source/problem_type not in native mode | No auto_sensors for these on `EspLightShell` yet | Low — MQTT has them, native doesn't surface them as entities |
-| Native diagnostic data as separate entities, MQTT uses json_attributes | ESPHome native API has no json_attributes equivalent | Cosmetic — same data, different HA presentation |
+| Native mode doesn't surface per-device diagnostic sensors (RSSI / Status / Problem / Command Source / Problem Type) | RFC-002 removed the YAML cover/light platforms, which is where the auto-sensor codegen used to live. `NvsAdapter` only registers the cover/light entity itself today. | Medium — data is computed and visible via the web UI; needs a follow-up to teach `NvsAdapter` to register sensors per slot |
+| Remotes not exposed as HA entities in native mode | Same root cause as above (`NvsAdapter` only handles cover/light) | Low — visible in the web UI |
+| Native diagnostic data would be separate entities, MQTT uses json_attributes | ESPHome native API has no json_attributes equivalent | Cosmetic once the gap above is closed |
 | `last_seen_ms` not exposed as native entity | Raw `millis()` (uptime-relative) isn't useful as an HA sensor without NTP | Intentional — available in MQTT attributes for clients that want it |
 
 ---
@@ -178,26 +178,23 @@ Elero::dispatch_packet(pkt)                ← Core 1, no SPI
   │
   │  RfPacketInfo (src, dst, channel, type, state, command, rssi, raw)
   │
-  ├──────────────────────────────────┐
-  │                                  │
-  │  Registry dispatch               │  Direct sensor publish (native mode)
-  ▼                                  ▼
-DeviceRegistry::on_rf_packet()       Elero::dispatch_packet() (continued)
-  │                                    │
-  │  1. notify_rf_packet_(pkt)         ├─ rssi_sensor->publish_state(rssi)
-  │     → all adapters get raw RF      ├─ text_sensor->publish_state(state_string)
-  │                                    └─ problem_sensor->publish_state(is_problem_state(...))
-  │  2. Classify packet:                       │
-  │     Status (0xCA) → find(src)              │  Hub's address-keyed sensor maps
-  │     Command (0x6A) → find(dst)             │  (USE_SENSOR / USE_TEXT_SENSOR /
-  │                                            │   USE_BINARY_SENSOR guards)
-  │  3. Update Device:                         ▼
-  │     rf.last_seen_ms = now          ┌────────────────────────┐
-  │     rf.last_rssi = rssi            │  Home Assistant         │
-  │     rf.last_state_raw = state      │  RSSI sensor            │
-  │                                    │  Status text_sensor     │
-  │  4. dispatch_status_()             │  Problem binary_sensor  │
-  │     → cover_sm / light_sm          └────────────────────────┘
+  ▼
+DeviceRegistry::on_rf_packet()
+  │
+  │  1. notify_rf_packet_(pkt)
+  │     → all adapters get raw RF
+  │
+  │  2. Classify packet:
+  │     Status (0xCA) → find(src)
+  │     Command (0x6A) → find(dst)
+  │
+  │  3. Update Device:
+  │     rf.last_seen_ms = now
+  │     rf.last_rssi = rssi
+  │     rf.last_state_raw = state
+  │
+  │  4. dispatch_status_()
+  │     → cover_sm / light_sm
   │     → update tilted flag
   │     → update last_command_source
   │     → changed?
@@ -236,11 +233,11 @@ dev.published      dev.published      from dev.published
 │  (if POS|OP| │  │  /problem (if PROBLEM)        │
 │   HA|TILT)   │  │  /attributes (if CMD_SRC|...) │
 │              │  │  /tilt_state (if TILT)         │
-│ sensors:     │  └──────────────────────────────┘
-│  (if RSSI)   │           │
-│  (if STATE)  │           ▼
-│  (if PROBLEM)│      Home Assistant
-│  etc.        │      (MQTT entities)
+│  diagnostic  │  └──────────────────────────────┘
+│  sensors not │           │
+│  yet wired   │           ▼
+│  in NVS mode │      Home Assistant
+│  (see Gaps)  │      (MQTT entities)
 └──────────────┘
        │
        ▼
@@ -258,7 +255,7 @@ dev.published      dev.published      from dev.published
 
 4. **No lateral adapter coupling.** Each adapter reads `Device.published` independently. MqttAdapter doesn't know about EspCoverShell. EleroWebServer doesn't know about MqttAdapter.
 
-5. **Two publish paths for native mode.** RSSI, text_sensor, and problem binary_sensor are published directly from `dispatch_packet()` via address-keyed sensor maps on the hub — these call `is_problem_state()` from `state_snapshot.h` (single derivation point). Cover position/operation + command_source/problem_type go through the registry → shell path, using `last_changes` bitmask for selective publish.
+5. **Single publish path per device.** Every per-device update now flows through the registry → adapter pipeline. The earlier hub-side "address-keyed sensor maps" path (where `Elero::dispatch_packet()` directly published to per-blind RSSI / status / problem sensors) was tied to the YAML cover/light setup that wired those sensors to the hub at codegen. With YAML-defined devices removed, that path is gone and per-device diagnostic sensors are not yet recreated by `NvsAdapter` — see "Known gaps".
 
 6. **MQTT topics are centralized.** Topic suffixes (`mqtt_topic::STATE`, etc.), HA discovery component types (`ha_discovery::COVER`, etc.), and topic construction (`MqttContext::topic()`, `object_id()`, `publish()`) are defined once in `mqtt_context.h`. Zero string concatenation at adapter call sites.
 
@@ -273,8 +270,7 @@ dev.published      dev.published      from dev.published
 | RF packet → interrupt | <1 ms (hardware) |
 | interrupt → RF task pickup | <1 ms (Core 0 dedicated task) |
 | RF task → dispatch_packet | queue transit, typically <1 loop tick |
-| dispatch_packet → sensor publish | synchronous (same loop tick) |
-| dispatch_packet → registry dispatch | synchronous |
+| dispatch_packet → registry dispatch | synchronous (same loop tick) |
 | registry → adapter notification | synchronous |
 | adapter → HA publish | synchronous (native) or async (MQTT) |
 | Movement position updates | throttled to 1/sec (`PUBLISH_THROTTLE_MS`) |

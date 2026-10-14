@@ -1,6 +1,18 @@
 # Configuration Reference: Elero ESPHome Component
 
-Complete reference for all configurable parameters.
+Complete reference for all YAML-configurable parameters.
+
+Requires **ESPHome 2026.9.0 or newer**, with ESP32 using ESP-IDF or Arduino.
+See [ESPHome compatibility](ESPHOME-COMPATIBILITY.md) for native API lifecycle details.
+
+> **Heads up — devices are no longer YAML-defined.** Since v0.11.0
+> (RFC-002), `cover: - platform: elero` and `light: - platform: elero`
+> are gone. All blinds and lights live in NVS and are managed through
+> the web UI. See [`MIGRATION-yaml-to-nvs.md`](MIGRATION-yaml-to-nvs.md)
+> if you're upgrading.
+>
+> What stays in YAML: the radio hub, the output adapter (`elero_nvs:` or
+> `elero_mqtt:`), and the web UI.
 
 ---
 
@@ -85,192 +97,77 @@ elero:
 
 ---
 
-## Platform: `cover`
+## Adding devices (no YAML)
 
-Each roller blind is configured as a separate cover entry.
+Devices live in NVS. Pick exactly one of the two output adapters below
+(`elero_nvs:` for native ESPHome API, `elero_mqtt:` for MQTT discovery),
+flash, then add devices through the web UI:
 
-```yaml
-cover:
-  - platform: elero
-    name: "Schlafzimmer"
-    dst_address: 0xa831e5
-    channel: 4
-    src_address: 0xf0d008
-    open_duration: 25s
-    close_duration: 22s
-    supports_tilt: false
-    payload_1: 0x00
-    payload_2: 0x04
-    type: 0x6a
-    type2: 0x00
-    hop: 0x0a
-    command_up: 0x20
-    command_down: 0x40
-    command_stop: 0x10
-    command_check: 0x00
-    command_tilt: 0x24
-```
+1. Open `http://<device-ip>/elero`.
+2. Press a button on a physical Elero remote — it auto-appears in the UI.
+3. Click **Save** to persist the discovered cover/light to NVS.
+4. (Optional) Hub → Backup & Restore → **Download backup**. Keep the
+   JSON safe for chip-swap recovery.
 
-### Required Parameters
+To restore from a backup (or migrate from older YAML): Hub → Backup & Restore → **Restore from backup**.
 
-| Parameter | Type | Description |
-|---|---|---|
-| `name` | String | Display name in Home Assistant |
-| `dst_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF address of the blind (destination address) |
-| `channel` | Integer (0-255) | RF channel of the blind |
-| `src_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF address of the remote control to emulate (source address) |
+### Per-device fields managed in the UI
 
-### Optional Parameters
+These are stored in `NvsDeviceConfig` (see `components/elero/nvs_config.h`)
+and edited via the web UI's device editor. Fields marked **(cover)** and
+**(light)** apply to that device type only.
 
-| Parameter | Type | Default | Description |
+| Field | Type | Default | Description |
 |---|---|---|---|
-| `open_duration` | Duration | `0s` | Travel time to fully open. Required for time-based position tracking. If set, `close_duration` must also be set. |
-| `close_duration` | Duration | `0s` | Travel time to fully close. Required for time-based position tracking. If set, `open_duration` must also be set. |
-| `supports_tilt` | Boolean | `false` | Enables tilt support (e.g. for venetian blinds). |
-| `auto_sensors` | Boolean | `true` | Automatically creates RSSI and status sensors for this blind. Set to `false` to configure them manually. |
+| `dst_address` | Hex (24-bit) | required | RF address of the blind/light |
+| `src_address` | Hex (24-bit) | required | Emulated remote address |
+| `channel` | Integer (0-255) | required | RF channel |
+| `name` | String (≤23 chars) | empty | Display name in HA |
+| `enabled` | Boolean | `true` | Whether the device is published to HA |
+| `open_duration_ms` | Integer | `0` | **(cover)** Travel time fully open. `0` = no position tracking. |
+| `close_duration_ms` | Integer | `0` | **(cover)** Travel time fully closed. Pair with `open_duration_ms`. |
+| `supports_tilt` | Boolean | `false` | **(cover)** Tilt-capable blind |
+| `command_up` | Hex byte | `0x20` | **(cover)** Full opening command |
+| `command_down` | Hex byte | `0x40` | **(cover)** Full closing command |
+| `command_stop` | Hex byte | `0x10` | **(cover)** Stop command |
+| `command_check` | Hex byte | `0x00` | **(cover)** Status query command |
+| `command_tilt` | Hex byte | `0x24` | **(cover)** Saved tilt command |
+| `ha_device_class` | Enum | `shutter` | **(cover)** `shutter`/`blind`/`awning`/`curtain`/`shade`/`garage` |
+| `dim_duration_ms` | Integer | `0` | **(light)** Dimming travel. `0` = on/off only. |
+| `hop` | Hex byte | `0x0a` | Protocol hop counter |
+| `payload_1` | Hex byte | `0x00` | Protocol payload byte 1 |
+| `payload_2` | Hex byte | `0x04` | Protocol payload byte 2 |
+| `msg_type` | Hex byte | `0x6a` | Message type (`0x6a` = command) |
+| `type2` | Hex byte | `0x00` | Secondary type byte |
 
-### Protocol Parameters
-
-These values are read from the log of the original remote control. They do not need to be specified if they match the defaults.
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `payload_1` | Hex (0x00-0xFF) | `0x00` | First payload byte |
-| `payload_2` | Hex (0x00-0xFF) | `0x04` | Second payload byte |
-| `type` | Hex (0x00-0xFF) | `0x6a` | Message type (0x6a=command, 0xca=status) |
-| `type2` | Hex (0x00-0xFF) | `0x00` | Secondary type byte |
-| `hop` | Hex (0x00-0xFF) | `0x0a` | Hop counter |
-
-### Command Parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `command_up` | Hex (0x00-0xFF) | `0x20` | Command code: open blind |
-| `command_down` | Hex (0x00-0xFF) | `0x40` | Command code: close blind |
-| `command_stop` | Hex (0x00-0xFF) | `0x10` | Command code: stop blind |
-| `command_check` | Hex (0x00-0xFF) | `0x00` | Command code: query status |
-| `command_tilt` | Hex (0x00-0xFF) | `0x24` | Command code: tilt |
-
----
-
-## Platform: `light`
-
-Each Elero light (e.g. a home light with an Elero receiver) is configured as a separate light entry. The light appears in Home Assistant as a full light entity -- with on/off and optional brightness control.
-
-```yaml
-light:
-  - platform: elero
-    name: "Wohnzimmerlicht"
-    dst_address: 0xc41a2b
-    channel: 6
-    src_address: 0xf0d008
-    dim_duration: 5s        # Optional: 0s = on/off only, >0 = brightness controllable
-    payload_1: 0x00
-    payload_2: 0x04
-    type: 0x6a
-    type2: 0x00
-    hop: 0x0a
-    command_on: 0x20
-    command_off: 0x40
-    command_dim_up: 0x20
-    command_dim_down: 0x40
-    command_stop: 0x10
-    command_check: 0x00
-```
-
-### Required Parameters
-
-| Parameter | Type | Description |
-|---|---|---|
-| `name` | String | Display name in Home Assistant |
-| `dst_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF address of the light (destination address) |
-| `channel` | Integer (0-255) | RF channel of the light |
-| `src_address` | Hex (24-bit, 0x0-0xFFFFFF) | RF address of the remote control to emulate (source address) |
-
-### Optional Parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `dim_duration` | Duration | `0s` | Dimming travel time from 0% to 100%. `0s` = on/off only (`ColorMode::ON_OFF`); value > 0 = brightness control enabled (`ColorMode::BRIGHTNESS`). |
-
-### Protocol Parameters
-
-These values are read from the log of the original remote control (same meaning as for `cover`).
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `payload_1` | Hex (0x00-0xFF) | `0x00` | First payload byte |
-| `payload_2` | Hex (0x00-0xFF) | `0x04` | Second payload byte |
-| `type` | Hex (0x00-0xFF) | `0x6a` | Message type (0x6a=command, 0xca=status) |
-| `type2` | Hex (0x00-0xFF) | `0x00` | Secondary type byte |
-| `hop` | Hex (0x00-0xFF) | `0x0a` | Hop counter |
-
-### Command Parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `command_on` | Hex (0x00-0xFF) | `0x20` | Command code: turn light on |
-| `command_off` | Hex (0x00-0xFF) | `0x40` | Command code: turn light off |
-| `command_dim_up` | Hex (0x00-0xFF) | `0x20` | Command code: dim up (only when `dim_duration > 0`) |
-| `command_dim_down` | Hex (0x00-0xFF) | `0x40` | Command code: dim down (only when `dim_duration > 0`) |
-| `command_stop` | Hex (0x00-0xFF) | `0x10` | Command code: stop dimming |
-| `command_check` | Hex (0x00-0xFF) | `0x00` | Command code: query status |
-
----
-
-## Automatic Sensors (`auto_sensors`)
-
-Diagnostic sensors are automatically created for each cover and light block when `auto_sensors: true` is set (the default). Separate `sensor:` / `text_sensor:` / `binary_sensor:` platform blocks are no longer needed.
-
-Sensors automatically created per device:
-
-| Sensor | Type | Description |
-|---|---|---|
-| RSSI | `sensor` (dBm, device_class: signal_strength) | Signal strength of the last packet |
-| Status | `text_sensor` | Last blind status as text |
-| Problem | `binary_sensor` | `true` on blocking/overheated/timeout |
-| Command source | `text_sensor` | Last command source |
-| Problem type | `text_sensor` | Type of problem |
-
-To disable automatic sensor creation, set `auto_sensors: false` in the cover/light block.
-
-> **Migration:** Standalone sensor platforms (`sensor: platform: elero`, `text_sensor: platform: elero`) have been removed. Sensors are now automatically created by cover/light entities via `auto_sensors: true`.
-
-### RSSI Reference Values
-
-| RSSI (dBm) | Rating |
-|---|---|
-| > -50 | Excellent |
-| -50 to -70 | Good |
-| -70 to -85 | Acceptable |
-| < -85 | Weak / unreliable |
-
-### Possible Status Values
-
-| Value | Description |
-|---|---|
-| `top` | Blind fully open (upper end position) |
-| `bottom` | Blind fully closed (lower end position) |
-| `intermediate` | Blind at an intermediate position |
-| `tilt` | Blind in tilt position |
-| `top_tilt` | Blind at top, tilted |
-| `bottom_tilt` | Blind at bottom, tilted |
-| `moving_up` | Blind moving up |
-| `moving_down` | Blind moving down |
-| `start_moving_up` | Blind starting to move up |
-| `start_moving_down` | Blind starting to move down |
-| `stopped` | Blind stopped (intermediate position) |
-| `blocking` | Blind blocked (error!) |
-| `overheated` | Motor overheated (error!) |
-| `timeout` | Timeout (error!) |
-| `on` | Turned on |
-| `unknown` | Unknown state |
+The protocol bytes (`hop`, `payload_*`, `msg_type`, `type2`) are rarely
+overridden — defaults match every Elero motor seen in the wild. Only
+touch them if you've sniffed an unusual remote and confirmed it differs.
 
 ---
 
 ## Web UI: `elero_web`
 
-Optional web interface for device discovery and YAML generation. Accessible at `http://<device-ip>/elero`.
+Cover command bytes are optional and also round-trip through device CRUD and
+backup JSON. For Raffstore variants, set `command_up` to `"0x21"` and
+`command_down` to `"0x44"` when those values match the physical transmitter.
+Legacy NVS records ignore the repurposed reserved bytes; old backups use the
+default commands. The 64-byte NVS record and version remain unchanged.
+
+Saved groups contain stable member addresses and survive removal of members
+until the last member is removed. Group position is the average of member
+positions. Any moving member makes the group moving (opening takes precedence
+if members move in opposing directions); every cover must have opening and
+closing durations before group position control is offered. Disabled members
+make their group unavailable without deleting its saved membership.
+MQTT group updates apply immediately; native cover-group CRUD requires reboot.
+
+Members sharing a remote and command variant use one `0x44` selector-list
+transmission; different remotes or command variants use their own TX paths.
+Group state is published through MQTT and `group_state_changed` WebSocket
+events, and is included in the initial WebSocket config.
+
+Web interface for device CRUD, RF discovery, backup/restore, and live RF/log tailing. Accessible at `http://<device-ip>/elero`.
 
 ```yaml
 # web_server_base is automatically loaded by elero_web.
@@ -285,43 +182,24 @@ elero_web:
 - `web_server_base` is automatically loaded by `elero_web`. Do **not** use `web_server:` -- that re-enables the default ESPHome UI at `/`. Navigating to `/` will redirect automatically to `/elero`.
 
 **Features:**
-- **Device discovery** -- view RF packets from Elero devices in real time
-- **Configured devices** -- status of blinds and lights
-- **Raw TX** -- send test commands for debugging
-- **Logs** -- ESPHome logs in real time
+- **Devices tab** — add, edit, remove blinds/lights/remotes.
+- **Hub tab** — display name override, frequency presets, raw TX, **Backup & Restore**.
+- **Packets tab** — live RF traffic.
+- **Logs** — ESPHome `elero.*` logs in real time.
 
-**WebSocket communication:**
+### WebSocket protocol
 
-The web UI communicates via WebSocket (`/elero/ws`) for real-time updates. See `docs/ARCHITECTURE.md` for the complete protocol.
+The web UI talks to the device over WebSocket at `/elero/ws`. The full protocol is documented as an AsyncAPI spec at `components/elero_web/frontend/app/asyncapi.yaml` — that file is the authoritative source.
 
 | Endpoint | Description |
 |---|---|
 | `/` | Redirect to `/elero` |
-| `/elero` | Web UI (HTML) |
+| `/elero` | Web UI (HTML, served gzipped) |
 | `/elero/ws` | WebSocket for real-time communication |
 
-**Server -> Client Events:**
+Server → client events include `config`, `rf`, `log`, `device_upserted`, `device_removed`, `state_changed`, `group_upserted`, `group_removed`, `group_state_changed`, `hub_config`, `config_snapshot`, `import_result`, `error`. Client → server messages include `cmd`, `raw`, `upsert_device`, `remove_device`, `upsert_group`, `remove_group`, `group_cmd`, `set_hub_config`, `export_config`, `import_config`, `restart`.
 
-| Event | Description |
-|---|---|
-| `config` | Device configuration on connection |
-| `rf` | Decoded RF packets in real time |
-| `log` | ESPHome log entries with `elero.*` tags |
-| `device_upserted` | NVS modes: device was created or updated (address, type) |
-| `device_removed` | NVS modes: device was removed (address) |
-
-**Client -> Server Messages:**
-
-| Type | Description |
-|---|---|
-| `cmd` | Command to blind/light: `{"type":"cmd", "address":"0xADDRESS", "action":"up"}` |
-| `raw` | Raw RF packet for testing: `{"type":"raw", "dst_address":"0x...", "src_address":"0x...", "channel":5, ...}` |
-| `upsert_device` | NVS modes: create or update device (NvsDeviceConfig fields) |
-| `remove_device` | NVS modes: remove device by `dst_address` + `device_type` |
-
-**Why Mongoose?**
-
-The web UI uses the Mongoose HTTP/WebSocket library instead of ESPHome's `web_server_base`. Reason: ESPHome uses different implementations depending on the framework (Arduino vs. ESP-IDF). Mongoose provides a unified API for both frameworks.
+**Why Mongoose?** ESPHome ships different HTTP backends per framework (Arduino vs ESP-IDF). Mongoose provides one API for both.
 
 ---
 
@@ -343,15 +221,15 @@ switch:
 | `id` | String | No | `elero_web_switch` | Unique component ID |
 | `restore_mode` | Enum | No | `RESTORE_DEFAULT_ON` | `RESTORE_DEFAULT_ON` or `RESTORE_DEFAULT_OFF` |
 
-**Prerequisites:**
-- `elero_web` must be present in the configuration
-- This switch is optional; if not present, the web UI is always active
+Prerequisites: `elero_web` must be present.
 
 ---
 
-## MQTT Mode: `elero_mqtt`
+## Output adapter (pick one)
 
-The `elero_mqtt` component enables runtime device management via NVS persistence and MQTT Home Assistant discovery. It requires the ESPHome `mqtt:` component.
+### MQTT mode: `elero_mqtt`
+
+Surfaces devices to Home Assistant via MQTT discovery. Requires the ESPHome `mqtt:` component.
 
 ```yaml
 mqtt:
@@ -367,41 +245,35 @@ elero_mqtt:
 |---|---|---|---|---|
 | `topic_prefix` | String | No | `elero` | MQTT topic prefix for all device topics |
 | `discovery_prefix` | String | No | `homeassistant` | Home Assistant MQTT discovery prefix |
-| `device_name` | String | No | `Elero Gateway` | Device name in Home Assistant |
+| `device_name` | String | No | `Elero Gateway` | YAML default for the gateway device name. The web UI can override this at runtime; the override is persisted to NVS. |
 
-**Important notes:**
-- When `elero_mqtt` is present, **no** covers or lights should be defined in YAML -- devices are added at runtime via the web UI or MQTT API.
-- Devices are stored in NVS (unified 48-slot pool).
-- The `mqtt:` component must be present in the ESPHome configuration.
-- Remote controls are automatically discovered from observed RF command packets.
+Notes:
+- Devices added through the web UI appear in HA immediately (no reboot).
+- Auto-discovered remotes (from observed RF) are **not** published until you save them.
 
----
+### Native API mode: `elero_nvs`
 
-## Native+NVS Mode: `elero_nvs`
-
-The `elero_nvs` component enables runtime device management via NVS persistence with the native ESPHome API (no MQTT broker required).
+Surfaces devices to Home Assistant via the ESPHome native API. No MQTT broker required.
 
 ```yaml
+api:
 elero_nvs:
 ```
 
-**No configuration parameters** -- simply including the component enables NVS persistence.
+No configuration parameters — including the component enables it.
 
-**Important notes:**
-- Devices are added via the web UI CRUD API and stored in NVS.
-- On boot, active devices are restored from NVS and registered with the native ESPHome API.
-- CRUD operations after boot write to NVS, but new entities only appear after a reboot (ESPHome limitation: entities cannot be registered after the initial connection).
-- No MQTT broker required -- uses the built-in native ESPHome API.
+Notes:
+- On boot, active NVS devices are registered as ESPHome cover/light entities.
+- ESPHome can't add entities after the initial API connection — adding/removing devices via the UI requires a reboot to surface the change to HA. The UI prompts for this automatically.
+- 48-slot pool is pre-allocated (`MAX_DEVICES`); empty slots have negligible runtime cost.
 
 ---
 
 ## Complete Example
 
-A complete configuration with all platforms:
-
 ```yaml
 external_components:
-  - source: github://pfriedrich84/esphome-elero
+  - source: github://manuschillerdev/esphome-elero
 
 spi:
   clk_pin: GPIO18
@@ -412,43 +284,22 @@ elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
 
-cover:
-  - platform: elero
-    name: "Schlafzimmer"
-    dst_address: 0xa831e5
-    channel: 4
-    src_address: 0xf0d008
-    open_duration: 25s
-    close_duration: 22s
+# Pick one: elero_nvs (native API) or elero_mqtt
+elero_nvs:
 
-  - platform: elero
-    name: "Wohnzimmer"
-    dst_address: 0xb912f3
-    channel: 5
-    src_address: 0xf0d008
-
-light:
-  - platform: elero
-    name: "Wohnzimmerlicht"
-    dst_address: 0xc41a2b
-    channel: 6
-    src_address: 0xf0d008
-    # dim_duration: 5s  # Enable for brightness control
-
-# Sensors (RSSI, status, problem, etc.) are automatically created by the cover/light blocks
-# when auto_sensors: true (the default). No separate sensor:/text_sensor: blocks needed.
-
-# Web UI for discovery (do NOT use web_server: — use web_server_base: instead)
+# Web UI + Backup/Restore
 web_server_base:
   port: 80
 
 elero_web:
 
-# Optional: Runtime control to disable/enable the web UI
+# Optional: HA toggle for the web UI
 switch:
   - platform: elero_web
     name: "Elero Web UI"
     restore_mode: RESTORE_DEFAULT_ON
 ```
 
-See also: [Installation Guide](INSTALLATION.md) | [README](../README.md) | [Example YAML](../example.yaml)
+After flashing, open `http://<device-ip>/elero` to add devices.
+
+See also: [Installation Guide](INSTALLATION.md) | [Backup &amp; Restore](BACKUP-RESTORE.md) | [Migration from YAML](MIGRATION-yaml-to-nvs.md) | [README](../README.md) | [Example YAML](../example.yaml)
