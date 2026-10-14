@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from esphome.config_validation import positive_time_period_milliseconds
 from esphome.core import TimePeriodMilliseconds
 

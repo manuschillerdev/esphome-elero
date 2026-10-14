@@ -22,8 +22,9 @@ CI verifies that the generated header matches the source.
 Pick a device config for your board:
 
 - [ESP32 + CC1101](docs/devices/esp32-cc1101.md) -- generic ESP32 with external CC1101 module
+- [ESP32-C6 + CC1101](docs/devices/esp32-c6-cc1101.md) -- ESP32-C6 with external CC1101 module
 - [Heltec WiFi LoRa 32 V4](docs/devices/heltec-lora-v4.md) -- onboard SX1262 (experimental)
-- [LILYGO LoRa32 V2.1](docs/devices/lilygo-lora32-sx1276.md) -- onboard SX1276 (experimental)
+- [LILYGO LoRa32 V2.1](docs/devices/lilygo-lora32-sx1276.md) -- onboard SX1276 (experimental); [native API + ESP-IDF setup](docs/ESPHOME-2026-LILYGO.md)
 - [LilyGO T-Embed](docs/devices/lilygo-t-embed.md) -- onboard CC1101
 
 ### 2. Choose your output adapter
@@ -73,6 +74,16 @@ elero_web:
 ### Migrating from older versions (YAML-defined devices)
 
 If you're upgrading from a version where devices were defined under `cover: - platform: elero` / `light: - platform: elero`, see [docs/MIGRATION-yaml-to-nvs.md](docs/MIGRATION-yaml-to-nvs.md). The TL;DR: run `uv run scripts/migrate_yaml_to_json.py old.yaml -o backup.json`, remove the `cover:` / `light:` blocks from YAML, flash, then upload the backup via the web UI.
+
+Group transmissions support up to **31 destination channels per source address**
+on CC1101, SX1262, and SX1276. See [radio framing and limits](docs/RADIO_FRAMING.md#supported-group-size).
+
+Cover groups expose member-derived state and position through MQTT and the native
+API. Motors with different command variants can coexist: each cover supports
+`command_up`, `command_down`, `command_stop`, `command_check`, and `command_tilt`
+overrides. For example, Raffstore motors may need `command_up: "0x21"` and
+`command_down: "0x44"`. Existing NVS devices and backups retain their defaults.
+See the [per-device fields](docs/CONFIGURATION.md#per-device-fields-managed-in-the-ui).
 
 ## Documentation
 

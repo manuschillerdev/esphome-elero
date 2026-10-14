@@ -127,6 +127,11 @@ and edited via the web UI's device editor. Fields marked **(cover)** and
 | `open_duration_ms` | Integer | `0` | **(cover)** Travel time fully open. `0` = no position tracking. |
 | `close_duration_ms` | Integer | `0` | **(cover)** Travel time fully closed. Pair with `open_duration_ms`. |
 | `supports_tilt` | Boolean | `false` | **(cover)** Tilt-capable blind |
+| `command_up` | Hex byte | `0x20` | **(cover)** Full opening command |
+| `command_down` | Hex byte | `0x40` | **(cover)** Full closing command |
+| `command_stop` | Hex byte | `0x10` | **(cover)** Stop command |
+| `command_check` | Hex byte | `0x00` | **(cover)** Status query command |
+| `command_tilt` | Hex byte | `0x24` | **(cover)** Saved tilt command |
 | `ha_device_class` | Enum | `shutter` | **(cover)** `shutter`/`blind`/`awning`/`curtain`/`shade`/`garage` |
 | `dim_duration_ms` | Integer | `0` | **(light)** Dimming travel. `0` = on/off only. |
 | `hop` | Hex byte | `0x0a` | Protocol hop counter |
@@ -142,6 +147,25 @@ touch them if you've sniffed an unusual remote and confirmed it differs.
 ---
 
 ## Web UI: `elero_web`
+
+Cover command bytes are optional and also round-trip through device CRUD and
+backup JSON. For Raffstore variants, set `command_up` to `"0x21"` and
+`command_down` to `"0x44"` when those values match the physical transmitter.
+Legacy NVS records ignore the repurposed reserved bytes; old backups use the
+default commands. The 64-byte NVS record and version remain unchanged.
+
+Saved groups contain stable member addresses and survive removal of members
+until the last member is removed. Group position is the average of member
+positions. Any moving member makes the group moving (opening takes precedence
+if members move in opposing directions); every cover must have opening and
+closing durations before group position control is offered. Disabled members
+make their group unavailable without deleting its saved membership.
+MQTT group updates apply immediately; native cover-group CRUD requires reboot.
+
+Members sharing a remote and command variant use one `0x44` selector-list
+transmission; different remotes or command variants use their own TX paths.
+Group state is published through MQTT and `group_state_changed` WebSocket
+events, and is included in the initial WebSocket config.
 
 Web interface for device CRUD, RF discovery, backup/restore, and live RF/log tailing. Accessible at `http://<device-ip>/elero`.
 
@@ -173,7 +197,7 @@ The web UI talks to the device over WebSocket at `/elero/ws`. The full protocol 
 | `/elero` | Web UI (HTML, served gzipped) |
 | `/elero/ws` | WebSocket for real-time communication |
 
-Server → client events include `config`, `rf`, `log`, `device_upserted`, `device_removed`, `state_changed`, `hub_config`, `config_snapshot`, `import_result`, `error`. Client → server messages include `cmd`, `raw`, `upsert_device`, `remove_device`, `set_hub_config`, `export_config`, `import_config`, `restart`.
+Server → client events include `config`, `rf`, `log`, `device_upserted`, `device_removed`, `state_changed`, `group_upserted`, `group_removed`, `group_state_changed`, `hub_config`, `config_snapshot`, `import_result`, `error`. Client → server messages include `cmd`, `raw`, `upsert_device`, `remove_device`, `upsert_group`, `remove_group`, `group_cmd`, `set_hub_config`, `export_config`, `import_config`, `restart`.
 
 **Why Mongoose?** ESPHome ships different HTTP backends per framework (Arduino vs ESP-IDF). Mongoose provides one API for both.
 

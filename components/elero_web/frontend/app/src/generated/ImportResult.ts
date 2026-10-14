@@ -36,4 +36,4 @@ interface ImportResult {
    */
   'errors': ImportError[];
 }
-export { ImportResult };
+export type { ImportResult };

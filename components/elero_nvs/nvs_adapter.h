@@ -44,6 +44,51 @@ class NvsLightState final : public light::LightState {
   EspLightShell output_;
 };
 
+class NvsGroupCover final : public cover::Cover {
+ public:
+  NvsGroupCover(DeviceRegistry &registry, const char *id) : registry_(registry), id_(id) {}
+  const std::string &id() const { return id_; }
+  cover::CoverTraits get_traits() override {
+    cover::CoverTraits traits;
+    const auto *group = registry_.find_group(id_.c_str());
+    traits.set_supports_position(group != nullptr && registry_.group_snapshot(*group, millis()).supports_position);
+    traits.set_supports_stop(true);
+    traits.set_is_assumed_state(true);
+    return traits;
+  }
+  void sync_and_publish(const GroupStateSnapshot &state) {
+    if (!state.valid || state.type != DeviceType::COVER) return;
+    position = static_cast<float>(state.position_pct) / PERCENT_SCALE;
+    current_operation = state.operation == cover_sm::Operation::OPENING ? cover::COVER_OPERATION_OPENING
+        : state.operation == cover_sm::Operation::CLOSING ? cover::COVER_OPERATION_CLOSING : cover::COVER_OPERATION_IDLE;
+    publish_state();
+  }
+
+ protected:
+  void control(const cover::CoverCall &call) override {
+    if (call.get_stop()) {
+      send_command_(packet::command::STOP);
+    } else if (call.get_position().has_value()) {
+      const float target = *call.get_position();
+      if (target <= 0.0f || target >= 1.0f) {
+        send_command_(target >= 1.0f ? packet::command::UP : packet::command::DOWN);
+      } else {
+        registry_.set_group_position(id_.c_str(), target);
+      }
+    }
+  }
+
+ private:
+  void send_command_(uint8_t command) {
+    std::string error;
+    if (!registry_.command_saved_group(id_.c_str(), command, &error)) {
+      ESP_LOGW("nvs_adapter", "Group '%s' command rejected: %s", id_.c_str(), error.c_str());
+    }
+  }
+  DeviceRegistry &registry_;
+  std::string id_;
+};
+
 class NvsAdapter : public Component, public OutputAdapter {
  public:
   float get_setup_priority() const override {
@@ -60,6 +105,11 @@ class NvsAdapter : public Component, public OutputAdapter {
   void loop() override {}
   void on_device_added(const Device &) override {}
   void on_device_removed(const Device &) override {}
+  void on_group_state_changed(const NvsGroupConfig &group, const GroupStateSnapshot &state) override {
+    for (auto *shell : group_shells_) {
+      if (shell != nullptr && shell->id() == group.id) shell->sync_and_publish(state);
+    }
+  }
   void on_state_changed(const Device &dev, uint16_t changes) override {
     size_t idx = registry_->slot_index(dev);
     if (dev.is_cover() && cover_shells_[idx] != nullptr) {
@@ -88,6 +138,19 @@ class NvsAdapter : public Component, public OutputAdapter {
     }
 
     ESP_LOGI("nvs_adapter", "Created %zu cover(s) and %zu light(s) from NVS", covers, lights);
+    size_t group_index = 0;
+    registry_->for_each_group([&](const NvsGroupConfig &group) {
+      const auto snapshot = registry_->group_snapshot(group, millis());
+      if (!snapshot.valid || snapshot.type != DeviceType::COVER) return;
+      auto *shell = new NvsGroupCover(*registry_, group.id);  // Firmware-lifetime entity
+      group_names_[group_index] = group.name;
+      group_shells_[group_index] = shell;
+      const auto object_id = std::string("elero_group_") + group.id;
+      App.register_cover(shell, group_names_[group_index].c_str(), fnv1_hash(object_id), 0);
+      shell->sync_and_publish(snapshot);
+      ++group_index;
+    });
+    ESP_LOGI("nvs_adapter", "Created %zu native cover group(s) from NVS", group_index);
   }
 
  private:
@@ -112,6 +175,7 @@ class NvsAdapter : public Component, public OutputAdapter {
     output->set_device(dev);
 
     state->set_restore_mode(light::LIGHT_RESTORE_DEFAULT_OFF);
+    state->set_default_transition_length(0);  // Registry owns physical dimming timing.
 
     output->set_light_state(state);
 
@@ -125,6 +189,8 @@ class NvsAdapter : public Component, public OutputAdapter {
   std::array<EspLightShell *, DeviceRegistry::MAX_DEVICES> light_shells_{};
   std::array<NvsLightState *, DeviceRegistry::MAX_DEVICES> light_states_{};
   std::array<std::string, DeviceRegistry::MAX_DEVICES> names_{};
+  std::array<NvsGroupCover *, DeviceRegistry::MAX_GROUPS> group_shells_{};
+  std::array<std::string, DeviceRegistry::MAX_GROUPS> group_names_{};
 };
 
 }  // namespace elero

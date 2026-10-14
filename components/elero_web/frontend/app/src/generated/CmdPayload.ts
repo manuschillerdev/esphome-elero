@@ -13,4 +13,4 @@ interface CmdPayload {
    */
   'action': DeviceAction;
 }
-export { CmdPayload };
+export type { CmdPayload };

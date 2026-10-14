@@ -36,4 +36,4 @@ interface ConfigSnapshot {
    */
   'groups': GroupConfig[];
 }
-export { ConfigSnapshot };
+export type { ConfigSnapshot };

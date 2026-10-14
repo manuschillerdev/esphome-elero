@@ -6,4 +6,4 @@ interface GroupRemovedData {
    */
   'id': string;
 }
-export { GroupRemovedData };
+export type { GroupRemovedData };

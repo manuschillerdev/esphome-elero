@@ -6,4 +6,4 @@
  *   - `mqtt`   — MQTT HA discovery (MqttAdapter publishes topics)
  */
 type HubMode = "native" | "mqtt";
-export { HubMode };
+export type { HubMode };

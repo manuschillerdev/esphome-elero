@@ -34,7 +34,7 @@ This guide walks you through the complete setup of the Elero component step by s
 ### Tools
 
 - Computer with a USB port
-- Python 3.9+ installed
+- ESPHome 2026.9.0 or newer; local builds use Python 3.12 through mise
 - Internet access
 
 ---
@@ -81,14 +81,21 @@ Connect the ESP32 to your computer via USB. The driver should install automatica
 3. Install and start
 4. Open the ESPHome Dashboard
 
+Use ESPHome 2026.9.0 or newer. The current development configuration uses
+`github://manuschillerdev/esphome-elero@dev` as its external component source.
+The component bundles its web UI, so a Git installation does not need Node.js,
+pnpm, or a separate `elero_web_ui.h` release download. For a local checkout,
+follow [the compatibility guide](ESPHOME-COMPATIBILITY.md).
+
 ### Option B: ESPHome CLI (Command Line)
 
 ```bash
-# Python and pip must be installed
-pip install esphome
+# In a local checkout, install the pinned runtimes and dependencies.
+mise install
+mise exec -- uv sync --locked
 
 # Verify it works
-esphome version
+mise exec -- uv run esphome version
 ```
 
 ---
@@ -130,7 +137,7 @@ ota:
 
 # External Elero component
 external_components:
-  - source: github://manuschillerdev/esphome-elero
+  - source: github://manuschillerdev/esphome-elero@dev
 
 # SPI bus
 spi:
@@ -155,7 +162,7 @@ elero_web:
 **Via CLI:**
 ```bash
 # Initial flash over USB
-esphome run elero-blinds.yaml
+mise exec -- uv run esphome run elero-blinds.yaml
 ```
 
 **Via Dashboard:**
@@ -250,7 +257,7 @@ ota:
     password: !secret ota_password
 
 external_components:
-  - source: github://manuschillerdev/esphome-elero
+  - source: github://manuschillerdev/esphome-elero@dev
 
 spi:
   clk_pin: GPIO18
@@ -278,7 +285,7 @@ elero_web:
 Flash:
 
 ```bash
-uv run esphome run elero-blinds.yaml
+mise exec -- uv run esphome run elero-blinds.yaml
 ```
 
 After it boots, open `http://<device-ip>/elero` and add your blinds via the UI.

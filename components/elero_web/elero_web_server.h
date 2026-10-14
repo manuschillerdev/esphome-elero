@@ -48,6 +48,7 @@ class EleroWebServer : public Component, public OutputAdapter {
   void on_rf_packet(const RfPacketInfo &pkt) override;
   void on_group_upserted(const NvsGroupConfig &group) override;
   void on_group_removed(const char *id) override;
+  void on_group_state_changed(const NvsGroupConfig &group, const GroupStateSnapshot &state) override;
 
   // Logger callback - forward logs to WebSocket clients
   void on_log(uint8_t level, const char *tag, const char *message, size_t message_len);
@@ -107,6 +108,7 @@ class EleroWebServer : public Component, public OutputAdapter {
 
   /// Serialize one device's NvsDeviceConfig into a `DeviceSnapshot` JSON object.
   void build_device_snapshot_(const NvsDeviceConfig &cfg, JsonObject out);
+  static void build_cover_commands_(const NvsDeviceConfig &cfg, JsonObject out);
   /// Build the full `ConfigSnapshot` envelope for the current registry state.
   std::string build_config_snapshot_json_();
 
@@ -115,7 +117,8 @@ class EleroWebServer : public Component, public OutputAdapter {
   void dispatch_device_command_(Device &dev, uint8_t cmd_byte);
 
   // Parse NvsDeviceConfig / NvsGroupConfig from JSON objects
-  bool parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error);
+  bool parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error,
+                            bool preserve_commands = false);
   bool parse_group_config_(JsonObject root, NvsGroupConfig &config, std::string &error);
 
   LearnInState last_learn_in_state_{LearnInState::IDLE};
@@ -123,7 +126,6 @@ class EleroWebServer : public Component, public OutputAdapter {
   bool last_learn_in_busy_{false};
   uint32_t last_learn_in_src_{0};
   uint8_t last_learn_in_channel_{0};
-  uint8_t last_learn_in_cmd_{packet::command::INVALID};
 };
 
 }  // namespace elero

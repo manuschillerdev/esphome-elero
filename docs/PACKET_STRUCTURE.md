@@ -46,6 +46,22 @@ Verified against eleropy, andyboeh, and pfriedrich84 implementations.
 
 ## Command Bytes
 
+Addressed `0x6A`/`0x69` packets can carry multiple 24-bit destinations. With N
+addresses, the destination list starts at offset 17 and occupies `3 * N` bytes;
+the two payload prefix bytes follow the list, and the encrypted eight-byte
+section starts at `19 + 3 * N`. All addresses are retained in decoded packets
+and the WebSocket `destinations` array. `dst` remains the first address for
+older clients. Prefix values vary between transmitters and are not assumed to
+be `00 04` during receive parsing. The supported 57-byte body fits up to 10
+addresses. Selector-list packets (`0x44`, `0x45`, `0x70`) use one-byte selectors
+and are a separate envelope.
+
+`msg_decode()` XORs the recovered key into the first pair as well as the other
+payload pairs, so its decoded first two bytes are zero by construction. This
+does not indicate failed decryption. Historical `0x45` group/all-channel
+captures and remaining semantic questions are documented in
+[the protocol issue investigation](research/elero-open-protocol-issues.md).
+
 All constants in `packet::command::` namespace.
 
 | Command | Byte | C++ Constant | Description |

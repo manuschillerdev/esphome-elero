@@ -5,6 +5,21 @@ use the same pinned ESPHome release, Python, and tools from `pyproject.toml`,
 `uv.lock`, and `.mise.toml`. Upgrade the ESPHome installation that builds your
 firmware before updating the external component.
 
+The nightly `Nightly ESPHome Compatibility` workflow runs at **03:23 UTC**
+and can also be started manually. It resolves the newest published stable,
+non-yanked ESPHome release from PyPI once, then runs the same frontend, Python,
+C++ unit-test, and eight-firmware compile checks used by ordinary CI. Exact
+version overlays leave the project's ESPHome pin and lockfile unchanged. A
+new release requiring a newer Python fails explicitly rather than silently
+testing an older compatible ESPHome release.
+
+GitHub schedules run on the default branch; the workflow becomes active after
+it is committed there. Failures appear in Actions and its check reports.
+
+The nightly checks were verified locally against ESPHome **2026.9.1**: all eight
+firmware configurations compiled, all 36 existing Python tests passed, and
+Ruff lint/format, ty, and workflow syntax checks passed.
+
 ## Native API and NVS
 
 Devices still live in NVS and are managed through the web UI or
@@ -30,6 +45,12 @@ Cover and light entity capacities are added through ESPHome's platform counts,
 so ordinary YAML entities can coexist with the NVS devices. Automatically
 created diagnostic sensors use the current entity registration API and also
 contribute to the sensor capacity.
+
+Native cover groups reserve another 16 cover entities. Their keys derive from
+the stable group id in a separate namespace, so a group can share a display
+name with a cover. Group position is the average member position; position
+control requires travel durations on every member. Native group CRUD requires
+a reboot, like individual native devices.
 
 WebSocket log forwarding uses ESPHome's context-pointer log callback API.
 
@@ -67,20 +88,21 @@ mise exec -- pnpm --dir components/elero_web/frontend/app install --frozen-lockf
 mise exec -- pnpm --dir components/elero_web/frontend/app build
 ```
 
-CI checks the regenerated header for drift. A separate fresh-install job compiles
-`tests/test.fresh-install.yaml` through ESPHome's Git external-component loader
-at the tested commit, without building or injecting a frontend artifact.
+CI checks the regenerated header for drift. Firmware compile jobs consume the
+committed header directly, without injecting a separately built artifact.
 
 Validated with ESPHome 2026.9.0 and Python 3.12.14:
 
 - The existing ESP32 NVS and MQTT fixtures compile with ESP-IDF 5.5.5.
 - The existing ESP32 Arduino fixture compiles.
-- A temporary configuration combining NVS with ordinary YAML cover, light,
-  and sensor entities compiles, including all ten automatic diagnostic sensors.
-  Generated entity capacities are 49 covers, 49 lights, and 11 sensors.
+- Platform counts accumulate ordinary YAML entities alongside the reserved
+  48 device covers, 16 group covers, and 48 light states. Automatic diagnostic
+  sensors also contribute to their platform's count.
 - Six existing CI configurations generate C++ successfully: ESP32-S3 Arduino,
   ESP32-S3 ESP-IDF, ESP32 Arduino, minimal, MQTT, and NVS.
-- All 36 existing Python tests pass. No tests were added or changed.
+- All 36 existing Python tests pass; existing test changes are mechanical formatting.
+- All 482 existing C++ tests pass.
+- Ruff lint/format, ty, and TypeScript 7.0.2 native-compiler checks pass.
 
 Hardware verification remains outstanding. After flashing, verify native API
 discovery and commands for both a cover and a light, light brightness changes,

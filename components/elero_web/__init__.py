@@ -3,10 +3,11 @@ from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components.elero import CONF_ELERO_ID, CONF_REGISTRY_ID, DeviceRegistry, elero, elero_ns
 from esphome.components.logger import request_log_listener
 from esphome.const import CONF_ID, CONF_PORT
 from esphome.core import EsphomeError
+
+from ..elero import CONF_ELERO_ID, CONF_REGISTRY_ID, DeviceRegistry, elero, elero_ns
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +91,8 @@ async def to_code(config):
     cg.add_define("MG_IO_SIZE", 512)
     # Build flag ensures mongoose.c sees this before its own default (#ifndef guard)
     cg.add_build_flag("-DMG_ENABLE_LOG=0")
+    # Mongoose C sources do not include ESPHome defines; the UI is served from flash.
+    cg.add_build_flag("-DMG_ENABLE_POSIX_FS=0")
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)

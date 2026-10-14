@@ -1,10 +1,11 @@
-
+import {GroupStateData} from './GroupStateData';
 /**
  * Saved group metadata. Groups are not devices and do not store a device
  * type; the backend derives and validates the common member type from the
  * referenced device ids. Device ids are stable 3-byte device addresses.
  */
 interface GroupConfig {
+  'state'?: GroupStateData;
   /**
    * Stable group id persisted in NVS.
    * @example grp_living_k8x2p1
@@ -20,4 +21,4 @@ interface GroupConfig {
    */
   'device_ids': string[];
 }
-export { GroupConfig };
+export type { GroupConfig };

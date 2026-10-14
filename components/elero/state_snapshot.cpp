@@ -66,6 +66,16 @@ LightStateSnapshot compute_light_snapshot(const Device &dev, uint32_t now) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #ifdef ELERO_HAS_JSON
+void GroupStateSnapshot::to_json(JsonObject obj) const {
+    obj["available"] = valid;
+    obj["device_type"] = device_type_str(type);
+    obj["supports_position"] = supports_position;
+    obj["position"] = static_cast<float>(position_pct) / PERCENT_SCALE;
+    obj["operation"] = operation == cover_sm::Operation::OPENING ? "opening"
+        : operation == cover_sm::Operation::CLOSING ? "closing" : "idle";
+    obj["is_on"] = is_on;
+}
+
 void CoverStateSnapshot::to_json(JsonObject obj) const {
     obj["position"] = position;
     obj["ha_state"] = ha_state;

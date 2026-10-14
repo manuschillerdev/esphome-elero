@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cinttypes>
 #include "mqtt_publisher.h"
 #include "../elero/elero_strings.h"
 #include "esphome/components/json/json_util.h"
@@ -11,10 +12,10 @@
 namespace esphome {
 namespace elero {
 
-/// Format a uint32_t as "%06x" for MQTT topic construction (no "0x" prefix).
+/// Format a uint32_t as "%06" PRIx32 for MQTT topic construction (no "0x" prefix).
 [[nodiscard]] inline std::string addr_hex(uint32_t addr) {
   char buf[12];
-  snprintf(buf, sizeof(buf), "%06x", addr);
+  snprintf(buf, sizeof(buf), "%06" PRIx32, addr);
   return buf;
 }
 

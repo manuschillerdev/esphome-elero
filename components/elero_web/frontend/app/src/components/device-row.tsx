@@ -6,7 +6,7 @@ import { formatTime } from './packet-table'
 import { ChevronUp, Square, ChevronDown, Shrink, Lightbulb, LightbulbOff, Settings, RotateCcw, Save, Info, Trash2 } from './icons'
 import { cn } from '@/lib/utils'
 import {
-  updateDevice, getStateLabel, getCommandLabel, isCommandPacket, isButtonPacket,
+  updateDevice, getStateLabel, getCommandLabel, isCommandPacket, isSelectorPacket,
   rfPackets, hub, displayNames,
   type Device, type RfPacketWithTimestamp,
 } from '@/store'
@@ -250,7 +250,7 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
 
   const commandPackets = deduplicatePackets(
     packets.filter((pkt) =>
-      (isCommandPacket(pkt) || isButtonPacket(pkt)) &&
+      (isCommandPacket(pkt) || isSelectorPacket(pkt)) &&
       pkt.src === device.remote &&
       (pkt.dst === device.address || pkt.channel === device.channel)
     )

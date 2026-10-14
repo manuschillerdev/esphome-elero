@@ -5,6 +5,14 @@ description: SX1262 radio driver reference for Heltec WiFi LoRa 32 V4 — regist
 
 # SX1262 Radio Driver Reference
 
+> Historical bring-up notes below. Current RX ownership and framing are described
+> in `docs/RADIO_FRAMING.md`: sync starts a bounded 64-byte capture, CRC is checked
+> in software, and RX is explicitly rearmed. The old fixed 32-byte capture and
+> unconditional CRC_OK are no longer the implementation. The new RX capture
+> requires bench validation. Claims below that SX1262 whitening is data-dependent
+> or its hardware CRC cannot be configured contradict the datasheet and are
+> historical hypotheses, not specifications.
+
 Use this skill when working on `sx1262_driver.{h,cpp}` or debugging SX1262 radio behavior. Covers:
 - SX1262 GFSK configuration for CC1101 interoperability
 - Errata fixes and their purpose

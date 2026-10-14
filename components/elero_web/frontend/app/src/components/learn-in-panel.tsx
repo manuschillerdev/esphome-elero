@@ -14,10 +14,6 @@ const selectClass = 'h-9 w-full appearance-none rounded-md border border-input b
 const fieldClass = 'flex flex-col gap-1.5'
 const labelClass = 'text-[11px] font-medium uppercase tracking-wider text-muted-foreground'
 
-function isValidHexByte(value: string) {
-  return /^0x[0-9a-fA-F]{1,2}$/.test(value)
-}
-
 function isValidHexAddress(value: string) {
   return /^0x[0-9a-fA-F]{6}$/.test(value)
 }
@@ -70,10 +66,6 @@ export function LearnInPanel() {
   const srcAddress = useSignal(state.src_address ?? defaultSrcAddress.value)
   const appliedDefaultSrcAddress = useSignal(srcAddress.value)
   const channel = useSignal(state.channel ?? 1)
-  const programmingCmd = useSignal(state.programming_cmd ?? '0x00')
-  const packets = useSignal(3)
-  const type2 = useSignal('0x10')
-  const hop = useSignal('0x00')
   const sessionTimeoutSec = useSignal(300)
 
   const remoteOptions = [...devices.value.values()]
@@ -82,13 +74,8 @@ export function LearnInPanel() {
 
   const formValid = useComputed(() => (
     isValidHexAddress(srcAddress.value)
-    && channel.value >= 0
+    && channel.value >= 1
     && channel.value <= 255
-    && isValidHexByte(programmingCmd.value)
-    && isValidHexByte(type2.value)
-    && isValidHexByte(hop.value)
-    && packets.value >= 1
-    && packets.value <= 20
     && sessionTimeoutSec.value >= 5
   ))
 
@@ -116,17 +103,12 @@ export function LearnInPanel() {
     sendLearnInStart({
       src_address: srcAddress.value,
       channel: channel.value,
-      programming_cmd: programmingCmd.value,
-      packets: packets.value,
-      type2: type2.value,
-      hop: hop.value,
       session_timeout_ms: sessionTimeoutSec.value * 1000,
     })
   }
 
   const currentSrc = state.src_address ?? srcAddress.value
   const currentChannel = state.channel ?? channel.value
-  const currentProgrammingCmd = state.programming_cmd ?? programmingCmd.value
 
   return (
     <Card className="gap-0 overflow-hidden p-0">
@@ -137,13 +119,12 @@ export function LearnInPanel() {
             <Badge className={cn('border-0 font-medium', stateTone(state.state))}>{stateLabel(state.state)}</Badge>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Pair a motor using a virtual remote. The programming command byte is still manual until sniffed and confirmed.
+            Pair a motor using a virtual remote. Isolate the target receiver before sending the programming action.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span className="rounded-md bg-muted px-2 py-1 font-mono">src {currentSrc}</span>
           <span className="rounded-md bg-muted px-2 py-1 font-mono">ch {currentChannel}</span>
-          <span className="rounded-md bg-muted px-2 py-1 font-mono">P {currentProgrammingCmd}</span>
         </div>
       </div>
 
@@ -191,58 +172,13 @@ export function LearnInPanel() {
               <label className={labelClass}>Channel</label>
               <Input
                 type="number"
-                min={0}
+                min={1}
                 max={255}
                 value={channel.value}
                 onInput={(e) => { channel.value = Number((e.target as HTMLInputElement).value) || 0 }}
                 disabled={active}
               />
               <p className="text-[11px] text-muted-foreground">Most setups use the motor's paired channel number.</p>
-            </div>
-
-            <div className={fieldClass}>
-              <label className={labelClass}>Programming Command</label>
-              <Input
-                value={programmingCmd.value}
-                onInput={(e) => { programmingCmd.value = (e.target as HTMLInputElement).value }}
-                placeholder="0x55"
-                disabled={active}
-                className="font-mono"
-              />
-              <p className="text-[11px] text-muted-foreground">Unknown RF byte for the remote's P/programming button.</p>
-            </div>
-
-            <div className={fieldClass}>
-              <label className={labelClass}>Packets Per Step</label>
-              <Input
-                type="number"
-                min={1}
-                max={20}
-                value={packets.value}
-                onInput={(e) => { packets.value = Number((e.target as HTMLInputElement).value) || 0 }}
-                disabled={active}
-              />
-              <p className="text-[11px] text-muted-foreground">Retries the same button-style TX multiple times per step.</p>
-            </div>
-
-            <div className={fieldClass}>
-              <label className={labelClass}>Button Type2</label>
-              <Input
-                value={type2.value}
-                onInput={(e) => { type2.value = (e.target as HTMLInputElement).value }}
-                disabled={active}
-                className="font-mono"
-              />
-            </div>
-
-            <div className={fieldClass}>
-              <label className={labelClass}>Hop</label>
-              <Input
-                value={hop.value}
-                onInput={(e) => { hop.value = (e.target as HTMLInputElement).value }}
-                disabled={active}
-                className="font-mono"
-              />
             </div>
 
             <div className={fieldClass}>
@@ -260,7 +196,7 @@ export function LearnInPanel() {
           {!formValid.value && (
             <div className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
               <AlertCircle className="mt-0.5 size-4 shrink-0" />
-              <p>Use a 3-byte hex source address like <span className="font-mono">0x17a753</span> and one-byte hex command fields like <span className="font-mono">0x55</span>.</p>
+              <p>Use a 3-byte hex source address like <span className="font-mono">0x17a753</span>, a channel from 1 to 255, and a timeout of at least 5 seconds.</p>
             </div>
           )}
 
@@ -295,7 +231,7 @@ export function LearnInPanel() {
           <StepRow
             icon={RemoteControl}
             title="2. Send programming / P"
-            detail="Start the session to transmit the virtual remote's programming button using the configured manual command byte."
+            detail="Start the session to transmit the virtual remote's programming / P action."
             active={active && (state.state === 'programming' || state.state === 'wait_up')}
             done={['wait_up', 'confirming_up', 'wait_down', 'confirming_down', 'complete'].includes(state.state)}
           />
@@ -326,14 +262,14 @@ export function LearnInPanel() {
               Session status: {stateLabel(state.state)}
             </div>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              {state.state === 'idle' && 'Ready to start. Keep the manual programming command configurable until the real P byte is confirmed.'}
-              {state.state === 'programming' && 'Programming command is being transmitted.'}
+              {state.state === 'idle' && 'Ready to start after the target receiver has been power-cycled.'}
+              {state.state === 'programming' && 'Programming action is being transmitted.'}
               {state.state === 'wait_up' && 'Motor should be ready for the first confirmation step. Press Confirm UP after movement.'}
               {state.state === 'confirming_up' && 'Sending UP confirmation.'}
               {state.state === 'wait_down' && 'First confirmation accepted. Wait for the next motor response, then press Confirm DOWN.'}
               {state.state === 'confirming_down' && 'Sending DOWN confirmation.'}
               {state.state === 'complete' && 'Learn-in completed. The next UI step is device discovery / saving the resulting motor config.'}
-              {state.state === 'failed' && 'Transmission failed after retries. Check RF settings, the command byte, and whether the receiver is still in programming mode.'}
+              {state.state === 'failed' && 'Transmission failed after retries. Check RF settings and whether the receiver is still in programming mode.'}
               {state.state === 'cancelled' && 'Session cancelled.'}
               {state.state === 'timed_out' && 'Session timed out. Power-cycle the receiver again and restart.'}
             </p>

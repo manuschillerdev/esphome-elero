@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cinttypes>
 #include <cstdint>
 
 namespace esphome {
@@ -66,7 +67,7 @@ inline constexpr const char *ha_cover_class_str(HaCoverClass v) {
 }
 
 /// Default name format for auto-discovered remotes.
-inline constexpr const char *DEFAULT_REMOTE_NAME_FMT = "Remote 0x%06x";
+inline constexpr const char *DEFAULT_REMOTE_NAME_FMT = "Remote 0x%06" PRIx32;
 
 }  // namespace elero
 }  // namespace esphome

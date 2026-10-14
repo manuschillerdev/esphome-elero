@@ -4,6 +4,7 @@
 /// Publishes HA discovery configs, state updates, and subscribes to command topics.
 /// Reads all state from Device structs via the DeviceRegistry — no old entity classes.
 
+#include <cinttypes>
 #include "mqtt_adapter.h"
 #include "../elero/device.h"
 #include "../elero/device_registry.h"
@@ -155,7 +156,7 @@ void MqttAdapter::remove_all_discovery_(const Device &dev) {
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::REMOTE, addr));
     }
 
-    ESP_LOGD(TAG, "Removed discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Removed discovery for 0x%06" PRIx32, addr);
 }
 
 void MqttAdapter::on_state_changed(const Device &dev, uint16_t changes) {
@@ -174,6 +175,15 @@ void MqttAdapter::on_state_changed(const Device &dev, uint16_t changes) {
 
 void MqttAdapter::on_config_changed(const Device &dev) {
     if (!ctx_.mqtt->is_connected()) return;
+    registry_->for_each_group([&](const NvsGroupConfig &group) {
+        for (uint8_t i = 0; i < group.member_count; ++i) {
+            if (group.device_ids[i] == dev.config.dst_address) {
+                publish_group_discovery_(group);
+                subscribe_group_commands_(group);
+                break;
+            }
+        }
+    });
 
     if (!dev.config.is_enabled()) {
         // Device was disabled — unpublish its discovery
@@ -202,6 +212,24 @@ void MqttAdapter::on_group_removed(const char *id) {
     if (!ctx_.mqtt->is_connected()) return;
     remove_group_discovery_(id);
     publish_gateway_state_();
+}
+
+void MqttAdapter::on_group_state_changed(const NvsGroupConfig &group, const GroupStateSnapshot &state) {
+    if (!ctx_.mqtt->is_connected()) return;
+    ctx_.mqtt->publish(ctx_.group_topic(group.id, mqtt_topic::STATUS).c_str(), state.valid ? "online" : "offline", true);
+    if (!state.valid) return;
+    if (state.type == DeviceType::COVER) {
+        const char *value = state.operation == cover_sm::Operation::OPENING ? "opening"
+            : state.operation == cover_sm::Operation::CLOSING ? "closing"
+            : state.position_pct == 0 ? "closed" : "open";
+        ctx_.mqtt->publish(ctx_.group_topic(group.id, mqtt_topic::STATE).c_str(), value, true);
+        if (state.supports_position) {
+            const auto position = std::to_string(state.position_pct);
+            ctx_.mqtt->publish(ctx_.group_topic(group.id, mqtt_topic::POSITION).c_str(), position.c_str(), true);
+        }
+    } else {
+        ctx_.mqtt->publish(ctx_.group_topic(group.id, mqtt_topic::STATE).c_str(), state.is_on ? "ON" : "OFF", true);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -294,7 +322,7 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::BINARY_SENSOR, problem_oid, problem_payload);
 
-    ESP_LOGD(TAG, "Published cover discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Published cover discovery for 0x%06" PRIx32, addr);
 }
 
 void MqttAdapter::publish_cover_state_(const Device &dev, uint16_t changes) {
@@ -349,7 +377,7 @@ void MqttAdapter::publish_cover_state_(const Device &dev, uint16_t changes) {
         ++topics;
     }
 
-    ESP_LOGV(TAG, "cover 0x%06x: %d topics (pos=%d ha=%s state=%s rssi=%d)",
+    ESP_LOGV(TAG, "cover 0x%06" PRIx32 ": %d topics (pos=%d ha=%s state=%s rssi=%d)",
              addr, topics, pub.position_pct, pub.ha_state, pub.state_string, pub.rssi_rounded);
 }
 
@@ -388,7 +416,7 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
             registry_->command_cover_tilt(*d);
         });
 
-    ESP_LOGD(TAG, "Subscribed to cover commands for 0x%06x", addr);
+    ESP_LOGD(TAG, "Subscribed to cover commands for 0x%06" PRIx32, addr);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -470,7 +498,7 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::BINARY_SENSOR, problem_oid, problem_payload);
 
-    ESP_LOGD(TAG, "Published light discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Published light discovery for 0x%06" PRIx32, addr);
 }
 
 void MqttAdapter::publish_light_state_(const Device &dev, uint16_t changes) {
@@ -510,7 +538,7 @@ void MqttAdapter::publish_light_state_(const Device &dev, uint16_t changes) {
         ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::ATTRIBUTES, attrs, false);
     }
 
-    ESP_LOGV(TAG, "light 0x%06x: on=%d bri=%d state=%s rssi=%d",
+    ESP_LOGV(TAG, "light 0x%06" PRIx32 ": on=%d bri=%d state=%s rssi=%d",
              addr, pub.is_on, pub.brightness_pct, pub.state_string, pub.rssi_rounded);
 }
 
@@ -551,7 +579,7 @@ void MqttAdapter::subscribe_light_commands_(const Device &dev) {
             }
         });
 
-    ESP_LOGD(TAG, "Subscribed to light commands for 0x%06x", addr);
+    ESP_LOGD(TAG, "Subscribed to light commands for 0x%06" PRIx32, addr);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -579,7 +607,7 @@ void MqttAdapter::publish_remote_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::SENSOR, oid, payload);
 
-    ESP_LOGD(TAG, "Published remote discovery for 0x%06x", addr);
+    ESP_LOGD(TAG, "Published remote discovery for 0x%06" PRIx32, addr);
 }
 
 void MqttAdapter::publish_remote_state_(const Device &dev) {
@@ -634,18 +662,25 @@ void MqttAdapter::publish_group_discovery_(const NvsGroupConfig &group) {
     const auto oid = ctx_.group_object_id(group.id);
     const auto command_topic = ctx_.group_topic(group.id, mqtt_topic::SET);
     const auto attributes_topic = ctx_.group_topic(group.id, mqtt_topic::ATTRIBUTES);
+    const auto snapshot = registry_->group_snapshot(group, millis());
 
     std::string payload = json::build_json([&](JsonObject root) {
         root["name"] = group.name;
         root["has_entity_name"] = false;
         root["unique_id"] = oid;
         root["command_topic"] = command_topic;
-        root["optimistic"] = true;
+        root["state_topic"] = ctx_.group_topic(group.id, mqtt_topic::STATE);
         root["json_attributes_topic"] = attributes_topic;
         if (type == DeviceType::COVER) {
             root["payload_open"] = action::OPEN;
             root["payload_close"] = action::CLOSE;
             root["payload_stop"] = action::STOP;
+            if (snapshot.supports_position) {
+                root["position_topic"] = ctx_.group_topic(group.id, mqtt_topic::POSITION);
+                root["set_position_topic"] = ctx_.group_topic(group.id, mqtt_topic::SET_POSITION);
+                root["position_open"] = 100;
+                root["position_closed"] = 0;
+            }
             Device *first = registry_ != nullptr ? registry_->find(group.device_ids[0]) : nullptr;
             if (first != nullptr) {
                 root["device_class"] = ha_cover_class_str(static_cast<HaCoverClass>(first->config.ha_device_class));
@@ -653,8 +688,16 @@ void MqttAdapter::publish_group_discovery_(const NvsGroupConfig &group) {
         } else {
             root["payload_on"] = action::UP;
             root["payload_off"] = action::DOWN;
+            root["state_on"] = "ON";
+            root["state_off"] = "OFF";
         }
         ctx_.add_availability(root);
+        const std::string hub_availability = root["availability_topic"].as<std::string>();
+        root.remove("availability_topic");
+        auto availability = root["availability"].to<JsonArray>();
+        availability.add<JsonObject>()["topic"] = hub_availability;
+        availability.add<JsonObject>()["topic"] = ctx_.group_topic(group.id, mqtt_topic::STATUS);
+        root["availability_mode"] = "all";
         JsonObject device = root["device"].to<JsonObject>();
         ctx_.add_hub_device_block(device);
     });
@@ -662,6 +705,7 @@ void MqttAdapter::publish_group_discovery_(const NvsGroupConfig &group) {
     ctx_.publish_discovery(type == DeviceType::COVER ? ha_discovery::COVER : ha_discovery::LIGHT,
                            oid, payload);
     publish_group_attributes_(group);
+    on_group_state_changed(group, snapshot);
     ESP_LOGD(TAG, "Published %s group discovery for '%s'", device_type_str(type), group.id);
 }
 
@@ -691,6 +735,19 @@ void MqttAdapter::subscribe_group_commands_(const NvsGroupConfig &group) {
     if (!group_type_(group, &type)) return;
 
     const std::string id = group.id;
+    ctx_.mqtt->unsubscribe(ctx_.group_topic(group.id, mqtt_topic::SET).c_str());
+    ctx_.mqtt->unsubscribe(ctx_.group_topic(group.id, mqtt_topic::SET_POSITION).c_str());
+    if (registry_->group_snapshot(group, millis()).supports_position) {
+        ctx_.mqtt->subscribe(ctx_.group_topic(group.id, mqtt_topic::SET_POSITION).c_str(),
+            [this, id](const char *, const char *payload) {
+                char *end = nullptr;
+                const float value = payload != nullptr ? strtof(payload, &end) : -1.0f;
+                if (payload == nullptr || end == payload || *end != '\0' ||
+                    !registry_->set_group_position(id.c_str(), value / PERCENT_SCALE)) {
+                    ESP_LOGW(TAG, "Invalid group position for '%s'", id.c_str());
+                }
+            });
+    }
     ctx_.mqtt->subscribe(ctx_.group_topic(group.id, mqtt_topic::SET).c_str(),
         [this, id, type](const char *, const char *payload) {
             if (registry_ == nullptr) return;
@@ -715,10 +772,14 @@ void MqttAdapter::remove_group_discovery_(const char *id) {
     if (id == nullptr || id[0] == '\0') return;
 
     ctx_.mqtt->unsubscribe(ctx_.group_topic(id, mqtt_topic::SET).c_str());
+    ctx_.mqtt->unsubscribe(ctx_.group_topic(id, mqtt_topic::SET_POSITION).c_str());
     const auto oid = ctx_.group_object_id(id);
     ctx_.remove_discovery(ha_discovery::COVER, oid);
     ctx_.remove_discovery(ha_discovery::LIGHT, oid);
     ctx_.mqtt->publish(ctx_.group_topic(id, mqtt_topic::ATTRIBUTES).c_str(), "", true);
+    ctx_.mqtt->publish(ctx_.group_topic(id, mqtt_topic::STATE).c_str(), "", true);
+    ctx_.mqtt->publish(ctx_.group_topic(id, mqtt_topic::POSITION).c_str(), "", true);
+    ctx_.mqtt->publish(ctx_.group_topic(id, mqtt_topic::STATUS).c_str(), "", true);
     ESP_LOGD(TAG, "Removed group discovery for '%s'", id);
 }
 

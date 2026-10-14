@@ -16,4 +16,4 @@ interface RemoteConfig {
    */
   'updated_at'?: number;
 }
-export { RemoteConfig };
+export type { RemoteConfig };

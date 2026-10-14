@@ -5,17 +5,17 @@ components/elero/__init__.py.
 """
 
 import pytest
-from esphome.config_validation import Invalid
-
 from elero import (
-    _validate_irq_pin,
-    _validate_sx1262_pins,
+    CONF_BUSY_PIN,
     CONF_GDO0_PIN,
     CONF_IRQ_PIN,
     CONF_RADIO,
-    CONF_BUSY_PIN,
     CONF_RST_PIN,
+    _validate_irq_pin,
+    _validate_sx1262_pins,
 )
+
+from esphome.config_validation import Invalid
 
 
 class TestIrqPinValidation:

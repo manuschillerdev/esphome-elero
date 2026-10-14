@@ -9,4 +9,4 @@ interface HubConfigEventData {
    */
   'name': string;
 }
-export { HubConfigEventData };
+export type { HubConfigEventData };

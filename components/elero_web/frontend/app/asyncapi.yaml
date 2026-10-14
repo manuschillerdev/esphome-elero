@@ -65,6 +65,8 @@ channels:
         $ref: "#/components/messages/groupUpsertedEvent"
       groupRemovedEvent:
         $ref: "#/components/messages/groupRemovedEvent"
+      groupStateEvent:
+        $ref: "#/components/messages/groupStateEvent"
       stateChangedEvent:
         $ref: "#/components/messages/stateChangedEvent"
       errorEvent:
@@ -109,6 +111,14 @@ channels:
         $ref: "#/components/messages/learnInCancelMessage"
 
 operations:
+  receiveGroupState:
+    action: receive
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Receive member-derived group state changes
+    messages:
+      - $ref: "#/channels/eleroWs/messages/groupStateEvent"
+
   receiveConfig:
     action: receive
     channel:
@@ -348,9 +358,9 @@ operations:
     summary: Start a learn-in session
     description: |
       Starts the backend learn-in state machine using the given virtual remote
-      source address, channel, and empirically determined programming command.
-      Frontends remain responsible for instructing the user to power-cycle the
-      motor before calling this.
+      source address and channel. The backend sends the canonical single-channel
+      programming/P packet; frontends remain responsible for instructing the user
+      to power-cycle the motor before calling this.
     messages:
       - $ref: "#/channels/eleroWs/messages/learnInStartMessage"
 
@@ -383,6 +393,12 @@ operations:
 
 components:
   messages:
+    groupStateEvent:
+      name: group_state_changed
+      title: Group state changed
+      payload:
+        $ref: "#/components/schemas/GroupStateEnvelope"
+
     configEvent:
       name: config
       title: Configuration Event
@@ -600,6 +616,39 @@ components:
         $ref: "#/components/schemas/LearnInCancelPayload"
 
   schemas:
+    GroupStateEnvelope:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: group_state_changed
+        data:
+          $ref: "#/components/schemas/GroupStateData"
+
+    GroupStateData:
+      type: object
+      additionalProperties: false
+      required: [id, available, device_type, supports_position, position, operation, is_on]
+      properties:
+        id:
+          type: string
+        available:
+          type: boolean
+        device_type:
+          $ref: "#/components/schemas/DeviceType"
+        supports_position:
+          type: boolean
+        position:
+          type: number
+          minimum: 0
+          maximum: 1
+        operation:
+          type: string
+          enum: [idle, opening, closing]
+        is_on:
+          type: boolean
+
     # ── Server → Client Envelopes ──
 
     ConfigEventEnvelope:
@@ -867,6 +916,26 @@ components:
           type: integer
           description: Timestamp (millis()) of last RF packet from this blind
           examples: [408]
+        command_up:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x20.
+        command_down:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x40.
+        command_stop:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x10.
+        command_check:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x00.
+        command_tilt:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x24.
 
     LightConfig:
       type: object
@@ -948,6 +1017,8 @@ components:
         type; the backend derives and validates the common member type from the
         referenced device ids. Device ids are stable 3-byte device addresses.
       properties:
+        state:
+          $ref: "#/components/schemas/GroupStateData"
         id:
           type: string
           minLength: 1
@@ -962,7 +1033,7 @@ components:
           examples: ["Living Room"]
         device_ids:
           type: array
-          minItems: 2
+          minItems: 1
           maxItems: 48
           uniqueItems: true
           description: Stable device address ids. All must resolve to existing covers or all to existing lights.
@@ -998,6 +1069,12 @@ components:
           type: string
           description: Destination address (hex string). Blind for commands, remote for status.
           examples: ["0xb42f01"]
+        destinations:
+          type: array
+          description: All 24-bit destinations for addressed packets. Empty for selector envelopes.
+          maxItems: 10
+          items:
+            type: string
         channel:
           type: integer
           description: RF channel
@@ -1006,9 +1083,11 @@ components:
           type: string
           description: |
             Message type byte (hex string):
-            - `0x44` — button press/release (broadcast)
+            - `0x44` — button press/release selector packet
+            - `0x45` — group/central selector packet
             - `0x6a` — targeted command to blind
             - `0x69` — alternate command format
+            - `0x70` — single-channel programming/P selector packet
             - `0xca` — status response from blind
             - `0xc9` — alternate status format
           examples: ["0xca"]
@@ -1019,13 +1098,16 @@ components:
         command:
           type: string
           description: |
-            Command byte (hex string, for command packets):
+            Command byte (hex string, for command/selector packets):
             - `0x00` — check (request status)
             - `0x10` — stop
             - `0x20` — up/open
             - `0x24` — tilt
             - `0x40` — down/close
             - `0x44` — intermediate position
+            - `0x80` — programming/P selector action
+            - `0x81` — programming/P group selector action
+            - `0x84` — programming/P targeted action
           examples: ["0x20"]
         state:
           type: string
@@ -1120,6 +1202,26 @@ components:
           type: integer
           description: Timestamp (millis()) when the device was last persisted to NVS. Non-zero means the device is server-confirmed.
           examples: [1234567]
+        command_up:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x20.
+        command_down:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x40.
+        command_stop:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x10.
+        command_check:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x00.
+        command_tilt:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x24.
 
     CrudEventData:
       type: object
@@ -1225,10 +1327,6 @@ components:
           type: integer
           description: RF channel for the current session, if any.
           examples: [5]
-        programming_cmd:
-          type: string
-          description: RF command byte used for the programming/P action, if any.
-          examples: ["0x55"]
 
     # ── Client → Server Payloads ──
 
@@ -1295,7 +1393,7 @@ components:
     LearnInStartPayload:
       type: object
       additionalProperties: false
-      required: [type, src_address, channel, programming_cmd]
+      required: [type, src_address, channel]
       description: |
         Starts a backend learn-in session. The frontend must already have guided
         the user through the required power-cycle of the target motor.
@@ -1310,23 +1408,9 @@ components:
         channel:
           type: integer
           description: RF channel to learn in
+          minimum: 1
+          maximum: 255
           examples: [5]
-        programming_cmd:
-          type: string
-          description: Empirically determined RF command byte for the remote's programming/P action.
-          examples: ["0x55"]
-        packets:
-          type: integer
-          description: Number of RF button packets per learn-in step (default 3)
-          examples: [3]
-        type2:
-          type: string
-          description: Secondary type byte for button packets (default 0x10)
-          examples: ["0x10"]
-        hop:
-          type: string
-          description: Hop count byte for button packets (default 0x00)
-          examples: ["0x00"]
         session_timeout_ms:
           type: integer
           description: Learn-in session timeout in milliseconds (default 300000)
@@ -1429,6 +1513,26 @@ components:
           type: boolean
           description: Whether the cover supports tilt (cover only, default false)
           default: false
+        command_up:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x20.
+        command_down:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x40.
+        command_stop:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x10.
+        command_check:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x00.
+        command_tilt:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x24.
 
     RemoveDevicePayload:
       type: object
@@ -1472,7 +1576,7 @@ components:
           description: Display name.
         device_ids:
           type: array
-          minItems: 2
+          minItems: 1
           maxItems: 48
           uniqueItems: true
           items:
@@ -1712,6 +1816,26 @@ components:
           type: string
           description: Secondary type byte (hex string, default "0x00").
           examples: ["0x00"]
+        command_up:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x20.
+        command_down:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x40.
+        command_stop:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x10.
+        command_check:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x00.
+        command_tilt:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{1,2}$"
+          description: Per-cover RF command byte; defaults to 0x24.
 
     ImportConfigPayload:
       type: object

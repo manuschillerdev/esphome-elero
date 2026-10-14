@@ -12,6 +12,7 @@
 #include "device.h"
 #include "nvs_hub_config.h"
 #include "output_adapter.h"
+#include "state_snapshot.h"
 #include "overloaded.h"
 #include "esphome/core/preferences.h"
 #include <array>
@@ -80,6 +81,9 @@ class DeviceRegistry {
     /// Find a saved group by id.
     [[nodiscard]] NvsGroupConfig *find_group(const char *id);
     [[nodiscard]] const NvsGroupConfig *find_group(const char *id) const;
+
+    [[nodiscard]] GroupStateSnapshot group_snapshot(const NvsGroupConfig &group, uint32_t now) const;
+    bool set_group_position(const char *id, float target, std::string *error = nullptr);
 
     /// Find a device by address and type.
     [[nodiscard]] Device *find(uint32_t address, DeviceType type);
@@ -217,6 +221,7 @@ class DeviceRegistry {
  private:
     std::array<Device, MAX_DEVICES> slots_{};
     std::array<NvsGroupConfig, MAX_GROUPS> groups_{};
+    std::array<GroupStateSnapshot, MAX_GROUPS> group_published_{};
     std::vector<OutputAdapter *> adapters_;
     Elero *hub_{nullptr};
     bool nvs_enabled_{false};
@@ -249,6 +254,7 @@ class DeviceRegistry {
     void notify_rf_packet_(const RfPacketInfo &pkt);
     void notify_group_upserted_(const NvsGroupConfig &group);
     void notify_group_removed_(const char *id);
+    void notify_group_states_(uint32_t now, bool force = false);
 
     [[nodiscard]] bool enqueue_or_warn_(Device &dev, uint8_t cmd_byte,
                                         uint8_t packets, uint8_t type,

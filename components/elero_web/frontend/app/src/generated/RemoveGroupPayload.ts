@@ -9,4 +9,4 @@ interface RemoveGroupPayload {
    */
   'id': string;
 }
-export { RemoveGroupPayload };
+export type { RemoveGroupPayload };

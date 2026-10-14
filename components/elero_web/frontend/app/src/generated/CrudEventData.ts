@@ -13,4 +13,4 @@ interface CrudEventData {
    */
   'device_type': DeviceType;
 }
-export { CrudEventData };
+export type { CrudEventData };

@@ -11,4 +11,4 @@ interface GroupUpsertedEnvelope {
    */
   'data': GroupConfig;
 }
-export { GroupUpsertedEnvelope };
+export type { GroupUpsertedEnvelope };

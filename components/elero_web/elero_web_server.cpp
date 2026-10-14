@@ -1,3 +1,4 @@
+#include <cinttypes>
 #include "elero_web_server.h"
 #include "elero_web_ui.h"
 #include "../elero/elero_packet.h"
@@ -166,21 +167,18 @@ void EleroWebServer::loop() {
   bool busy = learn_in.is_busy();
   uint32_t src = learn_in.src_addr();
   uint8_t channel = learn_in.channel();
-  uint8_t cmd = learn_in.programming_cmd();
   LearnInState state = this->parent_->learn_in_state();
 
   if (state != this->last_learn_in_state_ ||
       active != this->last_learn_in_active_ ||
       busy != this->last_learn_in_busy_ ||
       src != this->last_learn_in_src_ ||
-      channel != this->last_learn_in_channel_ ||
-      cmd != this->last_learn_in_cmd_) {
+      channel != this->last_learn_in_channel_) {
     this->last_learn_in_state_ = state;
     this->last_learn_in_active_ = active;
     this->last_learn_in_busy_ = busy;
     this->last_learn_in_src_ = src;
     this->last_learn_in_channel_ = channel;
-    this->last_learn_in_cmd_ = cmd;
     this->ws_broadcast("learn_in_state", this->build_learn_in_state_json_());
   }
 }
@@ -231,6 +229,14 @@ void EleroWebServer::on_group_removed(const char *id) {
     root["id"] = id == nullptr ? "" : id;
   });
   this->ws_broadcast("group_removed", payload);
+}
+
+void EleroWebServer::on_group_state_changed(const NvsGroupConfig &group, const GroupStateSnapshot &state) {
+  if (this->ws_clients_.empty() || !this->enabled_) return;
+  this->ws_broadcast("group_state_changed", json::build_json([&](JsonObject root) {
+    root["id"] = group.id;
+    state.to_json(root);
+  }));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -395,7 +401,7 @@ void EleroWebServer::handle_ws_upgrade(struct mg_connection *c, struct mg_http_m
   c->data[0] = 'W';  // Mark as WebSocket connection
   this->ws_clients_.push_back(c);
 
-  ESP_LOGI(TAG, "WebSocket client connected, %d total", this->ws_clients_.size());
+  ESP_LOGI(TAG, "WebSocket client connected, %zu total", this->ws_clients_.size());
 
   // Send config on connect
   if (this->enabled_) {
@@ -424,7 +430,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 
       Device *dev = registry->find(addr);
       if (dev == nullptr) {
-        ESP_LOGW(TAG, "Command for unknown address 0x%06x", addr);
+        ESP_LOGW(TAG, "Command for unknown address 0x%06" PRIx32, addr);
         return true;
       }
 
@@ -485,7 +491,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       bool success = this->parent_->send_raw_command(
           dst_addr, src_addr, channel, raw_command,
           payload_1, payload_2, msg_type, type2_val, hop);
-      ESP_LOGI(TAG, "Raw TX to 0x%06x cmd=0x%02x: %s", dst_addr, raw_command, success ? "OK" : "FAIL");
+      ESP_LOGI(TAG, "Raw TX to 0x%06" PRIx32 " cmd=0x%02x: %s", dst_addr, raw_command, success ? "OK" : "FAIL");
       return true;
     }
 
@@ -572,6 +578,7 @@ std::string EleroWebServer::build_config_json() {
         obj["open_ms"] = dev.config.open_duration_ms;
         obj["close_ms"] = dev.config.close_duration_ms;
         obj["supports_tilt"] = dev.config.supports_tilt != 0;
+        build_cover_commands_(dev.config, obj);
         obj["enabled"] = dev.config.is_enabled();
         obj["updated_at"] = dev.config.updated_at;
         snap.to_json(obj);
@@ -603,6 +610,9 @@ std::string EleroWebServer::build_config_json() {
         JsonObject obj = groups_arr.add<JsonObject>();
         obj["id"] = group.id;
         obj["name"] = group.name;
+        JsonObject state = obj["state"].to<JsonObject>();
+        state["id"] = group.id;
+        registry->group_snapshot(group, now).to_json(state);
         JsonArray ids = obj["device_ids"].to<JsonArray>();
         for (uint8_t i = 0; i < group.member_count; ++i) {
           ids.add(hex_str(group.device_ids[i]));
@@ -637,6 +647,10 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
     root["t"] = pkt.timestamp_ms;
     root["src"] = hex_str(pkt.src);
     root["dst"] = hex_str(pkt.dst);
+    auto destinations = root["destinations"].to<JsonArray>();
+    for (uint8_t i = 0; i < pkt.num_address_dests; ++i) {
+      destinations.add(hex_str(pkt.dst_addrs[i]));
+    }
     root["channel"] = pkt.channel;
     root["type"] = hex_str8(pkt.type);
     root["type2"] = hex_str8(pkt.type2);
@@ -665,6 +679,7 @@ std::string EleroWebServer::build_device_upserted_json_(const Device &dev) {
       root["open_ms"] = dev.config.open_duration_ms;
       root["close_ms"] = dev.config.close_duration_ms;
       root["supports_tilt"] = dev.config.supports_tilt != 0;
+      build_cover_commands_(dev.config, root);
     }
     if (dev.config.is_light()) {
       root["dim_ms"] = dev.config.dim_duration_ms;
@@ -676,6 +691,11 @@ std::string EleroWebServer::build_group_json_(const NvsGroupConfig &group) const
   return json::build_json([&](JsonObject root) {
     root["id"] = group.id;
     root["name"] = group.name;
+    if (const auto *registry = this->parent_->get_registry(); registry != nullptr) {
+      JsonObject state = root["state"].to<JsonObject>();
+      state["id"] = group.id;
+      registry->group_snapshot(group, millis()).to_json(state);
+    }
     JsonArray ids = root["device_ids"].to<JsonArray>();
     for (uint8_t i = 0; i < group.member_count; ++i) {
       ids.add(hex_str(group.device_ids[i]));
@@ -696,9 +716,6 @@ std::string EleroWebServer::build_learn_in_state_json_() const {
     if (learn_in.src_addr() != 0) {
       root["src_address"] = hex_str(learn_in.src_addr());
       root["channel"] = learn_in.channel();
-    }
-    if (learn_in.programming_cmd() != packet::command::INVALID) {
-      root["programming_cmd"] = hex_str8(learn_in.programming_cmd());
     }
   });
 }
@@ -721,10 +738,11 @@ void EleroWebServer::dispatch_device_command_(Device &dev, uint8_t cmd_byte) {
   } else {
     (void) dev.sender.enqueue(cmd_byte);
   }
-  ESP_LOGI(TAG, "Device TX to 0x%06x cmd=0x%02x", dev.config.dst_address, cmd_byte);
+  ESP_LOGI(TAG, "Device TX to 0x%06" PRIx32 " cmd=0x%02x", dev.config.dst_address, cmd_byte);
 }
 
-bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error) {
+bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error,
+                                        bool preserve_commands) {
   if (!parse_device_type(root["device_type"] | "", config.type)) {
     error = "Invalid device_type";
     return false;
@@ -736,6 +754,17 @@ bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &conf
     return false;
   }
   config.dst_address = dst_addr;
+  if (preserve_commands && config.is_cover() && this->parent_ != nullptr) {
+    auto *registry = this->parent_->get_registry();
+    const auto *existing = registry != nullptr ? registry->find(dst_addr, DeviceType::COVER) : nullptr;
+    if (existing != nullptr) {
+      config.command_up = existing->config.wire_command(packet::command::UP);
+      config.command_down = existing->config.wire_command(packet::command::DOWN);
+      config.command_stop = existing->config.wire_command(packet::command::STOP);
+      config.command_check = existing->config.wire_command(packet::command::CHECK);
+      config.command_tilt = existing->config.wire_command(packet::command::TILT);
+    }
+  }
 
   const char *name = root["name"];
   if (name != nullptr) {
@@ -761,6 +790,36 @@ bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &conf
 
     if (config.is_cover()) {
       config.supports_tilt = (root["supports_tilt"] | false) ? 1 : 0;
+      struct CommandField { const char *key; uint8_t *value; };
+      const CommandField commands[] = {
+          {"command_up", &config.command_up}, {"command_down", &config.command_down},
+          {"command_stop", &config.command_stop}, {"command_check", &config.command_check},
+          {"command_tilt", &config.command_tilt},
+      };
+      for (const auto &field : commands) {
+        if (root[field.key].isNull()) continue;
+        unsigned long value;
+        if (root[field.key].is<const char *>()) {
+          const char *text = root[field.key].as<const char *>();
+          char *end = nullptr;
+          value = strtoul(text, &end, 0);
+          if (end == text || *end != '\0') {
+            error = std::string("Invalid command byte: ") + field.key;
+            return false;
+          }
+        } else if (root[field.key].is<uint32_t>()) {
+          value = root[field.key].as<uint32_t>();
+        } else {
+          error = std::string("Invalid command byte: ") + field.key;
+          return false;
+        }
+        if (value > 255) {
+          error = std::string("Command byte outside 0..255: ") + field.key;
+          return false;
+        }
+        *field.value = static_cast<uint8_t>(value);
+      }
+      config.flags |= NvsDeviceConfig::FLAG_COMMAND_BYTES;
     }
     if (config.is_light()) {
       if (root["dim_duration_ms"].is<uint32_t>()) config.dim_duration_ms = root["dim_duration_ms"].as<uint32_t>();
@@ -798,8 +857,8 @@ bool EleroWebServer::parse_group_config_(JsonObject root, NvsGroupConfig &config
     return false;
   }
   JsonArray ids = root["device_ids"].as<JsonArray>();
-  if (ids.size() < 2) {
-    error = "Group requires at least 2 devices";
+  if (ids.size() == 0) {
+    error = "Group requires at least 1 device";
     return false;
   }
   if (ids.size() > NVS_GROUP_MAX_MEMBERS) {
@@ -838,7 +897,7 @@ void EleroWebServer::handle_upsert_device_(struct mg_connection *c, JsonObject r
 
   NvsDeviceConfig config{};
   std::string error;
-  if (!parse_device_config_(root, config, error)) {
+  if (!parse_device_config_(root, config, error, true)) {
     this->ws_send(c, "error", json::build_json([&](JsonObject r) { r["msg"] = error; }));
     return;
   }
@@ -950,6 +1009,14 @@ void EleroWebServer::handle_group_command_(struct mg_connection *c, JsonObject r
 // A drift makes every import fail with "Unsupported snapshot_version".
 constexpr uint8_t SNAPSHOT_VERSION = 2;
 
+void EleroWebServer::build_cover_commands_(const NvsDeviceConfig &cfg, JsonObject out) {
+  out["command_up"] = hex_str8(cfg.wire_command(packet::command::UP));
+  out["command_down"] = hex_str8(cfg.wire_command(packet::command::DOWN));
+  out["command_stop"] = hex_str8(cfg.wire_command(packet::command::STOP));
+  out["command_check"] = hex_str8(cfg.wire_command(packet::command::CHECK));
+  out["command_tilt"] = hex_str8(cfg.wire_command(packet::command::TILT));
+}
+
 void EleroWebServer::build_device_snapshot_(const NvsDeviceConfig &cfg, JsonObject out) {
   out["device_type"] = device_type_str(cfg.type);
   out["dst_address"] = hex_str(cfg.dst_address);
@@ -969,6 +1036,7 @@ void EleroWebServer::build_device_snapshot_(const NvsDeviceConfig &cfg, JsonObje
     out["open_duration_ms"] = cfg.open_duration_ms;
     out["close_duration_ms"] = cfg.close_duration_ms;
     out["supports_tilt"] = cfg.supports_tilt != 0;
+    build_cover_commands_(cfg, out);
     out["ha_device_class"] = cfg.ha_device_class;
   }
   if (cfg.is_light()) {
@@ -1187,10 +1255,7 @@ void EleroWebServer::handle_learn_in_start_(struct mg_connection *c, JsonObject 
     request.src_addr = derive_default_virtual_remote_address();
   }
   request.channel = root["channel"] | 0;
-  request.programming_cmd = parse_hex_or(root, "programming_cmd", packet::command::INVALID);
-  request.packets = parse_hex_or(root, "packets", packet::button::PACKETS);
-  request.type2 = parse_hex_or(root, "type2", packet::button::TYPE2);
-  request.hop = parse_hex_or(root, "hop", packet::button::HOP);
+  request.packets = parse_hex_or(root, "packets", packet::program::PACKETS);
   request.session_timeout_ms = root["session_timeout_ms"] | 300000;
 
   if (!this->parent_->start_learn_in(request)) {

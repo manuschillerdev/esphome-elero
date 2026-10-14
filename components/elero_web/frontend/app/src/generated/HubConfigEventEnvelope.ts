@@ -6,4 +6,4 @@ interface HubConfigEventEnvelope {
    */
   'data': HubConfigEventData;
 }
-export { HubConfigEventEnvelope };
+export type { HubConfigEventEnvelope };

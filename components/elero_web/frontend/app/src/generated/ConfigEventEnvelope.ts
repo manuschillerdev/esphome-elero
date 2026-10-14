@@ -3,4 +3,4 @@ interface ConfigEventEnvelope {
   'event': 'config';
   'data': ConfigData;
 }
-export { ConfigEventEnvelope };
+export type { ConfigEventEnvelope };

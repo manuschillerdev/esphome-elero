@@ -6,4 +6,4 @@ interface GroupRemovedEnvelope {
   'event': 'group_removed';
   'data': GroupRemovedData;
 }
-export { GroupRemovedEnvelope };
+export type { GroupRemovedEnvelope };

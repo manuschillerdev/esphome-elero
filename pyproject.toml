@@ -19,7 +19,11 @@ dev = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
+
+[tool.ty.environment]
+# Tests load these modules via sys.path; ESPHome loads components as packages.
+extra-paths = ["scripts", "typings"]
 
 [tool.ruff.lint]
 select = [

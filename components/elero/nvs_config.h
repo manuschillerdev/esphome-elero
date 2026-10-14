@@ -44,6 +44,7 @@ struct NvsDeviceConfig {
   uint8_t version{NVS_CONFIG_VERSION};
   DeviceType type{DeviceType::COVER};
   static constexpr uint8_t FLAG_ENABLED = 0x01;
+  static constexpr uint8_t FLAG_COMMAND_BYTES = 0x02;
   uint8_t flags{FLAG_ENABLED};  ///< bit 0 = enabled
   uint8_t ha_device_class{0};  ///< HaCoverClass enum value (0 = shutter, backward compatible)
 
@@ -57,12 +58,17 @@ struct NvsDeviceConfig {
   uint8_t type_byte{packet::msg_type::COMMAND};
   uint8_t type2{packet::defaults::TYPE2};
   uint8_t supports_tilt{0};  ///< Cover: 1 = tilt supported
-  uint8_t rf_reserved{0};
+  uint8_t command_up{packet::command::UP};  ///< Former rf_reserved; gated by FLAG_COMMAND_BYTES
 
   // Timing (16 bytes)
   uint32_t open_duration_ms{0};
   uint32_t close_duration_ms{0};
-  uint32_t poll_interval_ms_reserved{0};  ///< DEPRECATED: kept for NVS struct layout compat, ignored at runtime
+  // Former poll_interval_ms_reserved. Old records ignore these bytes unless
+  // FLAG_COMMAND_BYTES is set, so record size/version and preferences stay valid.
+  uint8_t command_down{packet::command::DOWN};
+  uint8_t command_stop{packet::command::STOP};
+  uint8_t command_check{packet::command::CHECK};
+  uint8_t command_tilt{packet::command::TILT};
   uint32_t dim_duration_ms{0};        ///< Light: 0 = on/off only, >0 = brightness control
 
   // Metadata (4 bytes)
@@ -81,6 +87,19 @@ struct NvsDeviceConfig {
   bool is_light() const { return type == DeviceType::LIGHT; }
   bool is_remote() const { return type == DeviceType::REMOTE; }
 
+  // State machines and adapters use semantic defaults; translate only at TX.
+  uint8_t wire_command(uint8_t command) const {
+    if (!is_cover() || !(flags & FLAG_COMMAND_BYTES)) return command;
+    switch (command) {
+      case packet::command::UP: return command_up;
+      case packet::command::DOWN: return command_down;
+      case packet::command::STOP: return command_stop;
+      case packet::command::CHECK: return command_check;
+      case packet::command::TILT: return command_tilt;
+    }
+    return command;
+  }
+
   void set_name(const char *n) {
     if (n == nullptr) {
       name[0] = '\0';
@@ -92,6 +111,12 @@ struct NvsDeviceConfig {
 };
 
 static_assert(sizeof(NvsDeviceConfig) == 64, "NvsDeviceConfig must be 64 bytes for NVS storage");
+static_assert(offsetof(NvsDeviceConfig, command_up) == 19 &&
+              offsetof(NvsDeviceConfig, command_down) == 28 &&
+              offsetof(NvsDeviceConfig, command_tilt) == 31 &&
+              offsetof(NvsDeviceConfig, dim_duration_ms) == 32 &&
+              offsetof(NvsDeviceConfig, name) == 40,
+              "Command overrides must preserve the legacy NVS field offsets");
 
 /// Fixed-size group configuration persisted via ESPHome preferences.
 /// Groups are pure membership metadata: id + display name + stable device ids.

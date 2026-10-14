@@ -63,5 +63,25 @@ interface DeviceUpsertedData {
    * @example 1234567
    */
   'updated_at'?: number;
+  /**
+   * Per-cover RF command byte; defaults to 0x20.
+   */
+  'command_up'?: string;
+  /**
+   * Per-cover RF command byte; defaults to 0x40.
+   */
+  'command_down'?: string;
+  /**
+   * Per-cover RF command byte; defaults to 0x10.
+   */
+  'command_stop'?: string;
+  /**
+   * Per-cover RF command byte; defaults to 0x00.
+   */
+  'command_check'?: string;
+  /**
+   * Per-cover RF command byte; defaults to 0x24.
+   */
+  'command_tilt'?: string;
 }
-export { DeviceUpsertedData };
+export type { DeviceUpsertedData };
