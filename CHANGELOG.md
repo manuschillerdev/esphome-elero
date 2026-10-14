@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0](https://github.com/manuschillerdev/esphome-elero/compare/v0.10.1...v0.11.0) (2026-10-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* `cover: - platform: elero` and `light: - platform: elero` are gone. Devices now live exclusively in NVS and are managed via the web UI (or restored from a snapshot via `import_config`). Run `uv run scripts/migrate_yaml_to_json.py <old.yaml> -o backup.json` and upload via Hub → Backup & Restore. Full guide: docs/MIGRATION-yaml-to-nvs.md.
+
+### Features
+
+* add ESP32-C6 support ([af3877f](https://github.com/manuschillerdev/esphome-elero/commit/af3877f63d93f6ff141eab171ca3742078b8c713))
+* backup/restore via WebSocket (Phase 1) ([7a37239](https://github.com/manuschillerdev/esphome-elero/commit/7a37239584dfe4e1d6ea52c396c8c36941d168bb))
+* TX multi-dest 0x44 group commands ([#41](https://github.com/manuschillerdev/esphome-elero/issues/41)) ([8d23254](https://github.com/manuschillerdev/esphome-elero/commit/8d232548da6b23ddfafd0282696c766bce90161b))
+* TX multi-dest 0x44 group commands ([#41](https://github.com/manuschillerdev/esphome-elero/issues/41)) ([07f0a95](https://github.com/manuschillerdev/esphome-elero/commit/07f0a95c81504c39760d3e4201347d9de3a48683))
+* yaml→json migration script + docs ([2e45cf5](https://github.com/manuschillerdev/esphome-elero/commit/2e45cf519bd25dbbb6d619e3675ce780c74601f8))
+
+
+### Bug Fixes
+
+* deduplicate remote device publish notifications ([1bff5c7](https://github.com/manuschillerdev/esphome-elero/commit/1bff5c70eef899a8fedfdab3bfb23071829b318e))
+* deduplicate remote device publish notifications ([ce13bc6](https://github.com/manuschillerdev/esphome-elero/commit/ce13bc6924a3b8837eda1474dc6fd73680addbc7))
+* derive learn-in virtual remote from hardware ([18ed11c](https://github.com/manuschillerdev/esphome-elero/commit/18ed11ca1e2a6b17ed81dfeafb065fc258451c17))
+* **elero_web:** copy packet JSON without the async clipboard API ([#64](https://github.com/manuschillerdev/esphome-elero/issues/64)) ([c5f0a31](https://github.com/manuschillerdev/esphome-elero/commit/c5f0a31ac8c54e021a67bfdbadabebccb659c7bf))
+* **elero:** demote CC1101 health log from WARN to VERBOSE ([#61](https://github.com/manuschillerdev/esphome-elero/issues/61)) ([7a84cff](https://github.com/manuschillerdev/esphome-elero/commit/7a84cff9b0919b8a3a37060066f04d665ecfe2b2))
+* HA-native entity naming + overridable hub name ([26b4769](https://github.com/manuschillerdev/esphome-elero/commit/26b4769c348dc8949001fc1d3bdda7e0bb2cc986))
+* HA-native entity naming + overridable hub name ([03fe806](https://github.com/manuschillerdev/esphome-elero/commit/03fe806bf14c4f0f936d247c2eb983411bb0de3f))
+* harden cc1101 tx/rx handoff ([5d08327](https://github.com/manuschillerdev/esphome-elero/commit/5d08327b0c9f289ed05b4d3e84c103aae5703390))
+* harden cc1101 tx/rx handoff ([fbbb0d7](https://github.com/manuschillerdev/esphome-elero/commit/fbbb0d7c28037b0e8f90cba3c58ee4a41da39830))
+* harden radio transport, preserve device commands and check ESPHome nightly ([a75bd21](https://github.com/manuschillerdev/esphome-elero/commit/a75bd215f3b806ac9ba84f7ef645c99241bceddc))
+* harden SX1276 TX/RX state transitions ([83b2786](https://github.com/manuschillerdev/esphome-elero/commit/83b27861e6370a58dba83722ad849759a0257538))
+* review fixes for backup/restore handlers ([b151834](https://github.com/manuschillerdev/esphome-elero/commit/b15183473e092dd596b5bcdbf3610ee1ccfda131))
+* self-cleaning num_dests, registry tests, release comment ([2668596](https://github.com/manuschillerdev/esphome-elero/commit/2668596e24e572421ce247220df658498424a680))
+* support ESPHome 2026.8 and LilyGO native API builds ([#65](https://github.com/manuschillerdev/esphome-elero/issues/65)) ([0da6815](https://github.com/manuschillerdev/esphome-elero/commit/0da68159d36ace31f9d2b03c73fd61777792a92f))
+* support ESPHome 2026.9 native and MQTT builds ([#66](https://github.com/manuschillerdev/esphome-elero/issues/66)) ([951d6fb](https://github.com/manuschillerdev/esphome-elero/commit/951d6fbc70c840b8fcbdadc209d4b338a2336772))
+* tighten SX1262 TX FSM invariants ([483a389](https://github.com/manuschillerdev/esphome-elero/commit/483a389392baa837872f27e7da11429311832b2f))
+* update ESPHome compatibility, commands and group state ([8bfb97b](https://github.com/manuschillerdev/esphome-elero/commit/8bfb97b6ce78239de83202c50cfafecca65f0efe))
+
+
+### Refactoring
+
+* simplify registry publish path and migrate agent resources ([cf1df6b](https://github.com/manuschillerdev/esphome-elero/commit/cf1df6b082eb655c2125c205b238b6a85a42c197))
+
+
+### Documentation
+
+* backup/restore guide + sweep remaining YAML-mode references ([33cf9b9](https://github.com/manuschillerdev/esphome-elero/commit/33cf9b9f006d3e4a6b5cf223a592548c6dc430c0))
+* RFC-002 plan for NVS-only refactor + backup/restore ([148b4e4](https://github.com/manuschillerdev/esphome-elero/commit/148b4e46a35bb72534a6ff41b800f9bb7f196bde))
+
+
+### Maintenance
+
+* NVS-only devices — remove YAML cover/light platforms ([7ba04ca](https://github.com/manuschillerdev/esphome-elero/commit/7ba04cad65991ce677be0365e0994e81d7d80ff2))
+
 ## [0.10.1](https://github.com/manuschillerdev/esphome-elero/compare/v0.10.0...v0.10.1) (2026-04-06)
 
 

@@ -7,7 +7,7 @@ from esphome.core import CORE
 
 DEPENDENCIES = ["spi"]
 
-ELERO_VERSION = "0.10.0"  # x-release-please-version
+ELERO_VERSION = "0.11.0"  # x-release-please-version
 
 elero_ns = cg.esphome_ns.namespace("elero")
 elero = elero_ns.class_("Elero", cg.Component)
