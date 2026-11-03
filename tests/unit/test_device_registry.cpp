@@ -22,6 +22,7 @@
 #include <cstring>
 #include <array>
 #include <queue>
+#include <map>
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ESPHome stubs — must come before any production includes
@@ -77,6 +78,7 @@ constexpr float DATA = 0.0f;
 #include "elero/light_sm.cpp"
 #include "elero/state_snapshot.cpp"
 #include "elero/device_registry.cpp"
+#include "elero_mqtt/mqtt_adapter.h"
 
 // Stub Elero methods (device_registry.cpp includes elero.h)
 namespace esphome {
@@ -264,6 +266,8 @@ class DeviceRegistryTest : public ::testing::Test {
         return registry_.upsert(make_light_config(addr));
     }
 };
+
+#include "test_mqtt_cover.inc"
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CRUD — only non-trivial paths
@@ -493,6 +497,7 @@ TEST_F(DeviceRegistryTest, RfStatus_TiltSetAndClearedByMovement) {
 TEST_F(DeviceRegistryTest, RfStatus_DuplicateStateByte_StillPublishesRssiChange) {
     // Same state byte but different RSSI → snapshot diff catches the RSSI change.
     // No premature gating in dispatch_status_; the diff handles dedup.
+    mock_time_.advance(1000);  // last_seen_ms == 0 means no RF observation yet.
     auto *dev = add_cover();
     registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP), mock_time_.millis());
     adapter_.clear();
@@ -500,12 +505,14 @@ TEST_F(DeviceRegistryTest, RfStatus_DuplicateStateByte_StillPublishesRssiChange)
     registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP, -40.0f), mock_time_.millis());
 
     // RSSI changed → adapter should be notified
-    EXPECT_GE(adapter_.state_changed.size(), 1u);
+    ASSERT_EQ(adapter_.last_changes.size(), 1u);
+    EXPECT_EQ(adapter_.last_changes[0], state_change::RSSI);
     EXPECT_FLOAT_EQ(dev->rf.last_rssi, -40.0f);
 }
 
 TEST_F(DeviceRegistryTest, RfStatus_IdenticalPacket_Suppressed) {
     // Truly identical packet (same state, same RSSI) → diff sees no changes → suppressed.
+    mock_time_.advance(1000);  // last_seen_ms == 0 means no RF observation yet.
     add_cover();
     registry_.on_rf_packet(make_status_pkt(0xA831E5, pkt::state::TOP, -50.0f), mock_time_.millis());
     adapter_.clear();

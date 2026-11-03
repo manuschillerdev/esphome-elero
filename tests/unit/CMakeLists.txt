@@ -14,6 +14,13 @@ FetchContent_Declare(
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
+# Exercise MQTT discovery and state payloads with the same JSON library as ESPHome.
+FetchContent_Declare(
+  ArduinoJson
+  URL https://github.com/bblanchon/ArduinoJson/archive/refs/tags/v7.4.2.zip
+)
+FetchContent_MakeAvailable(ArduinoJson)
+
 enable_testing()
 
 # Include paths
@@ -106,13 +113,15 @@ target_link_libraries(test_poll_timer GTest::gtest_main)
 # Unity-build: test file #includes production .cpp files directly to control stub ordering
 add_executable(test_device_registry
   test_device_registry.cpp
+  ${COMPONENTS_DIR}/elero_mqtt/mqtt_adapter.cpp
   ${ELERO_PACKET_SRC}
   ${ELERO_STRINGS_SRC}
   ${ELERO_TIME_PROVIDER_SRC}
   ${ELERO_LEARN_IN_SRC}
 )
 target_compile_definitions(test_device_registry PRIVATE UNIT_TEST)
-target_link_libraries(test_device_registry GTest::gtest_main)
+target_include_directories(test_device_registry BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/mqtt_stubs)
+target_link_libraries(test_device_registry GTest::gtest_main ArduinoJson)
 
 # Group button packet building (0x44 multi-dest TX)
 add_executable(test_group_packet

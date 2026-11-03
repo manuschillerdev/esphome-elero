@@ -135,9 +135,9 @@ class DeviceRegistry {
     /// Process a decoded RF packet. Updates device state machines, notifies adapters.
     void on_rf_packet(const RfPacketInfo &pkt, uint32_t now);
 
-    /// Reset all Published caches and re-notify adapters through the normal
-    /// snapshot→diff→update pipeline. Use when an adapter's downstream (e.g. MQTT
-    /// broker) has lost state and needs a full republish.
+    /// Refresh snapshots and notify adapters with all fields, including zero/false
+    /// values. Use when an adapter's downstream (e.g. MQTT broker) has lost state
+    /// and needs a full republish.
     void force_republish_all();
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -249,7 +249,7 @@ class DeviceRegistry {
     void prune_device_from_groups_(uint32_t address);
     void notify_added_(const Device &dev);
     void notify_removed_(const Device &dev);
-    void notify_state_changed_(Device &dev, uint32_t now);
+    void notify_state_changed_(Device &dev, uint32_t now, bool force = false);
     void notify_config_changed_(const Device &dev);
     void notify_rf_packet_(const RfPacketInfo &pkt);
     void notify_group_upserted_(const NvsGroupConfig &group);
@@ -269,7 +269,7 @@ class DeviceRegistry {
 
     /// Handle an RF status packet for a specific device.
     /// Always runs through snapshot→diff→publish; the diff handles dedup.
-    void dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now);
+    void dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now, bool first_report);
 
     /// Track a remote control from an observed RF command packet.
     void track_remote_(const RfPacketInfo &pkt, uint32_t now);

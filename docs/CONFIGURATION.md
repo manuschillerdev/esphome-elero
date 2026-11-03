@@ -126,7 +126,7 @@ and edited via the web UI's device editor. Fields marked **(cover)** and
 | `enabled` | Boolean | `true` | Whether the device is published to HA |
 | `open_duration_ms` | Integer | `0` | **(cover)** Travel time fully open. `0` = no position tracking. |
 | `close_duration_ms` | Integer | `0` | **(cover)** Travel time fully closed. Pair with `open_duration_ms`. |
-| `supports_tilt` | Boolean | `false` | **(cover)** Tilt-capable blind |
+| `supports_tilt` | Boolean | `false` | **(cover)** Expose the motor's saved tilt preset; not arbitrary slat angles. |
 | `command_up` | Hex byte | `0x20` | **(cover)** Full opening command |
 | `command_down` | Hex byte | `0x40` | **(cover)** Full closing command |
 | `command_stop` | Hex byte | `0x10` | **(cover)** Stop command |
@@ -143,6 +143,36 @@ and edited via the web UI's device editor. Fields marked **(cover)** and
 The protocol bytes (`hop`, `payload_*`, `msg_type`, `type2`) are rarely
 overridden — defaults match every Elero motor seen in the wild. Only
 touch them if you've sniffed an unusual remote and confirmed it differs.
+
+### Cover position and tilt
+
+For percentage positioning, expand a cover in the Devices tab and enter its
+measured full opening and closing travel times in seconds (the up/down fields).
+Both must be greater than zero. The firmware stores these as `open_duration_ms`
+and `close_duration_ms`, estimates position from elapsed travel time, and sends
+STOP when an intermediate target is reached. Use a full travel to a confirmed
+endpoint to establish a reference; intermediate positions remain estimates and
+can drift. Do not use placeholder travel times just to enable a slider.
+
+In MQTT mode, saving these values updates discovery and republishes known state
+without moving the cover. In native API mode, reboot after changing capabilities
+so Home Assistant receives the updated entity information. A HomeKit bridge can
+cache accessory capabilities: after verifying `current_position` and position
+control in HA, use HA's `homekit.reset_accessory` for only the affected cover if
+Apple Home still has the old controls. Resetting an accessory can require restoring
+its Apple Home room, name, scenes and automations; do not reset the entire bridge.
+
+`supports_tilt` exposes the existing Elero saved-preset command and binary tilt
+state (0/100). It does **not** measure a slat angle or make arbitrary percentage
+tilt targets possible; the current adapters recall the same preset for tilt
+requests. Enable it only for motors with a programmed tilt preset.
+
+Cover state topics are retained at the MQTT broker so a restarted HA or a new
+discovery subscription receives the last reported state. The gateway's availability
+topic still marks covers unavailable when it disconnects. Removing or disabling
+a cover clears its retained state, and removing position/tilt support clears the
+corresponding retained values. At gateway startup, old retained cover state is
+cleared until the motor is observed again; no initial 50% position is advertised.
 
 ---
 
