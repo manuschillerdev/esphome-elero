@@ -96,7 +96,8 @@ class DeviceRegistry {
     // ═════════════════════════════════════════════════════════════════════════
 
     /// Dispatch a command byte to a cover device (open/close/stop + FSM + enqueue + poll).
-    void command_cover(Device &dev, uint8_t cmd_byte);
+    /// Returns queue admission, not confirmation from the receiver.
+    bool command_cover(Device &dev, uint8_t cmd_byte);
 
     /// Set a cover's target position (0.0–1.0). Determines direction, sets target, starts movement.
     void set_cover_position(Device &dev, float target);
@@ -105,7 +106,7 @@ class DeviceRegistry {
     void command_cover_tilt(Device &dev);
 
     /// Dispatch a command byte to a light device (on/off + FSM + enqueue).
-    void command_light(Device &dev, uint8_t cmd_byte);
+    bool command_light(Device &dev, uint8_t cmd_byte);
 
     /// Set a light's target brightness (0.0–1.0). Determines dim direction, starts dimming.
     void set_light_brightness(Device &dev, float brightness);
@@ -114,19 +115,22 @@ class DeviceRegistry {
     /// Each device's channel becomes a destination in the packet. All devices must share
     /// the same src_address (same emulated remote). Single-member buckets fall back to
     /// the normal per-device command path at the saved-group orchestration layer.
+    /// STOP/CHECK and incompatible command mappings use the per-device path.
+    /// Returns false if any member's command could not be queued.
     /// @param devices Pointer to array of Device pointers (must be active covers or active lights)
     /// @param count Number of devices in the array
     /// @param cmd_byte Command byte (UP/DOWN/STOP/CHECK)
-    void command_group(Device *const *devices, size_t count, uint8_t cmd_byte);
+    bool command_group(Device *const *devices, size_t count, uint8_t cmd_byte);
 
     /// Dispatch a saved group command by id. Resolves member ids, derives their
     /// common device type, partitions by src_address, then emits one TX command
     /// per remote bucket. RX/status handling remains per-device and unchanged.
+    /// Failure can mean partial admission; commands already queued are retained.
     bool command_saved_group(const char *id, uint8_t cmd_byte, std::string *error = nullptr);
 
     /// Request an immediate status CHECK for any device (cover or light).
     /// Enqueues a single CHECK packet — blind responds with current state.
-    void request_check(Device &dev);
+    bool request_check(Device &dev);
 
     // ═════════════════════════════════════════════════════════════════════════
     // RF DISPATCH
@@ -258,8 +262,9 @@ class DeviceRegistry {
 
     [[nodiscard]] bool enqueue_or_warn_(Device &dev, uint8_t cmd_byte,
                                         uint8_t packets, uint8_t type,
-                                        const char *context);
+                                        const char *context, std::span<const uint8_t> channels = {});
     [[nodiscard]] bool enqueue_check_(Device &dev, const char *context);
+    void cancel_pending_commands_(Device &dev);
 
     /// Process cover device loop (polling, timeouts, position, command queue).
     void loop_cover_(Device &dev, CoverDevice &cover, uint32_t now);

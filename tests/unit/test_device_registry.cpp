@@ -265,6 +265,30 @@ class DeviceRegistryTest : public ::testing::Test {
     Device *add_light(uint32_t addr = 0xC41A2B) {
         return registry_.upsert(make_light_config(addr));
     }
+
+    std::vector<EleroCommand> drain_commands(Device &dev) {
+        struct RecordingHub {
+            std::vector<EleroCommand> commands;
+            TxClient *pending{nullptr};
+            uint32_t attempt{0};
+            bool request_tx(TxClient *client, const EleroCommand &cmd) {
+                commands.push_back(cmd);
+                pending = client;
+                attempt = client->begin_tx_attempt();
+                return true;
+            }
+        } hub;
+        for (int i = 0; dev.sender.is_busy() && i < 100; ++i) {
+            mock_time_.advance(pkt::button::INTER_PACKET_MS);
+            dev.sender.process_queue(mock_time_.millis(), &hub, "test");
+            if (hub.pending) {
+                hub.pending->complete_tx_attempt(hub.attempt, true);
+                hub.pending = nullptr;
+            }
+        }
+        EXPECT_FALSE(dev.sender.is_busy());
+        return hub.commands;
+    }
 };
 
 #include "test_mqtt_cover.inc"
@@ -915,88 +939,70 @@ TEST_F(DeviceRegistryTest, CommandGroup_StopClearsTarget) {
     EXPECT_EQ(cover2.target_position, cover_sm::NO_TARGET);
 }
 
-TEST_F(DeviceRegistryTest, CommandGroup_SetsGroupFieldsOnLeadSender) {
+TEST_F(DeviceRegistryTest, CommandGroup_QueuesRecipientsWithoutMutatingTemplate) {
     auto *dev1 = registry_.upsert(make_cover_config_ch(0xA00001, 1));
     auto *dev2 = registry_.upsert(make_cover_config_ch(0xA00002, 3));
 
     Device *devs[] = {dev1, dev2};
     registry_.command_group(devs, 2, pkt::command::UP);
 
-    // Lead sender's command template should have group fields set
-    const auto &cmd = dev1->sender.command();
+    EXPECT_EQ(dev1->sender.command().num_dests, 0);
+    const auto commands = drain_commands(*dev1);
+    ASSERT_EQ(commands.size(), 4u);  // Three group presses, one targeted CHECK.
+    const auto &cmd = commands.front();
     EXPECT_EQ(cmd.num_dests, 2);
     EXPECT_EQ(cmd.dest_channels[0], 1);
     EXPECT_EQ(cmd.dest_channels[1], 3);
+    EXPECT_EQ(commands.back().type, pkt::msg_type::COMMAND);
+    EXPECT_EQ(commands.back().num_dests, 0);
 }
 
-TEST_F(DeviceRegistryTest, CommandGroup_EnqueueFailureRestoresTemplate) {
+TEST_F(DeviceRegistryTest, CommandGroup_EnqueueFailureDoesNotChangeState) {
     auto *dev1 = registry_.upsert(make_cover_config_ch(0xA00001, 1));
     auto *dev2 = registry_.upsert(make_cover_config_ch(0xA00002, 3));
     ASSERT_NE(dev1, nullptr);
     ASSERT_NE(dev2, nullptr);
-
-    auto &cmd = dev1->sender.command();
-    cmd.num_dests = 7;
-    cmd.dest_channels[0] = 9;
-    cmd.dest_channels[1] = 11;
 
     for (int i = 0; i < pkt::limits::MAX_COMMAND_QUEUE; ++i) {
         uint8_t queued = (i % 2 == 0) ? pkt::command::UP : pkt::command::DOWN;
         ASSERT_TRUE(dev1->sender.enqueue(queued));
     }
 
+    adapter_.clear();
     Device *devs[] = {dev1, dev2};
-    registry_.command_group(devs, 2, pkt::command::STOP);
+    EXPECT_FALSE(registry_.command_group(devs, 2, pkt::command::UP));
 
-    EXPECT_EQ(cmd.num_dests, 7);
-    EXPECT_EQ(cmd.dest_channels[0], 9);
-    EXPECT_EQ(cmd.dest_channels[1], 11);
+    EXPECT_TRUE(adapter_.state_changed.empty());
+    EXPECT_EQ(dev1->sender.command().num_dests, 0);
     EXPECT_EQ(dev2->sender.queue_size(), 0u);
 }
 
-TEST_F(DeviceRegistryTest, CommandGroup_NumDestsAutoCleared) {
-    // Test the mechanism directly: CommandSender::advance_queue_() clears num_dests.
-    // We use a deferred-completion mock because process_queue sets TX_PENDING
-    // AFTER request_tx returns — synchronous on_tx_complete would be overwritten.
-    CommandSender sender;
-    auto &cmd = sender.command();
-    cmd.src_addr = 0xF0D008;
-    cmd.dst_addr = 0xA00001;
-    cmd.channel = 1;
-    cmd.type = pkt::msg_type::BUTTON;
-
-    // Simulate what command_group does: set group fields, enqueue
-    cmd.num_dests = 2;
-    cmd.dest_channels[0] = 1;
-    cmd.dest_channels[1] = 3;
-    (void) sender.enqueue(pkt::command::UP, pkt::button::PACKETS, pkt::msg_type::BUTTON);
-
-    EXPECT_EQ(cmd.num_dests, 2);  // Still set while queued
-
-    // Mock hub that defers on_tx_complete to the next tick
-    struct DeferredHub {
-        TxClient *pending{nullptr};
-        bool request_tx(TxClient *client, const EleroCommand &) {
-            pending = client;
-            return true;
+TEST_F(DeviceRegistryTest, CommandGroup_BackToBackGroupsAndIndividualKeepTheirTargets) {
+    auto *a = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *b = registry_.upsert(make_cover_config_ch(0xA00002, 2));
+    auto *c = registry_.upsert(make_cover_config_ch(0xA00003, 3));
+    Device *first[] = {a, b};
+    Device *second[] = {a, c};
+    ASSERT_TRUE(registry_.command_group(first, 2, pkt::command::UP));
+    ASSERT_TRUE(registry_.command_group(second, 2, pkt::command::DOWN));
+    ASSERT_TRUE(registry_.command_cover(*a, pkt::command::UP));
+    const auto commands = drain_commands(*a);
+    ASSERT_EQ(commands.size(), 12u);
+    for (size_t i = 0; i < commands.size(); ++i) {
+        const auto &cmd = commands[i];
+        if (i % 4 == 3) {
+            EXPECT_EQ(cmd.type, pkt::msg_type::COMMAND);
+            EXPECT_EQ(cmd.num_dests, 0);
+        } else if (i < 8) {
+            EXPECT_EQ(cmd.payload[4], i < 4 ? pkt::command::UP : pkt::command::DOWN);
+            EXPECT_EQ(cmd.num_dests, 2);
+            EXPECT_EQ(cmd.dest_channels[0], 1);
+            EXPECT_EQ(cmd.dest_channels[1], i < 4 ? 2 : 3);
+        } else {
+            EXPECT_EQ(cmd.num_dests, 0);
+            EXPECT_EQ(cmd.channel, 1);
         }
-        void complete() {
-            if (pending) { pending->on_tx_complete(true); pending = nullptr; }
-        }
-    } mock_hub;
-
-    // Drain the queue: each cycle = process_queue (sends) + complete + advance time
-    for (int i = 0; i < 20; ++i) {
-        mock_time_.advance(15);
-        sender.process_queue(mock_time_.millis(), &mock_hub, "test");
-        mock_hub.complete();
-        if (!sender.has_pending_commands() &&
-            sender.state() == CommandSender::State::IDLE) break;
     }
-
-    EXPECT_EQ(sender.state(), CommandSender::State::IDLE);
-    EXPECT_FALSE(sender.has_pending_commands());
-    EXPECT_EQ(sender.command().num_dests, 0);
 }
 
 TEST_F(DeviceRegistryTest, CommandGroup_RejectsCountBelow2) {
@@ -1008,6 +1014,103 @@ TEST_F(DeviceRegistryTest, CommandGroup_RejectsCountBelow2) {
 
     // Should not have notified anything
     EXPECT_TRUE(adapter_.state_changed.empty());
+}
+
+TEST_F(DeviceRegistryTest, GroupStopCancelsOverlappingGroupsAndPreservesOtherTargets) {
+    auto *a = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *b = registry_.upsert(make_cover_config_ch(0xA00002, 2));
+    auto *c = registry_.upsert(make_cover_config_ch(0xA00003, 3));
+    auto *unrelated = registry_.upsert(make_cover_config_ch(0xA00004, 1, 0xABCDEF));
+    Device *first[] = {a, b};
+    Device *second[] = {b, c};
+    Device *stopped[] = {a, c};
+    ASSERT_TRUE(registry_.command_group(first, 2, pkt::command::UP));
+    ASSERT_TRUE(registry_.command_group(second, 2, pkt::command::DOWN));
+    ASSERT_TRUE(registry_.command_cover(*unrelated, pkt::command::UP));
+    ASSERT_TRUE(registry_.command_group(stopped, 2, pkt::command::STOP));
+
+    for (auto *dev : {a, b, c}) {
+        const auto commands = drain_commands(*dev);
+        ASSERT_FALSE(commands.empty());
+        if (dev != b) {
+            EXPECT_EQ(commands.front().payload[4], pkt::command::STOP);
+            EXPECT_EQ(commands.front().type, pkt::msg_type::COMMAND);
+            EXPECT_EQ(commands.front().dst_addr, dev->config.dst_address);
+        }
+        for (const auto &cmd : commands) {
+            if (cmd.type != pkt::msg_type::BUTTON) continue;
+            // Only B's un-cancelled movement remains, even in A's sender.
+            EXPECT_EQ(cmd.num_dests, 1);
+            EXPECT_EQ(cmd.channel, 2);
+            EXPECT_EQ(cmd.dest_channels[0], 2);
+            uint8_t frame[pkt::FIFO_LENGTH]{};
+            ASSERT_GT(pkt::build_command_packet(cmd, frame), 0u);
+            EXPECT_EQ(frame[17], 2);  // Remaining selector actually encoded on wire.
+        }
+    }
+    const auto commands = drain_commands(*unrelated);
+    ASSERT_EQ(commands.size(), 4u);
+    EXPECT_EQ(commands.front().payload[4], pkt::command::UP);
+    EXPECT_EQ(commands.front().src_addr, 0xABCDEFu);
+}
+
+TEST_F(DeviceRegistryTest, IndividualStopPreemptsFullGroupQueueWithoutDroppingOtherChannels) {
+    auto *a = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *b = registry_.upsert(make_cover_config_ch(0xA00002, 2));
+    Device *members[] = {a, b};
+    for (int i = 0; i < 5; ++i) {
+        ASSERT_TRUE(registry_.command_group(members, 2, pkt::command::UP));
+    }
+    ASSERT_EQ(a->sender.queue_size(), pkt::limits::MAX_COMMAND_QUEUE);
+    ASSERT_TRUE(registry_.command_cover(*a, pkt::command::STOP));
+    ASSERT_TRUE(registry_.command_cover(*a, pkt::command::STOP));  // Repeated STOP stays bounded.
+    const auto commands = drain_commands(*a);
+    ASSERT_EQ(commands.size(), 19u);  // STOP x3, B's five presses x3, CHECK.
+    EXPECT_EQ(commands.front().payload[4], pkt::command::STOP);
+    for (const auto &cmd : commands) {
+        if (cmd.type == pkt::msg_type::BUTTON) {
+            EXPECT_EQ(cmd.channel, 2);
+            EXPECT_EQ(cmd.num_dests, 1);
+        }
+    }
+}
+
+TEST_F(DeviceRegistryTest, GroupSelectorsAreDeduplicated) {
+    auto *a = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *b = registry_.upsert(make_cover_config_ch(0xA00002, 1));
+    Device *members[] = {a, b};
+    ASSERT_TRUE(registry_.command_group(members, 2, pkt::command::UP));
+    const auto commands = drain_commands(*a);
+    ASSERT_EQ(commands.size(), 4u);
+    EXPECT_EQ(commands.front().num_dests, 1);
+    EXPECT_EQ(commands.front().channel, 1);
+}
+
+TEST_F(DeviceRegistryTest, SavedGroupReportsPartialQueueRejectionWithoutOptimisticStateForRejectedMembers) {
+    auto *a = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *b = registry_.upsert(make_cover_config_ch(0xA00002, 2));
+    auto *c = registry_.upsert(make_cover_config_ch(0xA00003, 3, 0xABCDEF));
+    auto group = make_group_config("partial", "Partial", {0xA00001, 0xA00002, 0xA00003});
+    ASSERT_NE(registry_.upsert_group(group), nullptr);
+    for (int i = 0; i < pkt::limits::MAX_COMMAND_QUEUE; ++i) {
+        ASSERT_TRUE(a->sender.enqueue(i % 2 ? pkt::command::DOWN : pkt::command::UP));
+    }
+    const auto old_state = std::get<CoverDevice>(a->logic).state.index();
+    adapter_.clear();
+    std::string error;
+    EXPECT_FALSE(registry_.command_saved_group("partial", pkt::command::UP, &error));
+    EXPECT_NE(error.find("queue full"), std::string::npos);
+    EXPECT_EQ(std::get<CoverDevice>(a->logic).state.index(), old_state);
+    EXPECT_EQ(b->sender.queue_size(), 0u);
+    EXPECT_EQ(c->sender.queue_size(), 2u);  // Other remote still admitted.
+    ASSERT_EQ(adapter_.state_changed.size(), 1u);
+
+    // The same failure must propagate through a single-member remote bucket.
+    auto config = b->config;
+    config.src_address = 0x123456;
+    registry_.upsert(config);
+    EXPECT_FALSE(registry_.command_saved_group("partial", pkt::command::UP, &error));
+    EXPECT_EQ(std::get<CoverDevice>(a->logic).state.index(), old_state);
 }
 
 TEST_F(DeviceRegistryTest, CommandGroup_RejectsNullDevices) {
@@ -1089,10 +1192,14 @@ TEST_F(DeviceRegistryTest, CommandSavedGroup_PartitionsByRemote) {
 
     EXPECT_TRUE(registry_.command_saved_group("grp_multi", pkt::command::UP, &error)) << error;
 
-    EXPECT_EQ(dev1->sender.command().num_dests, 2);
-    EXPECT_EQ(dev1->sender.command().dest_channels[0], 1);
-    EXPECT_EQ(dev1->sender.command().dest_channels[1], 3);
-    EXPECT_EQ(dev3->sender.command().num_dests, 0);
+    const auto first = drain_commands(*dev1);
+    const auto second = drain_commands(*dev3);
+    ASSERT_EQ(first.size(), 4u);
+    ASSERT_EQ(second.size(), 4u);
+    EXPECT_EQ(first.front().num_dests, 2);
+    EXPECT_EQ(first.front().dest_channels[0], 1);
+    EXPECT_EQ(first.front().dest_channels[1], 3);
+    EXPECT_EQ(second.front().num_dests, 0);
     EXPECT_GE(adapter_.state_changed.size(), 3u);
 }
 
