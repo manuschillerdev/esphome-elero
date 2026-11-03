@@ -681,10 +681,11 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
         // Status packets: src is the blind/light reporting status
         Device *dev = find(pkt.src);
         if (dev && dev->active) {
+            const bool first_report = dev->rf.last_seen_ms == 0;
             dev->rf.last_seen_ms = now;
             dev->rf.last_rssi = pkt.rssi;
             dev->rf.last_state_raw = pkt.state;
-            dispatch_status_(*dev, pkt.state, now);
+            dispatch_status_(*dev, pkt.state, now, first_report);
         }
     } else if (packet::carries_command(pkt.type)) {
         // Remote commands/selector actions are passive — auto-discover the remote.
@@ -693,7 +694,7 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
     }
 }
 
-void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now) {
+void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now, bool first_report) {
     std::visit(overloaded{
         [&](CoverDevice &cover) {
             auto ctx = cover_context(dev.config);
@@ -721,10 +722,10 @@ void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t 
         [](RemoteDevice &) {},
     }, dev.logic);
 
-    // Always run through the snapshot→diff→publish pipeline on STATUS.
-    // The diff handles dedup: if nothing changed (same RSSI, same state),
-    // changes=0 and adapters aren't notified. No premature gating here.
-    notify_state_changed_(dev, now);
+    // The first RF report must publish even values matching registration-time
+    // defaults: MQTT suppresses those defaults until a device is observed.
+    // Subsequent reports use the normal diff to deduplicate unchanged values.
+    notify_state_changed_(dev, now, first_report);
 }
 
 

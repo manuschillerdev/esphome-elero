@@ -263,7 +263,7 @@ dev.published      dev.published      from dev.published
 
 8. **MQTT reconnect forces full republish.** `republish_all_()` asks the registry to recompute snapshots and notify adapters with `state_change::ALL`, including false/zero values that would disappear when diffed against default caches. Covers without an RF observation are not replayed. Updating a known device's configuration also forces state after discovery so newly enabled position/tilt topics receive an initial value.
 
-9. **MQTT cover state is retained.** A Home Assistant restart or discovery update receives state even when the motor has not changed. Removing/disabling a cover clears retained state; removing a capability clears its position/tilt topic. An unobserved cover clears previous-boot state before discovery and waits for RF instead of publishing its default position.
+9. **MQTT cover state is retained.** A Home Assistant restart or discovery update receives state even when the motor has not changed. Removing/disabling a cover clears retained state; removing a capability clears its position/tilt topic. An unobserved cover clears previous-boot state before discovery and waits for RF instead of publishing its default position. Its first RF status report forces a complete snapshot, including values that match registration-time defaults; subsequent reports use normal change detection.
 
 ### Timing
 

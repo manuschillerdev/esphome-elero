@@ -159,10 +159,13 @@ struct MqttContext {
 
   // ── Subscribe helpers ───────────────────────────────────────
 
-  /// Subscribe to a device topic.
+  /// Replace the command subscription for a device topic.
   void subscribe(DeviceType type, uint32_t addr, const char *suffix,
                   std::function<void(const char *, const char *)> cb) const {
-    mqtt->subscribe(topic(type, addr, suffix).c_str(), std::move(cb));
+    const auto full_topic = topic(type, addr, suffix);
+    // ESPHome appends callbacks; edits and reconnects must not accumulate them.
+    mqtt->unsubscribe(full_topic.c_str());
+    mqtt->subscribe(full_topic.c_str(), std::move(cb));
   }
 
   /// Unsubscribe from a device topic.

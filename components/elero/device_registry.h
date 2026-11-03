@@ -269,7 +269,7 @@ class DeviceRegistry {
 
     /// Handle an RF status packet for a specific device.
     /// Always runs through snapshot→diff→publish; the diff handles dedup.
-    void dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now);
+    void dispatch_status_(Device &dev, uint8_t state_byte, uint32_t now, bool first_report);
 
     /// Track a remote control from an observed RF command packet.
     void track_remote_(const RfPacketInfo &pkt, uint32_t now);

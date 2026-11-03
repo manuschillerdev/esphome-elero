@@ -4,7 +4,7 @@
 class FakeMqttPublisher : public MqttPublisher {
  public:
     std::map<std::string, std::string> retained;
-    std::map<std::string, std::function<void(const char *, const char *)>> subscriptions;
+    std::map<std::string, std::vector<std::function<void(const char *, const char *)>>> subscriptions;
     bool connected{true};
 
     bool publish(const char *topic, const char *payload, bool retain) override {
@@ -16,11 +16,15 @@ class FakeMqttPublisher : public MqttPublisher {
         return true;
     }
     bool subscribe(const char *topic, std::function<void(const char *, const char *)> cb) override {
-        subscriptions[topic] = std::move(cb);
+        // ESPHome appends callbacks even when a topic is already subscribed.
+        subscriptions[topic].push_back(std::move(cb));
         return true;
     }
     void unsubscribe(const char *topic) override { subscriptions.erase(topic); }
     bool is_connected() const override { return connected; }
+    void deliver(const char *topic, const char *payload) {
+        for (const auto &cb : subscriptions.at(topic)) cb(topic, payload);
+    }
 };
 
 class MqttCoverTest : public DeviceRegistryTest {
@@ -31,6 +35,9 @@ class MqttCoverTest : public DeviceRegistryTest {
     static constexpr const char *POSITION_TOPIC = "elero/cover/a831e5/position";
     static constexpr const char *TILT_TOPIC = "elero/cover/a831e5/tilt_state";
     static constexpr const char *SET_TOPIC = "elero/cover/a831e5/set";
+    static constexpr const char *SET_POSITION_TOPIC = "elero/cover/a831e5/set_position";
+    static constexpr const char *SET_TILT_TOPIC = "elero/cover/a831e5/tilt";
+    static constexpr const char *LIGHT_SET_TOPIC = "elero/light/c41a2b/set";
     static constexpr const char *DISCOVERY_TOPIC = "homeassistant/cover/test-gateway_cover_a831e5/config";
 
     void SetUp() override {
@@ -62,6 +69,79 @@ TEST_F(MqttCoverTest, UncalibratedCoverDoesNotAdvertisePositionOrTilt) {
     EXPECT_TRUE(doc["tilt_command_topic"].isNull());
     EXPECT_FALSE(broker_.retained.contains(STATE_TOPIC));
     EXPECT_FALSE(broker_.retained.contains(POSITION_TOPIC));
+}
+
+class MqttFirstStatusTest : public MqttCoverTest, public ::testing::WithParamInterface<uint8_t> {};
+
+TEST_P(MqttFirstStatusTest, FirstStationaryReportPublishesCompleteState) {
+    auto cfg = make_cover_config(0xA831E5);
+    cfg.open_duration_ms = cfg.close_duration_ms = 0;
+    cfg.supports_tilt = 1;
+    registry_.upsert(cfg);
+    EXPECT_FALSE(broker_.retained.contains(STATE_TOPIC));
+
+    registry_.on_rf_packet(make_status_pkt(0xA831E5, GetParam()), mock_time_.millis());
+    EXPECT_EQ(broker_.retained.at(STATE_TOPIC), "open");
+    EXPECT_EQ(broker_.retained.at(TILT_TOPIC), "0");
+    EXPECT_EQ(broker_.retained.at("elero/cover/a831e5/problem"), "OFF");
+    EXPECT_TRUE(broker_.retained.contains("elero/cover/a831e5/attributes"));
+    EXPECT_FALSE(broker_.retained.contains(POSITION_TOPIC));
+
+    // Once the first snapshot is published, identical reports stay deduplicated.
+    adapter_.clear();
+    mock_time_.advance(100);
+    registry_.on_rf_packet(make_status_pkt(0xA831E5, GetParam()), mock_time_.millis());
+    EXPECT_TRUE(adapter_.last_changes.empty());
+}
+
+INSTANTIATE_TEST_SUITE_P(Stationary, MqttFirstStatusTest,
+    ::testing::Values(pkt::state::TOP, pkt::state::STOPPED, pkt::state::INTERMEDIATE));
+
+TEST_F(MqttCoverTest, ConfigurationEditsKeepOneCoverCommandHandler) {
+    auto cfg = make_cover_config(0xA831E5);
+    cfg.supports_tilt = 1;
+    auto *dev = registry_.upsert(cfg);
+    for (int i = 0; i < 3; ++i) {
+        snprintf(cfg.name, NVS_NAME_MAX, "Renamed Cover %d", i);
+        registry_.upsert(cfg);
+    }
+    for (const auto *topic : {SET_TOPIC, SET_POSITION_TOPIC, SET_TILT_TOPIC}) {
+        EXPECT_EQ(broker_.subscriptions.at(topic).size(), 1u) << topic;
+    }
+    broker_.deliver(SET_TOPIC, "open");
+    EXPECT_EQ(dev->sender.queue_size(), 2u);  // One move + one status check.
+}
+
+TEST_F(MqttCoverTest, ConfigurationEditsKeepOneLightCommandHandler) {
+    auto cfg = make_light_config(0xC41A2B);
+    auto *dev = registry_.upsert(cfg);
+    for (int i = 0; i < 3; ++i) {
+        snprintf(cfg.name, NVS_NAME_MAX, "Renamed Light %d", i);
+        registry_.upsert(cfg);
+    }
+    EXPECT_EQ(broker_.subscriptions.at(LIGHT_SET_TOPIC).size(), 1u);
+    broker_.deliver(LIGHT_SET_TOPIC, R"({"state":"ON"})");
+    EXPECT_EQ(dev->sender.queue_size(), 1u);
+}
+
+TEST_F(MqttCoverTest, ReconnectKeepsOneCommandHandlerPerTopic) {
+    auto *cover = add_cover();
+    auto *light = add_light();
+    for (int i = 0; i < 3; ++i) {
+        broker_.connected = false;
+        mqtt_.loop();
+        broker_.connected = true;
+        mqtt_.loop();
+        mock_time_.advance(501);
+        mqtt_.loop();
+    }
+    for (const auto *topic : {SET_TOPIC, SET_POSITION_TOPIC, SET_TILT_TOPIC, LIGHT_SET_TOPIC}) {
+        EXPECT_EQ(broker_.subscriptions.at(topic).size(), 1u) << topic;
+    }
+    broker_.deliver(SET_TOPIC, "open");
+    broker_.deliver(LIGHT_SET_TOPIC, R"({"state":"ON"})");
+    EXPECT_EQ(cover->sender.queue_size(), 2u);
+    EXPECT_EQ(light->sender.queue_size(), 1u);
 }
 
 TEST_F(MqttCoverTest, LateHomeAssistantSubscriberReceivesReportedState) {
@@ -143,8 +223,24 @@ TEST_F(MqttCoverTest, DisablingAndReenablingRestoresStateAndCommandSubscription)
     registry_.upsert(cfg);
     EXPECT_EQ(broker_.retained.at(STATE_TOPIC), "closed");
     ASSERT_TRUE(broker_.subscriptions.contains(SET_TOPIC));
-    broker_.subscriptions.at(SET_TOPIC)(SET_TOPIC, "open");
+    EXPECT_EQ(broker_.subscriptions.at(SET_TOPIC).size(), 1u);
+    broker_.deliver(SET_TOPIC, "open");
     EXPECT_EQ(dev->sender.queue_size(), 2u);
+}
+
+TEST_F(MqttCoverTest, DisablingAndReenablingLightRestoresOneCommandHandler) {
+    auto *dev = add_light();
+    auto cfg = dev->config;
+    for (int i = 0; i < 3; ++i) {
+        cfg.set_enabled(false);
+        registry_.upsert(cfg);
+        EXPECT_FALSE(broker_.subscriptions.contains(LIGHT_SET_TOPIC));
+        cfg.set_enabled(true);
+        registry_.upsert(cfg);
+    }
+    EXPECT_EQ(broker_.subscriptions.at(LIGHT_SET_TOPIC).size(), 1u);
+    broker_.deliver(LIGHT_SET_TOPIC, R"({"state":"ON"})");
+    EXPECT_EQ(dev->sender.queue_size(), 1u);
 }
 
 TEST_F(MqttCoverTest, RemovingCoverClearsAllRetainedState) {
