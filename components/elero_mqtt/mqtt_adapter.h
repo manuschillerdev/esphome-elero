@@ -25,6 +25,9 @@ namespace elero {
 
 class MqttAdapter : public OutputAdapter {
  public:
+    MqttAdapter() = default;
+    explicit MqttAdapter(MqttPublisher &publisher) { ctx_.mqtt = &publisher; }
+
     // ═════════════════════════════════════════════════════════════════════════
     // CONFIGURATION (called by codegen before setup)
     // ═════════════════════════════════════════════════════════════════════════
@@ -56,6 +59,7 @@ class MqttAdapter : public OutputAdapter {
     // ── Cover helpers ──
     void publish_cover_discovery_(const Device &dev);
     void publish_cover_state_(const Device &dev, uint16_t changes);
+    void clear_cover_state_(const Device &dev);
     void subscribe_cover_commands_(const Device &dev);
 
     // ── Light helpers ──

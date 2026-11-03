@@ -172,6 +172,11 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
         update_device_config(*existing, config);
         persist(*existing);
         notify_config_changed_(*existing);
+        // A capability change can add state topics without changing the motor's
+        // state. Replay the snapshot after discovery, including false/zero values.
+        if (existing->rf.last_seen_ms != 0) {
+            notify_state_changed_(*existing, millis(), true);
+        }
         ESP_LOGI(TAG, "Updated %s '%s' at 0x%06" PRIx32,
                  device_type_str(config.type), config.name, config.dst_address);
         return existing;
@@ -1069,7 +1074,7 @@ void DeviceRegistry::notify_removed_(const Device &dev) {
     for (auto *a : adapters_) a->on_device_removed(dev);
 }
 
-void DeviceRegistry::notify_state_changed_(Device &dev, uint32_t now) {
+void DeviceRegistry::notify_state_changed_(Device &dev, uint32_t now, bool force) {
     uint16_t changes = 0;
 
     if (dev.is_cover()) {
@@ -1082,6 +1087,8 @@ void DeviceRegistry::notify_state_changed_(Device &dev, uint32_t now) {
         auto snap = compute_remote_snapshot(dev);
         changes = diff_and_update_remote(snap, std::get<RemoteDevice>(dev.logic).published);
     }
+
+    if (force) changes = state_change::ALL;
 
     if (changes == 0) {
         ESP_LOGVV(TAG, "0x%06" PRIx32 ": notify suppressed (no changes)", dev.config.dst_address);
@@ -1187,16 +1194,9 @@ void DeviceRegistry::force_republish_all() {
         // CHECK poll will query them and real STATUS responses will publish.
         if (dev.rf.last_seen_ms == 0) continue;
 
-        // Reset Published to sentinel defaults — the next diff will see everything
-        // as changed, recompute valid values, and notify adapters with ALL fields.
-        if (dev.is_cover()) {
-            std::get<CoverDevice>(dev.logic).published = {};
-        } else if (dev.is_light()) {
-            std::get<LightDevice>(dev.logic).published = {};
-        } else if (dev.is_remote()) {
-            std::get<RemoteDevice>(dev.logic).published = {};
-        }
-        notify_state_changed_(dev, now);
+        // Resetting to defaults is insufficient: false tilt/off values can equal
+        // the defaults and disappear from the diff. Explicitly send all fields.
+        notify_state_changed_(dev, now, true);
     }
 }
 

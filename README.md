@@ -104,6 +104,20 @@ overrides. For example, Raffstore motors may need `command_up: "0x21"` and
 `command_down: "0x44"`. Existing NVS devices and backups retain their defaults.
 See the [per-device fields](docs/CONFIGURATION.md#per-device-fields-managed-in-the-ui).
 
+### Cover position and Apple Home
+
+Percentage positioning is enabled only when **both** opening and closing travel
+times are configured in the device editor. Measure each full travel separately;
+the reported percentage is a time-based estimate, not a motor position reading.
+With either time set to zero, Home Assistant and HomeKit get open/close/stop only.
+The optional Tilt control recalls the motor's **saved tilt preset**; it does not
+provide arbitrary slat-angle positioning. See the
+[calibration and HomeKit notes](docs/CONFIGURATION.md#cover-position-and-tilt).
+
+MQTT cover state is retained for Home Assistant restarts and discovery updates.
+Changing a saved cover's capabilities republishes its known state immediately;
+an unobserved cover waits for an RF report instead of publishing a guessed position.
+
 ## Documentation
 
 - [Configuration Reference](docs/CONFIGURATION.md) -- full parameter tables for all modes

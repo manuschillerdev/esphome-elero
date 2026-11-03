@@ -22,6 +22,7 @@
 #include <cstring>
 #include <array>
 #include <queue>
+#include <map>
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ESPHome stubs — must come before any production includes
@@ -77,6 +78,7 @@ constexpr float DATA = 0.0f;
 #include "elero/light_sm.cpp"
 #include "elero/state_snapshot.cpp"
 #include "elero/device_registry.cpp"
+#include "elero_mqtt/mqtt_adapter.h"
 
 // Stub Elero methods (device_registry.cpp includes elero.h)
 namespace esphome {
@@ -264,6 +266,8 @@ class DeviceRegistryTest : public ::testing::Test {
         return registry_.upsert(make_light_config(addr));
     }
 };
+
+#include "test_mqtt_cover.inc"
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CRUD — only non-trivial paths

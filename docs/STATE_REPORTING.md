@@ -261,7 +261,9 @@ dev.published      dev.published      from dev.published
 
 7. **WebSocket is raw RF, not snapshots.** The web server forwards raw `RfPacketInfo` to the browser. The browser derives all state client-side. The `config` event on connect sends current device state using snapshots.
 
-8. **MQTT reconnect forces full republish.** `republish_all_()` resets each device's `Published` cache to defaults and calls `on_state_changed(dev, state_change::ALL)`, guaranteeing all topics are republished to the fresh broker.
+8. **MQTT reconnect forces full republish.** `republish_all_()` asks the registry to recompute snapshots and notify adapters with `state_change::ALL`, including false/zero values that would disappear when diffed against default caches. Covers without an RF observation are not replayed. Updating a known device's configuration also forces state after discovery so newly enabled position/tilt topics receive an initial value.
+
+9. **MQTT cover state is retained.** A Home Assistant restart or discovery update receives state even when the motor has not changed. Removing/disabling a cover clears retained state; removing a capability clears its position/tilt topic. An unobserved cover clears previous-boot state before discovery and waits for RF instead of publishing its default position.
 
 ### Timing
 
