@@ -1,0 +1,21 @@
+{
+  "firmware": "01.10",
+  "radio_address": "0x244680",
+  "channels": [
+    {
+      "channel": 1,
+      "raw": "0201806001",
+      "receiver_count_or_group": 1,
+      "receiver_type": "0x60",
+      "icon": "0x01"
+    },
+    {
+      "channel": 2,
+      "raw": "0201806001",
+      "receiver_count_or_group": 1,
+      "receiver_type": "0x60",
+      "icon": "0x01"
+    }
+  ],
+  "evidence": "Field offsets follow MessageReceiveVersion in the official Sombrero executable; raw fields retain unknown meanings."
+}

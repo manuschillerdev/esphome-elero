@@ -1,0 +1,117 @@
+{
+  "date": "2026-11-04",
+  "condition": "Paired receivers unavailable at this location, confirmed by owner. USB observations only.",
+  "baud": 38400,
+  "format": "8N1",
+  "firmware": "01.10",
+  "paired_channels": [
+    1,
+    2
+  ],
+  "easy_cases": 65,
+  "easy_requests": 68,
+  "easy_reply_frames": 36,
+  "native_cases": 40,
+  "native_reply_frames": 39,
+  "native_reply_counts": {
+    "aa56420030312e31308046240201806001020180600100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001c": 2,
+    "aa084301010d002105d6": 1,
+    "aa044700010a": 24,
+    "aa0447000209": 11,
+    "aa044b000304": 1
+  },
+  "all_received_checksums_valid": true,
+  "sombrero_sha256": "971ef664da50fb7411d3882e6415802dc533e73c0e2cf86648272405927954f1",
+  "vbier_revision": "9aab0f7d12dde8002a06aa4ef160122415a54071",
+  "limits": [
+    "No RF capture.",
+    "No motor movement or receiver status was available.",
+    "Same failure reply for 0x21/0x41 does not establish command support.",
+    "No firmware read, update, erase, pairing operation or clock write was attempted."
+  ],
+  "sessions": [
+    {
+      "file": "matrix-session.jsonl",
+      "test_records": 65,
+      "passive_windows": 0,
+      "requests": 68,
+      "reply_frames": 36
+    },
+    {
+      "file": "native-session.jsonl",
+      "test_records": 40,
+      "passive_windows": 0,
+      "requests": 40,
+      "reply_frames": 39
+    },
+    {
+      "file": "followup-session.jsonl",
+      "test_records": 41,
+      "passive_windows": 0,
+      "requests": 42,
+      "reply_frames": 38
+    },
+    {
+      "file": "isolation-session.jsonl",
+      "test_records": 19,
+      "passive_windows": 3,
+      "requests": 16,
+      "reply_frames": 11
+    },
+    {
+      "file": "interruption-isolated.jsonl",
+      "test_records": 6,
+      "passive_windows": 1,
+      "requests": 6,
+      "reply_frames": 5
+    }
+  ],
+  "total_test_records": 171,
+  "total_passive_windows": 4,
+  "total_requests": 172,
+  "total_reply_frames": 129,
+  "intentional_bad_checksum_requests": [
+    {
+      "session": "matrix-session.jsonl",
+      "case": "bad_checksum_check"
+    },
+    {
+      "session": "followup-session.jsonl",
+      "case": "native_info_bad_checksum"
+    },
+    {
+      "session": "isolation-session.jsonl",
+      "case": "bad_checksum_native_info_2_after_1"
+    },
+    {
+      "session": "isolation-session.jsonl",
+      "case": "bad_checksum_native_info_1_after_2"
+    },
+    {
+      "session": "isolation-session.jsonl",
+      "case": "bad_checksum_easy_info_2_after_1"
+    }
+  ],
+  "all_received_frames_have_valid_length_and_checksum": true,
+  "all_captured_version_and_pairing_replies_match_baseline": true,
+  "native_group_reply_offsets_seconds": {
+    "followup": [
+      3.5102,
+      6.9716
+    ],
+    "isolation": [
+      3.4619,
+      6.9266
+    ]
+  },
+  "native_zero_mask_control": "No reply in clean single-channel isolation. Replies following zero masks in chained runs cannot be assigned to those requests.",
+  "bad_checksum_control": "Bad-checksum native/Easy requests give no reply in clean isolation; late replies during chained tests do not establish acceptance.",
+  "isolated_native_interruption": "INFO 1 then INFO 2 after 155 ms: only NACK 2 received in 14.25-second window.",
+  "bier_offline_replay": {
+    "observed_easy_reply_fixtures": 29,
+    "accepted": 0,
+    "matching_channel_positive_control": true,
+    "wrong_and_zero_channel_negative_controls": false,
+    "same_channel_up_down_indistinguishable": true
+  }
+}

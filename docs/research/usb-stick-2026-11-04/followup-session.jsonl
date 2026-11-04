@@ -1,0 +1,41 @@
+{"label": "baseline_version", "tx": [{"t": 0.002, "hex": "aa024113"}], "chunks": [{"t": 0.0522, "hex": "aa56420030312e31308046240201806001020180600100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001c"}]}
+{"label": "baseline_channels", "tx": [{"t": 0.606, "hex": "aa024a0a"}], "chunks": [{"t": 0.6561, "hex": "aa044b000304"}]}
+{"label": "easy_info_mask_0006", "tx": [{"t": 1.2101, "hex": "aa044e0006fe"}], "chunks": [{"t": 4.6232, "hex": "aa054d00000004"}]}
+{"label": "native_info_mask_0006", "tx": [{"t": 5.4802, "hex": "aa0c4500060204000000000001f8"}], "chunks": [{"t": 8.8912, "hex": "aa0447000209"}]}
+{"label": "easy_info_mask_0007", "tx": [{"t": 9.7463, "hex": "aa044e0007fd"}], "chunks": []}
+{"label": "native_info_mask_0007", "tx": [{"t": 14.0161, "hex": "aa0c4500070204000000000001f7"}], "chunks": [{"t": 17.4767, "hex": "aa044700010a"}]}
+{"label": "easy_info_mask_0101", "tx": [{"t": 18.2821, "hex": "aa044e010102"}], "chunks": [{"t": 21.7421, "hex": "aa054d00000004"}]}
+{"label": "native_info_mask_0101", "tx": [{"t": 22.549, "hex": "aa0c4501010204000000000001fc"}], "chunks": [{"t": 26.1108, "hex": "aa044700010a"}]}
+{"label": "easy_info_mask_0102", "tx": [{"t": 26.815, "hex": "aa044e010201"}], "chunks": [{"t": 30.3255, "hex": "aa054d00000004"}]}
+{"label": "native_info_mask_0102", "tx": [{"t": 31.0823, "hex": "aa0c4501020204000000000001fb"}], "chunks": [{"t": 34.593, "hex": "aa0447000209"}]}
+{"label": "easy_info_mask_0103", "tx": [{"t": 35.347, "hex": "aa044e010300"}], "chunks": []}
+{"label": "native_info_mask_0103", "tx": [{"t": 39.616, "hex": "aa0c4501030204000000000001fa"}], "chunks": [{"t": 43.0265, "hex": "aa044700010a"}]}
+{"label": "easy_info_mask_4001", "tx": [{"t": 43.881, "hex": "aa044e4001c3"}], "chunks": [{"t": 47.3419, "hex": "aa054d00000004"}]}
+{"label": "native_info_mask_4001", "tx": [{"t": 48.148, "hex": "aa0c4540010204000000000001bd"}], "chunks": [{"t": 51.711, "hex": "aa044700010a"}]}
+{"label": "easy_info_mask_4002", "tx": [{"t": 52.416, "hex": "aa044e4002c2"}], "chunks": [{"t": 55.8776, "hex": "aa054d00000004"}]}
+{"label": "native_info_mask_4002", "tx": [{"t": 56.684, "hex": "aa0c4540020204000000000001bc"}], "chunks": [{"t": 60.1455, "hex": "aa0447000209"}]}
+{"label": "easy_info_mask_4003", "tx": [{"t": 60.9502, "hex": "aa044e4003c1"}], "chunks": []}
+{"label": "native_info_mask_4003", "tx": [{"t": 65.2181, "hex": "aa0c4540030204000000000001bb"}], "chunks": [{"t": 68.7296, "hex": "aa044700010a"}]}
+{"label": "native_channel_2_before_zero", "tx": [{"t": 69.486, "hex": "aa0c4500020204000000000001fc"}], "chunks": [{"t": 72.8975, "hex": "aa0447000209"}]}
+{"label": "native_zero_after_channel_2", "tx": [{"t": 73.7552, "hex": "aa0c4500000204000000000001fe"}], "chunks": [{"t": 76.7658, "hex": "aa0447000209"}]}
+{"label": "easy_group_0003_long_window", "tx": [{"t": 78.021, "hex": "aa044e000301"}], "chunks": []}
+{"label": "native_group_0003_long_window", "tx": [{"t": 86.305, "hex": "aa0c4500030204000000000001fb"}], "chunks": [{"t": 89.8152, "hex": "aa044700010a"}, {"t": 93.2766, "hex": "aa0447000209"}]}
+{"label": "experimental_native_mask_1_key_21", "tx": [{"t": 94.5862, "hex": "aa0c4500010004210000010001dd"}], "chunks": [{"t": 98.0469, "hex": "aa044700010a"}]}
+{"label": "cleanup_native_mask_1_key_21", "tx": [{"t": 98.854, "hex": "aa0c4500010004100000000001ef"}], "chunks": [{"t": 102.317, "hex": "aa044700010a"}]}
+{"label": "experimental_native_mask_1_key_41", "tx": [{"t": 103.1243, "hex": "aa0c4500010004410000010001bd"}], "chunks": [{"t": 106.5842, "hex": "aa044700010a"}]}
+{"label": "cleanup_native_mask_1_key_41", "tx": [{"t": 107.3912, "hex": "aa0c4500010004100000000001ef"}], "chunks": [{"t": 110.8546, "hex": "aa044700010a"}]}
+{"label": "experimental_native_mask_2_key_21", "tx": [{"t": 111.6622, "hex": "aa0c4500020004210000010001dc"}], "chunks": [{"t": 115.1241, "hex": "aa0447000209"}]}
+{"label": "cleanup_native_mask_2_key_21", "tx": [{"t": 115.9323, "hex": "aa0c4500020004100000000001ee"}], "chunks": [{"t": 119.3963, "hex": "aa0447000209"}]}
+{"label": "experimental_native_mask_2_key_41", "tx": [{"t": 120.203, "hex": "aa0c4500020004410000010001bc"}], "chunks": [{"t": 123.7149, "hex": "aa0447000209"}]}
+{"label": "cleanup_native_mask_2_key_41", "tx": [{"t": 124.4722, "hex": "aa0c4500020004100000000001ee"}], "chunks": [{"t": 127.9344, "hex": "aa0447000209"}]}
+{"label": "experimental_native_mask_3_key_21", "tx": [{"t": 128.7411, "hex": "aa0c4500030004210000010001db"}], "chunks": [{"t": 132.2548, "hex": "aa044700010a"}]}
+{"label": "cleanup_native_mask_3_key_21", "tx": [{"t": 133.0112, "hex": "aa0c4500030004100000000001ed"}], "chunks": [{"t": 136.4213, "hex": "aa044700010a"}]}
+{"label": "experimental_native_mask_3_key_41", "tx": [{"t": 137.2793, "hex": "aa0c4500030004410000010001bb"}], "chunks": [{"t": 140.6889, "hex": "aa044700010a"}]}
+{"label": "cleanup_native_mask_3_key_41", "tx": [{"t": 141.545, "hex": "aa0c4500030004100000000001ed"}], "chunks": [{"t": 145.006, "hex": "aa044700010a"}]}
+{"label": "native_interruption_1_then_2", "tx": [{"t": 145.8122, "hex": "aa0c4500010204000000000001fd"}, {"t": 145.9661, "hex": "aa0c4500020204000000000001fc"}], "chunks": [{"t": 149.3772, "hex": "aa0447000209"}]}
+{"label": "native_info_bad_checksum", "tx": [{"t": 150.286, "hex": "aa0c4500010204000000000001fc"}], "chunks": [{"t": 153.2439, "hex": "aa0447000209"}]}
+{"label": "recovery_version", "tx": [{"t": 154.549, "hex": "aa024113"}], "chunks": [{"t": 154.5991, "hex": "aa56420030312e31308046240201806001020180600100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001c"}]}
+{"label": "final_version", "tx": [{"t": 155.153, "hex": "aa024113"}], "chunks": [{"t": 155.2031, "hex": "aa56420030312e31308046240201806001020180600100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001c"}]}
+{"label": "final_channels", "tx": [{"t": 155.756, "hex": "aa024a0a"}], "chunks": [{"t": 155.8061, "hex": "aa044b000304"}]}
+{"label": "final_native_stop_channel_1", "tx": [{"t": 156.3622, "hex": "aa0c4500010004100000000001ef"}], "chunks": [{"t": 159.7714, "hex": "aa044700010a"}]}
+{"label": "final_native_stop_channel_2", "tx": [{"t": 160.628, "hex": "aa0c4500020004100000000001ee"}], "chunks": [{"t": 164.0407, "hex": "aa0447000209"}]}

@@ -1,0 +1,15 @@
+{
+  "initial_commit": {
+    "sha": "89af33d5b4e2ef7b5037797082b310962597edff",
+    "author_date": "2017-02-07T08:25:24Z",
+    "committer_date": "2017-09-01T06:58:11Z"
+  },
+  "review_original_commit": "6f2b385eca948ab9b65f89853f606f3f75b44195",
+  "reply_fix_commit": "ee72664d475069d8394c09746e86e2a86e5f07e3",
+  "reply_fix_parent": "220115c7342b589ff2386111c363f7f8e1a3d04a",
+  "source_links": {
+    "initial_workaround": "https://github.com/openhab/openhab-addons/blob/89af33d5b4e2ef7b5037797082b310962597edff/addons/binding/org.openhab.binding.elerotransmitterstick/src/main/java/org/openhab/binding/elerotransmitterstick/stick/TransmitterStick.java",
+    "old_group_handler": "https://github.com/openhab/openhab-addons/blob/6f2b385eca948ab9b65f89853f606f3f75b44195/addons/binding/org.openhab.binding.elerotransmitterstick/src/main/java/org/openhab/binding/elerotransmitterstick/handler/EleroGroupHandler.java",
+    "reply_fix": "https://github.com/openhab/openhab-addons/commit/ee72664d475069d8394c09746e86e2a86e5f07e3"
+  }
+}

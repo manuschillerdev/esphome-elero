@@ -1,0 +1,12 @@
+{
+  "revision": "9aab0f7d12dde8002a06aa4ef160122415a54071",
+  "runtime": "javac/java 25.0.4.1",
+  "scope": "Offline execution of actual unmodified Response, ResponseUtil, ResponseStatus and CommandPacket classes; not a full openHAB or serial-thread test.",
+  "stub": "HexUtils.bytesToHex only, for display formatting.",
+  "classes": {
+    "ResponseStatus.java": "2b22dd8552b61b0a77fa8e0ef8187e60523945776457c6779185899188f2870f",
+    "ResponseUtil.java": "e8e7f1d3cd65f47727eba52844af2905ae2e97e44f1026b388777b4d71fa918c",
+    "Response.java": "e042b13489e1058815d16b326fad530c61d8af0608fd0763da404c6fd33e22af",
+    "CommandPacket.java": "1ea83120dfa2d33805ebe6253ab445ce14f7790f45a8e46da0d85c3f9dc9777a"
+  }
+}
