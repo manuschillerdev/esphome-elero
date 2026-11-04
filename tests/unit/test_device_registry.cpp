@@ -1075,6 +1075,89 @@ TEST_F(DeviceRegistryTest, IndividualStopPreemptsFullGroupQueueWithoutDroppingOt
     }
 }
 
+TEST_F(DeviceRegistryTest, StopAfterChannelUpdateDoesNotReplayOldMovement) {
+    auto *dev = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::UP));
+
+    auto updated = dev->config;
+    updated.channel = 2;
+    ASSERT_EQ(registry_.upsert(updated), dev);
+    ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::STOP));
+
+    const auto commands = drain_commands(*dev);
+    ASSERT_EQ(commands.size(), 4u);  // STOP x3, CHECK.
+    for (const auto &cmd : commands) {
+        EXPECT_EQ(cmd.channel, 2);
+        EXPECT_EQ(cmd.type, pkt::msg_type::COMMAND);
+        EXPECT_NE(cmd.payload[4], pkt::command::UP);
+    }
+    EXPECT_EQ(commands.front().payload[4], pkt::command::STOP);
+}
+
+TEST_F(DeviceRegistryTest, SourceUpdateCancelsOldGroupTargetAndPreservesOtherMembers) {
+    auto *lead = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *edited = registry_.upsert(make_cover_config_ch(0xA00002, 2));
+    Device *members[] = {lead, edited};
+    ASSERT_TRUE(registry_.command_group(members, 2, pkt::command::UP));
+
+    // The old group request is already in flight when its member is edited.
+    struct PendingHub {
+        uint32_t attempt{0};
+        bool request_tx(TxClient *client, const EleroCommand &) {
+            attempt = client->begin_tx_attempt();
+            return true;
+        }
+    } hub;
+    mock_time_.advance(pkt::button::INTER_PACKET_MS);
+    lead->sender.process_queue(mock_time_.millis(), &hub, "test");
+    ASSERT_EQ(lead->sender.state(), CommandSender::State::TX_PENDING);
+
+    auto updated = edited->config;
+    updated.src_address = 0xABCDEF;
+    ASSERT_EQ(registry_.upsert(updated), edited);
+    lead->sender.complete_tx_attempt(hub.attempt, true);
+    EXPECT_EQ(lead->sender.state(), CommandSender::State::WAIT_DELAY);
+    ASSERT_TRUE(registry_.command_cover(*edited, pkt::command::STOP));
+
+    const auto remaining = drain_commands(*lead);
+    ASSERT_EQ(remaining.size(), 4u);  // Lead's UP x3, CHECK.
+    for (const auto &cmd : remaining) {
+        EXPECT_EQ(cmd.src_addr, lead->config.src_address);
+        EXPECT_EQ(cmd.channel, 1);
+        if (cmd.type == pkt::msg_type::BUTTON) {
+            ASSERT_EQ(cmd.num_dests, 1);
+            EXPECT_EQ(cmd.dest_channels[0], 1);
+        }
+    }
+    const auto stopped = drain_commands(*edited);
+    ASSERT_EQ(stopped.size(), 4u);
+    for (const auto &cmd : stopped) {
+        EXPECT_EQ(cmd.src_addr, updated.src_address);
+        EXPECT_EQ(cmd.type, pkt::msg_type::COMMAND);
+        EXPECT_NE(cmd.payload[4], pkt::command::UP);
+    }
+    EXPECT_EQ(stopped.front().payload[4], pkt::command::STOP);
+}
+
+TEST_F(DeviceRegistryTest, RenamePreservesQueuedGroupMovement) {
+    auto *lead = registry_.upsert(make_cover_config_ch(0xA00001, 1));
+    auto *edited = registry_.upsert(make_cover_config_ch(0xA00002, 2));
+    Device *members[] = {lead, edited};
+    ASSERT_TRUE(registry_.command_group(members, 2, pkt::command::UP));
+
+    auto updated = edited->config;
+    updated.set_name("Renamed cover");
+    ASSERT_EQ(registry_.upsert(updated), edited);
+
+    const auto commands = drain_commands(*lead);
+    ASSERT_EQ(commands.size(), 4u);
+    EXPECT_EQ(commands.front().payload[4], pkt::command::UP);
+    EXPECT_EQ(commands.front().num_dests, 2);
+    EXPECT_EQ(commands.front().dest_channels[0], 1);
+    EXPECT_EQ(commands.front().dest_channels[1], 2);
+    EXPECT_EQ(drain_commands(*edited).size(), 1u);  // CHECK remains queued.
+}
+
 TEST_F(DeviceRegistryTest, GroupSelectorsAreDeduplicated) {
     auto *a = registry_.upsert(make_cover_config_ch(0xA00001, 1));
     auto *b = registry_.upsert(make_cover_config_ch(0xA00002, 1));

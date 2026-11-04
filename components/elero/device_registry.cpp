@@ -180,6 +180,12 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
     // Try to find existing device with same address+type
     Device *existing = find(config.dst_address, config.type);
     if (existing) {
+        // Queued requests retain their original RF selectors. Cancel using the
+        // old identity before replacing it, including groups owned by peers.
+        if (existing->config.src_address != config.src_address ||
+            existing->config.channel != config.channel) {
+            cancel_pending_commands_(*existing);
+        }
         update_device_config(*existing, config);
         persist(*existing);
         notify_config_changed_(*existing);
