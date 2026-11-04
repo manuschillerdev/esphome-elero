@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { beforeEach, test } from 'node:test'
-import { addRfPacket, devices, rfPackets, resolveStateName as storeStateName } from '../src/store'
+import { addRfPacket, devices, onStateChanged, rfPackets, resolveStateName as storeStateName } from '../src/store'
 import { getStateLabel, resolveStateName } from '../src/lib/protocol'
-import type { RfData } from '../src/generated'
+import { envelope } from '../mock-contract'
+import type { RfData, StateChangedData } from '../src/generated'
 
 const remote = '0x111111'
 const address = '0x222222'
@@ -39,5 +40,23 @@ await test('both literal switching state bytes identify a light receiver', () =>
     addRfPacket(packet)
     addRfPacket({ ...packet, src: address, dst: remote, type: '0xca', state })
     assert.equal(devices.value.get(address)?.type, 'light')
+  }
+})
+
+await test('contract light snapshots drive the displayed state without aliases', () => {
+  for (const state of ['light_off', 'light_on'] as const) {
+    const data: StateChangedData = { address, device_type: 'light', state }
+    assert.doesNotThrow(() => envelope('state_changed', data))
+    onStateChanged(data)
+    assert.equal(devices.value.get(address)?.lastStatus?.state, state)
+    assert.equal(getStateLabel(devices.value.get(address)?.lastStatus?.state, 'light'),
+      state === 'light_off' ? 'OFF' : 'ON')
+  }
+})
+
+await test('the contract rejects noncanonical switching snapshot names', () => {
+  for (const state of ['off', 'on']) {
+    const data = { address, device_type: 'light', state } as StateChangedData
+    assert.throws(() => envelope('state_changed', data), /allowed values/)
   }
 })

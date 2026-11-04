@@ -27,7 +27,7 @@ static const char *const COVER_STATE_OPTIONS[] = {
     "stopped", "blocking", "overheated", "timeout", "unknown",
 };
 static const char *const LIGHT_STATE_OPTIONS[] = {
-    "on", "top", "bottom", "intermediate",
+    "light_off", "light_on", "top", "bottom", "intermediate",
     "moving_up", "moving_down", "start_moving_up", "start_moving_down",
     "stopped", "blocking", "overheated", "timeout", "unknown",
 };

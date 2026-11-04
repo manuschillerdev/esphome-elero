@@ -507,6 +507,21 @@ TEST_F(DeviceRegistryTest, RfStatus_UpdatesMetadataAndTransitionsFsm) {
     EXPECT_TRUE(cover_sm::is_moving(std::get<CoverDevice>(dev->logic).state));
 }
 
+TEST_F(DeviceRegistryTest, LightRfSnapshotsSerializeContractStateNames) {
+    auto *dev = add_light();
+    const std::array<std::pair<uint8_t, const char *>, 2> cases{{
+        {0x10, "light_off"}, {0x11, "light_on"},
+    }};
+    for (const auto &[state, name] : cases) {
+        registry_.on_rf_packet(make_status_pkt(dev->config.dst_address, state), mock_time_.millis());
+        const auto snapshot = compute_light_snapshot(*dev, mock_time_.millis());
+        JsonDocument doc;
+        snapshot.to_json(doc.to<JsonObject>());
+        EXPECT_STREQ(doc["state"].as<const char *>(), name);
+        EXPECT_EQ(doc["is_on"].as<bool>(), state == 0x11);
+    }
+}
+
 TEST_F(DeviceRegistryTest, RfStatus_TiltSetAndClearedByMovement) {
     auto *dev = add_cover();
 
@@ -837,7 +852,7 @@ TEST(DiffLightTest, IdenticalSnapshot_ReturnsZero) {
         .is_problem = false,
         .problem_type = "none",
         .rssi = -45.0f,
-        .state_string = "on",
+        .state_string = "light_on",
     };
 
     diff_and_update_light(snap, pub);
@@ -854,7 +869,7 @@ TEST(DiffLightTest, BrightnessChange_ReturnsBrightnessFlag) {
         .is_problem = false,
         .problem_type = "none",
         .rssi = -45.0f,
-        .state_string = "on",
+        .state_string = "light_on",
     };
 
     diff_and_update_light(snap, pub);

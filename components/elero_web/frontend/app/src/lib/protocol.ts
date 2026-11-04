@@ -75,8 +75,8 @@ export function getStateLabel(state: string | undefined, deviceType?: DeviceType
   const name = resolveStateName(state)
   // Switching states are distinct from the cover endpoint at 0x0f.
   if (deviceType === 'light') {
-    if (name === 'light_off' || state === 'off') return 'OFF'
-    if (name === 'light_on' || state === 'on') return 'ON'
+    if (name === 'light_off') return 'OFF'
+    if (name === 'light_on') return 'ON'
   }
   return (name && STATE_LABELS[name]) ?? state
 }
