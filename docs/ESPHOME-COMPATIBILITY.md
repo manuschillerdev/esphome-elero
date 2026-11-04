@@ -1,20 +1,23 @@
 # ESPHome compatibility
 
-For **v0.11.0-rc.1**, use ESPHome **2026.9.0**. Standard CI passes on that
-version. The 4 November 2026 compatibility run fails with ESPHome **2026.10.2**:
-the native light adapter still calls `set_restore_mode()` and
-`LIGHT_RESTORE_DEFAULT_OFF`, which that version removed. This release candidate
-does not claim compatibility with every newer ESPHome version.
-
-Local development and CI
-use the same pinned ESPHome release, Python, and tools from `pyproject.toml`,
+This branch requires ESPHome **2026.10.2 or newer**. Local development and CI
+use ESPHome **2026.10.2** and the pinned Python and tools from `pyproject.toml`,
 `uv.lock`, and `.mise.toml`. Upgrade the ESPHome installation that builds your
 firmware before updating the external component.
+
+The native light adapter uses `LightState::set_save_enabled(true)` in place of
+the removed restore-mode API. ESPHome loads saved light values, or starts off
+when no saved values exist. The output ignores boot restoration commands until
+it is initialized, then publishes the registry snapshot. Startup does not send
+restoration commands to the RF device.
+
+The published **v0.11.0-rc.1** still requires ESPHome **2026.9.0**. It does not
+contain this fix and fails to compile the native light adapter with 2026.10.2.
 
 The nightly `Nightly ESPHome Compatibility` workflow runs at **03:23 UTC**
 and can also be started manually. It resolves the newest published stable,
 non-yanked ESPHome release from PyPI once, then runs the same frontend, Python,
-C++ unit-test, and eight-firmware compile checks used by ordinary CI. Exact
+C++ unit-test, and nine-firmware compile checks used by ordinary CI. Exact
 version overlays leave the project's ESPHome pin and lockfile unchanged. A
 new release requiring a newer Python fails explicitly rather than silently
 testing an older compatible ESPHome release.
@@ -97,7 +100,7 @@ mise exec -- pnpm --dir components/elero_web/frontend/app build
 CI checks the regenerated header for drift. Firmware compile jobs consume the
 committed header directly, without injecting a separately built artifact.
 
-Validated with ESPHome 2026.9.0 and Python 3.12.14:
+Earlier verification with ESPHome 2026.9.0 and Python 3.12.14:
 
 - The existing ESP32 NVS and MQTT fixtures compile with ESP-IDF 5.5.5.
 - The existing ESP32 Arduino fixture compiles.
