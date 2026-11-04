@@ -440,7 +440,9 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
         return true;
       }
 
-      this->dispatch_device_command_(*dev, cmd_byte);
+      if (!this->dispatch_device_command_(*dev, cmd_byte)) {
+        this->ws_send(c, "error", "{\"msg\":\"Command queue full\"}");
+      }
       return true;
     }
 
@@ -477,7 +479,9 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
       if (registry != nullptr) {
         Device *dev = registry->find(dst_addr);
         if (dev != nullptr) {
-          this->dispatch_device_command_(*dev, raw_command);
+          if (!this->dispatch_device_command_(*dev, raw_command)) {
+            this->ws_send(c, "error", "{\"msg\":\"Command queue full\"}");
+          }
           return true;
         }
       }
@@ -724,21 +728,16 @@ std::string EleroWebServer::build_learn_in_state_json_() const {
 // Device Config Parser (shared by save/update)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-void EleroWebServer::dispatch_device_command_(Device &dev, uint8_t cmd_byte) {
+bool EleroWebServer::dispatch_device_command_(Device &dev, uint8_t cmd_byte) {
   auto *registry = this->parent_->get_registry();
   if (registry == nullptr) {
     ESP_LOGW(TAG, "No registry for command dispatch");
-    return;
+    return false;
   }
 
-  if (dev.is_cover()) {
-    registry->command_cover(dev, cmd_byte);
-  } else if (dev.is_light()) {
-    registry->command_light(dev, cmd_byte);
-  } else {
-    (void) dev.sender.enqueue(cmd_byte);
-  }
-  ESP_LOGI(TAG, "Device TX to 0x%06" PRIx32 " cmd=0x%02x", dev.config.dst_address, cmd_byte);
+  if (dev.is_cover()) return registry->command_cover(dev, cmd_byte);
+  if (dev.is_light()) return registry->command_light(dev, cmd_byte);
+  return dev.sender.enqueue(cmd_byte);
 }
 
 bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error,

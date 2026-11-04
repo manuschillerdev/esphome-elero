@@ -114,7 +114,7 @@ class EleroWebServer : public Component, public OutputAdapter {
 
   /// Dispatch a command byte to a known device with proper FSM + follow-ups.
   /// This is the single low-level primitive — cmd handler calls into this.
-  void dispatch_device_command_(Device &dev, uint8_t cmd_byte);
+  bool dispatch_device_command_(Device &dev, uint8_t cmd_byte);
 
   // Parse NvsDeviceConfig / NvsGroupConfig from JSON objects
   bool parse_device_config_(JsonObject root, NvsDeviceConfig &config, std::string &error,

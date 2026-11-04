@@ -147,7 +147,100 @@ class CommandSenderTest : public ::testing::Test {
   void TearDown() override {
     set_time_provider(nullptr);  // Restore default
   }
+
+  void drain() {
+    for (int i = 0; sender_.is_busy() && i < 100; ++i) {
+      mock_time_.advance(packet::button::INTER_PACKET_MS);
+      sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+      mock_hub_.complete_tx(true);
+    }
+    ASSERT_FALSE(sender_.is_busy());
+  }
 };
+
+TEST_F(CommandSenderTest, QueuedGroupsKeepRecipientsAcrossChecksAndTemplateChanges) {
+  uint8_t channels[] = {1, 2};
+  ASSERT_TRUE(sender_.enqueue(packet::command::UP, 3, packet::msg_type::BUTTON, channels));
+  ASSERT_TRUE(sender_.enqueue(packet::command::CHECK, 1, packet::msg_type::COMMAND));
+  channels[1] = 3;
+  ASSERT_TRUE(sender_.enqueue(packet::command::DOWN, 3, packet::msg_type::BUTTON, channels));
+  sender_.command().src_addr = 0x999999;
+  sender_.command().channel = 9;
+  drain();
+
+  ASSERT_EQ(mock_hub_.recorded_commands.size(), 7u);
+  for (size_t i = 0; i < 7; ++i) {
+    const auto &cmd = mock_hub_.recorded_commands[i];
+    EXPECT_EQ(cmd.src_addr, 0xABCDEFu);
+    if (i == 3) {
+      EXPECT_EQ(cmd.type, packet::msg_type::COMMAND);
+      EXPECT_EQ(cmd.num_dests, 0);
+      EXPECT_EQ(cmd.channel, 5);
+    } else {
+      EXPECT_EQ(cmd.payload[4], i < 3 ? packet::command::UP : packet::command::DOWN);
+      EXPECT_EQ(cmd.num_dests, 2);
+      EXPECT_EQ(cmd.dest_channels[0], 1);
+      EXPECT_EQ(cmd.dest_channels[1], i < 3 ? 2 : 3);
+    }
+  }
+}
+
+TEST_F(CommandSenderTest, DuplicateDetectionIncludesRecipientsAndRepetitions) {
+  const uint8_t first[] = {1, 2};
+  const uint8_t second[] = {1, 3};
+  ASSERT_TRUE(sender_.enqueue(packet::command::UP, 1, packet::msg_type::BUTTON, first));
+  ASSERT_TRUE(sender_.enqueue(packet::command::UP, 1, packet::msg_type::BUTTON, first));
+  ASSERT_TRUE(sender_.enqueue(packet::command::UP, 1, packet::msg_type::BUTTON, second));
+  ASSERT_TRUE(sender_.enqueue(packet::command::UP, 2, packet::msg_type::BUTTON, second));
+  drain();
+  ASSERT_EQ(mock_hub_.recorded_commands.size(), 4u);
+  EXPECT_EQ(mock_hub_.recorded_commands[0].dest_channels[1], 2);
+  EXPECT_EQ(mock_hub_.recorded_commands[1].dest_channels[1], 3);
+}
+
+TEST_F(CommandSenderTest, CancelTargetDuringTxPreservesOtherChannelsAndIgnoresOldCompletion) {
+  const uint8_t channels[] = {5, 7};
+  ASSERT_TRUE(sender_.enqueue(packet::command::UP, 3, packet::msg_type::BUTTON, channels));
+  mock_time_.advance(10);
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  const auto old_attempt = mock_hub_.pending_attempt;
+  const auto old_counter = mock_hub_.recorded_commands[0].counter;
+
+  sender_.cancel_target(0xABCDEF, 5, 0x123456);
+  ASSERT_TRUE(sender_.enqueue(packet::command::STOP, 3, packet::msg_type::COMMAND, {}, true));
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  sender_.complete_tx_attempt(old_attempt, true);
+  EXPECT_EQ(sender_.state(), CommandSender::State::TX_PENDING);
+  mock_hub_.complete_tx(true);
+  drain();
+
+  ASSERT_EQ(mock_hub_.recorded_commands.size(), 7u);
+  for (size_t i = 1; i < 7; ++i) {
+    const auto &cmd = mock_hub_.recorded_commands[i];
+    EXPECT_NE(cmd.counter, old_counter);
+    if (i < 4) {
+      EXPECT_EQ(cmd.type, packet::msg_type::COMMAND);
+      EXPECT_EQ(cmd.payload[4], packet::command::STOP);
+      EXPECT_EQ(cmd.dst_addr, 0x123456u);
+    } else {
+      EXPECT_EQ(cmd.payload[4], packet::command::UP);
+      EXPECT_EQ(cmd.num_dests, 1);
+      EXPECT_EQ(cmd.channel, 7);
+      EXPECT_EQ(cmd.dest_channels[0], 7);
+    }
+  }
+}
+
+TEST_F(CommandSenderTest, PriorityStopHasRoomInFullQueueAndRunsFirst) {
+  for (int i = 0; i < packet::limits::MAX_COMMAND_QUEUE; ++i) {
+    ASSERT_TRUE(sender_.enqueue(i % 2 ? packet::command::UP : packet::command::DOWN, 1));
+  }
+  ASSERT_TRUE(sender_.enqueue(packet::command::STOP, 1, packet::msg_type::COMMAND, {}, true));
+  EXPECT_FALSE(sender_.enqueue(packet::command::UP));
+  drain();
+  ASSERT_EQ(mock_hub_.recorded_commands.size(), packet::limits::MAX_COMMAND_QUEUE + 1u);
+  EXPECT_EQ(mock_hub_.recorded_commands.front().payload[4], packet::command::STOP);
+}
 
 // ============================================================================
 // Basic State Machine Tests
