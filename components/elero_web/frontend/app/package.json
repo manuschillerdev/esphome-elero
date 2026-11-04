@@ -11,8 +11,9 @@
     "generate:types": "node scripts/generate-models.mjs",
     "build": "pnpm generate:types && vite build",
     "preview": "vite preview",
-    "lint": "oxlint -c oxlintrc.json --type-aware --tsconfig=tsconfig.json --ignore-pattern=src/generated src/ mock-server.ts mock-contract.ts",
-    "typecheck": "tsc --noEmit"
+    "lint": "oxlint -c oxlintrc.json --type-aware --tsconfig=tsconfig.json --ignore-pattern=src/generated src/ tests/ mock-server.ts mock-contract.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@preact/compat": "^17.1.2",

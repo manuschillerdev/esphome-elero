@@ -55,6 +55,29 @@ TEST_F(LightSmTest, BrightnessPartialRange) {
 // RF STATUS — ON/OFF FROM ANY STATE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Literal bytes from Elero's status table. Keep these independent of our constants
+// so an off-by-one error in the constants cannot make the regression pass.
+TEST_F(LightSmTest, SwitchingOffByteStopsAnOnOrDimmingLight) {
+    for (const sm::State &before : {sm::State{sm::On{1.0f}},
+                                   sm::State{sm::DimmingUp{0.2f, 0.8f, 0}},
+                                   sm::State{sm::DimmingDown{0.8f, 0.2f, 0}}}) {
+        auto after = sm::on_rf_status(before, 0x10, 100, ctx);
+        EXPECT_TRUE(std::holds_alternative<sm::Off>(after));
+    }
+}
+
+TEST_F(LightSmTest, SwitchingOnByteTurnsOnAnOffLight) {
+    auto after = sm::on_rf_status(sm::Off{}, 0x11, 100, ctx);
+    ASSERT_TRUE(std::holds_alternative<sm::On>(after));
+    EXPECT_FLOAT_EQ(sm::brightness(after, 100, ctx), 1.0f);
+}
+
+TEST_F(LightSmTest, CoverEndpointByteDoesNotSwitchOffALight) {
+    auto after = sm::on_rf_status(sm::On{0.5f}, 0x0f, 100, ctx);
+    ASSERT_TRUE(std::holds_alternative<sm::On>(after));
+    EXPECT_FLOAT_EQ(sm::brightness(after, 100, ctx), 0.5f);
+}
+
 TEST_F(LightSmTest, RfLightOnTurnsOnFromOff) {
     auto s = sm::on_rf_status(sm::Off{}, pkt::state::LIGHT_ON, 100, ctx);
     ASSERT_TRUE(std::holds_alternative<sm::On>(s));

@@ -445,7 +445,7 @@ TEST(CoverStateMapping, MapState_InvalidValue) {
 }
 
 TEST(CoverStateMapping, MapState_LightOn) {
-  // LIGHT_ON (0x10) falls through to default — position unchanged, IDLE
+  // LIGHT_ON (0x11) falls through to default — position unchanged, IDLE
   auto result = map_cover_state(state::LIGHT_ON);
   EXPECT_FLOAT_EQ(result.position, -1.0f);  // Unchanged (default)
   EXPECT_EQ(result.operation, CoverOp::IDLE);

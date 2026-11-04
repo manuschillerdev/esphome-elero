@@ -3,6 +3,8 @@
 ///
 /// These tests verify that our implementation matches the working behavior exactly.
 /// Any change to packet structure, offsets, or byte values should be caught here.
+/// Light status values use the corrected Elero status table; the historical
+/// commit retained an off-by-one error after the unused 0x0c entry.
 
 #include <gtest/gtest.h>
 #include <cstring>
@@ -48,7 +50,8 @@ namespace golden {
   constexpr uint8_t STATE_STOPPED = 0x0d;
   constexpr uint8_t STATE_TOP_TILT = 0x0e;
   constexpr uint8_t STATE_BOTTOM_TILT = 0x0f;
-  constexpr uint8_t STATE_ON = 0x10;
+  constexpr uint8_t STATE_OFF = 0x10;
+  constexpr uint8_t STATE_ON = 0x11;
 
   // TX packet structure constants
   constexpr uint8_t TX_MSG_LENGTH = 0x1d;  // 29 bytes
@@ -133,6 +136,7 @@ TEST(GoldenConstants, StateBytes) {
   EXPECT_EQ(state::STOPPED, golden::STATE_STOPPED);
   EXPECT_EQ(state::TOP_TILT, golden::STATE_TOP_TILT);
   EXPECT_EQ(state::BOTTOM_TILT, golden::STATE_BOTTOM_TILT);
+  EXPECT_EQ(state::LIGHT_OFF, golden::STATE_OFF);
   EXPECT_EQ(state::LIGHT_ON, golden::STATE_ON);
 }
 
