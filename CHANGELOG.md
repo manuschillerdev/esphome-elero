@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Bug Fixes
+
+- Use the ESPHome 2026.10.2 light persistence API in the native NVS adapter.
+  Keep saved-state restoration enabled, with an off state on first boot.
+- Update the locked development and CI target to ESPHome 2026.10.2.
+  This is now the minimum supported ESPHome version.
+
 ## [0.11.0-rc.1](https://github.com/manuschillerdev/esphome-elero/compare/v0.10.1...v0.11.0-rc.1) (2026-11-04)
 
 ### Migration

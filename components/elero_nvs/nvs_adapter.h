@@ -174,7 +174,8 @@ class NvsAdapter : public Component, public OutputAdapter {
     output->set_registry(registry_);
     output->set_device(dev);
 
-    state->set_restore_mode(light::LIGHT_RESTORE_DEFAULT_OFF);
+    // Restore saved values, or use LightStateRTCState's off state on first boot.
+    state->set_save_enabled(true);
     state->set_default_transition_length(0);  // Registry owns physical dimming timing.
 
     output->set_light_state(state);

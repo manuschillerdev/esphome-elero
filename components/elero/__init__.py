@@ -72,7 +72,7 @@ def _validate_sx1276_pins(config):
 
 
 CONFIG_SCHEMA = cv.All(
-    cv.require_esphome_version(2026, 9, 0),
+    cv.require_esphome_version(2026, 10, 2),
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(elero),
