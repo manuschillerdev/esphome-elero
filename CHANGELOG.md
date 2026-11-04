@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0-rc.1](https://github.com/manuschillerdev/esphome-elero/compare/v0.10.1...v0.11.0-rc.1) (2026-11-04)
+
+### Migration
+
+- YAML `cover: - platform: elero` and `light: - platform: elero` definitions
+  are removed. Devices now live in NVS. Use the web UI or `import_config`.
+- Convert old YAML with `uv run scripts/migrate_yaml_to_json.py old.yaml -o backup.json`,
+  then restore the file through Hub → Backup & Restore.
+  See [the migration guide](docs/MIGRATION-yaml-to-nvs.md).
+- Existing NVS device records and backup files remain supported.
+
+### Features and fixes
+
+- Support ESPHome 2026.9.0 native API and MQTT builds, including correct
+  32-bit log format specifiers (#69).
+- Bundle the web UI with the component. Fresh Git installations no longer
+  depend on a frontend release download (#55, #56).
+- Preserve all 24-bit destinations from addressed packets through decoding,
+  discovery, and WebSocket events (#70).
+- Store per-cover command byte overrides without changing the 64-byte NVS
+  record. Carry overrides through device CRUD, backup/restore, and migration (#63).
+- Add group commands and member-derived group state for MQTT and the native API.
+- Restore MQTT cover state after discovery and capability changes, including
+  position reporting for HomeKit bridges.
+- Preserve queued group targets, prioritize STOP, and cancel stale commands
+  before RF identity changes.
+- Include ESP32-C6 support, radio transport fixes, and web UI improvements.
+
+### Validation and known limits
+
+- The source baseline at `49a16fff37bb24ead6ddf1e171d578dfdf271283` passes
+  standard CI: frontend build, unit tests, Python checks, nine firmware compile
+  configurations, and a fresh Git installation with ESPHome 2026.9.0.
+- ESPHome 2026.10.2 fails to compile the native light adapter because its restore
+  API changed. Use ESPHome 2026.9.0 for this release candidate.
+- Multi-destination reception still needs hardware confirmation (#70).
+- Per-cover command overrides work through CRUD and backup JSON; dedicated
+  editor fields and confirmation with the reported motor variant remain (#63).
+- SX1262 and SX1276 support remains experimental. Hardware tests are required
+  before the final 0.11.0 release.
+
 ## [0.10.0](https://github.com/manuschillerdev/esphome-elero/compare/v0.9.0...v0.10.0) (2026-04-01)
 
 

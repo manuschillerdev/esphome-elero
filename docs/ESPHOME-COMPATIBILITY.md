@@ -1,6 +1,12 @@
 # ESPHome compatibility
 
-This branch requires ESPHome **2026.9.0 or newer**. Local development and CI
+For **v0.11.0-rc.1**, use ESPHome **2026.9.0**. Standard CI passes on that
+version. The 4 November 2026 compatibility run fails with ESPHome **2026.10.2**:
+the native light adapter still calls `set_restore_mode()` and
+`LIGHT_RESTORE_DEFAULT_OFF`, which that version removed. This release candidate
+does not claim compatibility with every newer ESPHome version.
+
+Local development and CI
 use the same pinned ESPHome release, Python, and tools from `pyproject.toml`,
 `uv.lock`, and `.mise.toml`. Upgrade the ESPHome installation that builds your
 firmware before updating the external component.
