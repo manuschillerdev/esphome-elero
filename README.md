@@ -104,6 +104,11 @@ overrides. For example, Raffstore motors may need `command_up: "0x21"` and
 `command_down: "0x44"`. Existing NVS devices and backups retain their defaults.
 See the [per-device fields](docs/CONFIGURATION.md#per-device-fields-managed-in-the-ui).
 
+Cover movement uses the paired remote's channel (`0x44`); STOP and status queries
+target the receiver address (`0x6a`). Several receivers paired to one remote
+channel can therefore move together. See [RF addressing](docs/CONFIGURATION.md#rf-addressing-and-packet-type)
+before changing protocol fields or command overrides.
+
 ### Cover position and Apple Home
 
 Percentage positioning is enabled only when **both** opening and closing travel

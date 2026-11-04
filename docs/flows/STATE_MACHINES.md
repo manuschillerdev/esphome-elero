@@ -140,7 +140,7 @@ flowchart TD
 
     DEQUEUE -->|TX request| BUILD["build_tx_packet_(cmd)
     select 0x44 button or 0x6a command builder
-    AES-128 encrypt, write to msg_tx_[]"]
+    Encode payload, write to msg_tx_[]"]
     BUILD --> START["driver_->load_and_transmit()
     tx_owner_ = client
     tx_in_progress = true"]
@@ -344,7 +344,7 @@ sequenceDiagram
 
     RF->>TXQ: xQueueReceive
     TXQ->>RF: RfTaskRequest (copy)
-    RF->>RF: build_tx_packet_(cmd)<br/>select builder: 0x44 button vs 0x6a command<br/>AES-128 encrypt
+    RF->>RF: build_tx_packet_(cmd)<br/>select builder: 0x44 button vs 0x6a command<br/>Encode payload
     RF->>Driver: load_and_transmit(msg_tx_)
     Driver->>HW: SIDLE -> SFTX -> write FIFO -> STX
     HW-->>RF: GDO0 interrupt (TX complete)
@@ -481,11 +481,19 @@ sequenceDiagram
 
 | Type Byte | Direction | Description |
 |-----------|-----------|-------------|
-| `0x44` | Remote -> Blind | Button press (short packet, different builder) |
+| `0x44` | Remote -> paired receivers | One-byte channel selector(s), qualified by source remote identity |
+| `0x45` | Remote -> paired receivers | Group/central selector list; one-byte selectors |
 | `0x6A` | Remote -> Blind | Command with 3-byte addressing |
-| `0x69` | Remote -> Blind | Command with 1-byte addressing |
+| `0x69` | Remote -> Blind | Command with 3-byte addressing |
+| `0x70` | Remote -> Receiver | Programming with a one-byte channel selector |
 | `0xCA` | Blind -> Remote | Status response with 3-byte addressing |
-| `0xC9` | Blind -> Remote | Status response with 1-byte addressing |
+| `0xC9` | Blind -> Remote | Status response with 3-byte addressing |
+
+Cover movement currently uses `0x44`; cover STOP/CHECK use `0x6a`. The registry
+chooses these formats explicitly, rather than using stored `msg_type` as a
+movement-format switch. See the
+[addressing reference](../PACKET_STRUCTURE.md#channel-addressing-versus-receiver-addressing)
+for the effects of a channel shared by several receivers.
 
 ---
 

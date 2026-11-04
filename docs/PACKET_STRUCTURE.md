@@ -1,8 +1,46 @@
 # Elero RF Packet Structure
 
-This document describes the exact byte layout for TX and RX packets, derived from working implementation `fe33d186f70dd97a3fc8dc8a42bfb94dc3c7a5e5`.
+This document describes the current packet builders and parser in
+`components/elero/elero_packet.cpp`. Packet type selects the addressing format;
+the command byte selects the action.
 
-## TX Packet (Command to Blind)
+## Channel addressing versus receiver addressing
+
+| Packet type | Destination fields | Which receivers can act? |
+| --- | --- | --- |
+| `0x44` button | One-byte channel selector, or a list of selectors | Receivers paired to the source remote identity and selected channel(s) |
+| `0x6a` targeted command | Three-byte receiver address, or a list of receiver addresses | The explicitly addressed receiver(s), using the paired source identity |
+
+Example: remote `0x111111`, channel 2, is paired to blinds A (`0x222222`)
+and B (`0x333333`). A `0x44` DOWN packet from that remote with selector 2
+can operate both A and B. A `0x6a` DOWN packet addressed to `0x222222`
+selects A. Both packets can carry the same DOWN command byte `0x40`.
+
+Here, **channel** means a logical channel on a remote, not the RF frequency.
+The source remote identity still matters in both formats. The receiver address
+stored for a device remains necessary for status lookup and targeted commands,
+even when its movement command uses channel addressing.
+
+### What this component currently sends
+
+| Operation | Packet type | Target |
+| --- | --- | --- |
+| Single-cover UP, DOWN, tilt, intermediate preset | `0x44` | Device's source remote identity and channel |
+| Cover STOP and CHECK | `0x6a` | Device's receiver address |
+| Compatible group movement | `0x44` selector list | Channels sharing a source remote and command mapping |
+| Group STOP/CHECK, or movement with different command mappings | Separate per-device operations | Each device uses the corresponding single-device path |
+
+The registry explicitly selects these types. A device's stored `msg_type` is
+not currently a switch between `0x44` and `0x6a` for normal cover movement.
+Changing `command_down` changes the action byte; it does not change addressing.
+See [configuration behaviour](CONFIGURATION.md#rf-addressing-and-packet-type).
+
+Physical remote captures establish that `0x44` is a real Elero format. This does
+not establish that every receiver accepts both formats with the same action
+semantics. Receiver-specific command values and packet addressing are separate
+compatibility questions.
+
+## Targeted TX packet (`0x6a`, one receiver)
 
 Total length: 30 bytes (length byte + 29 data bytes)
 
@@ -104,13 +142,18 @@ All constants in `packet::msg_type::` namespace.
 
 | Type | Byte | C++ Constant | Direction | Description |
 |------|------|--------------|-----------|-------------|
-| BUTTON | `0x44` | `msg_type::BUTTON` | Remote → All | Button broadcast |
+| BUTTON | `0x44` | `msg_type::BUTTON` | Remote → paired receivers | Channel selector(s) |
+| BUTTON_GROUP | `0x45` | `msg_type::BUTTON_GROUP` | Remote → paired receivers | Group/central selector-list envelope; TX semantics remain under investigation |
 | COMMAND | `0x6A` | `msg_type::COMMAND` | Remote → Blind | Targeted command |
 | COMMAND_ALT | `0x69` | `msg_type::COMMAND_ALT` | Remote → Blind | Alternate command format |
+| PROGRAM | `0x70` | `msg_type::PROGRAM` | Remote → Receiver | Programming with a one-byte channel selector |
 | STATUS | `0xCA` | `msg_type::STATUS` | Blind → All | Status response |
 | STATUS_ALT | `0xC9` | `msg_type::STATUS_ALT` | Blind → All | Alternate status format |
 
-**Addressing rule:** Types > `msg_type::ADDR_3BYTE_THRESHOLD` (0x60) use 3-byte addresses, others use 1-byte.
+**Addressing rule:** use the explicit envelope classifiers in `elero_packet.h`.
+Types `0x44`, `0x45`, and `0x70` use one-byte selectors; `0x6a`, `0x69`,
+`0xca`, and `0xc9` use three-byte addresses. A numeric threshold is incorrect:
+`0x70` is greater than `0x60` but still uses a one-byte selector.
 
 ## Critical Implementation Notes
 

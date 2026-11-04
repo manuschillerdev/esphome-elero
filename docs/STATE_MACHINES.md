@@ -238,7 +238,12 @@ Duplicate consecutive commands (same `cmd` AND `type`) are collapsed to prevent 
 }
 ```
 
-The `type` parameter controls which packet builder the hub uses: `0x44` (BUTTON) for press/release dimming, `0x6a` (COMMAND) for targeted commands. This also affects `type2` and `hop` fields set in `process_queue()`.
+The `type` argument selects the packet builder. The registry chooses `0x44`
+channel-addressed packets for cover movement and light button operations, and
+`0x6a` receiver-addressed packets for cover STOP/CHECK. This also sets `type2`
+and `hop`. This argument is chosen by code; stored device `msg_type` does not
+select the normal cover movement format. See the
+[addressing reference](PACKET_STRUCTURE.md#channel-addressing-versus-receiver-addressing).
 
 ### Exponential Backoff on Retry
 

@@ -121,7 +121,7 @@ and edited via the web UI's device editor. Fields marked **(cover)** and
 |---|---|---|---|
 | `dst_address` | Hex (24-bit) | required | RF address of the blind/light |
 | `src_address` | Hex (24-bit) | required | Emulated remote address |
-| `channel` | Integer (0-255) | required | RF channel |
+| `channel` | Integer (0-255) | required | Logical channel of the emulated remote; not the RF frequency |
 | `name` | String (≤23 chars) | empty | Display name in HA |
 | `enabled` | Boolean | `true` | Whether the device is published to HA |
 | `open_duration_ms` | Integer | `0` | **(cover)** Travel time fully open. `0` = no position tracking. |
@@ -137,12 +137,28 @@ and edited via the web UI's device editor. Fields marked **(cover)** and
 | `hop` | Hex byte | `0x0a` | Protocol hop counter |
 | `payload_1` | Hex byte | `0x00` | Protocol payload byte 1 |
 | `payload_2` | Hex byte | `0x04` | Protocol payload byte 2 |
-| `msg_type` | Hex byte | `0x6a` | Message type (`0x6a` = command) |
+| `msg_type` | Hex byte | `0x6a` | Stored protocol metadata; does not select the normal movement format (see below) |
 | `type2` | Hex byte | `0x00` | Secondary type byte |
 
-The protocol bytes (`hop`, `payload_*`, `msg_type`, `type2`) are rarely
-overridden — defaults match every Elero motor seen in the wild. Only
-touch them if you've sniffed an unusual remote and confirmed it differs.
+### RF addressing and packet type
+
+Normal cover UP/DOWN, tilt, and intermediate-preset commands use **channel
+addressing (`0x44`)**: receivers paired to `src_address` and `channel` can act.
+If several blinds share that pairing, the channel command can operate them all.
+STOP and CHECK use **receiver addressing (`0x6a`)** with `dst_address`.
+
+The current registry selects those formats explicitly. Setting stored
+`msg_type` to `0x6a` does **not** make ordinary movement commands receiver-addressed.
+The sender also selects `type2=0x10`, `hop=0x00` for button packets and
+`type2=0x00`, `hop=0x0a` for targeted packets. Stored protocol fields therefore
+do not provide a complete per-device override of normal command generation.
+
+`command_down`, for example, changes the action byte inside the selected packet
+format. It does not select a packet type or destination format. The defaults
+are not a claim of compatibility with every receiver variant.
+
+See [channel versus receiver addressing](PACKET_STRUCTURE.md#channel-addressing-versus-receiver-addressing)
+for a two-blind example and the current per-operation routing table.
 
 ### Cover position and tilt
 
