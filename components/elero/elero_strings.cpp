@@ -37,8 +37,10 @@ const char *elero_state_to_string(uint8_t state) {
       return "top_tilt";
     case packet::state::BOTTOM_TILT:
       return "bottom_tilt";
+    case packet::state::LIGHT_OFF:
+      return "light_off";
     case packet::state::LIGHT_ON:
-      return "on";
+      return "light_on";
     default:
       return "unknown";
   }

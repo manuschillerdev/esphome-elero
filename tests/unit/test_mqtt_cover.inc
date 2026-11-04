@@ -71,6 +71,21 @@ TEST_F(MqttCoverTest, UncalibratedCoverDoesNotAdvertisePositionOrTilt) {
     EXPECT_FALSE(broker_.retained.contains(POSITION_TOPIC));
 }
 
+TEST_F(MqttCoverTest, LightDiscoveryAdvertisesCanonicalSwitchingStateNames) {
+    add_light();
+    JsonDocument doc;
+    ASSERT_FALSE(deserializeJson(doc, broker_.retained.at(
+        "homeassistant/sensor/test-gateway_light_c41a2b_state/config")));
+    std::vector<std::string> options;
+    for (const auto value : doc["options"].as<JsonArrayConst>()) {
+        options.emplace_back(value.as<const char *>());
+    }
+    EXPECT_NE(std::find(options.begin(), options.end(), "light_off"), options.end());
+    EXPECT_NE(std::find(options.begin(), options.end(), "light_on"), options.end());
+    EXPECT_EQ(std::find(options.begin(), options.end(), "off"), options.end());
+    EXPECT_EQ(std::find(options.begin(), options.end(), "on"), options.end());
+}
+
 class MqttFirstStatusTest : public MqttCoverTest, public ::testing::WithParamInterface<uint8_t> {};
 
 TEST_P(MqttFirstStatusTest, FirstStationaryReportPublishesCompleteState) {

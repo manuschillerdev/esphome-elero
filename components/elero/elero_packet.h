@@ -121,9 +121,9 @@ constexpr uint8_t MOVING_UP = 0x0a;           ///< Currently moving up
 constexpr uint8_t MOVING_DOWN = 0x0b;         ///< Currently moving down
 constexpr uint8_t STOPPED = 0x0d;             ///< Stopped (after movement)
 constexpr uint8_t TOP_TILT = 0x0e;            ///< Open + tilted
-constexpr uint8_t BOTTOM_TILT = 0x0f;         ///< Closed + tilted / Light off
-constexpr uint8_t LIGHT_OFF = 0x0f;           ///< Light off (alias for BOTTOM_TILT)
-constexpr uint8_t LIGHT_ON = 0x10;            ///< Light on
+constexpr uint8_t BOTTOM_TILT = 0x0f;         ///< Closed + stored intermediate position
+constexpr uint8_t LIGHT_OFF = 0x10;           ///< Switching receiver off
+constexpr uint8_t LIGHT_ON = 0x11;            ///< Switching receiver on
 }  // namespace state
 
 // ═══════════════════════════════════════════════════════════════════════════════

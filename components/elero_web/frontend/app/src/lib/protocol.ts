@@ -48,7 +48,8 @@ const STATE_HEX: Record<string, RfStateName> = {
   '0x0d': 'stopped',
   '0x0e': 'top_tilt',
   '0x0f': 'bottom_tilt',
-  '0x10': 'light_on',
+  '0x10': 'light_off',
+  '0x11': 'light_on',
 }
 
 /// Resolve a state value (hex byte or snake_case name) to its canonical RfStateName.
@@ -72,11 +73,10 @@ const MSG_TYPE_LABELS: Record<string, string> = Object.fromEntries(
 export function getStateLabel(state: string | undefined, deviceType?: DeviceType): string {
   if (!state) return 'UNKNOWN'
   const name = resolveStateName(state)
-  // The 0x0f byte means tilt for covers and off for lights. Preserve the wire
-  // value and interpret it only when the device type is known.
+  // Switching states are distinct from the cover endpoint at 0x0f.
   if (deviceType === 'light') {
-    if (name === 'bottom_tilt' || state === 'off') return 'OFF'
-    if (name === 'light_on' || state === 'on') return 'ON'
+    if (name === 'light_off') return 'OFF'
+    if (name === 'light_on') return 'ON'
   }
   return (name && STATE_LABELS[name]) ?? state
 }
