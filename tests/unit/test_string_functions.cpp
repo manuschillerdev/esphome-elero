@@ -31,6 +31,7 @@ TEST(StateToString, AllKnownStates) {
   EXPECT_STREQ(elero_state_to_string(state::STOPPED), "stopped");
   EXPECT_STREQ(elero_state_to_string(state::TOP_TILT), "top_tilt");
   EXPECT_STREQ(elero_state_to_string(state::BOTTOM_TILT), "bottom_tilt");
+  EXPECT_STREQ(elero_state_to_string(state::LIGHT_OFF), "off");
   EXPECT_STREQ(elero_state_to_string(state::LIGHT_ON), "on");
 }
 
@@ -40,10 +41,10 @@ TEST(StateToString, UnknownState) {
   EXPECT_STREQ(elero_state_to_string(0x99), "unknown");
 }
 
-TEST(StateToString, LightOffAliasesBottomTilt) {
-  // LIGHT_OFF and BOTTOM_TILT are both 0x0f
-  EXPECT_EQ(state::LIGHT_OFF, state::BOTTOM_TILT);
-  EXPECT_STREQ(elero_state_to_string(state::LIGHT_OFF), "bottom_tilt");
+TEST(StateToString, SwitchingStatesAreDistinctFromCoverEndpoint) {
+  EXPECT_STREQ(elero_state_to_string(0x0f), "bottom_tilt");
+  EXPECT_STREQ(elero_state_to_string(0x10), "off");
+  EXPECT_STREQ(elero_state_to_string(0x11), "on");
 }
 
 // =============================================================================

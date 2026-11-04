@@ -256,8 +256,9 @@ void calc_parity(uint8_t* msg) {
 | MOVING_DOWN | 0x0B | Currently moving down |
 | STOPPED | 0x0D | Stopped (after movement) |
 | TOP_TILT | 0x0E | Top position + tilted |
-| BOTTOM_TILT / OFF | 0x0F | Bottom + tilt / Light off |
-| ON | 0x10 | Light on |
+| BOTTOM_TILT | 0x0F | Bottom + stored intermediate position |
+| OFF | 0x10 | Switching receiver off |
+| ON | 0x11 | Switching receiver on |
 
 ---
 

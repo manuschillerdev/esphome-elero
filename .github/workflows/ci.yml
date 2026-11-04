@@ -45,6 +45,7 @@ jobs:
         run: |
           mise exec node pnpm -- pnpm lint
           mise exec node pnpm -- pnpm typecheck
+          mise exec node pnpm -- pnpm test
 
       - name: Verify bundled frontend is tracked and up to date
         run: |

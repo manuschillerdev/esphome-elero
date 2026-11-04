@@ -56,7 +56,8 @@ const STATE_HEX: Record<string, RfStateName> = {
   '0x0d': 'stopped',
   '0x0e': 'top_tilt',
   '0x0f': 'bottom_tilt',
-  '0x10': 'light_on',
+  '0x10': 'light_off',
+  '0x11': 'light_on',
 }
 
 /// Resolve a state value (hex byte or snake_case name) to its canonical RfStateName.
@@ -382,7 +383,7 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
       // Type correction: if we see a light state, correct cover→light
       const name = resolveStateName(pkt.state)
       const correctedType: DeviceType =
-        (name === 'light_on' || name === 'bottom_tilt') ? 'light' : existing.type
+        (name === 'light_on' || name === 'light_off') ? 'light' : existing.type
       mut().set(pkt.src, { ...existing, type: correctedType, lastStatus: pkt })
     }
     // Do NOT create devices from status packets — byte offset 6 is not the RF channel.

@@ -15,7 +15,7 @@ const hex = (value: number, width = 2) => `0x${value.toString(16).padStart(width
 const stateBytes: Record<RfStateName, number> = {
   unknown: 0, top: 1, bottom: 2, intermediate: 3, tilt: 4, blocking: 5,
   overheated: 6, timeout: 7, start_moving_up: 8, start_moving_down: 9,
-  moving_up: 10, moving_down: 11, stopped: 13, top_tilt: 14, bottom_tilt: 15, light_on: 16,
+  moving_up: 10, moving_down: 11, stopped: 13, top_tilt: 14, bottom_tilt: 15, light_off: 16, light_on: 17,
 }
 const defaults = { command_up: '0x20', command_down: '0x40', command_stop: '0x10', command_check: '0x00', command_tilt: '0x24' }
 type Motion = { from: number; target: number; started: number; duration: number }
@@ -51,7 +51,7 @@ groups.set('grp_terrasse_k8x2p1', { id: 'grp_terrasse_k8x2p1', name: 'Terrasse',
 
 function seed(config: DeviceSnapshot): Device {
   const device: Device = { config: { enabled: true, ...config }, value: config.device_type === 'cover' ? 0.5 : 0,
-    state: config.device_type === 'cover' ? 'stopped' : config.device_type === 'light' ? 'bottom_tilt' : 'unknown',
+    state: config.device_type === 'cover' ? 'stopped' : config.device_type === 'light' ? 'light_off' : 'unknown',
     source: 'unknown', lastSeen: 0, rssi: -70, updatedAt: 1 }
   devices.set(config.dst_address, device)
   return device
@@ -168,7 +168,7 @@ function settle(device: Device) {
   device.value = Math.round((motion.from + (motion.target - motion.from) * fraction) * 100) / 100
   if (fraction === 1) {
     device.motion = undefined
-    device.state = device.config.device_type === 'light' ? device.value > 0 ? 'light_on' : 'bottom_tilt'
+    device.state = device.config.device_type === 'light' ? device.value > 0 ? 'light_on' : 'light_off'
       : device.value === 1 ? 'top' : device.value === 0 ? 'bottom' : 'intermediate'
     rf(device)
   }
@@ -196,9 +196,9 @@ function act(device: Device, action: DeviceAction, source: Device['source'] = 'h
   if (action === 'check') { rf(device); publish(); return }
   device.source = source
   device.motion = undefined
-  if (action === 'stop') device.state = device.config.device_type === 'cover' ? 'stopped' : device.value > 0 ? 'light_on' : 'bottom_tilt'
+  if (action === 'stop') device.state = device.config.device_type === 'cover' ? 'stopped' : device.value > 0 ? 'light_on' : 'light_off'
   else if (action === 'tilt') device.state = device.value === 1 ? 'top_tilt' : device.value === 0 ? 'bottom_tilt' : 'tilt'
-  else if (action === 'on' || action === 'off') { device.value = action === 'on' ? 1 : 0; device.state = action === 'on' ? 'light_on' : 'bottom_tilt' }
+  else if (action === 'on' || action === 'off') { device.value = action === 'on' ? 1 : 0; device.state = action === 'on' ? 'light_on' : 'light_off' }
   else {
     const target = action === 'int' ? 0.5 : ['up', 'open', 'dim_up'].includes(action) ? 1 : 0
     const duration = device.config.device_type === 'light' ? device.config.dim_duration_ms ?? 0
@@ -415,7 +415,7 @@ controls.on('line', line => {
       if (c.rssi !== undefined && (!Number.isFinite(c.rssi) || c.rssi < -130 || c.rssi > 0)) throw new Error('RSSI must be -130..0')
       settle(d); d.motion = undefined; d.state = c.state
       if (c.state === 'top' || c.state === 'top_tilt' || c.state === 'light_on') d.value = 1
-      if (c.state === 'bottom' || c.state === 'bottom_tilt') d.value = 0
+      if (c.state === 'bottom' || c.state === 'bottom_tilt' || c.state === 'light_off') d.value = 0
       if (['moving_up', 'start_moving_up', 'moving_down', 'start_moving_down'].includes(c.state)) {
         const target = c.state.endsWith('_up') ? 1 : 0
         d.motion = { from: d.value, target, started: Date.now(), duration: Math.max(STEP_MS, 25000 * Math.abs(target - d.value)) }

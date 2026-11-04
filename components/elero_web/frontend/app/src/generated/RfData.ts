@@ -71,8 +71,9 @@ interface RfData {
    * - `0x0b` — moving down
    * - `0x0d` — stopped
    * - `0x0e` — top + tilted
-   * - `0x0f` — bottom + tilted / light off
-   * - `0x10` — light on
+   * - `0x0f` — bottom + stored intermediate position
+   * - `0x10` — light off
+   * - `0x11` — light on
    * @example 0x01
    */
   'state': string;

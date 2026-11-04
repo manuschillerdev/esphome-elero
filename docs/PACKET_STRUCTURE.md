@@ -95,8 +95,8 @@ All constants in `packet::state::` namespace.
 | STOPPED | `0x0D` | `state::STOPPED` | Stopped |
 | TOP_TILT | `0x0E` | `state::TOP_TILT` | Open + tilted |
 | BOTTOM_TILT | `0x0F` | `state::BOTTOM_TILT` | Closed + tilted |
-| LIGHT_OFF | `0x0F` | `state::LIGHT_OFF` | Light off (alias for BOTTOM_TILT) |
-| LIGHT_ON | `0x10` | `state::LIGHT_ON` | Light on |
+| LIGHT_OFF | `0x10` | `state::LIGHT_OFF` | Switching receiver off |
+| LIGHT_ON | `0x11` | `state::LIGHT_ON` | Light on |
 
 ## Message Types
 
