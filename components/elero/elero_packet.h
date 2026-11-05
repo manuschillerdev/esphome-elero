@@ -16,6 +16,7 @@
 ///
 /// Quick Reference - Commands:
 ///   CHECK=0x00  STOP=0x10  UP=0x20  TILT=0x24  DOWN=0x40  INT=0x44
+///   TILT_UP=0x20  TILT_DOWN=0x40  (slat step; same bytes as UP/DOWN)
 
 #pragma once
 
@@ -100,6 +101,19 @@ constexpr uint8_t PROGRAM = 0x80;             ///< Programming/P for single-chan
 constexpr uint8_t PROGRAM_GROUP = 0x81;       ///< Programming/P for group selector packets (RX only)
 constexpr uint8_t PROGRAM_TARGET = 0x84;      ///< Programming/P for targeted packets (RX only)
 constexpr uint8_t INVALID = 0xFF;             ///< Invalid/unknown command marker
+
+/// Directional slat step, used by DeviceRegistry::command_cover_tilt().
+///
+/// On an Elero hand transmitter a short press steps the slats one notch and a
+/// long press starts a full travel. Both press lengths send the same command
+/// byte on the default variant, so TILT_UP/TILT_DOWN alias UP/DOWN by value.
+/// They exist as separate names because the two meanings diverge on venetian
+/// (Raffstore) motors that use the extended byte set, where the full-travel
+/// commands move to 0x21/0x44 and 0x20/0x40 stay slat steps.
+///
+/// @see https://github.com/andyboeh/esphome-elero/issues/4
+constexpr uint8_t TILT_UP = UP;               ///< Step slats open (short up)
+constexpr uint8_t TILT_DOWN = DOWN;           ///< Step slats closed (short down)
 }  // namespace command
 
 // ═══════════════════════════════════════════════════════════════════════════════
