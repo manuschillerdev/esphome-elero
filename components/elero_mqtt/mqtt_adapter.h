@@ -103,9 +103,9 @@ class MqttAdapter : public OutputAdapter {
     enum class CleanupState : uint8_t { IDLE, COLLECTING, DONE };
     static constexpr uint32_t STALE_COLLECT_DELAY_MS = 500;
     static constexpr const char *DISCOVERY_DOMAINS[] = {
-        "cover", "light", "sensor", "binary_sensor"
+        "cover", "light", "sensor", "binary_sensor", "button"
     };
-    static constexpr size_t DISCOVERY_DOMAIN_COUNT = 4;
+    static constexpr size_t DISCOVERY_DOMAIN_COUNT = sizeof(DISCOVERY_DOMAINS) / sizeof(DISCOVERY_DOMAINS[0]);
     CleanupState cleanup_state_{CleanupState::IDLE};
     uint32_t collect_start_ms_{0};
     std::vector<std::string> collected_topics_;

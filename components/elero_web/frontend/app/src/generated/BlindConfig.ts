@@ -1,4 +1,4 @@
-
+import {CoverMovementMode} from './CoverMovementMode';
 interface BlindConfig {
   /**
    * 3-byte destination address (hex string)
@@ -67,6 +67,10 @@ interface BlindConfig {
    * @example 408
    */
   'last_seen'?: number;
+  /**
+   * Standard uses configured commands. Step uses targeted full travel for Open/Close; explicit step actions remain available.
+   */
+  'movement_mode'?: CoverMovementMode;
   /**
    * Per-cover RF command byte; defaults to 0x20.
    */

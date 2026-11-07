@@ -52,6 +52,10 @@ const char *elero_command_to_string(uint8_t command) {
       return "CHECK";
     case packet::command::STOP:
       return "STOP";
+    case packet::command::FULL_UP:
+      return "FULL_UP";
+    case packet::command::FULL_DOWN:
+      return "FULL_DOWN";
     case packet::command::UP:
       return "UP";
     case packet::command::TILT:
@@ -74,6 +78,8 @@ const char *elero_command_to_string(uint8_t command) {
 uint8_t elero_action_to_command(const char *action) {
   if (action == nullptr)
     return packet::command::INVALID;
+  if (strcmp(action, action::FULL_UP) == 0) return packet::command::FULL_UP;
+  if (strcmp(action, action::FULL_DOWN) == 0) return packet::command::FULL_DOWN;
   if (strcmp(action, action::UP) == 0 || strcmp(action, action::OPEN) == 0)
     return packet::command::UP;
   if (strcmp(action, action::DOWN) == 0 || strcmp(action, action::CLOSE) == 0)
@@ -91,6 +97,8 @@ uint8_t elero_action_to_command(const char *action) {
 
 const char *elero_command_to_action(uint8_t cmd_byte) {
   switch (cmd_byte) {
+    case packet::command::FULL_UP: return action::FULL_UP;
+    case packet::command::FULL_DOWN: return action::FULL_DOWN;
     case packet::command::UP: return action::UP;
     case packet::command::DOWN: return action::DOWN;
     case packet::command::STOP: return action::STOP;

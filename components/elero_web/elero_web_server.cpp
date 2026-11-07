@@ -434,6 +434,12 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
         return true;
       }
 
+      if (dev->is_cover()) {
+        if (!registry->command_cover_action(*dev, action_str)) {
+          this->ws_send(c, "error", "{\"msg\":\"Cover action rejected or command queue full\"}");
+        }
+        return true;
+      }
       uint8_t cmd_byte = elero_action_to_command(action_str);
       if (cmd_byte == packet::command::INVALID) {
         ESP_LOGW(TAG, "Unknown action: %s", action_str);
@@ -757,11 +763,12 @@ bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &conf
     auto *registry = this->parent_->get_registry();
     const auto *existing = registry != nullptr ? registry->find(dst_addr, DeviceType::COVER) : nullptr;
     if (existing != nullptr) {
-      config.command_up = existing->config.wire_command(packet::command::UP);
-      config.command_down = existing->config.wire_command(packet::command::DOWN);
-      config.command_stop = existing->config.wire_command(packet::command::STOP);
-      config.command_check = existing->config.wire_command(packet::command::CHECK);
-      config.command_tilt = existing->config.wire_command(packet::command::TILT);
+      config.set_step_mode(existing->config.is_step_mode());
+      config.command_up = existing->config.configured_command(packet::command::UP);
+      config.command_down = existing->config.configured_command(packet::command::DOWN);
+      config.command_stop = existing->config.configured_command(packet::command::STOP);
+      config.command_check = existing->config.configured_command(packet::command::CHECK);
+      config.command_tilt = existing->config.configured_command(packet::command::TILT);
     }
   }
 
@@ -788,6 +795,18 @@ bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &conf
     if (root["close_duration_ms"].is<uint32_t>()) config.close_duration_ms = root["close_duration_ms"].as<uint32_t>();
 
     if (config.is_cover()) {
+      if (!root["movement_mode"].isNull()) {
+        if (!root["movement_mode"].is<const char *>()) {
+          error = "Invalid movement_mode";
+          return false;
+        }
+        const char *mode = root["movement_mode"].as<const char *>();
+        if (strcmp(mode, "standard") != 0 && strcmp(mode, "step") != 0) {
+          error = "Invalid movement_mode";
+          return false;
+        }
+        config.set_step_mode(strcmp(mode, "step") == 0);
+      }
       config.supports_tilt = (root["supports_tilt"] | false) ? 1 : 0;
       struct CommandField { const char *key; uint8_t *value; };
       const CommandField commands[] = {
@@ -1009,11 +1028,12 @@ void EleroWebServer::handle_group_command_(struct mg_connection *c, JsonObject r
 constexpr uint8_t SNAPSHOT_VERSION = 2;
 
 void EleroWebServer::build_cover_commands_(const NvsDeviceConfig &cfg, JsonObject out) {
-  out["command_up"] = hex_str8(cfg.wire_command(packet::command::UP));
-  out["command_down"] = hex_str8(cfg.wire_command(packet::command::DOWN));
-  out["command_stop"] = hex_str8(cfg.wire_command(packet::command::STOP));
-  out["command_check"] = hex_str8(cfg.wire_command(packet::command::CHECK));
-  out["command_tilt"] = hex_str8(cfg.wire_command(packet::command::TILT));
+  out["movement_mode"] = cfg.is_step_mode() ? "step" : "standard";
+  out["command_up"] = hex_str8(cfg.configured_command(packet::command::UP));
+  out["command_down"] = hex_str8(cfg.configured_command(packet::command::DOWN));
+  out["command_stop"] = hex_str8(cfg.configured_command(packet::command::STOP));
+  out["command_check"] = hex_str8(cfg.configured_command(packet::command::CHECK));
+  out["command_tilt"] = hex_str8(cfg.configured_command(packet::command::TILT));
 }
 
 void EleroWebServer::build_device_snapshot_(const NvsDeviceConfig &cfg, JsonObject out) {

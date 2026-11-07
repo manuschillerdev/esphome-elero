@@ -1,6 +1,6 @@
 import { signal, computed, batch } from '@preact/signals'
-import { formatFrequency } from './lib/protocol'
-export { getStateLabel, parseFreq } from './lib/protocol'
+import { formatFrequency, command, msg_type } from './lib/protocol'
+export { getStateLabel, parseFreq, command, msg_type, getCommandLabel, getMsgTypeLabel } from './lib/protocol'
 import type {
   ConfigData, RfData, DeviceType, CrudEventData, DeviceUpsertedData,
   StateChangedData, FreqConfig, HubMode, HubConfig, HubConfigEventData, RadioConfig,
@@ -14,28 +14,6 @@ export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode,
 export type GroupConfig = WireGroupConfig & { updated_at: number | null }
 
 // ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
-
-export const msg_type = {
-  BUTTON: '0x44',
-  BUTTON_GROUP: '0x45',
-  COMMAND: '0x6a',
-  COMMAND_ALT: '0x69',
-  PROGRAM: '0x70',
-  STATUS: '0xca',
-  STATUS_ALT: '0xc9',
-} as const
-
-export const command = {
-  CHECK: '0x00',
-  STOP: '0x10',
-  UP: '0x20',
-  TILT: '0x24',
-  DOWN: '0x40',
-  INTERMEDIATE: '0x44',
-  PROGRAM: '0x80',
-  PROGRAM_GROUP: '0x81',
-  PROGRAM_TARGET: '0x84',
-} as const
 
 /// Hex byte → RfStateName (from AsyncAPI spec). Single source of truth for
 /// normalizing RF packet state bytes to the canonical snake_case names that
@@ -66,26 +44,9 @@ export function resolveStateName(raw: string | undefined): RfStateName | undefin
   return STATE_HEX[raw.toLowerCase()] ?? (raw as RfStateName)
 }
 
-const COMMAND_LABELS: Record<string, string> = Object.fromEntries(
-  Object.entries(command).map(([k, v]) => [v, k])
-)
-const MSG_TYPE_LABELS: Record<string, string> = Object.fromEntries(
-  Object.entries(msg_type).map(([k, v]) => [v, k])
-)
-
 // ─── Packet Helpers ──────────────────────────────────────────────────────────
 
 export type RfPacketWithTimestamp = RfData & { received_at?: number }
-
-export function getCommandLabel(hexCmd: string | undefined): string {
-  if (!hexCmd) return ''
-  return COMMAND_LABELS[hexCmd.toLowerCase()] ?? hexCmd
-}
-
-export function getMsgTypeLabel(hexType: string | undefined): string {
-  if (!hexType) return ''
-  return MSG_TYPE_LABELS[hexType.toLowerCase()] ?? hexType
-}
 
 export function isStatusPacket(pkt: RfData): boolean {
   const t = pkt.type?.toLowerCase()
@@ -146,6 +107,7 @@ export interface Device extends CoverCommandBytes {
   open_ms: number
   close_ms: number
   supports_tilt: boolean
+  movement_mode: 'standard' | 'step'
   dim_ms: number
   lastStatus: RfPacketWithTimestamp | null
 }
@@ -248,6 +210,7 @@ function makeDevice(partial: Partial<Device> & { address: string; type: DeviceTy
     open_ms: 0,
     close_ms: 0,
     supports_tilt: false,
+    movement_mode: 'standard',
     dim_ms: 0,
     lastStatus: null,
     ...partial,
@@ -260,6 +223,7 @@ function blindToDevice(b: BlindConfig): Device {
     address: b.address, type: 'cover', updated_at: b.updated_at || null, enabled: b.enabled,
     name: b.name, channel: b.channel, remote: b.remote, pairings: makePairings(b.remote, b.channel),
     open_ms: b.open_ms, close_ms: b.close_ms, supports_tilt: b.supports_tilt,
+    movement_mode: b.movement_mode ?? 'standard',
     lastStatus: b.state && b.state !== '0x00'
       ? { state: b.state, rssi: b.rssi } as RfPacketWithTimestamp
       : null,
@@ -426,6 +390,7 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
     open_ms: data.open_ms ?? 0,
     close_ms: data.close_ms ?? 0,
     supports_tilt: data.supports_tilt ?? false,
+    movement_mode: data.movement_mode ?? 'standard',
     dim_ms: data.dim_ms ?? 0,
     lastStatus: existing?.lastStatus ?? null,
   })

@@ -5,7 +5,7 @@ from esphome.core import CORE
 from ..elero import CONF_ELERO_ID, CONF_REGISTRY_ID, DeviceRegistry, OutputAdapter, elero_ns
 
 DEPENDENCIES = ["elero"]
-AUTO_LOAD = ["json", "cover", "light"]
+AUTO_LOAD = ["json", "cover", "light", "button"]
 CODEOWNERS = ["@manuschillerdev"]
 
 NvsAdapter = elero_ns.class_("NvsAdapter", cg.Component, OutputAdapter)
@@ -13,6 +13,8 @@ NvsLightState = elero_ns.class_("NvsLightState", cg.Component)
 # Keep in sync with DeviceRegistry::MAX_DEVICES.
 MAX_DEVICES = 48
 MAX_GROUPS = 16
+# Keep in sync with ELERO_COVER_ACTIONS; a C++ assertion checks the count.
+COVER_ACTION_BUTTON_COUNT = 4
 _LIGHT_SLOT_IDS = [f"light_slot_{i}_id" for i in range(MAX_DEVICES)]
 
 CONF_NVS_ADAPTER_ID = "nvs_adapter_id"
@@ -32,21 +34,25 @@ async def to_code(config):
 
     # Enable NVS persistence on the unified device registry.
     cg.add(registry.set_nvs_enabled(True))
+    cg.add_define("ELERO_COVER_ACTION_BUTTON_COUNT", COVER_ACTION_BUTTON_COUNT)
 
     # If elero_mqtt is loaded, it handles entity publishing via MQTT discovery.
     # Otherwise, create an NVS adapter that builds ESPHome entities from NVS at boot.
     if "elero_mqtt" not in CORE.loaded_integrations:
         cg.add(registry.set_hub_mode(cg.RawExpression("elero::HubMode::NATIVE")))
 
-        # Ensure cover/light framework is enabled — ESPHome normally sets these
+        # Ensure cover/light/button framework is enabled — ESPHome normally sets these
         # defines when it sees a `cover:`/`light:` block in YAML, but here entities
         # are created at runtime from NVS. Counts are pre-sized to MAX_DEVICES
         # since the actual count isn't known at codegen.
         cg.add_define("USE_COVER")
         cg.add_define("USE_LIGHT")
+        cg.add_define("USE_BUTTON")
         for _ in range(MAX_DEVICES):
             CORE.register_platform_component("cover", None)
             CORE.register_platform_component("light", None)
+        for _ in range(MAX_DEVICES * COVER_ACTION_BUTTON_COUNT):
+            CORE.register_platform_component("button", None)
         for _ in range(MAX_GROUPS):
             CORE.register_platform_component("cover", None)
 

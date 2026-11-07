@@ -36,6 +36,8 @@
 #define ESP_LOGE(tag, format, ...) ((void)0)
 #define LOG_PIN(msg, pin) ((void)0)
 #define ESP_LOGCONFIG(tag, format, ...) ((void)0)
+#define USE_BUTTON
+#define USE_COVER
 #define IRAM_ATTR
 
 #ifndef UNIT_TEST
@@ -79,6 +81,8 @@ constexpr float DATA = 0.0f;
 #include "elero/state_snapshot.cpp"
 #include "elero/device_registry.cpp"
 #include "elero_mqtt/mqtt_adapter.h"
+#include "elero/esp_cover_action_button.h"
+#include "elero/esp_cover_shell.h"
 
 // Stub Elero methods (device_registry.cpp includes elero.h)
 namespace esphome {
@@ -1396,4 +1400,309 @@ TEST_F(DeviceRegistryTest, HubName_HasOverrideReflectsState) {
 
     registry_.set_hub_name_override("");
     EXPECT_FALSE(registry_.has_hub_name_override());
+}
+
+// Step receiver controls: check the emitted wire format, not only enum values.
+TEST_F(DeviceRegistryTest, StepMode_OpenCloseUseTargetedContinuousCommands) {
+    auto config = make_cover_config(0xA831E5);
+    config.set_step_mode(true);
+    auto *dev = registry_.upsert(config);
+    for (const auto command : {pkt::command::UP, pkt::command::DOWN}) {
+        ASSERT_TRUE(registry_.command_cover(*dev, command));
+        const auto emitted = drain_commands(*dev);
+        ASSERT_EQ(emitted.size(), 4u);
+        for (size_t i = 0; i < 3; ++i) {
+            const auto &tx = emitted[i];
+            EXPECT_EQ(tx.type, 0x6a);
+            EXPECT_EQ(tx.type2, 0x10);
+            EXPECT_EQ(tx.hop, 0x00);
+            EXPECT_EQ(tx.num_dests, 0);
+            uint8_t frame[64]{};
+            const size_t length = pkt::build_command_packet(tx, frame);
+            ASSERT_EQ(length, 30u);
+            EXPECT_EQ(frame[16], 1);  // One full 24-bit destination, not a selector.
+            EXPECT_EQ(frame[17], 0xa8);
+            EXPECT_EQ(frame[18], 0x31);
+            EXPECT_EQ(frame[19], 0xe5);
+            frame[length] = 100;
+            frame[length + 1] = 0x80;
+            const auto decoded = pkt::parse_packet(frame, length + 2);
+            ASSERT_TRUE(decoded.valid);
+            EXPECT_EQ(decoded.command, command == pkt::command::UP ? 0x21 : 0x41);
+        }
+        EXPECT_EQ(emitted.back().type, 0x6a);
+        EXPECT_EQ(emitted.back().payload[4], 0x00);  // Follow-up CHECK, not release.
+    }
+}
+
+TEST_F(DeviceRegistryTest, ExplicitFullTravelKeepsLogicalDirection) {
+    auto *dev = add_cover();
+    ASSERT_TRUE(registry_.command_cover_action(*dev, "full_up"));
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Opening>(std::get<CoverDevice>(dev->logic).state));
+    const auto up = drain_commands(*dev);
+    ASSERT_FALSE(up.empty());
+    EXPECT_EQ(up.front().type, 0x6a);
+    EXPECT_EQ(up.front().payload[4], 0x21);
+    ASSERT_TRUE(registry_.command_cover_action(*dev, "full_down"));
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Closing>(std::get<CoverDevice>(dev->logic).state));
+    const auto down = drain_commands(*dev);
+    ASSERT_FALSE(down.empty());
+    EXPECT_EQ(down.front().type, 0x6a);
+    EXPECT_EQ(down.front().payload[4], 0x41);
+}
+
+TEST_F(DeviceRegistryTest, StepMode_ShortPressBypassesOverridesAndIncludesRelease) {
+    auto config = make_cover_config(0xA831E5);
+    config.set_step_mode(true);
+    config.flags |= NvsDeviceConfig::FLAG_COMMAND_BYTES;
+    config.command_up = 0x21;
+    config.command_down = 0x41;
+    auto *dev = registry_.upsert(config);
+    for (const auto action : {"step_up", "step_down"}) {
+        ASSERT_TRUE(registry_.command_cover_action(*dev, action));
+        const auto emitted = drain_commands(*dev);
+        ASSERT_EQ(emitted.size(), 6u);
+        for (size_t i = 0; i < emitted.size(); ++i) {
+            EXPECT_EQ(emitted[i].type, 0x44);
+            EXPECT_EQ(emitted[i].channel, 4);
+            EXPECT_EQ(emitted[i].payload[4], i < 3 ? (strcmp(action, "step_up") == 0 ? 0x20 : 0x40) : 0x00);
+        }
+    }
+}
+
+TEST_F(DeviceRegistryTest, StepMode_PositionAndGroupUsePerReceiverFullTravel) {
+    auto config = make_cover_config(0xA831E5);
+    config.set_step_mode(true);
+    auto *first = registry_.upsert(config);
+    config.dst_address = 0xA831E6;
+    auto *second = registry_.upsert(config);
+    registry_.set_cover_position(*first, 1.0f);
+    const auto position = drain_commands(*first);
+    ASSERT_FALSE(position.empty());
+    EXPECT_EQ(position.front().payload[4], 0x21);
+    EXPECT_EQ(position.front().type, 0x6a);
+    Device *members[] = {first, second};
+    ASSERT_TRUE(registry_.command_group(members, 2, pkt::command::DOWN));
+    for (auto *dev : members) {
+        const auto emitted = drain_commands(*dev);
+        ASSERT_EQ(emitted.size(), 4u);
+        EXPECT_EQ(emitted.front().type, 0x6a);
+        EXPECT_EQ(emitted.front().payload[4], 0x41);
+        EXPECT_EQ(emitted.front().dst_addr, dev->config.dst_address);
+        EXPECT_EQ(emitted.front().num_dests, 0);
+    }
+}
+
+TEST_F(DeviceRegistryTest, StandardModeAndCustomCommandsRemainAvailable) {
+    auto *dev = add_cover();
+    ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::UP));
+    auto emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().type, 0x44);
+    EXPECT_EQ(emitted.front().payload[4], 0x20);
+    auto config = dev->config;
+    config.flags |= NvsDeviceConfig::FLAG_COMMAND_BYTES;
+    config.command_up = 0x21;
+    registry_.upsert(config);
+    ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::UP));
+    emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().type, 0x6a);
+    EXPECT_EQ(emitted.front().payload[4], 0x21);
+}
+
+TEST_F(DeviceRegistryTest, MovementModeChangeCancelsQueuedOldFormat) {
+    auto *dev = add_cover();
+    ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::UP));
+    auto config = dev->config;
+    config.set_step_mode(true);
+    registry_.upsert(config);
+    EXPECT_TRUE(drain_commands(*dev).empty());
+    EXPECT_TRUE(dev->config.is_step_mode());
+    EXPECT_EQ(sizeof(config), 64u);
+    EXPECT_EQ(config.configured_command(pkt::command::UP), 0x20);
+    EXPECT_EQ(config.wire_command(pkt::command::UP), 0x21);
+    config.set_step_mode(false);
+    EXPECT_EQ(config.wire_command(pkt::command::UP), 0x20);
+}
+
+TEST_F(DeviceRegistryTest, CoverActionsRejectUnknownAndNonCoverSteps) {
+    auto *dev = add_cover();
+    EXPECT_FALSE(registry_.command_cover_action(*dev, "invalid"));
+    EXPECT_FALSE(registry_.command_cover_action(*dev, nullptr));
+    auto *light = add_light();
+    EXPECT_FALSE(registry_.command_cover_action(*light, "step_up"));
+    EXPECT_FALSE(registry_.command_cover_action(*light, "full_up"));
+    EXPECT_FALSE(registry_.command_light(*light, pkt::command::FULL_UP));
+    EXPECT_EQ(light->sender.queue_size(), 0u);
+}
+
+TEST_F(DeviceRegistryTest, ManualActionsReplaceAnOldTimedPositionTarget) {
+    registry_.set_hub(nullptr);
+    uint32_t address = 0xA83000;
+    for (const auto *action : {"full_up", "full_down", "step_up", "step_down"}) {
+        auto *dev = add_cover(++address);
+        registry_.set_cover_position(*dev, 0.5f);
+        auto &cover = std::get<CoverDevice>(dev->logic);
+        ASSERT_FLOAT_EQ(cover.target_position, 0.5f);
+        (void) drain_commands(*dev);
+        ASSERT_TRUE(registry_.command_cover_action(*dev, action));
+        EXPECT_EQ(cover.target_position, cover_sm::NO_TARGET) << action;
+        (void) drain_commands(*dev);
+        mock_time_.advance(6000);
+        registry_.loop(mock_time_.millis());
+        const auto commands = drain_commands(*dev);
+        for (const auto &command : commands) EXPECT_NE(command.payload[4], 0x10) << action;
+    }
+}
+
+TEST_F(DeviceRegistryTest, RejectedManualActionsKeepTheTimedPositionTarget) {
+    auto *dev = add_cover();
+    registry_.set_cover_position(*dev, 0.5f);
+    while (dev->sender.queue_size() < pkt::limits::MAX_COMMAND_QUEUE) {
+        ASSERT_TRUE(dev->sender.enqueue(static_cast<uint8_t>(0x60 + dev->sender.queue_size())));
+    }
+    EXPECT_FALSE(registry_.command_cover_action(*dev, "full_up"));
+    EXPECT_FALSE(registry_.command_cover_action(*dev, "step_down"));
+    EXPECT_FLOAT_EQ(std::get<CoverDevice>(dev->logic).target_position, 0.5f);
+}
+
+TEST_F(DeviceRegistryTest, UnpublishedCoverStillAcceptsAndTransmitsExplicitStop) {
+    auto *dev = add_cover();
+    auto config = dev->config;
+    config.set_enabled(false);
+    registry_.upsert(config);
+    ASSERT_TRUE(registry_.command_cover_action(*dev, "stop"));
+    EXPECT_EQ(dev->sender.state(), CommandSender::State::WAIT_DELAY);
+    registry_.loop(mock_time_.millis());
+    EXPECT_EQ(dev->sender.state(), CommandSender::State::TX_PENDING);
+    dev->sender.clear_queue();
+    ASSERT_TRUE(registry_.command_cover_action(config.dst_address, "stop"));
+    (void) drain_commands(*dev);
+    mock_time_.advance(300000);
+    registry_.loop(mock_time_.millis());
+    EXPECT_EQ(dev->sender.queue_size(), 0u);  // No autonomous polling while unpublished.
+    EXPECT_FALSE(registry_.command_cover_action(config.dst_address, "full_up"));
+}
+
+TEST_F(DeviceRegistryTest, UnpublishedCoverRejectsTimedPositionPlans) {
+    auto config = make_cover_config(0xA831E5);
+    config.set_enabled(false);
+    auto *dev = registry_.upsert(config);
+    for (const float target : {0.0f, 0.5f, 1.0f}) {
+        registry_.set_cover_position(*dev, target);
+        EXPECT_EQ(dev->sender.queue_size(), 0u);
+        EXPECT_EQ(std::get<CoverDevice>(dev->logic).target_position, cover_sm::NO_TARGET);
+    }
+    EXPECT_TRUE(registry_.command_cover_action(*dev, "full_up"));
+}
+
+TEST_F(DeviceRegistryTest, UnpublishedManualDrainDoesNotChangeLightBehaviour) {
+    auto config = make_light_config(0xC41A2B);
+    config.set_enabled(false);
+    auto *dev = registry_.upsert(config);
+    ASSERT_TRUE(registry_.command_light(*dev, pkt::command::UP));
+    ASSERT_EQ(dev->sender.state(), CommandSender::State::WAIT_DELAY);
+    registry_.loop(mock_time_.millis());
+    EXPECT_EQ(dev->sender.state(), CommandSender::State::WAIT_DELAY);
+}
+
+TEST_F(DeviceRegistryTest, DisablingCancelsPreviouslyQueuedCoverCommands) {
+    auto *dev = add_cover();
+    ASSERT_TRUE(registry_.command_cover_action(*dev, "full_up"));
+    EXPECT_GT(dev->sender.queue_size(), 0u);
+    auto config = dev->config;
+    config.set_enabled(false);
+    registry_.upsert(config);
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+    EXPECT_TRUE(registry_.command_cover_action(*dev, "stop"));
+}
+
+class TestCoverShell : public EspCoverShell {
+ public:
+    using EspCoverShell::control;
+};
+
+TEST_F(DeviceRegistryTest, NativeCoverRejectsDisabledMovementButKeepsStopAndManualWebAccess) {
+    auto *dev = add_cover();
+    TestCoverShell shell;
+    shell.set_registry(&registry_);
+    shell.set_device(dev);
+    auto config = dev->config;
+    config.set_enabled(false);
+    registry_.upsert(config);
+
+    for (const float target : {0.0f, 0.5f, 1.0f}) {
+        esphome::cover::CoverCall call;
+        call.position = target;
+        shell.control(call);
+        EXPECT_EQ(dev->sender.queue_size(), 0u);
+    }
+    esphome::cover::CoverCall tilt;
+    tilt.tilt = 1.0f;
+    shell.control(tilt);
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+    esphome::cover::CoverCall toggle;
+    toggle.toggle = true;
+    shell.control(toggle);
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+
+    esphome::cover::CoverCall stop;
+    stop.stop = true;
+    shell.control(stop);
+    auto emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().payload[4], pkt::command::STOP);
+
+    // Web manual commands deliberately use the Device& registry route.
+    ASSERT_TRUE(registry_.command_cover_action(*dev, "full_up"));
+    emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().payload[4], pkt::command::FULL_UP);
+}
+
+TEST_F(DeviceRegistryTest, NativeCoverCommandsFollowCurrentConfigurationAndRejectSlotReuse) {
+    auto *dev = add_cover();
+    TestCoverShell shell;
+    shell.set_registry(&registry_);
+    shell.set_device(dev);
+    auto config = dev->config;
+    config.set_step_mode(true);
+    config.src_address = 0x123456;
+    config.channel = 8;
+    registry_.upsert(config);
+
+    esphome::cover::CoverCall open;
+    open.position = 1.0f;
+    shell.control(open);
+    auto emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().payload[4], pkt::command::FULL_UP);
+    EXPECT_EQ(emitted.front().src_addr, config.src_address);
+    EXPECT_EQ(emitted.front().channel, config.channel);
+    esphome::cover::CoverCall position;
+    position.position = 0.75f;
+    shell.control(position);
+    EXPECT_FLOAT_EQ(std::get<CoverDevice>(dev->logic).target_position, 0.75f);
+    (void) drain_commands(*dev);
+    esphome::cover::CoverCall tilt;
+    tilt.tilt = 1.0f;
+    shell.control(tilt);
+    emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().payload[4], pkt::command::TILT);
+
+    ASSERT_TRUE(registry_.remove(config.dst_address, DeviceType::COVER));
+    shell.control(open);
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+    auto *replacement = add_cover(0xA831E6);
+    ASSERT_EQ(replacement, dev);
+    for (auto call : {open, position, tilt}) shell.control(call);
+    esphome::cover::CoverCall stop;
+    stop.stop = true;
+    shell.control(stop);
+    esphome::cover::CoverCall toggle;
+    toggle.toggle = true;
+    shell.control(toggle);
+    EXPECT_EQ(replacement->sender.queue_size(), 0u);
 }

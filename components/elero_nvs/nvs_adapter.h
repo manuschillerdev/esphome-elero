@@ -13,6 +13,8 @@
 #include "../elero/device_type.h"
 #include "../elero/esp_cover_shell.h"
 #include "../elero/esp_light_shell.h"
+#include "../elero/esp_cover_action_button.h"
+#include "../elero/cover_actions.h"
 #include "../elero/output_adapter.h"
 #include "esphome/components/light/light_state.h"
 #include <array>
@@ -20,6 +22,9 @@
 
 namespace esphome {
 namespace elero {
+
+static_assert(ELERO_COVER_ACTIONS.size() == ELERO_COVER_ACTION_BUTTON_COUNT,
+              "Native button capacity must match the shared cover actions");
 
 // Registered by Python codegen so LightState's loop enable/disable and scheduler
 // participate in the normal ESPHome lifecycle. Only NVS-bound slots are entities.
@@ -166,6 +171,16 @@ class NvsAdapter : public Component, public OutputAdapter {
     App.register_cover(shell, names_[slot_index].c_str(), 0, 0);
     // Covers have no periodic work; initialize directly after binding.
     shell->setup();
+
+    for (size_t i = 0; i < ELERO_COVER_ACTIONS.size(); ++i) {
+      const auto &action = ELERO_COVER_ACTIONS[i];
+      auto *button = new EspCoverActionButton(*registry_, dev->config.dst_address, action.action);
+      const auto prefix = names_[slot_index].empty()
+          ? std::string("Cover ") + hex_str(dev->config.dst_address) : names_[slot_index];
+      button_names_[slot_index][i] = prefix + " " + action.name;
+      const auto object_id = std::string("elero_cover_") + hex_str(dev->config.dst_address) + "_" + action.action;
+      App.register_button(button, button_names_[slot_index][i].c_str(), fnv1_hash(object_id), 0);
+    }
   }
 
   void create_light_(Device *dev, size_t slot_index) {
@@ -190,6 +205,8 @@ class NvsAdapter : public Component, public OutputAdapter {
   std::array<EspLightShell *, DeviceRegistry::MAX_DEVICES> light_shells_{};
   std::array<NvsLightState *, DeviceRegistry::MAX_DEVICES> light_states_{};
   std::array<std::string, DeviceRegistry::MAX_DEVICES> names_{};
+  // EntityBase retains StringRef names; keep each boot name alive and immutable.
+  std::array<std::array<std::string, ELERO_COVER_ACTIONS.size()>, DeviceRegistry::MAX_DEVICES> button_names_{};
   std::array<NvsGroupCover *, DeviceRegistry::MAX_GROUPS> group_shells_{};
   std::array<std::string, DeviceRegistry::MAX_GROUPS> group_names_{};
 };

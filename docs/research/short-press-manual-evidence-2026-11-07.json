@@ -1,0 +1,87 @@
+{
+  "retrieved": "2026-11-07",
+  "branch": "feat/step-receiver-controls",
+  "implementation_commit": "1e57db5",
+  "scope": "Official physical-remote feature evidence. This does not certify RF encoding or timing.",
+  "page_numbering": "PDF pages are 1-based. Printed pages follow the document footer; some PDF pages contain two printed pages.",
+  "sources": [
+    {
+      "products": "MonoTel 2",
+      "url": "https://www.elero.com/en/downloads-service/downloads?tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bcontroller%5D=Download&tx_avelero_downloads%5Bdownload%5D=320&cHash=bcb8ff9e75585c395c63a5016eff85e6",
+      "sha256": "158e8416bbf3d6ccadb47310144d5a655cf9ffdfa916783bd29ea44c6afa72c6",
+      "pages": 12,
+      "document": "18 122.0001_EN_0822",
+      "movement_pdf_pages": [
+        7
+      ],
+      "movement_printed_pages": [
+        "EN 13"
+      ],
+      "pulse_pdf_pages": [
+        8,
+        9
+      ],
+      "pulse_printed_pages": [
+        "EN 15",
+        "EN 16"
+      ],
+      "download_id": "320"
+    },
+    {
+      "products": "VarioTel 2",
+      "url": "https://www.elero.com/en/downloads-service/downloads?tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bcontroller%5D=Download&tx_avelero_downloads%5Bdownload%5D=325&cHash=78a602382d851e9c1b95f20927d7eccb",
+      "sha256": "27aac01cf958068ecc7dd48f32fa1880f84dad217ceb78a6e55cdae62b9e28e7",
+      "pages": 11,
+      "document": "181220201_EN_0314",
+      "movement_pdf_pages": [
+        8
+      ],
+      "movement_printed_pages": [
+        "EN 14"
+      ],
+      "pulse_pdf_pages": [
+        9
+      ],
+      "pulse_printed_pages": [
+        "EN 16",
+        "EN 17"
+      ],
+      "download_id": "325"
+    },
+    {
+      "products": "TempoTel 2",
+      "url": "https://www.elero.com/en/downloads-service/downloads?tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bcontroller%5D=Download&tx_avelero_downloads%5Bdownload%5D=324&cHash=23c1a06c0aba16153d980c7601f322c9",
+      "sha256": "e67cf15a1c33c7ba1ca6ac8e47327c5474b58bd1be37b86616c4ee4137274dc2",
+      "pages": 38,
+      "document": "18 202.0002_EN_0922",
+      "movement_pdf_pages": [
+        29
+      ],
+      "movement_printed_pages": [
+        "EN 29"
+      ],
+      "pulse_pdf_pages": [
+        31,
+        32
+      ],
+      "pulse_printed_pages": [
+        "EN 31",
+        "EN 32"
+      ],
+      "download_id": "324"
+    }
+  ],
+  "established_features": [
+    "Brief UP/DOWN can start endpoint travel on roller shutters and awnings.",
+    "Suitable Venetian JA and Combio JA Pulse receivers support jog or pulse movement after a brief UP/DOWN press.",
+    "Holding UP/DOWN until the status indicator lights starts endpoint travel on the described Venetian receivers.",
+    "Basic movement requires a learned transmitter/channel and set drive end positions, not a saved intermediate or tilt preset.",
+    "Combio JA Pulse stores a configurable receiver pulse duration, distinct from a saved position or transmitted release delay."
+  ],
+  "not_established": [
+    "RF command byte values, addressing envelope, repeat count, or release byte.",
+    "A numerical short/long button threshold for these instructions.",
+    "That the implemented three press and three release packets match every physical remote.",
+    "That a short press always produces a small movement on every receiver."
+  ]
+}

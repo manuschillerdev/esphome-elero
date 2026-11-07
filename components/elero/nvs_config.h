@@ -45,7 +45,8 @@ struct NvsDeviceConfig {
   DeviceType type{DeviceType::COVER};
   static constexpr uint8_t FLAG_ENABLED = 0x01;
   static constexpr uint8_t FLAG_COMMAND_BYTES = 0x02;
-  uint8_t flags{FLAG_ENABLED};  ///< bit 0 = enabled
+  static constexpr uint8_t FLAG_STEP_MODE = 0x04;
+  uint8_t flags{FLAG_ENABLED};  ///< enabled, command overrides, and step-receiver mode
   uint8_t ha_device_class{0};  ///< HaCoverClass enum value (0 = shutter, backward compatible)
 
   // RF addressing (16 bytes)
@@ -82,6 +83,11 @@ struct NvsDeviceConfig {
   bool is_enabled() const { return flags & FLAG_ENABLED; }
   void set_enabled(bool en) { en ? (flags |= FLAG_ENABLED) : (flags &= ~FLAG_ENABLED); }
 
+  bool is_step_mode() const { return is_cover() && (flags & FLAG_STEP_MODE); }
+  void set_step_mode(bool enabled) {
+    enabled ? (flags |= FLAG_STEP_MODE) : (flags &= ~FLAG_STEP_MODE);
+  }
+
   bool is_valid() const { return version == NVS_CONFIG_VERSION && dst_address != 0; }
   bool is_cover() const { return type == DeviceType::COVER; }
   bool is_light() const { return type == DeviceType::LIGHT; }
@@ -89,6 +95,14 @@ struct NvsDeviceConfig {
 
   // State machines and adapters use semantic defaults; translate only at TX.
   uint8_t wire_command(uint8_t command) const {
+    if (is_step_mode()) {
+      if (command == packet::command::UP) return packet::command::FULL_UP;
+      if (command == packet::command::DOWN) return packet::command::FULL_DOWN;
+    }
+    return configured_command(command);
+  }
+
+  uint8_t configured_command(uint8_t command) const {
     if (!is_cover() || !(flags & FLAG_COMMAND_BYTES)) return command;
     switch (command) {
       case packet::command::UP: return command_up;
@@ -98,6 +112,14 @@ struct NvsDeviceConfig {
       case packet::command::TILT: return command_tilt;
     }
     return command;
+  }
+
+  uint8_t wire_packet_type(uint8_t command, uint8_t fallback) const {
+    const uint8_t wire = wire_command(command);
+    if (is_cover() && (wire == packet::command::FULL_UP || wire == packet::command::FULL_DOWN)) {
+      return packet::msg_type::COMMAND;
+    }
+    return fallback;
   }
 
   void set_name(const char *n) {

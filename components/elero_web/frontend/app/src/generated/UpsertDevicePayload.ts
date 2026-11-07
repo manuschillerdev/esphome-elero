@@ -1,4 +1,5 @@
 import {DeviceType} from './DeviceType';
+import {CoverMovementMode} from './CoverMovementMode';
 /**
  * Create or update a device in NVS. The combination of `dst_address` + `device_type`
  * identifies the device. All other fields are updateable.
@@ -78,6 +79,10 @@ interface UpsertDevicePayload {
    * Whether the cover supports tilt (cover only, default false)
    */
   'supports_tilt'?: boolean;
+  /**
+   * Standard uses configured commands. Step uses targeted full travel for Open/Close; explicit step actions remain available.
+   */
+  'movement_mode'?: CoverMovementMode;
   /**
    * Per-cover RF command byte; defaults to 0x20.
    */

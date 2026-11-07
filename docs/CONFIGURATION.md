@@ -126,6 +126,7 @@ and edited via the web UI's device editor. Fields marked **(cover)** and
 | `enabled` | Boolean | `true` | Whether the device is published to HA |
 | `open_duration_ms` | Integer | `0` | **(cover)** Travel time fully open. `0` = no position tracking. |
 | `close_duration_ms` | Integer | `0` | **(cover)** Travel time fully closed. Pair with `open_duration_ms`. |
+| `movement_mode` | `standard` / `step` | `standard` | **(cover)** Step mode makes Open/Close use targeted continuous travel. |
 | `supports_tilt` | Boolean | `false` | **(cover)** Expose the motor's saved tilt preset; not arbitrary slat angles. |
 | `command_up` | Hex byte | `0x20` | **(cover)** Full opening command |
 | `command_down` | Hex byte | `0x40` | **(cover)** Full closing command |
@@ -143,6 +144,87 @@ and edited via the web UI's device editor. Fields marked **(cover)** and
 The protocol bytes (`hop`, `payload_*`, `msg_type`, `type2`) are rarely
 overridden — defaults match every Elero motor seen in the wild. Only
 touch them if you've sniffed an unusual remote and confirmed it differs.
+
+### Step receiver movement mode
+
+Set `movement_mode` to `step` for a receiver whose ordinary UP/DOWN commands
+only make short movements. The cover editor calls this **Step receiver**.
+Save the device to apply the mode. It applies to normal Open/Close commands from
+all adapters, calibrated position commands, and saved groups.
+
+| Action | Wire command | Packet type / destination |
+|---|---|---|
+| Open in step mode, or explicit `full_up` | `0x21` | `0x6a`, the cover's 24-bit receiver address |
+| Close in step mode, or explicit `full_down` | `0x41` | `0x6a`, the cover's 24-bit receiver address |
+| Explicit `step_up` | `0x20`, then release `0x00` | `0x44`, the paired remote channel |
+| Explicit `step_down` | `0x40`, then release `0x00` | `0x44`, the paired remote channel |
+| Saved tilt / intermediate preset | `command_tilt` / `0x44` | Existing channel-button path |
+| Stop / status query | `command_stop` / `command_check` | Existing receiver-addressed path |
+
+Full-travel packets use `type2=0x10`, `hop=0x00`, as in the captured long-press
+transactions. Each full-travel action uses the existing three-packet repetition
+and follow-up CHECK. A short step uses three press packets followed by three
+release packets with the existing 10 ms repeat interval. Both phases are
+reserved before the step is accepted, so a full queue cannot accept only a press.
+This is a short pulse, not a reproduction of every remote's hold duration.
+Official MonoTel 2, VarioTel 2, and TempoTel 2 manuals describe the physical
+jog/pulse feature, with receiver-dependent results. They do not define these RF
+bytes or repeat/release timings. See [official manual evidence](TESTING_STEP_RECEIVERS.md#official-remote-manual-evidence)
+for the exact pages and source hashes.
+
+Step mode takes precedence over `command_up` and `command_down`; those custom
+values are retained and become active again in standard mode. In standard mode,
+UP/DOWN overrides that resolve to `0x21` or `0x41` also use targeted full-travel
+packets. Other custom commands keep their existing packet format. Explicit
+`full_up`/`full_down` and `step_up`/`step_down` bypass the UP/DOWN overrides.
+
+Both native API and MQTT discovery expose four Home Assistant buttons for each
+enabled cover: **Short press up/down** and **Full up/down**. Button presses use
+the same registry action dispatch as WebSocket `cmd` and the MQTT cover command
+topic. No adapter selects packet bytes, estimates positions, or maintains a
+button state. The public action IDs remain `step_up`, `step_down`, `full_up`, and
+`full_down`; “short press” describes the transmitted action without promising a
+fixed movement distance.
+
+Native API registers the buttons at boot with stable address/action identities
+and names that remain valid for the firmware lifetime. After device changes,
+follow the native mode reboot prompt to update entity registration. Existing
+buttons resolve their cover through the registry on each press; disabled or
+removed covers are rejected even before a reboot. A reused registry slot does
+not change which cover an existing button controls.
+
+MQTT publishes retained `button` discovery configs under the same HA device as
+the cover, with the gateway's availability topic. Each button uses the existing
+cover `/set` subscription and its canonical action as `payload_press`. Commands
+are not retained. Rename and reconnect retain stable discovery identities;
+disable/remove clears all four button configs. Startup cleanup includes the
+button domain and removes only stale discovery owned by this gateway.
+
+The explicit actions are also available directly through WebSocket `cmd` and
+the MQTT cover command topic. Step actions apply to one configured cover at a time; the RF
+channel can still contain several paired receivers. On standard roller shutter
+receivers, even a short press can start full travel. Test the actual receiver.
+
+Groups containing full-travel actions send one targeted command per receiver;
+they do not encode those commands as a multi-selector `0x44` packet. Group start
+times are therefore not guaranteed to be simultaneous.
+
+An accepted manual movement, preset, or short press replaces any earlier timed
+position target. A rejected command leaves the existing target unchanged. Status
+queries do not replace a movement plan.
+
+`enabled` controls publication to Home Assistant. Manual web controls remain
+available for unpublished covers, including STOP. Disabling a cover cancels its
+pending commands. Explicit cover commands requested afterward can still drain, while background
+polling and automatic timers remain disabled. Percentage-position requests are
+ignored while the cover is unpublished; use explicit directions or STOP instead. Native action buttons reject
+unpublished movement actions through the registry, even before a reboot.
+
+The mode uses a previously unused flag bit. The NVS record stays at 64 bytes,
+with the same version and field offsets. Export/import includes `movement_mode`;
+old backups without it restore standard mode. Older firmware ignores the new
+mode and uses its original movement handling. No new angle or position feedback
+is inferred. See [hardware testing](TESTING_STEP_RECEIVERS.md).
 
 ### Cover position and tilt
 

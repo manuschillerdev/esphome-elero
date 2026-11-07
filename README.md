@@ -104,6 +104,22 @@ overrides. For example, Raffstore motors may need `command_up: "0x21"` and
 `command_down: "0x44"`. Existing NVS devices and backups retain their defaults.
 See the [per-device fields](docs/CONFIGURATION.md#per-device-fields-managed-in-the-ui).
 
+### Step receivers and full travel
+
+The cover editor has a **Movement mode** selector. Use **Step receiver** when
+ordinary UP/DOWN only move the slats or make a short step. After saving, Open/Close
+use receiver-addressed full travel (`0x21`/`0x41`). Standard mode keeps the configured
+command bytes. The expanded panel has separate **Short press up/down**, **Full up/down**,
+**Stop**, and **Intermediate** controls for hardware tests. Steps send a short
+channel-button press and release; they do not measure or select a slat angle.
+Home Assistant also gets four button entities per enabled cover: **Short press
+up**, **Short press down**, **Full up**, and **Full down**, through native API or
+MQTT discovery. These call the same registry actions as the web UI. A short
+press can start full travel on a standard receiver. The feature distinction is
+covered by [official remote manuals](docs/TESTING_STEP_RECEIVERS.md#official-remote-manual-evidence).
+See the [hardware test guide](docs/TESTING_STEP_RECEIVERS.md) and
+[configuration reference](docs/CONFIGURATION.md#step-receiver-movement-mode).
+
 ### Cover position and Apple Home
 
 Percentage positioning is enabled only when **both** opening and closing travel

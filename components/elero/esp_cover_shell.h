@@ -39,7 +39,10 @@ class EspCoverShell : public cover::Cover, public Component {
 
   // ── Binding (called by NvsAdapter at construction time) ──
   void set_registry(DeviceRegistry *r) { registry_ = r; }
-  void set_device(Device *d) { device_ = d; }
+  void set_device(Device *d) {
+    device_ = d;
+    address_ = d != nullptr ? d->config.dst_address : 0;
+  }
 
   // ── Sensor setters (published from sync_and_publish via snapshot) ──
 #ifdef USE_SENSOR
@@ -72,6 +75,7 @@ class EspCoverShell : public cover::Cover, public Component {
   // ── ESPHome Cover interface ────────────────────────────────
   cover::CoverTraits get_traits() override {
     auto traits = cover::CoverTraits();
+    if (!has_bound_device_()) return traits;
     const auto &cfg = device_->config;
     auto ctx = cover_context(cfg);
     traits.set_supports_position(cover_sm::has_position_tracking(ctx));
@@ -84,49 +88,51 @@ class EspCoverShell : public cover::Cover, public Component {
 
  protected:
   void control(const cover::CoverCall &call) override {
-    if (!device_ || !device_->is_cover() || !registry_) return;
+    if (!registry_) return;
+    auto *dev = registry_->find(address_, DeviceType::COVER);
+    if (dev == nullptr) return;
 
     if (call.get_stop()) {
-      registry_->command_cover(*device_, packet::command::STOP);
+      registry_->command_cover(address_, packet::command::STOP);
       return;
     }
 
     if (call.get_position().has_value()) {
       float target = *call.get_position();
-      auto ctx = cover_context(device_->config);
+      auto ctx = cover_context(dev->config);
       if (cover_sm::has_position_tracking(ctx) &&
           target > cover_sm::POSITION_CLOSED && target < cover_sm::POSITION_OPEN) {
-        registry_->set_cover_position(*device_, target);
+        registry_->set_cover_position(address_, target);
       } else {
         uint8_t cmd = (target >= cover_sm::POSITION_OPEN) ? packet::command::UP : packet::command::DOWN;
-        registry_->command_cover(*device_, cmd);
+        registry_->command_cover(address_, cmd);
       }
       return;
     }
 
     if (call.get_tilt().has_value()) {
-      registry_->command_cover_tilt(*device_);
+      registry_->command_cover_tilt(address_);
       return;
     }
 
     if (call.get_toggle().has_value()) {
-      auto &cover = std::get<CoverDevice>(device_->logic);
+      auto &cover = std::get<CoverDevice>(dev->logic);
       uint8_t cmd;
       if (cover_sm::is_moving(cover.state)) {
         cmd = packet::command::STOP;
       } else {
-        auto ctx = cover_context(device_->config);
+        auto ctx = cover_context(dev->config);
         float pos = cover_sm::position(cover.state, millis(), ctx);
         bool was_closing = (cover.last_direction == cover_sm::Operation::CLOSING);
         cmd = (pos <= cover_sm::POSITION_CLOSED || was_closing) ? packet::command::UP : packet::command::DOWN;
       }
-      registry_->command_cover(*device_, cmd);
+      registry_->command_cover(address_, cmd);
     }
   }
 
  public:
   void sync_and_publish(uint16_t changes) {
-    if (!device_ || !device_->is_cover()) return;
+    if (!has_bound_device_()) return;
     const auto &pub = std::get<CoverDevice>(device_->logic).published;
 
     if (changes & (state_change::POSITION | state_change::HA_STATE |
@@ -178,6 +184,13 @@ class EspCoverShell : public cover::Cover, public Component {
 #ifdef USE_BUTTON
   RefreshButton *refresh_button_{nullptr};
 #endif
+
+ private:
+  bool has_bound_device_() const {
+    return device_ != nullptr && device_->active && device_->is_cover() &&
+        device_->config.dst_address == address_;
+  }
+  uint32_t address_{0};
 };
 
 }  // namespace elero

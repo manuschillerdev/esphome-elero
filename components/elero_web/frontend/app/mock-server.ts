@@ -85,7 +85,7 @@ function configEvent(device: Device): DeviceUpsertedData {
   const rf = { ...common, channel: c.channel ?? 1, remote: c.src_address ?? '0x000001', enabled: c.enabled ?? true }
   if (c.device_type === 'light') return { ...rf, dim_ms: c.dim_duration_ms ?? 0 }
   return { ...rf, open_ms: c.open_duration_ms ?? 0, close_ms: c.close_duration_ms ?? 0, poll_ms: 300000,
-    supports_tilt: c.supports_tilt ?? false, ...Object.fromEntries(Object.keys(defaults).map(key => [key, c[key as keyof DeviceSnapshot] ?? defaults[key as keyof typeof defaults]])) }
+    supports_tilt: c.supports_tilt ?? false, movement_mode: c.movement_mode ?? 'standard', ...Object.fromEntries(Object.keys(defaults).map(key => [key, c[key as keyof DeviceSnapshot] ?? defaults[key as keyof typeof defaults]])) }
 }
 function snapshot(device: Device): StateChangedData {
   const c = device.config
@@ -121,7 +121,7 @@ function config(): ConfigData {
     const { device_type: type, ...entry } = c
     const live = { rssi: device.rssi, last_seen: device.lastSeen, state: hex(stateBytes[device.state]) }
     if (type === 'cover') data.blinds.push({ ...entry, name: c.name ?? '', channel: c.channel!, remote: c.remote!, enabled: c.enabled!,
-      open_ms: c.open_ms!, close_ms: c.close_ms!, poll_ms: c.poll_ms!, supports_tilt: c.supports_tilt!, ...live, position: device.value })
+      open_ms: c.open_ms!, close_ms: c.close_ms!, poll_ms: c.poll_ms!, supports_tilt: c.supports_tilt!, movement_mode: device.config.movement_mode ?? 'standard', ...live, position: device.value })
     else if (type === 'light') data.lights.push({ ...entry, name: c.name ?? '', channel: c.channel!, remote: c.remote!, enabled: c.enabled!, dim_ms: c.dim_ms!, ...live, brightness: device.value, is_on: device.value > 0 })
     else data.remotes.push({ address: entry.address, name: entry.name ?? '', updated_at: entry.updated_at })
   }
@@ -154,7 +154,7 @@ function rf(device: Device, command = '0x00', transmitting = false, overrides: P
     dst: transmitting ? c.dst_address : c.src_address ?? '0x000001', channel: c.channel ?? 1,
     type: transmitting ? '0x44' : '0xca', type2: transmitting ? '0x10' : '0x00', command,
     state: transmitting ? '0x00' : hex(stateBytes[device.state]), cnt: counter = (counter % 255) + 1,
-    rssi: device.rssi, hop: c.hop ?? '0x0a', raw: '', ...overrides }
+    rssi: device.rssi, hop: transmitting ? '0x00' : c.hop ?? '0x0a', raw: '', ...overrides }
   // Diagnostic bytes only, deliberately not presented as an encrypted over-the-air packet.
   data.raw = [data.cnt, data.channel, Number(data.type), Number(data.type2), Number(data.command), Number(data.state)]
     .map(byte => hex(byte).slice(2)).join(' ')
@@ -175,7 +175,7 @@ function settle(device: Device) {
 }
 function actionAllowed(device: Device, action: DeviceAction) {
   const c = device.config
-  const allowed = c.device_type === 'cover' ? ['up', 'open', 'down', 'close', 'stop', 'check', 'int', 'tilt']
+  const allowed = c.device_type === 'cover' ? ['up', 'open', 'down', 'close', 'stop', 'check', 'int', 'tilt', 'full_up', 'full_down', 'step_up', 'step_down']
     : c.device_type === 'light' ? ['on', 'off', 'stop', 'check', 'dim_up', 'dim_down'] : []
   if (!allowed.includes(action)) throw new Error(`Unsupported ${c.device_type} action: ${action}`)
   if (action === 'tilt' && !c.supports_tilt) throw new Error('Cover does not support tilt')
@@ -184,23 +184,40 @@ function actionAllowed(device: Device, action: DeviceAction) {
 function commandByte(device: Device, action: DeviceAction): string {
   const keys: Partial<Record<DeviceAction, keyof typeof defaults>> = { up: 'command_up', open: 'command_up', down: 'command_down', close: 'command_down',
     stop: 'command_stop', check: 'command_check', tilt: 'command_tilt' }
+  if (action === 'full_up') return '0x21'
+  if (action === 'full_down') return '0x41'
+  if (action === 'step_up') return '0x20'
+  if (action === 'step_down') return '0x40'
+  if (device.config.device_type === 'cover' && device.config.movement_mode === 'step') {
+    if (action === 'up' || action === 'open') return '0x21'
+    if (action === 'down' || action === 'close') return '0x41'
+  }
   const key = keys[action]
   if (device.config.device_type === 'cover' && key) return device.config[key] ?? defaults[key]
   return ({ up: '0x20', open: '0x20', down: '0x40', close: '0x40', stop: '0x10', check: '0x00',
-    tilt: '0x24', on: '0x20', off: '0x40', dim_up: '0x20', dim_down: '0x40', int: '0x44' })[action]
+    tilt: '0x24', on: '0x20', off: '0x40', dim_up: '0x20', dim_down: '0x40', int: '0x44',
+    full_up: '0x21', full_down: '0x41', step_up: '0x20', step_down: '0x40' })[action]
 }
 function act(device: Device, action: DeviceAction, source: Device['source'] = 'hub', emitCommand = true) {
   actionAllowed(device, action)
   settle(device)
-  if (emitCommand) rf(device, commandByte(device, action), true, source === 'remote' ? { type: '0x44' } : {})
+  if (emitCommand) {
+    const byte = commandByte(device, action)
+    const fullTravel = device.config.device_type === 'cover' && ['0x21', '0x41'].includes(byte)
+    const targeted = device.config.device_type === 'cover' && (fullTravel || action === 'stop' || action === 'check')
+    rf(device, byte, true, targeted ? { type: '0x6a', type2: fullTravel ? '0x10' : '0x00', hop: fullTravel ? '0x00' : '0x0a' } : {})
+    if (action === 'step_up' || action === 'step_down') rf(device, '0x00', true)
+  }
   if (action === 'check') { rf(device); publish(); return }
   device.source = source
   device.motion = undefined
-  if (action === 'stop') device.state = device.config.device_type === 'cover' ? 'stopped' : device.value > 0 ? 'light_on' : 'light_off'
+  if (action === 'step_up' || action === 'step_down') {
+    device.state = 'stopped'
+  } else if (action === 'stop') device.state = device.config.device_type === 'cover' ? 'stopped' : device.value > 0 ? 'light_on' : 'light_off'
   else if (action === 'tilt') device.state = device.value === 1 ? 'top_tilt' : device.value === 0 ? 'bottom_tilt' : 'tilt'
   else if (action === 'on' || action === 'off') { device.value = action === 'on' ? 1 : 0; device.state = action === 'on' ? 'light_on' : 'light_off' }
   else {
-    const target = action === 'int' ? 0.5 : ['up', 'open', 'dim_up'].includes(action) ? 1 : 0
+    const target = action === 'int' ? 0.5 : ['up', 'open', 'dim_up', 'full_up'].includes(action) ? 1 : 0
     const duration = device.config.device_type === 'light' ? device.config.dim_duration_ms ?? 0
       : target > device.value ? device.config.open_duration_ms ?? 0 : device.config.close_duration_ms ?? 0
     if (target !== device.value) {
