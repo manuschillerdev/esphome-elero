@@ -24,7 +24,7 @@ included in the branch. Reload `/elero` after the firmware update.
 3. Test **Full up**, **Stop**, **Full down**, and **Stop**. Full travel targets the
    configured receiver address. Confirm which blind moves and whether travel
    continues without holding the button.
-4. From a stopped position, test **Step up** and **Step down**. Each action sends
+4. From a stopped position, test **Short press up** and **Short press down**. Each action sends
    one short press/release cycle. Record whether it turns the slats, makes a
    short movement, or starts continuous travel. Channel peers can also respond.
 5. If full travel works, select **Step receiver**, then save the cover. Normal
@@ -37,6 +37,21 @@ included in the branch. Reload `/elero` after the firmware update.
 8. To return to the old movement selection, save **Standard**. The stored custom
    UP/DOWN values are retained. Explicit `0x21`/`0x41` overrides now select targeted
    packets even in standard mode; remove those overrides to return to `0x20`/`0x40`.
+
+## Home Assistant buttons
+
+Each enabled cover exposes **Short press up**, **Short press down**, **Full up**,
+and **Full down** in both native API and MQTT modes. These are stateless buttons;
+normal cover Open/Close/Stop controls remain available. In MQTT mode they use the
+existing cover device and command topic. In native mode they are registered at
+boot, so new covers require the normal native-mode reboot.
+
+Verify that the buttons appear on the intended cover in Home Assistant. A short
+press on a standard receiver can start full travel, just as on its physical
+remote. Full travel is independent of the selected movement mode. Rename should
+preserve MQTT entity identities; disabling or removing the cover should remove
+its MQTT buttons. Native buttons must not send commands for a disabled or removed
+cover, even before the required reboot updates the entity list.
 
 ## Record the results
 

@@ -323,12 +323,17 @@ Device *DeviceRegistry::find(uint32_t address) {
 // ═════════════════════════════════════════════════════════════════════════════
 
 bool DeviceRegistry::command_cover_action(Device &dev, const char *action_name) {
-    if (action_name == nullptr) return false;
+    if (!dev.active || !dev.is_cover() || !dev.config.is_enabled() || action_name == nullptr) return false;
     if (strcmp(action_name, action::STEP_UP) == 0) return step_cover(dev, true);
     if (strcmp(action_name, action::STEP_DOWN) == 0) return step_cover(dev, false);
     const uint8_t command = elero_action_to_command(action_name);
     if (command == packet::command::INVALID) return false;
     return command_cover(dev, command);
+}
+
+bool DeviceRegistry::command_cover_action(uint32_t address, const char *action_name) {
+    auto *dev = find(address, DeviceType::COVER);
+    return dev != nullptr && command_cover_action(*dev, action_name);
 }
 
 bool DeviceRegistry::step_cover(Device &dev, bool up) {

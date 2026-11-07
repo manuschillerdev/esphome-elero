@@ -174,8 +174,30 @@ UP/DOWN overrides that resolve to `0x21` or `0x41` also use targeted full-travel
 packets. Other custom commands keep their existing packet format. Explicit
 `full_up`/`full_down` and `step_up`/`step_down` bypass the UP/DOWN overrides.
 
-The explicit actions are available through WebSocket `cmd` and the MQTT cover
-command topic. Step actions apply to one configured cover at a time; the RF
+Both native API and MQTT discovery expose four Home Assistant buttons for each
+enabled cover: **Short press up/down** and **Full up/down**. Button presses use
+the same registry action dispatch as WebSocket `cmd` and the MQTT cover command
+topic. No adapter selects packet bytes, estimates positions, or maintains a
+button state. The public action IDs remain `step_up`, `step_down`, `full_up`, and
+`full_down`; “short press” describes the transmitted action without promising a
+fixed movement distance.
+
+Native API registers the buttons at boot with stable address/action identities
+and names that remain valid for the firmware lifetime. After device changes,
+follow the native mode reboot prompt to update entity registration. Existing
+buttons resolve their cover through the registry on each press; disabled or
+removed covers are rejected even before a reboot. A reused registry slot does
+not change which cover an existing button controls.
+
+MQTT publishes retained `button` discovery configs under the same HA device as
+the cover, with the gateway's availability topic. Each button uses the existing
+cover `/set` subscription and its canonical action as `payload_press`. Commands
+are not retained. Rename and reconnect retain stable discovery identities;
+disable/remove clears all four button configs. Startup cleanup includes the
+button domain and removes only stale discovery owned by this gateway.
+
+The explicit actions are also available directly through WebSocket `cmd` and
+the MQTT cover command topic. Step actions apply to one configured cover at a time; the RF
 channel can still contain several paired receivers. On standard roller shutter
 receivers, even a short press can start full travel. Test the actual receiver.
 

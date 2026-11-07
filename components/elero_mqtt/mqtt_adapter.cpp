@@ -7,6 +7,7 @@
 #include <cinttypes>
 #include "mqtt_adapter.h"
 #include "../elero/device.h"
+#include "../elero/cover_actions.h"
 #include "../elero/device_registry.h"
 #include "../elero/state_snapshot.h"  // state_change:: flags, Published types
 #include "../elero/elero_strings.h"
@@ -143,6 +144,9 @@ void MqttAdapter::remove_all_discovery_(const Device &dev) {
         ctx_.unsubscribe(DeviceType::COVER, addr, mqtt_topic::SET_POSITION);
         ctx_.unsubscribe(DeviceType::COVER, addr, mqtt_topic::TILT);
 
+        for (const auto &action : ELERO_COVER_ACTIONS) {
+            ctx_.remove_discovery(ha_discovery::BUTTON, ctx_.object_id(DeviceType::COVER, addr, action.action));
+        }
         ctx_.remove_discovery(ha_discovery::COVER, ctx_.object_id(DeviceType::COVER, addr));
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "rssi"));
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "state"));
@@ -334,6 +338,24 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
     });
     ctx_.publish_discovery(ha_discovery::BINARY_SENSOR, problem_oid, problem_payload);
 
+    // Stateless actions use the existing cover command subscription. Discovery
+    // adds no command queue, RF mapping, or per-button state in this adapter.
+    for (const auto &action : ELERO_COVER_ACTIONS) {
+        const auto button_oid = ctx_.object_id(DeviceType::COVER, addr, action.action);
+        const auto payload = json::build_json([&](JsonObject root) {
+            root["name"] = action.name;
+            root["has_entity_name"] = true;
+            root["unique_id"] = button_oid;
+            root["command_topic"] = ctx_.topic(DeviceType::COVER, addr, mqtt_topic::SET);
+            root["payload_press"] = action.action;
+            root["retain"] = false;
+            ctx_.add_availability(root);
+            auto device = root["device"].to<JsonObject>();
+            ctx_.add_child_device_block(device, DeviceType::COVER, addr, dev.config.name);
+        });
+        ctx_.publish_discovery(ha_discovery::BUTTON, button_oid, payload);
+    }
+
     ESP_LOGD(TAG, "Published cover discovery for 0x%06" PRIx32, addr);
 }
 
@@ -409,10 +431,7 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
 
     ctx_.subscribe(DeviceType::COVER, addr, mqtt_topic::SET,
         [this, addr](const char *, const char *payload) {
-            Device *d = registry_->find(addr, DeviceType::COVER);
-            if (d == nullptr) return;
-
-            if (!registry_->command_cover_action(*d, payload)) {
+            if (!registry_->command_cover_action(addr, payload)) {
                 ESP_LOGW(TAG, "Cover action rejected: %s", payload);
             }
         });
@@ -944,6 +963,10 @@ void MqttAdapter::collect_expected_topics_(std::vector<std::string> &out) const 
         uint32_t addr = dev.config.dst_address;
 
         if (dev.is_cover()) {
+            for (const auto &action : ELERO_COVER_ACTIONS) {
+                out.push_back(ctx_.discovery_topic(ha_discovery::BUTTON,
+                    ctx_.object_id(DeviceType::COVER, addr, action.action)));
+            }
             out.push_back(ctx_.discovery_topic(ha_discovery::COVER, ctx_.object_id(DeviceType::COVER, addr)));
             out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "rssi")));
             out.push_back(ctx_.discovery_topic(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "state")));

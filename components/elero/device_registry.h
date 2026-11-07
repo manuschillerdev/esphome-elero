@@ -99,6 +99,7 @@ class DeviceRegistry {
     /// Returns queue admission, not confirmation from the receiver.
     bool command_cover(Device &dev, uint8_t cmd_byte);
     bool command_cover_action(Device &dev, const char *action);
+    bool command_cover_action(uint32_t address, const char *action);
     bool step_cover(Device &dev, bool up);
 
     /// Set a cover's target position (0.0–1.0). Determines direction, sets target, starts movement.

@@ -36,6 +36,7 @@
 #define ESP_LOGE(tag, format, ...) ((void)0)
 #define LOG_PIN(msg, pin) ((void)0)
 #define ESP_LOGCONFIG(tag, format, ...) ((void)0)
+#define USE_BUTTON
 #define IRAM_ATTR
 
 #ifndef UNIT_TEST
@@ -79,6 +80,7 @@ constexpr float DATA = 0.0f;
 #include "elero/state_snapshot.cpp"
 #include "elero/device_registry.cpp"
 #include "elero_mqtt/mqtt_adapter.h"
+#include "elero/esp_cover_action_button.h"
 
 // Stub Elero methods (device_registry.cpp includes elero.h)
 namespace esphome {

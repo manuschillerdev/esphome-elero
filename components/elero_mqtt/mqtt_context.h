@@ -49,6 +49,7 @@ inline constexpr const char *COVER = "cover";
 inline constexpr const char *LIGHT = "light";
 inline constexpr const char *SENSOR = "sensor";
 inline constexpr const char *BINARY_SENSOR = "binary_sensor";
+inline constexpr const char *BUTTON = "button";
 }  // namespace ha_discovery
 
 // ═══════════════════════════════════════════════════════════════════════════════

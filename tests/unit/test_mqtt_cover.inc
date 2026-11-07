@@ -6,11 +6,12 @@ class FakeMqttPublisher : public MqttPublisher {
     std::map<std::string, std::string> retained;
     std::map<std::string, std::vector<std::function<void(const char *, const char *)>>> subscriptions;
     bool connected{true};
+    std::vector<std::string> cleared_topics;
 
     bool publish(const char *topic, const char *payload, bool retain) override {
         if (!connected) return false;
         if (retain) {
-            if (payload[0] == '\0') retained.erase(topic);
+            if (payload[0] == '\0') { retained.erase(topic); cleared_topics.emplace_back(topic); }
             else retained[topic] = payload;
         }
         return true;
@@ -294,4 +295,152 @@ TEST_F(MqttCoverTest, StartupWhileDisconnectedClearsOldStateOnReconnect) {
     EXPECT_FALSE(broker_.retained.contains(STATE_TOPIC));
     EXPECT_FALSE(broker_.retained.contains(POSITION_TOPIC));
     EXPECT_TRUE(broker_.retained.contains(DISCOVERY_TOPIC));
+}
+
+// Explicit buttons share the existing cover command topic and registry path.
+TEST_F(MqttCoverTest, DiscoversFourStatelessActionsOnTheCoverDevice) {
+    add_cover();
+    const std::pair<const char *, const char *> expected[] = {
+        {"step_up", "Short press up"}, {"step_down", "Short press down"},
+        {"full_up", "Full up"}, {"full_down", "Full down"},
+    };
+    for (const auto &[action, name] : expected) {
+        const auto id = std::string("test-gateway_cover_a831e5_") + action;
+        const auto topic = "homeassistant/button/" + id + "/config";
+        ASSERT_TRUE(broker_.retained.contains(topic));
+        JsonDocument button;
+        ASSERT_FALSE(deserializeJson(button, broker_.retained.at(topic)));
+        EXPECT_EQ(button["name"].as<std::string>(), name);
+        EXPECT_TRUE(button["has_entity_name"].as<bool>());
+        EXPECT_EQ(button["unique_id"].as<std::string>(), id);
+        EXPECT_EQ(button["command_topic"].as<std::string>(), SET_TOPIC);
+        EXPECT_EQ(button["payload_press"].as<std::string>(), action);
+        EXPECT_FALSE(button["retain"].as<bool>());
+        EXPECT_TRUE(button["state_topic"].isNull());
+        EXPECT_EQ(button["availability_topic"].as<std::string>(), "elero/status");
+        EXPECT_EQ(button["device"]["identifiers"][0].as<std::string>(), "test-gateway_cover_a831e5");
+        EXPECT_EQ(button["device"]["via_device"].as<std::string>(), "test-gateway");
+    }
+    EXPECT_EQ(broker_.subscriptions.at(SET_TOPIC).size(), 1u);
+    add_light();
+    for (const auto &[topic, payload] : broker_.retained) {
+        if (topic.starts_with("homeassistant/button/")) EXPECT_NE(topic.find("_cover_"), std::string::npos);
+    }
+}
+
+TEST_F(MqttCoverTest, NativeAndMqttButtonsUseIdenticalRegistryTransactions) {
+    auto *dev = add_cover();
+    for (const auto *action : {"step_up", "step_down", "full_up", "full_down"}) {
+        broker_.deliver(SET_TOPIC, action);
+        const auto mqtt = drain_commands(*dev);
+        EspCoverActionButton button(registry_, dev->config.dst_address, action);
+        button.press();
+        const auto native = drain_commands(*dev);
+        ASSERT_EQ(native.size(), mqtt.size()) << action;
+        ASSERT_FALSE(native.empty());
+        for (size_t i = 0; i < mqtt.size(); ++i) {
+            EXPECT_EQ(native[i].type, mqtt[i].type);
+            EXPECT_EQ(native[i].type2, mqtt[i].type2);
+            EXPECT_EQ(native[i].hop, mqtt[i].hop);
+            EXPECT_EQ(native[i].payload[4], mqtt[i].payload[4]);
+            EXPECT_EQ(native[i].src_addr, mqtt[i].src_addr);
+            EXPECT_EQ(native[i].dst_addr, mqtt[i].dst_addr);
+            EXPECT_EQ(native[i].channel, mqtt[i].channel);
+        }
+    }
+}
+
+TEST_F(MqttCoverTest, ButtonIdentitySurvivesRenameAndDiscoveryFollowsLifecycle) {
+    auto cfg = make_cover_config(0xA831E5);
+    registry_.upsert(cfg);
+    std::vector<std::string> topics;
+    for (const auto &[topic, payload] : broker_.retained) {
+        if (topic.starts_with("homeassistant/button/")) topics.push_back(topic);
+    }
+    ASSERT_EQ(topics.size(), 4u);
+    cfg.set_name("New cover name");
+    registry_.upsert(cfg);
+    for (const auto &topic : topics) {
+        JsonDocument button;
+        ASSERT_FALSE(deserializeJson(button, broker_.retained.at(topic)));
+        EXPECT_EQ(button["device"]["name"].as<std::string>(), "New cover name");
+    }
+    cfg.set_enabled(false);
+    registry_.upsert(cfg);
+    for (const auto &topic : topics) EXPECT_FALSE(broker_.retained.contains(topic));
+    EXPECT_FALSE(broker_.subscriptions.contains(SET_TOPIC));
+    cfg.set_enabled(true);
+    registry_.upsert(cfg);
+    for (const auto &topic : topics) EXPECT_TRUE(broker_.retained.contains(topic));
+    ASSERT_TRUE(registry_.remove(cfg.dst_address, DeviceType::COVER));
+    for (const auto &topic : topics) EXPECT_FALSE(broker_.retained.contains(topic));
+    EXPECT_FALSE(broker_.subscriptions.contains(SET_TOPIC));
+}
+
+TEST_F(MqttCoverTest, CleanupRemovesOnlyStaleOwnedButtonsAndReconnectKeepsOneHandler) {
+    add_cover();
+    const std::string active = "homeassistant/button/test-gateway_cover_a831e5_full_up/config";
+    const std::string stale = "homeassistant/button/test-gateway_cover_deadbe_full_up/config";
+    const std::string foreign = "homeassistant/button/other-gateway_cover_deadbe_full_up/config";
+    broker_.retained[stale] = R"({"device":{"identifiers":["test-gateway_cover_deadbe"]}})";
+    broker_.retained[foreign] = R"({"device":{"identifiers":["other-gateway_cover_deadbe"]}})";
+    const auto &callbacks = broker_.subscriptions.at("homeassistant/button/+/config");
+    for (const auto &topic : {active, stale, foreign}) {
+        for (const auto &callback : callbacks) callback(topic.c_str(), broker_.retained.at(topic).c_str());
+    }
+    mock_time_.advance(501);
+    mqtt_.loop();
+    EXPECT_TRUE(broker_.retained.contains(active));
+    EXPECT_FALSE(broker_.retained.contains(stale));
+    EXPECT_TRUE(broker_.retained.contains(foreign));
+    EXPECT_EQ(std::count(broker_.cleared_topics.begin(), broker_.cleared_topics.end(), active), 0);
+    EXPECT_EQ(std::count(broker_.cleared_topics.begin(), broker_.cleared_topics.end(), foreign), 0);
+    for (int i = 0; i < 2; ++i) {
+        broker_.connected = false;
+        mqtt_.loop();
+        broker_.connected = true;
+        mqtt_.loop();
+        mock_time_.advance(501);
+        mqtt_.loop();
+    }
+    EXPECT_TRUE(broker_.retained.contains(active));
+    EXPECT_EQ(broker_.subscriptions.at(SET_TOPIC).size(), 1u);
+}
+
+TEST_F(DeviceRegistryTest, NativeButtonRejectsDisabledRemovedAndReusedSlots) {
+    auto *original = add_cover();
+    EspCoverActionButton button(registry_, original->config.dst_address, "full_up");
+    auto config = original->config;
+    config.set_enabled(false);
+    registry_.upsert(config);
+    button.press();
+    EXPECT_EQ(original->sender.queue_size(), 0u);
+    EXPECT_FALSE(registry_.command_cover_action(*original, "full_up"));
+    config.set_enabled(true);
+    registry_.upsert(config);
+    button.press();
+    EXPECT_FALSE(drain_commands(*original).empty());
+    ASSERT_TRUE(registry_.remove(config.dst_address, DeviceType::COVER));
+    auto *replacement = add_cover(0xA831E6);
+    ASSERT_EQ(replacement, original);  // The slot is reused, but its identity is different.
+    button.press();
+    EXPECT_EQ(replacement->sender.queue_size(), 0u);
+    EXPECT_FALSE(registry_.command_cover_action(config.dst_address, "full_up"));
+}
+
+TEST_F(DeviceRegistryTest, NativeButtonReadsCurrentAddressConfigurationFromRegistry) {
+    auto *dev = add_cover();
+    EspCoverActionButton button(registry_, dev->config.dst_address, "full_up");
+    auto config = dev->config;
+    config.src_address = 0x123456;
+    config.channel = 8;
+    config.set_name("Renamed");
+    registry_.upsert(config);
+    button.press();
+    const auto commands = drain_commands(*dev);
+    ASSERT_FALSE(commands.empty());
+    EXPECT_EQ(commands.front().src_addr, 0x123456u);
+    EXPECT_EQ(commands.front().channel, 8);
+    EXPECT_EQ(commands.front().payload[4], 0x21);
+    EXPECT_EQ(commands.front().type, 0x6a);
 }

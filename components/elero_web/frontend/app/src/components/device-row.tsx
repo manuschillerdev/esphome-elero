@@ -351,8 +351,8 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
             Save changes before testing. Step receiver mode uses full travel for Open/Close, including Home Assistant.
           </p>
           <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Cover movement test">
-            <Button variant="outline" size="sm" disabled={device.updated_at === null} onClick={() => sendDeviceCommand(device, 'step_up')}>Step up</Button>
-            <Button variant="outline" size="sm" disabled={device.updated_at === null} onClick={() => sendDeviceCommand(device, 'step_down')}>Step down</Button>
+            <Button variant="outline" size="sm" disabled={device.updated_at === null} onClick={() => sendDeviceCommand(device, 'step_up')}>Short press up</Button>
+            <Button variant="outline" size="sm" disabled={device.updated_at === null} onClick={() => sendDeviceCommand(device, 'step_down')}>Short press down</Button>
             <Button variant="outline" size="sm" disabled={device.updated_at === null} onClick={() => sendDeviceCommand(device, 'full_up')}>Full up</Button>
             <Button variant="outline" size="sm" disabled={device.updated_at === null} onClick={() => sendDeviceCommand(device, 'full_down')}>Full down</Button>
             <Button variant="outline" size="sm" onClick={() => sendDeviceCommand(device, 'stop')}>Stop</Button>
