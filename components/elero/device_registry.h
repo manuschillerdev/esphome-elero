@@ -99,6 +99,8 @@ class DeviceRegistry {
     /// Returns queue admission, not confirmation from the receiver.
     bool command_cover(Device &dev, uint8_t cmd_byte);
     bool command_cover_action(Device &dev, const char *action);
+    /// Entity-bound route: resolve the current cover by ID and require it to be
+    /// published, except for explicit STOP. Manual controls use Device& above.
     bool command_cover_action(uint32_t address, const char *action);
     bool step_cover(Device &dev, bool up);
 

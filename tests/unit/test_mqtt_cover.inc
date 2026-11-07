@@ -415,7 +415,7 @@ TEST_F(DeviceRegistryTest, NativeButtonRejectsDisabledRemovedAndReusedSlots) {
     registry_.upsert(config);
     button.press();
     EXPECT_EQ(original->sender.queue_size(), 0u);
-    EXPECT_FALSE(registry_.command_cover_action(*original, "full_up"));
+    EXPECT_FALSE(registry_.command_cover_action(config.dst_address, "full_up"));
     config.set_enabled(true);
     registry_.upsert(config);
     button.press();

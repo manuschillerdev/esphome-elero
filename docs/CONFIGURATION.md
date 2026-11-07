@@ -205,6 +205,17 @@ Groups containing full-travel actions send one targeted command per receiver;
 they do not encode those commands as a multi-selector `0x44` packet. Group start
 times are therefore not guaranteed to be simultaneous.
 
+An accepted manual movement, preset, or short press replaces any earlier timed
+position target. A rejected command leaves the existing target unchanged. Status
+queries do not replace a movement plan.
+
+`enabled` controls publication to Home Assistant. Manual web controls remain
+available for unpublished covers, including STOP. Disabling a cover cancels its
+pending commands. Explicit cover commands requested afterward can still drain, while background
+polling and automatic timers remain disabled. Percentage-position requests are
+ignored while the cover is unpublished; use explicit directions or STOP instead. Native action buttons reject
+unpublished movement actions through the registry, even before a reboot.
+
 The mode uses a previously unused flag bit. The NVS record stays at 64 bytes,
 with the same version and field offsets. Export/import includes `movement_mode`;
 old backups without it restore standard mode. Older firmware ignores the new

@@ -1534,3 +1534,84 @@ TEST_F(DeviceRegistryTest, CoverActionsRejectUnknownAndNonCoverSteps) {
     EXPECT_FALSE(registry_.command_light(*light, pkt::command::FULL_UP));
     EXPECT_EQ(light->sender.queue_size(), 0u);
 }
+
+TEST_F(DeviceRegistryTest, ManualActionsReplaceAnOldTimedPositionTarget) {
+    registry_.set_hub(nullptr);
+    uint32_t address = 0xA83000;
+    for (const auto *action : {"full_up", "full_down", "step_up", "step_down"}) {
+        auto *dev = add_cover(++address);
+        registry_.set_cover_position(*dev, 0.5f);
+        auto &cover = std::get<CoverDevice>(dev->logic);
+        ASSERT_FLOAT_EQ(cover.target_position, 0.5f);
+        (void) drain_commands(*dev);
+        ASSERT_TRUE(registry_.command_cover_action(*dev, action));
+        EXPECT_EQ(cover.target_position, cover_sm::NO_TARGET) << action;
+        (void) drain_commands(*dev);
+        mock_time_.advance(6000);
+        registry_.loop(mock_time_.millis());
+        const auto commands = drain_commands(*dev);
+        for (const auto &command : commands) EXPECT_NE(command.payload[4], 0x10) << action;
+    }
+}
+
+TEST_F(DeviceRegistryTest, RejectedManualActionsKeepTheTimedPositionTarget) {
+    auto *dev = add_cover();
+    registry_.set_cover_position(*dev, 0.5f);
+    while (dev->sender.queue_size() < pkt::limits::MAX_COMMAND_QUEUE) {
+        ASSERT_TRUE(dev->sender.enqueue(static_cast<uint8_t>(0x60 + dev->sender.queue_size())));
+    }
+    EXPECT_FALSE(registry_.command_cover_action(*dev, "full_up"));
+    EXPECT_FALSE(registry_.command_cover_action(*dev, "step_down"));
+    EXPECT_FLOAT_EQ(std::get<CoverDevice>(dev->logic).target_position, 0.5f);
+}
+
+TEST_F(DeviceRegistryTest, UnpublishedCoverStillAcceptsAndTransmitsExplicitStop) {
+    auto *dev = add_cover();
+    auto config = dev->config;
+    config.set_enabled(false);
+    registry_.upsert(config);
+    ASSERT_TRUE(registry_.command_cover_action(*dev, "stop"));
+    EXPECT_EQ(dev->sender.state(), CommandSender::State::WAIT_DELAY);
+    registry_.loop(mock_time_.millis());
+    EXPECT_EQ(dev->sender.state(), CommandSender::State::TX_PENDING);
+    dev->sender.clear_queue();
+    ASSERT_TRUE(registry_.command_cover_action(config.dst_address, "stop"));
+    (void) drain_commands(*dev);
+    mock_time_.advance(300000);
+    registry_.loop(mock_time_.millis());
+    EXPECT_EQ(dev->sender.queue_size(), 0u);  // No autonomous polling while unpublished.
+    EXPECT_FALSE(registry_.command_cover_action(config.dst_address, "full_up"));
+}
+
+TEST_F(DeviceRegistryTest, UnpublishedCoverRejectsTimedPositionPlans) {
+    auto config = make_cover_config(0xA831E5);
+    config.set_enabled(false);
+    auto *dev = registry_.upsert(config);
+    for (const float target : {0.0f, 0.5f, 1.0f}) {
+        registry_.set_cover_position(*dev, target);
+        EXPECT_EQ(dev->sender.queue_size(), 0u);
+        EXPECT_EQ(std::get<CoverDevice>(dev->logic).target_position, cover_sm::NO_TARGET);
+    }
+    EXPECT_TRUE(registry_.command_cover_action(*dev, "full_up"));
+}
+
+TEST_F(DeviceRegistryTest, UnpublishedManualDrainDoesNotChangeLightBehaviour) {
+    auto config = make_light_config(0xC41A2B);
+    config.set_enabled(false);
+    auto *dev = registry_.upsert(config);
+    ASSERT_TRUE(registry_.command_light(*dev, pkt::command::UP));
+    ASSERT_EQ(dev->sender.state(), CommandSender::State::WAIT_DELAY);
+    registry_.loop(mock_time_.millis());
+    EXPECT_EQ(dev->sender.state(), CommandSender::State::WAIT_DELAY);
+}
+
+TEST_F(DeviceRegistryTest, DisablingCancelsPreviouslyQueuedCoverCommands) {
+    auto *dev = add_cover();
+    ASSERT_TRUE(registry_.command_cover_action(*dev, "full_up"));
+    EXPECT_GT(dev->sender.queue_size(), 0u);
+    auto config = dev->config;
+    config.set_enabled(false);
+    registry_.upsert(config);
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+    EXPECT_TRUE(registry_.command_cover_action(*dev, "stop"));
+}

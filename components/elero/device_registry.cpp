@@ -185,7 +185,8 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
         // old identity before replacing it, including groups owned by peers.
         if (existing->config.src_address != config.src_address ||
             existing->config.channel != config.channel ||
-            existing->config.is_step_mode() != config.is_step_mode()) {
+            existing->config.is_step_mode() != config.is_step_mode() ||
+            (existing->config.is_enabled() && !config.is_enabled())) {
             cancel_pending_commands_(*existing);
         }
         update_device_config(*existing, config);
@@ -323,7 +324,7 @@ Device *DeviceRegistry::find(uint32_t address) {
 // ═════════════════════════════════════════════════════════════════════════════
 
 bool DeviceRegistry::command_cover_action(Device &dev, const char *action_name) {
-    if (!dev.active || !dev.is_cover() || !dev.config.is_enabled() || action_name == nullptr) return false;
+    if (!dev.active || !dev.is_cover() || action_name == nullptr) return false;
     if (strcmp(action_name, action::STEP_UP) == 0) return step_cover(dev, true);
     if (strcmp(action_name, action::STEP_DOWN) == 0) return step_cover(dev, false);
     const uint8_t command = elero_action_to_command(action_name);
@@ -333,7 +334,11 @@ bool DeviceRegistry::command_cover_action(Device &dev, const char *action_name) 
 
 bool DeviceRegistry::command_cover_action(uint32_t address, const char *action_name) {
     auto *dev = find(address, DeviceType::COVER);
-    return dev != nullptr && command_cover_action(*dev, action_name);
+    if (dev == nullptr || action_name == nullptr) return false;
+    // Entity-bound actions must not outlive publication. Explicit STOP remains
+    // available; manual web controls use the Device& overload independently.
+    if (!dev->config.is_enabled() && strcmp(action_name, action::STOP) != 0) return false;
+    return command_cover_action(*dev, action_name);
 }
 
 bool DeviceRegistry::step_cover(Device &dev, bool up) {
@@ -342,6 +347,7 @@ bool DeviceRegistry::step_cover(Device &dev, bool up) {
     // use channel addressing; no angle or lift position is inferred from a pulse.
     if (!dev.sender.enqueue_short_press(up ? packet::command::UP : packet::command::DOWN)) return false;
     auto &cover = std::get<CoverDevice>(dev.logic);
+    cover.target_position = cover_sm::NO_TARGET;
     cover.poll.on_command_sent(millis());
     return true;
 }
@@ -369,6 +375,8 @@ bool DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte) {
         if (!enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
                               packet::msg_type::BUTTON,
                               "command_cover(move)")) return false;
+        // A manual motion or preset replaces a previously timed position plan.
+        cover.target_position = cover_sm::NO_TARGET;
         if (cmd_byte == packet::command::FULL_UP) cmd_byte = packet::command::UP;
         if (cmd_byte == packet::command::FULL_DOWN) cmd_byte = packet::command::DOWN;
         if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
@@ -383,7 +391,9 @@ bool DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte) {
 }
 
 void DeviceRegistry::set_cover_position(Device &dev, float target) {
-    if (!dev.is_cover()) return;
+    // Unpublished covers do not run timed-position plans. Explicit manual
+    // directions and STOP use command_cover_action independently.
+    if (!dev.is_cover() || !dev.config.is_enabled()) return;
 
     auto &cover = std::get<CoverDevice>(dev.logic);
     auto ctx = cover_context(dev.config);
@@ -810,7 +820,13 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
 
 void DeviceRegistry::loop(uint32_t now) {
     for (auto &dev : slots_) {
-        if (!dev.active || !dev.config.is_enabled()) continue;
+        if (!dev.active) continue;
+        if (!dev.config.is_enabled()) {
+            // Unpublished devices still accept explicit manual commands,
+            // especially STOP, but do not schedule background polling.
+            if (dev.is_cover() && hub_ != nullptr) dev.sender.process_queue(now, hub_, "elero.manual");
+            continue;
+        }
 
         std::visit(overloaded{
             [&](CoverDevice &cover) { loop_cover_(dev, cover, now); },
