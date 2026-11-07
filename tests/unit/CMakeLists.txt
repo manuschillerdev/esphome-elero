@@ -23,6 +23,11 @@ FetchContent_MakeAvailable(ArduinoJson)
 
 enable_testing()
 
+add_executable(test_web_json test_web_json.cpp)
+target_include_directories(test_web_json BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/mqtt_stubs)
+target_include_directories(test_web_json PRIVATE ${CMAKE_SOURCE_DIR}/../../components)
+target_link_libraries(test_web_json GTest::gtest_main ArduinoJson)
+
 # Include paths
 set(COMPONENTS_DIR ${CMAKE_SOURCE_DIR}/../../components)
 include_directories(${COMPONENTS_DIR})          # elero headers
@@ -182,6 +187,7 @@ target_link_libraries(test_rf_transport GTest::gtest_main)
 
 # Discover all tests
 include(GoogleTest)
+gtest_discover_tests(test_web_json)
 gtest_discover_tests(test_rf_transport)
 gtest_discover_tests(test_cc1101_compat)
 gtest_discover_tests(test_cc1101_tx_fsm)
@@ -205,6 +211,7 @@ gtest_discover_tests(test_device_registry)
 
 # All test targets
 set(ALL_TEST_TARGETS
+  test_web_json
   test_rf_transport test_cc1101_compat test_cc1101_tx_fsm test_cc1101_driver_tx
   test_freq_conversion test_semtech_tx_fsm test_sx1262_driver test_sx1276_driver
   test_packet_vectors test_command_sender test_golden_vectors

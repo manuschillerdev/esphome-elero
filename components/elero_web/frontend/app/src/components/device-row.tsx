@@ -1,13 +1,14 @@
 import { Button } from './ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip'
 import { InlineEdit } from './ui/inline-edit'
+import { CoverCommandEditor } from './cover-command-editor'
 import { SignalIndicator } from './signal-indicator'
 import { formatTime } from './packet-table'
 import { ChevronUp, Square, ChevronDown, Shrink, Lightbulb, LightbulbOff, Settings, RotateCcw, Save, Info, Trash2 } from './icons'
 import { cn } from '@/lib/utils'
 import {
   updateDevice, getStateLabel, getCommandLabel, isCommandPacket, isSelectorPacket,
-  rfPackets, hub, displayNames,
+  rfPackets, hub, displayNames, devices,
   type Device, type RfPacketWithTimestamp,
 } from '@/store'
 import { sendDeviceCommand, sendRawCommand, sendUpsertDevice, sendRemoveDevice } from '@/ws'
@@ -173,7 +174,7 @@ export function DeviceActions({ device, expanded, onToggleExpand }: {
         <Tooltip>
           <TooltipTrigger>
             <Button variant="ghost" size="icon" className="size-7 text-primary hover:text-primary"
-              onClick={() => sendUpsertDevice(device)}>
+              onClick={() => sendUpsertDevice(devices.value.get(device.address) ?? device)}>
               <Save className="size-3.5" />
             </Button>
           </TooltipTrigger>
@@ -364,6 +365,8 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
           </p>
         </div>
       )}
+
+      {device.type === 'cover' && <CoverCommandEditor device={device} disabled={!crudEnabled} />}
 
       {/* Sniffed commands */}
       <div className="px-5 py-3">

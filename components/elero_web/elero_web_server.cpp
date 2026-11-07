@@ -1,5 +1,6 @@
 #include <cinttypes>
 #include "elero_web_server.h"
+#include "web_json.h"
 #include "elero_web_ui.h"
 #include "../elero/elero_packet.h"
 #include "../elero/elero_strings.h"
@@ -209,7 +210,7 @@ void EleroWebServer::on_config_changed(const Device &dev) {
 void EleroWebServer::on_device_removed(const Device &dev) {
   if (this->ws_clients_.empty() || !this->enabled_)
     return;
-  std::string payload = json::build_json([&](JsonObject root) {
+  std::string payload = build_web_json([&](JsonObject root) {
     root["address"] = hex_str(dev.config.dst_address);
     root["device_type"] = device_type_str(dev.config.type);
   });
@@ -225,7 +226,7 @@ void EleroWebServer::on_group_upserted(const NvsGroupConfig &group) {
 void EleroWebServer::on_group_removed(const char *id) {
   if (this->ws_clients_.empty() || !this->enabled_)
     return;
-  std::string payload = json::build_json([&](JsonObject root) {
+  std::string payload = build_web_json([&](JsonObject root) {
     root["id"] = id == nullptr ? "" : id;
   });
   this->ws_broadcast("group_removed", payload);
@@ -233,7 +234,7 @@ void EleroWebServer::on_group_removed(const char *id) {
 
 void EleroWebServer::on_group_state_changed(const NvsGroupConfig &group, const GroupStateSnapshot &state) {
   if (this->ws_clients_.empty() || !this->enabled_) return;
-  this->ws_broadcast("group_state_changed", json::build_json([&](JsonObject root) {
+  this->ws_broadcast("group_state_changed", build_web_json([&](JsonObject root) {
     root["id"] = group.id;
     state.to_json(root);
   }));
@@ -252,14 +253,14 @@ void EleroWebServer::on_state_changed(const Device &dev, uint16_t /*changes*/) {
 
   if (dev.is_cover()) {
     auto snap = compute_cover_snapshot(dev, now);
-    payload = json::build_json([&](JsonObject root) {
+    payload = build_web_json([&](JsonObject root) {
       root["address"] = hex_str(dev.config.dst_address);
       root["device_type"] = device_type_str(dev.config.type);
       snap.to_json(root);
     });
   } else if (dev.is_light()) {
     auto snap = compute_light_snapshot(dev, now);
-    payload = json::build_json([&](JsonObject root) {
+    payload = build_web_json([&](JsonObject root) {
       root["address"] = hex_str(dev.config.dst_address);
       root["device_type"] = device_type_str(dev.config.type);
       snap.to_json(root);
@@ -311,7 +312,7 @@ void EleroWebServer::on_log(uint8_t level, const char *tag, const char *message,
     }
   }
 
-  std::string log_json = json::build_json([&](JsonObject root) {
+  std::string log_json = build_web_json([&](JsonObject root) {
     root["t"] = millis();
     root["level"] = level;
     root["tag"] = tag;
@@ -519,7 +520,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 void EleroWebServer::ws_send(struct mg_connection *c, const char *event, const std::string &data) {
   if (c == nullptr || c->is_closing)
     return;
-  std::string ws_msg = json::build_json([&](JsonObject root) {
+  std::string ws_msg = build_web_json([&](JsonObject root) {
     root["event"] = event;
     root["data"] = serialized(data);
   });
@@ -544,7 +545,7 @@ void EleroWebServer::ws_cleanup() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 std::string EleroWebServer::build_config_json() {
-  return json::build_json([this](JsonObject root) {
+  return build_web_json([this](JsonObject root) {
     auto *registry = this->parent_->get_registry();
     bool has_nvs = registry != nullptr && registry->is_nvs_enabled();
 
@@ -653,7 +654,7 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
     raw_hex += byte_buf;
   }
 
-  return json::build_json([&](JsonObject root) {
+  return build_web_json([&](JsonObject root) {
     root["t"] = pkt.timestamp_ms;
     root["src"] = hex_str(pkt.src);
     root["dst"] = hex_str(pkt.dst);
@@ -674,7 +675,7 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
 }
 
 std::string EleroWebServer::build_device_upserted_json_(const Device &dev) {
-  return json::build_json([&](JsonObject root) {
+  return build_web_json([&](JsonObject root) {
     root["address"] = hex_str(dev.config.dst_address);
     root["device_type"] = device_type_str(dev.config.type);
     root["name"] = dev.config.name;
@@ -698,7 +699,7 @@ std::string EleroWebServer::build_device_upserted_json_(const Device &dev) {
 }
 
 std::string EleroWebServer::build_group_json_(const NvsGroupConfig &group) const {
-  return json::build_json([&](JsonObject root) {
+  return build_web_json([&](JsonObject root) {
     root["id"] = group.id;
     root["name"] = group.name;
     if (const auto *registry = this->parent_->get_registry(); registry != nullptr) {
@@ -719,7 +720,7 @@ std::string EleroWebServer::build_learn_in_state_json_() const {
   }
 
   const auto &learn_in = this->parent_->learn_in();
-  return json::build_json([&](JsonObject root) {
+  return build_web_json([&](JsonObject root) {
     root["state"] = learn_in_state_str(this->parent_->learn_in_state());
     root["active"] = this->parent_->is_learn_in_active();
     root["busy"] = learn_in.is_busy();
@@ -916,7 +917,7 @@ void EleroWebServer::handle_upsert_device_(struct mg_connection *c, JsonObject r
   NvsDeviceConfig config{};
   std::string error;
   if (!parse_device_config_(root, config, error, true)) {
-    this->ws_send(c, "error", json::build_json([&](JsonObject r) { r["msg"] = error; }));
+    this->ws_send(c, "error", build_web_json([&](JsonObject r) { r["msg"] = error; }));
     return;
   }
 
@@ -959,12 +960,12 @@ void EleroWebServer::handle_upsert_group_(struct mg_connection *c, JsonObject ro
   NvsGroupConfig config{};
   std::string error;
   if (!parse_group_config_(root, config, error)) {
-    this->ws_send(c, "error", json::build_json([&](JsonObject r) { r["msg"] = error; }));
+    this->ws_send(c, "error", build_web_json([&](JsonObject r) { r["msg"] = error; }));
     return;
   }
 
   if (registry->upsert_group(config, &error) == nullptr) {
-    this->ws_send(c, "error", json::build_json([&](JsonObject r) { r["msg"] = error.empty() ? "Failed to upsert group" : error; }));
+    this->ws_send(c, "error", build_web_json([&](JsonObject r) { r["msg"] = error.empty() ? "Failed to upsert group" : error; }));
   }
 }
 
@@ -1012,7 +1013,7 @@ void EleroWebServer::handle_group_command_(struct mg_connection *c, JsonObject r
   if (!registry->command_saved_group(id, cmd_byte, &error)) {
     const std::string msg = error.empty() ? "Failed to command group" : error;
     ESP_LOGW(TAG, "Group command rejected for '%s': %s", id, msg.c_str());
-    this->ws_send(c, "error", json::build_json([&](JsonObject r) { r["msg"] = msg; }));
+    this->ws_send(c, "error", build_web_json([&](JsonObject r) { r["msg"] = msg; }));
     return;
   }
   ESP_LOGI(TAG, "Group command accepted: id='%s' action='%s'", id, action_str);
@@ -1064,7 +1065,7 @@ void EleroWebServer::build_device_snapshot_(const NvsDeviceConfig &cfg, JsonObje
 }
 
 std::string EleroWebServer::build_config_snapshot_json_() {
-  return json::build_json([this](JsonObject root) {
+  return build_web_json([this](JsonObject root) {
     auto *registry = this->parent_->get_registry();
 
     root["snapshot_version"] = SNAPSHOT_VERSION;
@@ -1150,7 +1151,7 @@ void EleroWebServer::handle_import_config_(struct mg_connection *c, JsonObject r
   std::string errors_json = "[";
   auto append_error = [&](int idx, const std::string &msg) {
     if (errors_json.size() > 1) errors_json += ',';
-    std::string entry = json::build_json([&](JsonObject e) {
+    std::string entry = build_web_json([&](JsonObject e) {
       e["index"] = idx;
       e["msg"] = msg;
     });
@@ -1228,7 +1229,7 @@ void EleroWebServer::handle_import_config_(struct mg_connection *c, JsonObject r
 
   errors_json += "]";
 
-  std::string reply = json::build_json([&](JsonObject r) {
+  std::string reply = build_web_json([&](JsonObject r) {
     r["added"] = added;
     r["updated"] = updated;
     r["skipped"] = skipped;
@@ -1257,7 +1258,7 @@ void EleroWebServer::handle_set_hub_config_(struct mg_connection *c, JsonObject 
   // Broadcast updated config to all clients so frontends refresh.
   // Capture the name by value to keep the JSON build pure of registry lifetime.
   std::string display_name = registry->hub_display_name();
-  this->ws_broadcast("hub_config", json::build_json([&display_name](JsonObject r) {
+  this->ws_broadcast("hub_config", build_web_json([&display_name](JsonObject r) {
     r["name"] = display_name;
   }));
 }
