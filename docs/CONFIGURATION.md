@@ -167,6 +167,10 @@ and follow-up CHECK. A short step uses three press packets followed by three
 release packets with the existing 10 ms repeat interval. Both phases are
 reserved before the step is accepted, so a full queue cannot accept only a press.
 This is a short pulse, not a reproduction of every remote's hold duration.
+Official MonoTel 2, VarioTel 2, and TempoTel 2 manuals describe the physical
+jog/pulse feature, with receiver-dependent results. They do not define these RF
+bytes or repeat/release timings. See [official manual evidence](TESTING_STEP_RECEIVERS.md#official-remote-manual-evidence)
+for the exact pages and source hashes.
 
 Step mode takes precedence over `command_up` and `command_down`; those custom
 values are retained and become active again in standard mode. In standard mode,

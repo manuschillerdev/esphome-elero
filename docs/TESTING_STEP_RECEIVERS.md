@@ -67,7 +67,40 @@ Expected full-travel packets: type `0x6a`, command `0x21` or `0x41`,
 channel-addressed type `0x44`, command `0x20` or `0x40`, then `0x00` release.
 A command byte and packet type can both be `0x44`; they describe different fields.
 
-## Evidence and limits
+## Official remote manual evidence
+
+The physical short-press feature is documented by Elero. Its result depends on
+the receiver and operating mode. The following are manufacturer instructions
+for physical hand-held remotes, not inferred software command tables.
+
+| Official manual | Movement instructions | Feature evidence |
+|---|---|---|
+| [MonoTel 2](https://www.elero.com/en/downloads-service/downloads?tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bcontroller%5D=Download&tx_avelero_downloads%5Bdownload%5D=320&cHash=bcb8ff9e75585c395c63a5016eff85e6) | PDF 7; printed EN 13 | Short UP/DOWN is jog/pulse movement on the described Venetian receivers; a longer press starts endpoint travel. A brief press can start full travel on roller shutters/awnings. |
+| [VarioTel 2](https://www.elero.com/en/downloads-service/downloads?tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bcontroller%5D=Download&tx_avelero_downloads%5Bdownload%5D=325&cHash=78a602382d851e9c1b95f20927d7eccb) | PDF 8; printed EN 14 | Short UP/DOWN is jog/pulse movement on the described Venetian receivers; a longer press starts endpoint travel. A brief press can start full travel on roller shutters/awnings. |
+| [TempoTel 2](https://www.elero.com/en/downloads-service/downloads?tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bcontroller%5D=Download&tx_avelero_downloads%5Bdownload%5D=324&cHash=23c1a06c0aba16153d980c7601f322c9) | PDF 29; printed EN 29 | Short UP/DOWN is jog/pulse movement on the described Venetian receivers; a longer press starts endpoint travel. A brief press can start full travel on roller shutters/awnings. |
+
+Basic movement requires a learned transmitter/channel and set drive end
+positions. It does not require a saved intermediate or tilt position. Those
+presets have separate recall instructions. On the described Venetian receivers,
+UP/DOWN held until the status indicator lights requests endpoint travel. The
+manuals do not give a numerical short/long threshold for these instructions.
+
+Combio JA Pulse has a configurable pulse duration stored in the receiver. See
+MonoTel 2 PDF pages 8–9 / printed EN 15–16; VarioTel 2 PDF page 9 / printed
+EN 16–17; and TempoTel 2 PDF pages 31–32 / printed EN 31–32. This setting affects
+the receiver's jog/pulse operation. It is not a saved height/tilt preset and is
+not the delay between our RF press and release packets.
+
+Therefore the UI and HA entities use **Short press**, not a promise of a fixed
+step distance. A normal roller shutter can move fully after this action, as it
+does after a brief press on its physical remote.
+
+The [source manifest](research/short-press-manual-evidence-2026-11-07.json) records
+manufacturer URLs, document revisions, exact page locations, and SHA-256 hashes
+of the PDFs checked on 2026-11-07. It contains metadata only; the full manuals
+are not bundled with the component.
+
+## RF capture evidence and limits
 
 - [VarioCom remote capture](https://github.com/andyboeh/esphome-elero/issues/4#issuecomment-2129977456)
   shows channel DOWN followed by receiver-addressed long DOWN.
@@ -78,3 +111,11 @@ The implementation sends the targeted full-travel command directly, as in the
 successful eleropy test. It does not first send a short press and wait two seconds.
 It adds no measured tilt angle, new pairing procedure, or validated receiver
 profile beyond these explicit actions. Hardware results are still required.
+
+The official remote manuals establish the user-visible short-press/jog/pulse and
+endpoint-travel functions. They do not specify RF command bytes, packet types,
+repeat counts, release byte, or timing. The branch's three press packets followed
+by three release packets, at the existing 10 ms repeat interval, are an
+implementation choice supported by the recorded protocol context; they are not
+manufacturer-certified replay of every remote. Feature evidence and exact RF
+parity must remain separate in hardware acceptance results.
