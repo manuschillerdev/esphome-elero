@@ -5,6 +5,10 @@
 
 namespace esphome::json {
 
+inline ArduinoJson::Allocator *heap_json_allocator() {
+    return ArduinoJson::detail::DefaultAllocator::instance();
+}
+
 template<typename F> std::string build_json(F &&builder) {
     JsonDocument doc;
     builder(doc.to<JsonObject>());
