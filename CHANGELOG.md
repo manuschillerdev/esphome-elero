@@ -5,14 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.11.0-rc.2](https://github.com/manuschillerdev/esphome-elero/compare/v0.11.0-rc.1...v0.11.0-rc.2) (2026-11-07)
+
+### Features
+
+- Add Short press up/down and Full up/down buttons to the web UI, Home
+  Assistant native API, and MQTT discovery (#83).
+- Add a saved Standard/Step receiver mode. Step mode uses targeted full-travel
+  commands for normal cover controls, position movement, and group commands.
+- Document short-press and jog/pulse functions from official remote manuals,
+  with separate RF capture evidence and hardware acceptance checks.
+
+### Compatibility
+
+- Native API adds four buttons per enabled cover after reboot. MQTT discovery
+  adds the buttons immediately.
+- Custom UP/DOWN values of `0x21`/`0x41` now use targeted packets, including
+  in Standard mode. Full-travel group commands are sent per receiver.
+- Existing NVS records and backup files remain supported.
 
 ### Bug Fixes
 
+- Replace old timed movement plans when a new cover action is accepted.
+- Reject movement from disabled native cover entities before reboot, while
+  keeping manual web controls and STOP available.
+- Correct light switching state bytes and state names across adapters without
+  changing cover discovery.
 - Use the ESPHome 2026.10.2 light persistence API in the native NVS adapter.
   Keep saved-state restoration enabled, with an off state on first boot.
 - Update the locked development and CI target to ESPHome 2026.10.2.
   This is now the minimum supported ESPHome version.
+
+### Validation and known limits
+
+- Requires ESPHome 2026.10.2 or later.
+- Confirmed MQTT discovery for 40 action buttons on a Heltec with 10 covers.
+- A short press can start full travel on a normal roller shutter. Brief movement
+  still needs a hardware test on a suitable JA/Pulse receiver.
+- Native action buttons have compile and host-test coverage; device tests remain.
+- The manuals do not specify RF bytes, repeat counts, or timing. The implemented
+  press/release sequence is not a manufacturer-certified remote replay.
+- SX1262 and SX1276 support remains experimental. Multi-destination reception
+  still needs hardware confirmation (#70).
 
 ## [0.11.0-rc.1](https://github.com/manuschillerdev/esphome-elero/compare/v0.10.1...v0.11.0-rc.1) (2026-11-04)
 
