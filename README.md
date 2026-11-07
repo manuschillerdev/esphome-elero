@@ -100,7 +100,10 @@ on CC1101, SX1262, and SX1276. See [radio framing and limits](docs/RADIO_FRAMING
 Cover groups expose member-derived state and position through MQTT and the native
 API. Motors with different command variants can coexist: each cover supports
 `command_up`, `command_down`, `command_stop`, `command_check`, and `command_tilt`
-overrides. For example, Raffstore motors may need `command_up: "0x21"` and
+overrides. In the expanded cover settings, open **Custom command bytes** to edit
+all five values. Enter a hex byte (`0x00`–`0xFF`), then use **Save to NVS**.
+**Reset command bytes** restores the defaults; save to apply them.
+For example, Raffstore motors may need `command_up: "0x21"` and
 `command_down: "0x44"`. Existing NVS devices and backups retain their defaults.
 See the [per-device fields](docs/CONFIGURATION.md#per-device-fields-managed-in-the-ui).
 
