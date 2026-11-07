@@ -310,6 +310,21 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
                 </select>
               </label>
               <Toggle checked={device.supports_tilt} onChange={(v) => updateDevice(device.address, { supports_tilt: v })} label="Tilt" />
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                HA tilt control
+                <select
+                  aria-label="HA tilt control"
+                  disabled={!device.supports_tilt || !crudEnabled}
+                  value={device.tilt_mode}
+                  onChange={(event) => updateDevice(device.address, {
+                    tilt_mode: event.currentTarget.value === 'step' ? 'step' : 'preset',
+                  })}
+                  className="rounded border border-input bg-background px-2 py-1 text-foreground disabled:opacity-50"
+                >
+                  <option value="preset">Saved preset</option>
+                  <option value="step">Directional steps</option>
+                </select>
+              </label>
             </>
           )}
         </div>
@@ -363,6 +378,12 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
             Steps use the paired channel; other covers can respond. Full travel targets this cover.
             A standard receiver may travel fully after a short press.
           </p>
+          {device.supports_tilt && device.tilt_mode === 'step' && (
+            <p className="text-xs text-muted-foreground">
+              HA tilt control sends one short DOWN below 50% or one short UP at 50% or above.
+              It does not set a slat angle. The Saved tilt shortcut still recalls the saved preset.
+            </p>
+          )}
         </div>
       )}
 

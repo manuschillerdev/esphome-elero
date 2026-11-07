@@ -1,4 +1,5 @@
 import {CoverMovementMode} from './CoverMovementMode';
+import {CoverTiltMode} from './CoverTiltMode';
 interface BlindConfig {
   /**
    * 3-byte destination address (hex string)
@@ -71,6 +72,10 @@ interface BlindConfig {
    * Standard uses configured commands. Step uses targeted full travel for Open/Close; explicit step actions remain available.
    */
   'movement_mode'?: CoverMovementMode;
+  /**
+   * HA tilt requests recall the saved preset by default. Step mode selects one short DOWN below 50 percent or one short UP at or above 50 percent; no absolute angle is set.
+   */
+  'tilt_mode'?: CoverTiltMode;
   /**
    * Per-cover RF command byte; defaults to 0x20.
    */

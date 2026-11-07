@@ -109,9 +109,10 @@ class DeviceRegistry {
     void set_cover_position(Device &dev, float target);
     void set_cover_position(uint32_t address, float target);
 
-    /// Dispatch a tilt command to a cover device.
-    void command_cover_tilt(Device &dev);
-    void command_cover_tilt(uint32_t address);
+    /// Recall the saved tilt preset (manual control, independent of HA tilt mode).
+    bool command_cover_tilt(Device &dev);
+    /// Entity-bound HA tilt request (0..1). Step mode uses the value only as direction.
+    bool command_cover_tilt(uint32_t address, float target);
 
     /// Dispatch a command byte to a light device (on/off + FSM + enqueue).
     bool command_light(Device &dev, uint8_t cmd_byte);

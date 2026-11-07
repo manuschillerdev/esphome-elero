@@ -447,11 +447,13 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
         });
 
     ctx_.subscribe(DeviceType::COVER, addr, mqtt_topic::TILT,
-        [this, addr](const char *, const char *) {
-            Device *d = registry_->find(addr, DeviceType::COVER);
-            if (d == nullptr) return;
-
-            registry_->command_cover_tilt(*d);
+        [this, addr](const char *, const char *payload) {
+            char *end = nullptr;
+            const float value = payload != nullptr ? strtof(payload, &end) : -1.0f;
+            if (payload == nullptr || end == payload || *end != '\0' ||
+                !registry_->command_cover_tilt(addr, value / PERCENT_SCALE)) {
+                ESP_LOGW(TAG, "Invalid tilt request for 0x%06" PRIx32, addr);
+            }
         });
 
     ESP_LOGD(TAG, "Subscribed to cover commands for 0x%06" PRIx32, addr);

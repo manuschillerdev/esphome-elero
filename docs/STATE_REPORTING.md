@@ -28,6 +28,13 @@ How device state flows from RF packets through the firmware to Home Assistant en
 
 **Diagnostic sensors in native mode (post RFC-002).** With YAML-defined devices removed, the auto-sensor codegen path in the deleted `components/elero/cover/__init__.py` is gone too. `NvsAdapter` currently only registers the cover entity itself — the per-device RSSI / Status / Problem / Command Source / Problem Type sensors are not created. The data is still computed in the snapshot layer and is visible via the web UI's Devices tab (and via MQTT when `elero_mqtt:` is configured); only the ESPHome native-API surface is missing them. Restoring parity requires teaching `NvsAdapter` to register sensors per slot at boot — tracked as a follow-up.
 
+With `tilt_mode: step`, native and MQTT tilt requests select a directional short
+press through the same registry method. A request below 50% selects DOWN;
+50% or above selects UP. Commands do not update a measured slat angle, and the
+binary tilt snapshot retains its existing saved-preset meaning. The default
+`tilt_mode: preset` recalls the saved preset as before. Short-press commands use
+the common sender on all supported radio chips.
+
 ### Light
 
 | Data | HA Type | Native Mode | MQTT Mode | Parity |

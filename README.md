@@ -109,6 +109,14 @@ See the [per-device fields](docs/CONFIGURATION.md#per-device-fields-managed-in-t
 
 ### Step receivers and full travel
 
+For Home Assistant's tilt controls, enable **Tilt** and select **HA tilt control →
+Directional steps** in the expanded cover settings (`tilt_mode: step`). Each HA
+tilt request sends one existing short press: DOWN below 50%, UP at 50% or above.
+The percentage selects a direction; it does not set or measure an angle.
+**Saved preset** (`tilt_mode: preset`) is the default for existing devices and
+backups. The separate Saved tilt action still recalls the programmed preset.
+Tilt control uses the shared registry and sender on CC1101, SX1262, and SX1276.
+
 The cover editor has a **Movement mode** selector. Use **Step receiver** when
 ordinary UP/DOWN only move the slats or make a short step. After saving, Open/Close
 use receiver-addressed full travel (`0x21`/`0x41`). Standard mode keeps the configured

@@ -85,7 +85,7 @@ function configEvent(device: Device): DeviceUpsertedData {
   const rf = { ...common, channel: c.channel ?? 1, remote: c.src_address ?? '0x000001', enabled: c.enabled ?? true }
   if (c.device_type === 'light') return { ...rf, dim_ms: c.dim_duration_ms ?? 0 }
   return { ...rf, open_ms: c.open_duration_ms ?? 0, close_ms: c.close_duration_ms ?? 0, poll_ms: 300000,
-    supports_tilt: c.supports_tilt ?? false, movement_mode: c.movement_mode ?? 'standard', ...Object.fromEntries(Object.keys(defaults).map(key => [key, c[key as keyof DeviceSnapshot] ?? defaults[key as keyof typeof defaults]])) }
+    supports_tilt: c.supports_tilt ?? false, movement_mode: c.movement_mode ?? 'standard', tilt_mode: c.tilt_mode ?? 'preset', ...Object.fromEntries(Object.keys(defaults).map(key => [key, c[key as keyof DeviceSnapshot] ?? defaults[key as keyof typeof defaults]])) }
 }
 function snapshot(device: Device): StateChangedData {
   const c = device.config
@@ -121,7 +121,7 @@ function config(): ConfigData {
     const { device_type: type, ...entry } = c
     const live = { rssi: device.rssi, last_seen: device.lastSeen, state: hex(stateBytes[device.state]) }
     if (type === 'cover') data.blinds.push({ ...entry, name: c.name ?? '', channel: c.channel!, remote: c.remote!, enabled: c.enabled!,
-      open_ms: c.open_ms!, close_ms: c.close_ms!, poll_ms: c.poll_ms!, supports_tilt: c.supports_tilt!, movement_mode: device.config.movement_mode ?? 'standard', ...live, position: device.value })
+      open_ms: c.open_ms!, close_ms: c.close_ms!, poll_ms: c.poll_ms!, supports_tilt: c.supports_tilt!, movement_mode: device.config.movement_mode ?? 'standard', tilt_mode: device.config.tilt_mode ?? 'preset', ...live, position: device.value })
     else if (type === 'light') data.lights.push({ ...entry, name: c.name ?? '', channel: c.channel!, remote: c.remote!, enabled: c.enabled!, dim_ms: c.dim_ms!, ...live, brightness: device.value, is_on: device.value > 0 })
     else data.remotes.push({ address: entry.address, name: entry.name ?? '', updated_at: entry.updated_at })
   }

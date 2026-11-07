@@ -765,6 +765,8 @@ bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &conf
     const auto *existing = registry != nullptr ? registry->find(dst_addr, DeviceType::COVER) : nullptr;
     if (existing != nullptr) {
       config.set_step_mode(existing->config.is_step_mode());
+      config.set_step_tilt(existing->config.is_step_tilt());
+      config.supports_tilt = existing->config.supports_tilt;
       config.command_up = existing->config.configured_command(packet::command::UP);
       config.command_down = existing->config.configured_command(packet::command::DOWN);
       config.command_stop = existing->config.configured_command(packet::command::STOP);
@@ -808,7 +810,19 @@ bool EleroWebServer::parse_device_config_(JsonObject root, NvsDeviceConfig &conf
         }
         config.set_step_mode(strcmp(mode, "step") == 0);
       }
-      config.supports_tilt = (root["supports_tilt"] | false) ? 1 : 0;
+      if (!root["tilt_mode"].isUnbound()) {
+        if (!root["tilt_mode"].is<const char *>()) {
+          error = "Invalid tilt_mode";
+          return false;
+        }
+        const char *mode = root["tilt_mode"].as<const char *>();
+        if (strcmp(mode, "preset") != 0 && strcmp(mode, "step") != 0) {
+          error = "Invalid tilt_mode";
+          return false;
+        }
+        config.set_step_tilt(strcmp(mode, "step") == 0);
+      }
+      config.supports_tilt = (root["supports_tilt"] | (config.supports_tilt != 0)) ? 1 : 0;
       struct CommandField { const char *key; uint8_t *value; };
       const CommandField commands[] = {
           {"command_up", &config.command_up}, {"command_down", &config.command_down},
@@ -1030,6 +1044,7 @@ constexpr uint8_t SNAPSHOT_VERSION = 2;
 
 void EleroWebServer::build_cover_commands_(const NvsDeviceConfig &cfg, JsonObject out) {
   out["movement_mode"] = cfg.is_step_mode() ? "step" : "standard";
+  out["tilt_mode"] = cfg.is_step_tilt() ? "step" : "preset";
   out["command_up"] = hex_str8(cfg.configured_command(packet::command::UP));
   out["command_down"] = hex_str8(cfg.configured_command(packet::command::DOWN));
   out["command_stop"] = hex_str8(cfg.configured_command(packet::command::STOP));

@@ -107,6 +107,7 @@ export function sendUpsertDevice(device: Device) {
     dim_duration_ms: device.dim_ms,
     ...(device.type === 'cover' ? {
       movement_mode: device.movement_mode,
+      tilt_mode: device.tilt_mode,
       command_up: device.command_up, command_down: device.command_down,
       command_stop: device.command_stop, command_check: device.command_check,
       command_tilt: device.command_tilt,

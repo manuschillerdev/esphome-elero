@@ -111,7 +111,7 @@ class EspCoverShell : public cover::Cover, public Component {
     }
 
     if (call.get_tilt().has_value()) {
-      registry_->command_cover_tilt(address_);
+      registry_->command_cover_tilt(address_, *call.get_tilt());
       return;
     }
 
