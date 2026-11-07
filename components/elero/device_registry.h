@@ -102,13 +102,16 @@ class DeviceRegistry {
     /// Entity-bound route: resolve the current cover by ID and require it to be
     /// published, except for explicit STOP. Manual controls use Device& above.
     bool command_cover_action(uint32_t address, const char *action);
+    bool command_cover(uint32_t address, uint8_t cmd_byte);
     bool step_cover(Device &dev, bool up);
 
     /// Set a cover's target position (0.0–1.0). Determines direction, sets target, starts movement.
     void set_cover_position(Device &dev, float target);
+    void set_cover_position(uint32_t address, float target);
 
     /// Dispatch a tilt command to a cover device.
     void command_cover_tilt(Device &dev);
+    void command_cover_tilt(uint32_t address);
 
     /// Dispatch a command byte to a light device (on/off + FSM + enqueue).
     bool command_light(Device &dev, uint8_t cmd_byte);
@@ -228,6 +231,8 @@ class DeviceRegistry {
     bool set_hub_name_override(const std::string &name);
 
  private:
+    /// Admission for entity commands; manual Device& commands remain separate.
+    Device *find_entity_cover_(uint32_t address, bool allow_unpublished_stop = false);
     std::array<Device, MAX_DEVICES> slots_{};
     std::array<NvsGroupConfig, MAX_GROUPS> groups_{};
     std::array<GroupStateSnapshot, MAX_GROUPS> group_published_{};

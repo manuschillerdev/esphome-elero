@@ -37,6 +37,7 @@
 #define LOG_PIN(msg, pin) ((void)0)
 #define ESP_LOGCONFIG(tag, format, ...) ((void)0)
 #define USE_BUTTON
+#define USE_COVER
 #define IRAM_ATTR
 
 #ifndef UNIT_TEST
@@ -81,6 +82,7 @@ constexpr float DATA = 0.0f;
 #include "elero/device_registry.cpp"
 #include "elero_mqtt/mqtt_adapter.h"
 #include "elero/esp_cover_action_button.h"
+#include "elero/esp_cover_shell.h"
 
 // Stub Elero methods (device_registry.cpp includes elero.h)
 namespace esphome {
@@ -1614,4 +1616,93 @@ TEST_F(DeviceRegistryTest, DisablingCancelsPreviouslyQueuedCoverCommands) {
     registry_.upsert(config);
     EXPECT_EQ(dev->sender.queue_size(), 0u);
     EXPECT_TRUE(registry_.command_cover_action(*dev, "stop"));
+}
+
+class TestCoverShell : public EspCoverShell {
+ public:
+    using EspCoverShell::control;
+};
+
+TEST_F(DeviceRegistryTest, NativeCoverRejectsDisabledMovementButKeepsStopAndManualWebAccess) {
+    auto *dev = add_cover();
+    TestCoverShell shell;
+    shell.set_registry(&registry_);
+    shell.set_device(dev);
+    auto config = dev->config;
+    config.set_enabled(false);
+    registry_.upsert(config);
+
+    for (const float target : {0.0f, 0.5f, 1.0f}) {
+        esphome::cover::CoverCall call;
+        call.position = target;
+        shell.control(call);
+        EXPECT_EQ(dev->sender.queue_size(), 0u);
+    }
+    esphome::cover::CoverCall tilt;
+    tilt.tilt = 1.0f;
+    shell.control(tilt);
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+    esphome::cover::CoverCall toggle;
+    toggle.toggle = true;
+    shell.control(toggle);
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+
+    esphome::cover::CoverCall stop;
+    stop.stop = true;
+    shell.control(stop);
+    auto emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().payload[4], pkt::command::STOP);
+
+    // Web manual commands deliberately use the Device& registry route.
+    ASSERT_TRUE(registry_.command_cover_action(*dev, "full_up"));
+    emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().payload[4], pkt::command::FULL_UP);
+}
+
+TEST_F(DeviceRegistryTest, NativeCoverCommandsFollowCurrentConfigurationAndRejectSlotReuse) {
+    auto *dev = add_cover();
+    TestCoverShell shell;
+    shell.set_registry(&registry_);
+    shell.set_device(dev);
+    auto config = dev->config;
+    config.set_step_mode(true);
+    config.src_address = 0x123456;
+    config.channel = 8;
+    registry_.upsert(config);
+
+    esphome::cover::CoverCall open;
+    open.position = 1.0f;
+    shell.control(open);
+    auto emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().payload[4], pkt::command::FULL_UP);
+    EXPECT_EQ(emitted.front().src_addr, config.src_address);
+    EXPECT_EQ(emitted.front().channel, config.channel);
+    esphome::cover::CoverCall position;
+    position.position = 0.75f;
+    shell.control(position);
+    EXPECT_FLOAT_EQ(std::get<CoverDevice>(dev->logic).target_position, 0.75f);
+    (void) drain_commands(*dev);
+    esphome::cover::CoverCall tilt;
+    tilt.tilt = 1.0f;
+    shell.control(tilt);
+    emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().payload[4], pkt::command::TILT);
+
+    ASSERT_TRUE(registry_.remove(config.dst_address, DeviceType::COVER));
+    shell.control(open);
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+    auto *replacement = add_cover(0xA831E6);
+    ASSERT_EQ(replacement, dev);
+    for (auto call : {open, position, tilt}) shell.control(call);
+    esphome::cover::CoverCall stop;
+    stop.stop = true;
+    shell.control(stop);
+    esphome::cover::CoverCall toggle;
+    toggle.toggle = true;
+    shell.control(toggle);
+    EXPECT_EQ(replacement->sender.queue_size(), 0u);
 }

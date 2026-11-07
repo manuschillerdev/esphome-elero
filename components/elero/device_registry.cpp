@@ -333,12 +333,31 @@ bool DeviceRegistry::command_cover_action(Device &dev, const char *action_name) 
 }
 
 bool DeviceRegistry::command_cover_action(uint32_t address, const char *action_name) {
+    if (action_name == nullptr) return false;
+    auto *dev = find_entity_cover_(address, strcmp(action_name, action::STOP) == 0);
+    return dev != nullptr && command_cover_action(*dev, action_name);
+}
+
+Device *DeviceRegistry::find_entity_cover_(uint32_t address, bool allow_unpublished_stop) {
     auto *dev = find(address, DeviceType::COVER);
-    if (dev == nullptr || action_name == nullptr) return false;
+    if (dev == nullptr) return nullptr;
     // Entity-bound actions must not outlive publication. Explicit STOP remains
     // available; manual web controls use the Device& overload independently.
-    if (!dev->config.is_enabled() && strcmp(action_name, action::STOP) != 0) return false;
-    return command_cover_action(*dev, action_name);
+    if (!dev->config.is_enabled() && !allow_unpublished_stop) return nullptr;
+    return dev;
+}
+
+bool DeviceRegistry::command_cover(uint32_t address, uint8_t cmd_byte) {
+    auto *dev = find_entity_cover_(address, cmd_byte == packet::command::STOP);
+    return dev != nullptr && command_cover(*dev, cmd_byte);
+}
+
+void DeviceRegistry::set_cover_position(uint32_t address, float target) {
+    if (auto *dev = find_entity_cover_(address)) set_cover_position(*dev, target);
+}
+
+void DeviceRegistry::command_cover_tilt(uint32_t address) {
+    if (auto *dev = find_entity_cover_(address)) command_cover_tilt(*dev);
 }
 
 bool DeviceRegistry::step_cover(Device &dev, bool up) {
