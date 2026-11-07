@@ -1154,3 +1154,12 @@ TEST_F(CommandSenderTest, QueueSaturationAndWaitingDoNotConsumeHardwareRetries) 
   }
   EXPECT_EQ(sender_.queue_size(), 0u);
 }
+
+TEST_F(CommandSenderTest, ShortPressRejectsFullQueueWithoutLeavingButtonHeld) {
+  for (uint8_t i = 0; i < packet::limits::MAX_COMMAND_QUEUE - 1; ++i) {
+    ASSERT_TRUE(sender_.enqueue(static_cast<uint8_t>(0x50 + i)));
+  }
+  const auto size = sender_.queue_size();
+  EXPECT_FALSE(sender_.enqueue_short_press(0x20));
+  EXPECT_EQ(sender_.queue_size(), size);
+}

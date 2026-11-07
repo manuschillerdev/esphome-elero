@@ -218,13 +218,21 @@ void calc_parity(uint8_t* msg) {
 |---------|-----|-------------|
 | CHECK | 0x00 | Request status |
 | STOP | 0x10 | Stop movement |
-| UP / OPEN | 0x20 | Move up / open |
+| UP / OPEN | 0x20 | Short UP; full travel on standard receivers, a step on pulse receivers |
+| FULL UP | 0x21 | Continuous UP on tested step receivers; receiver-addressed 0x6A TX |
 | TILT | 0x24 | Tilt position |
-| DOWN / CLOSE | 0x40 | Move down / close |
+| DOWN / CLOSE | 0x40 | Short DOWN; full travel on standard receivers, a step on pulse receivers |
+| FULL DOWN | 0x41 | Continuous DOWN on tested step receivers; receiver-addressed 0x6A TX |
 | INTERMEDIATE | 0x44 | Move to intermediate position |
 | PROGRAM / P | 0x80 | Programming/P, single-channel selector envelope |
 | PROGRAM / P GROUP | 0x81 | Programming/P, group/list selector envelope (RX/sniffing only) |
 | PROGRAM / P TARGETED | 0x84 | Programming/P, targeted 3-byte-address envelope (RX/sniffing only) |
+
+Step-receiver mode maps semantic UP/DOWN to `0x21`/`0x41` at TX. Full-travel
+packets use `type=0x6A`, `type2=0x10`, `hop=0x00`, with one 24-bit receiver address.
+Explicit short steps use channel-button `0x44` press/release phases and bypass
+movement overrides. See `docs/TESTING_STEP_RECEIVERS.md` for source captures and
+hardware acceptance. This does not establish support on every receiver variant.
 
 ### Light Commands (if applicable)
 

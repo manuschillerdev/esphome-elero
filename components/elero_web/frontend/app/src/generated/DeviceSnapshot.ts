@@ -1,4 +1,5 @@
 import {DeviceType} from './DeviceType';
+import {CoverMovementMode} from './CoverMovementMode';
 /**
  * One device. Mirrors `NvsDeviceConfig` fields. Address fields are
  * hex strings (e.g., "0xa831e5"); the import handler accepts both
@@ -77,6 +78,10 @@ interface DeviceSnapshot {
    * @example 0x00
    */
   'type2'?: string;
+  /**
+   * Standard uses configured commands. Step uses targeted full travel for Open/Close; explicit step actions remain available.
+   */
+  'movement_mode'?: CoverMovementMode;
   /**
    * Per-cover RF command byte; defaults to 0x20.
    */

@@ -92,6 +92,8 @@ constexpr uint8_t STATUS_ALT = 0xc9;          ///< Alternate status format
 namespace command {
 constexpr uint8_t CHECK = 0x00;               ///< Request status (no movement)
 constexpr uint8_t STOP = 0x10;                ///< Stop movement
+constexpr uint8_t FULL_UP = 0x21;             ///< Continuous UP on step receivers (targeted TX)
+constexpr uint8_t FULL_DOWN = 0x41;           ///< Continuous DOWN on step receivers (targeted TX)
 constexpr uint8_t UP = 0x20;                  ///< Move up / open
 constexpr uint8_t TILT = 0x24;                ///< Tilt position
 constexpr uint8_t DOWN = 0x40;                ///< Move down / close

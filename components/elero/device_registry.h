@@ -98,6 +98,8 @@ class DeviceRegistry {
     /// Dispatch a command byte to a cover device (open/close/stop + FSM + enqueue + poll).
     /// Returns queue admission, not confirmation from the receiver.
     bool command_cover(Device &dev, uint8_t cmd_byte);
+    bool command_cover_action(Device &dev, const char *action);
+    bool step_cover(Device &dev, bool up);
 
     /// Set a cover's target position (0.0–1.0). Determines direction, sets target, starts movement.
     void set_cover_position(Device &dev, float target);

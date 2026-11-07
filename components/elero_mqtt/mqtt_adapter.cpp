@@ -412,13 +412,9 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
             Device *d = registry_->find(addr, DeviceType::COVER);
             if (d == nullptr) return;
 
-            uint8_t cmd_byte = elero_action_to_command(payload);
-            if (cmd_byte == packet::command::INVALID) {
-                ESP_LOGW(TAG, "Unknown cover action: %s", payload);
-                return;
+            if (!registry_->command_cover_action(*d, payload)) {
+                ESP_LOGW(TAG, "Cover action rejected: %s", payload);
             }
-
-            registry_->command_cover(*d, cmd_byte);
         });
 
     // Position commands (only meaningful when durations are set)

@@ -19,6 +19,7 @@ static const char *const TAG = "elero.registry";
 bool DeviceRegistry::enqueue_or_warn_(Device &dev, uint8_t cmd_byte,
                                       uint8_t packets, uint8_t type,
                                       const char *context, std::span<const uint8_t> channels) {
+    type = dev.config.wire_packet_type(cmd_byte, type);
     if (dev.sender.enqueue(dev.config.wire_command(cmd_byte), packets, type,
                            channels, cmd_byte == packet::command::STOP)) {
         return true;
@@ -183,7 +184,8 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
         // Queued requests retain their original RF selectors. Cancel using the
         // old identity before replacing it, including groups owned by peers.
         if (existing->config.src_address != config.src_address ||
-            existing->config.channel != config.channel) {
+            existing->config.channel != config.channel ||
+            existing->config.is_step_mode() != config.is_step_mode()) {
             cancel_pending_commands_(*existing);
         }
         update_device_config(*existing, config);
@@ -320,6 +322,25 @@ Device *DeviceRegistry::find(uint32_t address) {
 // COMMAND DISPATCH
 // ═════════════════════════════════════════════════════════════════════════════
 
+bool DeviceRegistry::command_cover_action(Device &dev, const char *action_name) {
+    if (action_name == nullptr) return false;
+    if (strcmp(action_name, action::STEP_UP) == 0) return step_cover(dev, true);
+    if (strcmp(action_name, action::STEP_DOWN) == 0) return step_cover(dev, false);
+    const uint8_t command = elero_action_to_command(action_name);
+    if (command == packet::command::INVALID) return false;
+    return command_cover(dev, command);
+}
+
+bool DeviceRegistry::step_cover(Device &dev, bool up) {
+    if (!dev.active || !dev.is_cover()) return false;
+    // Explicit steps bypass movement mode and command overrides. Both phases
+    // use channel addressing; no angle or lift position is inferred from a pulse.
+    if (!dev.sender.enqueue_short_press(up ? packet::command::UP : packet::command::DOWN)) return false;
+    auto &cover = std::get<CoverDevice>(dev.logic);
+    cover.poll.on_command_sent(millis());
+    return true;
+}
+
 bool DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte) {
     if (!dev.is_cover()) return false;
 
@@ -343,6 +364,8 @@ bool DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte) {
         if (!enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
                               packet::msg_type::BUTTON,
                               "command_cover(move)")) return false;
+        if (cmd_byte == packet::command::FULL_UP) cmd_byte = packet::command::UP;
+        if (cmd_byte == packet::command::FULL_DOWN) cmd_byte = packet::command::DOWN;
         if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
         if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
         (void) enqueue_check_(dev, "command_cover(move)");
@@ -410,7 +433,8 @@ void DeviceRegistry::command_cover_tilt(Device &dev) {
 }
 
 bool DeviceRegistry::command_light(Device &dev, uint8_t cmd_byte) {
-    if (!dev.is_light()) return false;
+    if (!dev.is_light() || cmd_byte == packet::command::FULL_UP ||
+        cmd_byte == packet::command::FULL_DOWN) return false;
 
     auto &light = std::get<LightDevice>(dev.logic);
     auto ctx = light_context(dev.config);
@@ -486,6 +510,8 @@ bool DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
 
     DeviceType group_type = devices[0] != nullptr ? devices[0]->config.type : DeviceType::COVER;
     uint32_t src_addr = devices[0] != nullptr ? devices[0]->config.src_address : 0;
+    if (group_type != DeviceType::COVER &&
+        (cmd_byte == packet::command::FULL_UP || cmd_byte == packet::command::FULL_DOWN)) return false;
     for (size_t i = 0; i < count; ++i) {
         if (devices[i] == nullptr || !devices[i]->active || devices[i]->is_remote()) {
             ESP_LOGW(TAG, "command_group: device[%zu] is not an active controllable device", i);
@@ -505,8 +531,9 @@ bool DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
     // STOP/CHECK are per-device. A selector packet also cannot combine
     // motor variants that map this action to different wire commands.
     bool individual = cmd_byte == packet::command::CHECK || cmd_byte == packet::command::STOP;
-    for (size_t i = 1; i < count; ++i) {
+    for (size_t i = 0; i < count; ++i) {
         individual |= devices[i]->config.wire_command(cmd_byte) != devices[0]->config.wire_command(cmd_byte);
+        individual |= devices[i]->config.wire_packet_type(cmd_byte, packet::msg_type::BUTTON) == packet::msg_type::COMMAND;
     }
     if (individual) {
         bool accepted = true;

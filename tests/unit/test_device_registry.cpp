@@ -1397,3 +1397,138 @@ TEST_F(DeviceRegistryTest, HubName_HasOverrideReflectsState) {
     registry_.set_hub_name_override("");
     EXPECT_FALSE(registry_.has_hub_name_override());
 }
+
+// Step receiver controls: check the emitted wire format, not only enum values.
+TEST_F(DeviceRegistryTest, StepMode_OpenCloseUseTargetedContinuousCommands) {
+    auto config = make_cover_config(0xA831E5);
+    config.set_step_mode(true);
+    auto *dev = registry_.upsert(config);
+    for (const auto command : {pkt::command::UP, pkt::command::DOWN}) {
+        ASSERT_TRUE(registry_.command_cover(*dev, command));
+        const auto emitted = drain_commands(*dev);
+        ASSERT_EQ(emitted.size(), 4u);
+        for (size_t i = 0; i < 3; ++i) {
+            const auto &tx = emitted[i];
+            EXPECT_EQ(tx.type, 0x6a);
+            EXPECT_EQ(tx.type2, 0x10);
+            EXPECT_EQ(tx.hop, 0x00);
+            EXPECT_EQ(tx.num_dests, 0);
+            uint8_t frame[64]{};
+            const size_t length = pkt::build_command_packet(tx, frame);
+            ASSERT_EQ(length, 30u);
+            EXPECT_EQ(frame[16], 1);  // One full 24-bit destination, not a selector.
+            EXPECT_EQ(frame[17], 0xa8);
+            EXPECT_EQ(frame[18], 0x31);
+            EXPECT_EQ(frame[19], 0xe5);
+            frame[length] = 100;
+            frame[length + 1] = 0x80;
+            const auto decoded = pkt::parse_packet(frame, length + 2);
+            ASSERT_TRUE(decoded.valid);
+            EXPECT_EQ(decoded.command, command == pkt::command::UP ? 0x21 : 0x41);
+        }
+        EXPECT_EQ(emitted.back().type, 0x6a);
+        EXPECT_EQ(emitted.back().payload[4], 0x00);  // Follow-up CHECK, not release.
+    }
+}
+
+TEST_F(DeviceRegistryTest, ExplicitFullTravelKeepsLogicalDirection) {
+    auto *dev = add_cover();
+    ASSERT_TRUE(registry_.command_cover_action(*dev, "full_up"));
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Opening>(std::get<CoverDevice>(dev->logic).state));
+    const auto up = drain_commands(*dev);
+    ASSERT_FALSE(up.empty());
+    EXPECT_EQ(up.front().type, 0x6a);
+    EXPECT_EQ(up.front().payload[4], 0x21);
+    ASSERT_TRUE(registry_.command_cover_action(*dev, "full_down"));
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Closing>(std::get<CoverDevice>(dev->logic).state));
+    const auto down = drain_commands(*dev);
+    ASSERT_FALSE(down.empty());
+    EXPECT_EQ(down.front().type, 0x6a);
+    EXPECT_EQ(down.front().payload[4], 0x41);
+}
+
+TEST_F(DeviceRegistryTest, StepMode_ShortPressBypassesOverridesAndIncludesRelease) {
+    auto config = make_cover_config(0xA831E5);
+    config.set_step_mode(true);
+    config.flags |= NvsDeviceConfig::FLAG_COMMAND_BYTES;
+    config.command_up = 0x21;
+    config.command_down = 0x41;
+    auto *dev = registry_.upsert(config);
+    for (const auto action : {"step_up", "step_down"}) {
+        ASSERT_TRUE(registry_.command_cover_action(*dev, action));
+        const auto emitted = drain_commands(*dev);
+        ASSERT_EQ(emitted.size(), 6u);
+        for (size_t i = 0; i < emitted.size(); ++i) {
+            EXPECT_EQ(emitted[i].type, 0x44);
+            EXPECT_EQ(emitted[i].channel, 4);
+            EXPECT_EQ(emitted[i].payload[4], i < 3 ? (strcmp(action, "step_up") == 0 ? 0x20 : 0x40) : 0x00);
+        }
+    }
+}
+
+TEST_F(DeviceRegistryTest, StepMode_PositionAndGroupUsePerReceiverFullTravel) {
+    auto config = make_cover_config(0xA831E5);
+    config.set_step_mode(true);
+    auto *first = registry_.upsert(config);
+    config.dst_address = 0xA831E6;
+    auto *second = registry_.upsert(config);
+    registry_.set_cover_position(*first, 1.0f);
+    const auto position = drain_commands(*first);
+    ASSERT_FALSE(position.empty());
+    EXPECT_EQ(position.front().payload[4], 0x21);
+    EXPECT_EQ(position.front().type, 0x6a);
+    Device *members[] = {first, second};
+    ASSERT_TRUE(registry_.command_group(members, 2, pkt::command::DOWN));
+    for (auto *dev : members) {
+        const auto emitted = drain_commands(*dev);
+        ASSERT_EQ(emitted.size(), 4u);
+        EXPECT_EQ(emitted.front().type, 0x6a);
+        EXPECT_EQ(emitted.front().payload[4], 0x41);
+        EXPECT_EQ(emitted.front().dst_addr, dev->config.dst_address);
+        EXPECT_EQ(emitted.front().num_dests, 0);
+    }
+}
+
+TEST_F(DeviceRegistryTest, StandardModeAndCustomCommandsRemainAvailable) {
+    auto *dev = add_cover();
+    ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::UP));
+    auto emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().type, 0x44);
+    EXPECT_EQ(emitted.front().payload[4], 0x20);
+    auto config = dev->config;
+    config.flags |= NvsDeviceConfig::FLAG_COMMAND_BYTES;
+    config.command_up = 0x21;
+    registry_.upsert(config);
+    ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::UP));
+    emitted = drain_commands(*dev);
+    ASSERT_FALSE(emitted.empty());
+    EXPECT_EQ(emitted.front().type, 0x6a);
+    EXPECT_EQ(emitted.front().payload[4], 0x21);
+}
+
+TEST_F(DeviceRegistryTest, MovementModeChangeCancelsQueuedOldFormat) {
+    auto *dev = add_cover();
+    ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::UP));
+    auto config = dev->config;
+    config.set_step_mode(true);
+    registry_.upsert(config);
+    EXPECT_TRUE(drain_commands(*dev).empty());
+    EXPECT_TRUE(dev->config.is_step_mode());
+    EXPECT_EQ(sizeof(config), 64u);
+    EXPECT_EQ(config.configured_command(pkt::command::UP), 0x20);
+    EXPECT_EQ(config.wire_command(pkt::command::UP), 0x21);
+    config.set_step_mode(false);
+    EXPECT_EQ(config.wire_command(pkt::command::UP), 0x20);
+}
+
+TEST_F(DeviceRegistryTest, CoverActionsRejectUnknownAndNonCoverSteps) {
+    auto *dev = add_cover();
+    EXPECT_FALSE(registry_.command_cover_action(*dev, "invalid"));
+    EXPECT_FALSE(registry_.command_cover_action(*dev, nullptr));
+    auto *light = add_light();
+    EXPECT_FALSE(registry_.command_cover_action(*light, "step_up"));
+    EXPECT_FALSE(registry_.command_cover_action(*light, "full_up"));
+    EXPECT_FALSE(registry_.command_light(*light, pkt::command::FULL_UP));
+    EXPECT_EQ(light->sender.queue_size(), 0u);
+}

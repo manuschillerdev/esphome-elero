@@ -14,7 +14,7 @@ namespace elero {
 
 /// Non-blocking command queue and transmission logic for Elero cover and light components.
 ///
-/// Movement uses 0x44 button packets; targeted STOP/CHECK uses 0x6a.
+/// Standard movement and short steps use 0x44; continuous travel and STOP/CHECK use 0x6a.
 /// Each queued request owns its command settings and recipients.
 ///
 /// State machine:
@@ -141,6 +141,13 @@ class CommandSender : public TxClient {
     cmd.type = type;
     cmd.type2 = type == packet::msg_type::BUTTON ? packet::button::TYPE2 : packet::defaults::TYPE2;
     cmd.hop = type == packet::msg_type::BUTTON ? packet::button::HOP : packet::defaults::HOP;
+    if (type == packet::msg_type::COMMAND &&
+        (cmd_byte == packet::command::FULL_UP || cmd_byte == packet::command::FULL_DOWN)) {
+      // Captured VarioCom long presses retain button header fields while
+      // switching from selector addressing to a 24-bit receiver address.
+      cmd.type2 = packet::button::TYPE2;
+      cmd.hop = packet::button::HOP;
+    }
     cmd.num_dests = static_cast<uint8_t>(channels.size());
     std::fill(std::begin(cmd.dest_channels), std::end(cmd.dest_channels), 0);
     std::copy(channels.begin(), channels.end(), cmd.dest_channels);
@@ -165,6 +172,13 @@ class CommandSender : public TxClient {
       this->state_ = State::WAIT_DELAY;
     }
     return true;
+  }
+
+  /// Reserve both phases before accepting a short channel-button press.
+  [[nodiscard]] bool enqueue_short_press(uint8_t command) {
+    if (this->command_queue_.size() > packet::limits::MAX_COMMAND_QUEUE - 2) return false;
+    if (!enqueue(command)) return false;
+    return enqueue(packet::button::RELEASE);
   }
 
   void clear_queue() {

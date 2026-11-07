@@ -289,7 +289,7 @@ function InlineActions({ device }: { device: Device }) {
               <Shrink className="size-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{device.supports_tilt ? 'Tilt' : 'Tilt (disabled)'}</TooltipContent>
+          <TooltipContent>{device.supports_tilt ? 'Saved tilt' : 'Saved tilt (disabled)'}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger>

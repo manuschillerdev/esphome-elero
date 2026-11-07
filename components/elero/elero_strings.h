@@ -15,6 +15,10 @@ namespace esphome::elero {
 // ─── Action string constants (used in perform_action, MQTT, WebSocket) ───
 
 namespace action {
+inline constexpr const char *FULL_UP = "full_up";
+inline constexpr const char *FULL_DOWN = "full_down";
+inline constexpr const char *STEP_UP = "step_up";
+inline constexpr const char *STEP_DOWN = "step_down";
 inline constexpr const char *UP = "up";
 inline constexpr const char *DOWN = "down";
 inline constexpr const char *OPEN = "open";

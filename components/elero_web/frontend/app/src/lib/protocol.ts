@@ -16,6 +16,8 @@ export const command = {
   CHECK: '0x00',
   STOP: '0x10',
   UP: '0x20',
+  FULL_UP: '0x21',
+  FULL_DOWN: '0x41',
   TILT: '0x24',
   DOWN: '0x40',
   INTERMEDIATE: '0x44',
@@ -26,7 +28,7 @@ export const command = {
 
 /** Commands that indicate a real user action (not a status poll). */
 export const DISCOVERY_COMMANDS: Set<string> = new Set([
-  command.UP, command.DOWN, command.STOP, command.TILT, command.INTERMEDIATE,
+  command.UP, command.DOWN, command.FULL_UP, command.FULL_DOWN, command.STOP, command.TILT, command.INTERMEDIATE,
 ])
 
 /// Hex byte → RfStateName (from AsyncAPI spec). Single source of truth for

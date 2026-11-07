@@ -109,7 +109,7 @@ export function BlindControls({ device }: { device: Device }) {
             <Shrink className="size-3.5" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{device.supports_tilt ? 'Tilt' : 'Tilt (disabled)'}</TooltipContent>
+        <TooltipContent>{device.supports_tilt ? 'Saved tilt' : 'Saved tilt (disabled)'}</TooltipContent>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger>
@@ -259,9 +259,9 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
   return (
     <div className="border-t border-border bg-muted/20">
       {/* Config row */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-border">
         {/* Left: config inputs */}
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           {device.type === 'cover' && (
             <>
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -293,6 +293,20 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
                   className={inputClass}
                 />
                 <span>s</span>
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                Movement mode
+                <select
+                  aria-label="Movement mode"
+                  value={device.movement_mode}
+                  onChange={(event) => updateDevice(device.address, {
+                    movement_mode: event.currentTarget.value === 'step' ? 'step' : 'standard',
+                  })}
+                  className="rounded border border-input bg-background px-2 py-1 text-foreground"
+                >
+                  <option value="standard">Standard</option>
+                  <option value="step">Step receiver</option>
+                </select>
               </label>
               <Toggle checked={device.supports_tilt} onChange={(v) => updateDevice(device.address, { supports_tilt: v })} label="Tilt" />
             </>
@@ -330,6 +344,26 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
           )}
         </div>
       </div>
+
+      {device.type === 'cover' && (
+        <div className="space-y-2 border-b border-border px-5 py-3">
+          <p className="text-xs text-muted-foreground">
+            Save changes before testing. Step receiver mode uses full travel for Open/Close, including Home Assistant.
+          </p>
+          <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Cover movement test">
+            <Button variant="outline" size="sm" disabled={device.updated_at === null} onClick={() => sendDeviceCommand(device, 'step_up')}>Step up</Button>
+            <Button variant="outline" size="sm" disabled={device.updated_at === null} onClick={() => sendDeviceCommand(device, 'step_down')}>Step down</Button>
+            <Button variant="outline" size="sm" disabled={device.updated_at === null} onClick={() => sendDeviceCommand(device, 'full_up')}>Full up</Button>
+            <Button variant="outline" size="sm" disabled={device.updated_at === null} onClick={() => sendDeviceCommand(device, 'full_down')}>Full down</Button>
+            <Button variant="outline" size="sm" onClick={() => sendDeviceCommand(device, 'stop')}>Stop</Button>
+            <Button variant="outline" size="sm" disabled={device.updated_at === null} onClick={() => sendDeviceCommand(device, 'int')}>Intermediate</Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Steps use the paired channel; other covers can respond. Full travel targets this cover.
+            A standard receiver may travel fully after a short press.
+          </p>
+        </div>
+      )}
 
       {/* Sniffed commands */}
       <div className="px-5 py-3">
