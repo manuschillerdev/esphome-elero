@@ -234,7 +234,7 @@ function SaveButton({ device }: { device: Device }) {
   return (
     <Tooltip>
       <TooltipTrigger>
-        <Button variant="ghost" size="icon" className="size-6 text-primary hover:text-primary" onClick={() => sendUpsertDevice(device)}>
+        <Button variant="ghost" size="icon" className="size-6 text-primary hover:text-primary" onClick={() => sendUpsertDevice(devices.value.get(device.address) ?? device)}>
           <Save className="size-3.5" />
         </Button>
       </TooltipTrigger>

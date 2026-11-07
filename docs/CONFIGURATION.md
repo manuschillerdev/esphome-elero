@@ -261,7 +261,18 @@ cleared until the motor is observed again; no initial 50% position is advertised
 ## Web UI: `elero_web`
 
 Cover command bytes are optional and also round-trip through device CRUD and
-backup JSON. For Raffstore variants, set `command_up` to `"0x21"` and
+backup JSON. Open **Custom command bytes** in a cover's expanded settings to
+edit Open, Close, Stop, Status query, and Saved tilt. The editor accepts one or
+two hex digits, with an optional `0x` prefix, and formats them as `0x00`–`0xFF`.
+Invalid input keeps the previous value and shows an error. Use **Save to NVS**
+to apply changes. **Reset command bytes** restores the five defaults and also
+requires Save. These fields are available only for covers and require CRUD
+support. They do not change the explicit Short press or Full travel buttons.
+
+Step receiver mode takes precedence over custom Open and Close bytes. Select
+Standard mode to use those overrides; switching modes keeps their stored values.
+
+For Raffstore variants, set `command_up` to `"0x21"` and
 `command_down` to `"0x44"` when those values match the physical transmitter.
 Legacy NVS records ignore the repurposed reserved bytes; old backups use the
 default commands. The 64-byte NVS record and version remain unchanged.
