@@ -183,11 +183,11 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
     if (existing) {
         // Queued requests retain their original RF selectors. Cancel using the
         // old identity before replacing it, including groups owned by peers.
+        // Tilt-only edits apply to later requests; accepted press/release cycles
+        // and unrelated movement must finish with their captured settings.
         if (existing->config.src_address != config.src_address ||
             existing->config.channel != config.channel ||
             existing->config.is_step_mode() != config.is_step_mode() ||
-            existing->config.is_step_tilt() != config.is_step_tilt() ||
-            existing->config.supports_tilt != config.supports_tilt ||
             (existing->config.is_enabled() && !config.is_enabled())) {
             cancel_pending_commands_(*existing);
         }

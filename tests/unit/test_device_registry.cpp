@@ -1852,8 +1852,68 @@ TEST_F(DeviceRegistryTest, RejectedTiltKeepsOldPlanAndNeverQueuesHalfAPress) {
     EXPECT_EQ(cover.target_position, 0.75f);
     config.set_step_tilt(false);
     registry_.upsert(config);
-    EXPECT_EQ(dev->sender.queue_size(), 0u);
+    EXPECT_EQ(dev->sender.queue_size(), count);
     EXPECT_FALSE(dev->config.is_step_tilt());
     EXPECT_EQ(sizeof(config), 64u);
     EXPECT_EQ(config.version, 3);
+}
+
+TEST_F(DeviceRegistryTest, TiltModeEditCompletesAnAcceptedPressReleaseCycle) {
+    auto config = make_cover_config(0xA831E5);
+    config.supports_tilt = 1;
+    config.set_step_tilt(true);
+    auto *dev = registry_.upsert(config);
+    ASSERT_TRUE(registry_.command_cover_tilt(config.dst_address, 1.0f));
+    struct RecordingHub {
+        std::vector<EleroCommand> commands;
+        TxClient *pending{nullptr};
+        uint32_t attempt{0};
+        bool request_tx(TxClient *client, const EleroCommand &command) {
+            commands.push_back(command);
+            pending = client;
+            attempt = client->begin_tx_attempt();
+            return true;
+        }
+    } hub;
+    for (int i = 0; i < 3; ++i) {
+        mock_time_.advance(pkt::button::INTER_PACKET_MS);
+        dev->sender.process_queue(mock_time_.millis(), &hub, "test");
+        ASSERT_NE(hub.pending, nullptr);
+        hub.pending->complete_tx_attempt(hub.attempt, true);
+        hub.pending = nullptr;
+    }
+    ASSERT_EQ(hub.commands.size(), 3u);
+    for (const auto &tx : hub.commands) EXPECT_EQ(tx.payload[4], pkt::command::UP);
+    ASSERT_EQ(dev->sender.queue_size(), 1u);
+
+    config.set_step_tilt(false);
+    registry_.upsert(config);
+    const auto release = drain_commands(*dev);
+    ASSERT_EQ(release.size(), 3u);
+    for (const auto &tx : release) {
+        EXPECT_EQ(tx.payload[4], pkt::button::RELEASE);
+        EXPECT_EQ(tx.type, pkt::msg_type::BUTTON);
+    }
+    // The accepted cycle finishes; subsequent requests use the new mode.
+    ASSERT_TRUE(registry_.command_cover_tilt(config.dst_address, 1.0f));
+    const auto preset = drain_commands(*dev);
+    ASSERT_FALSE(preset.empty());
+    EXPECT_EQ(preset.front().payload[4], pkt::command::TILT);
+}
+
+TEST_F(DeviceRegistryTest, TiltCapabilityEditPreservesAnUnrelatedOpenCommand) {
+    auto config = make_cover_config(0xA831E5);
+    auto *dev = registry_.upsert(config);
+    for (const uint8_t enabled : {1, 0}) {
+        ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::UP));
+        auto &cover = std::get<CoverDevice>(dev->logic);
+        ASSERT_TRUE(cover_sm::is_moving(cover.state));
+        config.supports_tilt = enabled;
+        registry_.upsert(config);
+        const auto open = drain_commands(*dev);
+        ASSERT_EQ(open.size(), 4u);
+        for (size_t i = 0; i < 3; ++i) EXPECT_EQ(open[i].payload[4], pkt::command::UP);
+        EXPECT_EQ(open.back().payload[4], pkt::command::CHECK);
+        EXPECT_TRUE(cover_sm::is_moving(cover.state));
+    }
 }
