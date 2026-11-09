@@ -108,6 +108,7 @@ export interface Device extends CoverCommandBytes {
   close_ms: number
   supports_tilt: boolean
   movement_mode: 'standard' | 'step'
+  tilt_mode: 'preset' | 'step'
   dim_ms: number
   lastStatus: RfPacketWithTimestamp | null
 }
@@ -211,6 +212,7 @@ function makeDevice(partial: Partial<Device> & { address: string; type: DeviceTy
     close_ms: 0,
     supports_tilt: false,
     movement_mode: 'standard',
+    tilt_mode: 'preset',
     dim_ms: 0,
     lastStatus: null,
     ...partial,
@@ -224,6 +226,7 @@ function blindToDevice(b: BlindConfig): Device {
     name: b.name, channel: b.channel, remote: b.remote, pairings: makePairings(b.remote, b.channel),
     open_ms: b.open_ms, close_ms: b.close_ms, supports_tilt: b.supports_tilt,
     movement_mode: b.movement_mode ?? 'standard',
+    tilt_mode: b.tilt_mode ?? 'preset',
     lastStatus: b.state && b.state !== '0x00'
       ? { state: b.state, rssi: b.rssi } as RfPacketWithTimestamp
       : null,
@@ -391,6 +394,7 @@ export function onDeviceUpserted(data: DeviceUpsertedData) {
     close_ms: data.close_ms ?? 0,
     supports_tilt: data.supports_tilt ?? false,
     movement_mode: data.movement_mode ?? 'standard',
+    tilt_mode: data.tilt_mode ?? 'preset',
     dim_ms: data.dim_ms ?? 0,
     lastStatus: existing?.lastStatus ?? null,
   })

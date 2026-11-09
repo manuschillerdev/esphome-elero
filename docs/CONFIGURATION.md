@@ -127,7 +127,8 @@ and edited via the web UI's device editor. Fields marked **(cover)** and
 | `open_duration_ms` | Integer | `0` | **(cover)** Travel time fully open. `0` = no position tracking. |
 | `close_duration_ms` | Integer | `0` | **(cover)** Travel time fully closed. Pair with `open_duration_ms`. |
 | `movement_mode` | `standard` / `step` | `standard` | **(cover)** Step mode makes Open/Close use targeted continuous travel. |
-| `supports_tilt` | Boolean | `false` | **(cover)** Expose the motor's saved tilt preset; not arbitrary slat angles. |
+| `supports_tilt` | Boolean | `false` | **(cover)** Enable HA tilt controls. No measured slat angle is available. |
+| `tilt_mode` | `preset` / `step` | `preset` | **(cover)** HA tilt controls recall the saved preset, or send directional short presses. Independent of `movement_mode`. |
 | `command_up` | Hex byte | `0x20` | **(cover)** Full opening command |
 | `command_down` | Hex byte | `0x40` | **(cover)** Full closing command |
 | `command_stop` | Hex byte | `0x10` | **(cover)** Stop command |
@@ -244,10 +245,31 @@ control in HA, use HA's `homekit.reset_accessory` for only the affected cover if
 Apple Home still has the old controls. Resetting an accessory can require restoring
 its Apple Home room, name, scenes and automations; do not reset the entire bridge.
 
-`supports_tilt` exposes the existing Elero saved-preset command and binary tilt
-state (0/100). It does **not** measure a slat angle or make arbitrary percentage
-tilt targets possible; the current adapters recall the same preset for tilt
-requests. Enable it only for motors with a programmed tilt preset.
+`supports_tilt` enables HA's tilt controls. Choose the behavior with `tilt_mode`:
+
+- `preset` (default): every valid HA tilt request recalls the saved tilt preset
+  (`command_tilt`, normally `0x24`). Existing devices and backups keep this mode.
+- `step`: each HA tilt request below 50% sends one short DOWN press; 50% or above
+  sends one short UP press. The common registry uses the existing three press
+  packets plus three release packets. Full-travel mode and custom command bytes
+  do not change these short presses.
+
+Neither mode sets or measures an absolute angle. RF-reported tilt state remains
+the existing binary saved-preset status; short presses do not manufacture an
+angle or lift-position estimate. Use the HA tilt-open/tilt-close controls for
+directional steps. Intermediate percentages select a direction, not a target
+angle. Invalid, non-finite, or out-of-range targets are rejected before enqueue.
+
+Select **HA tilt control** in the expanded web settings and Save to NVS. The Tilt
+toggle must be enabled. The setting is independent of Open/Close movement mode;
+the separate `tilt` action and Saved tilt shortcut always recall the preset.
+Short presses address the paired channel, so other covers on that channel can
+respond. A standard roller shutter can travel fully after a short press. Use
+directional mode only with a receiver that has the required short-press behavior.
+
+Native API and MQTT normalize their targets and use the same registry route.
+The shared sender serves CC1101, SX1262, and SX1276. No radio-specific tilt path
+is used. NVS record size/version and backup snapshot version stay unchanged.
 
 Cover state topics are retained at the MQTT broker so a restarted HA or a new
 discovery subscription receives the last reported state. The gateway's availability

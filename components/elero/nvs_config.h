@@ -46,7 +46,8 @@ struct NvsDeviceConfig {
   static constexpr uint8_t FLAG_ENABLED = 0x01;
   static constexpr uint8_t FLAG_COMMAND_BYTES = 0x02;
   static constexpr uint8_t FLAG_STEP_MODE = 0x04;
-  uint8_t flags{FLAG_ENABLED};  ///< enabled, command overrides, and step-receiver mode
+  static constexpr uint8_t FLAG_STEP_TILT = 0x08;
+  uint8_t flags{FLAG_ENABLED};  ///< enabled, command overrides, movement and tilt modes
   uint8_t ha_device_class{0};  ///< HaCoverClass enum value (0 = shutter, backward compatible)
 
   // RF addressing (16 bytes)
@@ -86,6 +87,11 @@ struct NvsDeviceConfig {
   bool is_step_mode() const { return is_cover() && (flags & FLAG_STEP_MODE); }
   void set_step_mode(bool enabled) {
     enabled ? (flags |= FLAG_STEP_MODE) : (flags &= ~FLAG_STEP_MODE);
+  }
+
+  bool is_step_tilt() const { return is_cover() && (flags & FLAG_STEP_TILT); }
+  void set_step_tilt(bool enabled) {
+    enabled ? (flags |= FLAG_STEP_TILT) : (flags &= ~FLAG_STEP_TILT);
   }
 
   bool is_valid() const { return version == NVS_CONFIG_VERSION && dst_address != 0; }

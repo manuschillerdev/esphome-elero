@@ -1,5 +1,6 @@
 import {DeviceType} from './DeviceType';
 import {CoverMovementMode} from './CoverMovementMode';
+import {CoverTiltMode} from './CoverTiltMode';
 /**
  * One device. Mirrors `NvsDeviceConfig` fields. Address fields are
  * hex strings (e.g., "0xa831e5"); the import handler accepts both
@@ -82,6 +83,10 @@ interface DeviceSnapshot {
    * Standard uses configured commands. Step uses targeted full travel for Open/Close; explicit step actions remain available.
    */
   'movement_mode'?: CoverMovementMode;
+  /**
+   * HA tilt requests recall the saved preset by default. Step mode selects one short DOWN below 50 percent or one short UP at or above 50 percent; no absolute angle is set.
+   */
+  'tilt_mode'?: CoverTiltMode;
   /**
    * Per-cover RF command byte; defaults to 0x20.
    */

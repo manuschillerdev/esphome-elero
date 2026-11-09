@@ -53,6 +53,24 @@ preserve MQTT entity identities; disabling or removing the cover should remove
 its MQTT buttons. Native buttons must not send commands for a disabled or removed
 cover, even before the required reboot updates the entity list.
 
+## Home Assistant directional tilt controls
+
+Enable **Tilt**, select **HA tilt control → Directional steps**, and Save to NVS.
+Use a receiver whose short UP/DOWN presses produce the required slat movement.
+The setting is independent of the Open/Close movement mode. Apply the normal
+native-mode reboot when changing exposed capabilities.
+
+In each HA transport, test tilt-open and tilt-close repeatedly. Expected RF is
+the same short press/release sequence as the separate Short press buttons.
+The values below 50% select DOWN; 50% or above select UP. A value such as 75%
+does not request a 75% angle. Check that custom full-travel bytes do not change
+these short presses, and that the Saved tilt shortcut still recalls its preset.
+
+Repeat with Saved preset selected: both HA tilt directions must recall the
+configured saved preset. Export and restore a backup to check the selected mode;
+an old backup without `tilt_mode` must use Saved preset. Record the radio chip
+(CC1101, SX1262, or SX1276) and receiver model for each hardware test.
+
 ## Record the results
 
 Record the receiver/motor and remote models, source address, receiver address,

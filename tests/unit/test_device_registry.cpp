@@ -23,6 +23,7 @@
 #include <array>
 #include <queue>
 #include <map>
+#include <limits>
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ESPHome stubs — must come before any production includes
@@ -1667,6 +1668,7 @@ TEST_F(DeviceRegistryTest, NativeCoverCommandsFollowCurrentConfigurationAndRejec
     shell.set_registry(&registry_);
     shell.set_device(dev);
     auto config = dev->config;
+    config.supports_tilt = 1;
     config.set_step_mode(true);
     config.src_address = 0x123456;
     config.channel = 8;
@@ -1705,4 +1707,213 @@ TEST_F(DeviceRegistryTest, NativeCoverCommandsFollowCurrentConfigurationAndRejec
     toggle.toggle = true;
     shell.control(toggle);
     EXPECT_EQ(replacement->sender.queue_size(), 0u);
+}
+
+TEST_F(MqttCoverTest, NativeAndMqttDirectionalTiltUseTheSameShortPressPackets) {
+    auto config = make_cover_config(0xA831E5);
+    config.supports_tilt = 1;
+    config.set_step_tilt(true);
+    config.set_step_mode(true);
+    config.flags |= NvsDeviceConfig::FLAG_COMMAND_BYTES;
+    config.command_up = 0x21;
+    config.command_down = 0x44;
+    config.command_check = 0x66;
+    config.command_tilt = 0x25;
+    auto *dev = registry_.upsert(config);
+    TestCoverShell shell;
+    shell.set_registry(&registry_);
+    shell.set_device(dev);
+    auto &cover = std::get<CoverDevice>(dev->logic);
+    const auto initial_state = cover.state.index();
+    const float initial_position = cover_sm::position(cover.state, mock_time_.millis(), cover_context(config));
+
+    for (const float target : {0.0f, 0.49f, 0.5f, 1.0f}) {
+        SCOPED_TRACE(target);
+        const uint8_t expected = target >= 0.5f ? pkt::command::UP : pkt::command::DOWN;
+        cover.target_position = 0.75f;
+        esphome::cover::CoverCall call;
+        call.tilt = target;
+        shell.control(call);
+        const auto native = drain_commands(*dev);
+        EXPECT_EQ(cover.target_position, cover_sm::NO_TARGET);
+        cover.target_position = 0.75f;
+        const std::string payload = std::to_string(target * 100.0f);
+        broker_.deliver(SET_TILT_TOPIC, payload.c_str());
+        const auto mqtt = drain_commands(*dev);
+        EXPECT_EQ(cover.target_position, cover_sm::NO_TARGET);
+        ASSERT_EQ(native.size(), 6u);
+        ASSERT_EQ(mqtt.size(), native.size());
+        for (size_t i = 0; i < native.size(); ++i) {
+            const uint8_t command = i < 3 ? expected : pkt::button::RELEASE;
+            EXPECT_EQ(native[i].payload[4], command);
+            EXPECT_EQ(mqtt[i].payload[4], command);
+            for (const auto *tx : {&native[i], &mqtt[i]}) {
+                EXPECT_EQ(tx->type, 0x44);
+                EXPECT_EQ(tx->type2, 0x10);
+                EXPECT_EQ(tx->hop, 0x00);
+                EXPECT_EQ(tx->src_addr, config.src_address);
+                EXPECT_EQ(tx->channel, config.channel);
+                uint8_t frame[64]{};
+                ASSERT_EQ(pkt::build_command_packet(*tx, frame), 28u);
+                EXPECT_EQ(frame[16], 1);
+                EXPECT_EQ(frame[17], config.channel);
+            }
+        }
+        // A short press does not manufacture an angle or a lift movement state.
+        EXPECT_FALSE(cover.tilted);
+        EXPECT_EQ(cover.state.index(), initial_state);
+        EXPECT_FLOAT_EQ(cover_sm::position(cover.state, mock_time_.millis(), cover_context(config)), initial_position);
+    }
+    // Preset recall stays available independently and retains its custom byte.
+    ASSERT_TRUE(registry_.command_cover_action(*dev, "tilt"));
+    const auto preset = drain_commands(*dev);
+    ASSERT_FALSE(preset.empty());
+    EXPECT_EQ(preset.front().payload[4], 0x25);
+}
+
+TEST_F(MqttCoverTest, DefaultHaTiltStillRecallsTheSavedPreset) {
+    auto config = make_cover_config(0xA831E5);
+    config.supports_tilt = 1;
+    EXPECT_FALSE(config.is_step_tilt());
+    auto *dev = registry_.upsert(config);
+    TestCoverShell shell;
+    shell.set_registry(&registry_);
+    shell.set_device(dev);
+    for (const float target : {0.0f, 1.0f}) {
+        esphome::cover::CoverCall call;
+        call.tilt = target;
+        shell.control(call);
+        const auto native = drain_commands(*dev);
+        broker_.deliver(SET_TILT_TOPIC, target == 0.0f ? "0" : "100");
+        const auto mqtt = drain_commands(*dev);
+        ASSERT_EQ(native.size(), 4u);
+        ASSERT_EQ(mqtt.size(), 4u);
+        EXPECT_EQ(native.front().payload[4], pkt::command::TILT);
+        EXPECT_EQ(mqtt.front().payload[4], pkt::command::TILT);
+    }
+}
+
+TEST_F(MqttCoverTest, HaTiltRejectsInvalidDisabledUnsupportedAndRemovedTargets) {
+    auto config = make_cover_config(0xA831E5);
+    config.supports_tilt = 1;
+    config.set_step_tilt(true);
+    auto *dev = registry_.upsert(config);
+    TestCoverShell shell;
+    shell.set_registry(&registry_);
+    shell.set_device(dev);
+    for (const float value : {-0.01f, 1.01f, std::numeric_limits<float>::infinity(),
+                              std::numeric_limits<float>::quiet_NaN()}) {
+        EXPECT_FALSE(registry_.command_cover_tilt(config.dst_address, value));
+        esphome::cover::CoverCall call;
+        call.tilt = value;
+        shell.control(call);
+        EXPECT_EQ(dev->sender.queue_size(), 0u);
+    }
+    for (const auto *payload : {"", "junk", "100junk", "-1", "101", "nan", "inf"}) {
+        broker_.deliver(SET_TILT_TOPIC, payload);
+        EXPECT_EQ(dev->sender.queue_size(), 0u);
+    }
+    broker_.deliver(SET_TILT_TOPIC, nullptr);
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+    config.supports_tilt = 0;
+    registry_.upsert(config);
+    EXPECT_FALSE(registry_.command_cover_tilt(config.dst_address, 1.0f));
+    broker_.deliver(SET_TILT_TOPIC, "100");
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+    config.supports_tilt = 1;
+    config.set_enabled(false);
+    registry_.upsert(config);
+    EXPECT_FALSE(registry_.command_cover_tilt(config.dst_address, 1.0f));
+    esphome::cover::CoverCall call;
+    call.tilt = 1.0f;
+    shell.control(call);
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+    ASSERT_TRUE(registry_.remove(config.dst_address, DeviceType::COVER));
+    auto *replacement = add_cover(0xA00001);
+    ASSERT_EQ(replacement, dev);
+    shell.control(call);
+    EXPECT_EQ(replacement->sender.queue_size(), 0u);
+    EXPECT_FALSE(registry_.command_cover_tilt(config.dst_address, 1.0f));
+}
+
+TEST_F(DeviceRegistryTest, RejectedTiltKeepsOldPlanAndNeverQueuesHalfAPress) {
+    auto config = make_cover_config(0xA831E5);
+    config.supports_tilt = 1;
+    config.set_step_tilt(true);
+    auto *dev = registry_.upsert(config);
+    for (int i = 0; i < pkt::limits::MAX_COMMAND_QUEUE - 1; ++i) {
+        ASSERT_TRUE(dev->sender.enqueue(i % 2 ? pkt::command::UP : pkt::command::DOWN));
+    }
+    auto &cover = std::get<CoverDevice>(dev->logic);
+    cover.target_position = 0.75f;
+    const auto count = dev->sender.queue_size();
+    EXPECT_FALSE(registry_.command_cover_tilt(config.dst_address, 1.0f));
+    EXPECT_EQ(dev->sender.queue_size(), count);
+    EXPECT_EQ(cover.target_position, 0.75f);
+    config.set_step_tilt(false);
+    registry_.upsert(config);
+    EXPECT_EQ(dev->sender.queue_size(), count);
+    EXPECT_FALSE(dev->config.is_step_tilt());
+    EXPECT_EQ(sizeof(config), 64u);
+    EXPECT_EQ(config.version, 3);
+}
+
+TEST_F(DeviceRegistryTest, TiltModeEditCompletesAnAcceptedPressReleaseCycle) {
+    auto config = make_cover_config(0xA831E5);
+    config.supports_tilt = 1;
+    config.set_step_tilt(true);
+    auto *dev = registry_.upsert(config);
+    ASSERT_TRUE(registry_.command_cover_tilt(config.dst_address, 1.0f));
+    struct RecordingHub {
+        std::vector<EleroCommand> commands;
+        TxClient *pending{nullptr};
+        uint32_t attempt{0};
+        bool request_tx(TxClient *client, const EleroCommand &command) {
+            commands.push_back(command);
+            pending = client;
+            attempt = client->begin_tx_attempt();
+            return true;
+        }
+    } hub;
+    for (int i = 0; i < 3; ++i) {
+        mock_time_.advance(pkt::button::INTER_PACKET_MS);
+        dev->sender.process_queue(mock_time_.millis(), &hub, "test");
+        ASSERT_NE(hub.pending, nullptr);
+        hub.pending->complete_tx_attempt(hub.attempt, true);
+        hub.pending = nullptr;
+    }
+    ASSERT_EQ(hub.commands.size(), 3u);
+    for (const auto &tx : hub.commands) EXPECT_EQ(tx.payload[4], pkt::command::UP);
+    ASSERT_EQ(dev->sender.queue_size(), 1u);
+
+    config.set_step_tilt(false);
+    registry_.upsert(config);
+    const auto release = drain_commands(*dev);
+    ASSERT_EQ(release.size(), 3u);
+    for (const auto &tx : release) {
+        EXPECT_EQ(tx.payload[4], pkt::button::RELEASE);
+        EXPECT_EQ(tx.type, pkt::msg_type::BUTTON);
+    }
+    // The accepted cycle finishes; subsequent requests use the new mode.
+    ASSERT_TRUE(registry_.command_cover_tilt(config.dst_address, 1.0f));
+    const auto preset = drain_commands(*dev);
+    ASSERT_FALSE(preset.empty());
+    EXPECT_EQ(preset.front().payload[4], pkt::command::TILT);
+}
+
+TEST_F(DeviceRegistryTest, TiltCapabilityEditPreservesAnUnrelatedOpenCommand) {
+    auto config = make_cover_config(0xA831E5);
+    auto *dev = registry_.upsert(config);
+    for (const uint8_t enabled : {1, 0}) {
+        ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::UP));
+        auto &cover = std::get<CoverDevice>(dev->logic);
+        ASSERT_TRUE(cover_sm::is_moving(cover.state));
+        config.supports_tilt = enabled;
+        registry_.upsert(config);
+        const auto open = drain_commands(*dev);
+        ASSERT_EQ(open.size(), 4u);
+        for (size_t i = 0; i < 3; ++i) EXPECT_EQ(open[i].payload[4], pkt::command::UP);
+        EXPECT_EQ(open.back().payload[4], pkt::command::CHECK);
+        EXPECT_TRUE(cover_sm::is_moving(cover.state));
+    }
 }

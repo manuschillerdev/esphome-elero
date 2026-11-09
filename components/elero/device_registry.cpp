@@ -183,6 +183,8 @@ Device *DeviceRegistry::upsert(const NvsDeviceConfig &config) {
     if (existing) {
         // Queued requests retain their original RF selectors. Cancel using the
         // old identity before replacing it, including groups owned by peers.
+        // Tilt-only edits apply to later requests; accepted press/release cycles
+        // and unrelated movement must finish with their captured settings.
         if (existing->config.src_address != config.src_address ||
             existing->config.channel != config.channel ||
             existing->config.is_step_mode() != config.is_step_mode() ||
@@ -356,8 +358,17 @@ void DeviceRegistry::set_cover_position(uint32_t address, float target) {
     if (auto *dev = find_entity_cover_(address)) set_cover_position(*dev, target);
 }
 
-void DeviceRegistry::command_cover_tilt(uint32_t address) {
-    if (auto *dev = find_entity_cover_(address)) command_cover_tilt(*dev);
+bool DeviceRegistry::command_cover_tilt(uint32_t address, float target) {
+    auto *dev = find_entity_cover_(address);
+    if (dev == nullptr || !dev->config.supports_tilt ||
+        !std::isfinite(target) || target < 0.0f || target > 1.0f) return false;
+
+    if (dev->config.is_step_tilt()) {
+        // HA's percentage selects a direction, never an absolute angle. Reuse
+        // short press admission, release, and override bypass from one path.
+        return command_cover_action(*dev, target >= 0.5f ? action::STEP_UP : action::STEP_DOWN);
+    }
+    return command_cover_tilt(*dev);
 }
 
 bool DeviceRegistry::step_cover(Device &dev, bool up) {
@@ -446,24 +457,8 @@ void DeviceRegistry::set_cover_position(Device &dev, float target) {
     notify_state_changed_(dev, now);
 }
 
-void DeviceRegistry::command_cover_tilt(Device &dev) {
-    if (!dev.is_cover()) return;
-
-    auto &cover = std::get<CoverDevice>(dev.logic);
-    auto ctx = cover_context(dev.config);
-    uint32_t now = millis();
-
-    bool tilt_queued = enqueue_or_warn_(dev, packet::command::TILT,
-                                        packet::button::PACKETS,
-                                        packet::msg_type::BUTTON,
-                                        "command_cover_tilt");
-    (void) enqueue_check_(dev, "command_cover_tilt");
-    cover.state = cover_sm::on_command(cover.state, packet::command::TILT, now, ctx);
-    if (tilt_queued) {
-        cover.poll.on_command_sent(now);
-    }
-
-    notify_state_changed_(dev, now);
+bool DeviceRegistry::command_cover_tilt(Device &dev) {
+    return command_cover_action(dev, action::TILT);
 }
 
 bool DeviceRegistry::command_light(Device &dev, uint8_t cmd_byte) {
