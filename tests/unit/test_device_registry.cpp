@@ -1575,6 +1575,14 @@ TEST_F(DeviceRegistryTest, CoverActionsRejectUnknownAndNonCoverSteps) {
     EXPECT_EQ(light->sender.queue_size(), 0u);
 }
 
+TEST_F(DeviceRegistryTest, AcceptedGroupMoveReplacesTimedTargetsOnAllMembers) {
+    Device *members[] = {add_cover(), add_cover(0xA00002)};
+    for (auto *member : members) ASSERT_TRUE(registry_.set_cover_position(*member, 0.75f));
+    ASSERT_TRUE(registry_.command_group(members, 2, pkt::command::UP));
+    for (auto *member : members)
+        EXPECT_EQ(std::get<CoverDevice>(member->logic).target_position, cover_sm::NO_TARGET);
+}
+
 TEST_F(DeviceRegistryTest, ManualActionsReplaceAnOldTimedPositionTarget) {
     registry_.set_hub(nullptr);
     uint32_t address = 0xA83000;

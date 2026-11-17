@@ -410,11 +410,7 @@ bool DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte) {
     return true;
 }
 
-bool DeviceRegistry::queue_cover_movement_(Device &dev, uint8_t cmd, float target, uint32_t now) {
-    if (!enqueue_or_warn_(dev, cmd, packet::button::PACKETS,
-                          packet::msg_type::BUTTON, "cover movement")) return false;
-
-    (void) enqueue_check_(dev, "cover movement");
+static void apply_cover_movement(Device &dev, uint8_t cmd, float target, uint32_t now) {
     auto &cover = std::get<CoverDevice>(dev.logic);
     cover.target_position = target;
     if (cmd == packet::command::FULL_UP) cmd = packet::command::UP;
@@ -423,6 +419,14 @@ bool DeviceRegistry::queue_cover_movement_(Device &dev, uint8_t cmd, float targe
     if (cmd == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
     cover.state = cover_sm::on_command(cover.state, cmd, now, cover_context(dev.config));
     cover.poll.on_command_sent(now);
+}
+
+bool DeviceRegistry::queue_cover_movement_(Device &dev, uint8_t cmd, float target, uint32_t now) {
+    if (!enqueue_or_warn_(dev, cmd, packet::button::PACKETS,
+                          packet::msg_type::BUTTON, "cover movement")) return false;
+
+    (void) enqueue_check_(dev, "cover movement");
+    apply_cover_movement(dev, cmd, target, now);
     notify_state_changed_(dev, now);
     return true;
 }
@@ -589,13 +593,7 @@ bool DeviceRegistry::command_group(Device *const *devices, size_t count, uint8_t
     uint32_t now = millis();
     for (size_t i = 0; i < count; ++i) {
         if (devices[i]->is_cover()) {
-            auto &cover = std::get<CoverDevice>(devices[i]->logic);
-            auto ctx = cover_context(devices[i]->config);
-
-            if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
-            if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
-            cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
-            cover.poll.on_command_sent(now);
+            apply_cover_movement(*devices[i], cmd_byte, cover_sm::NO_TARGET, now);
         } else if (devices[i]->is_light()) {
             auto &light = std::get<LightDevice>(devices[i]->logic);
             auto ctx = light_context(devices[i]->config);
