@@ -38,6 +38,7 @@
 #define LOG_PIN(msg, pin) ((void)0)
 #define ESP_LOGCONFIG(tag, format, ...) ((void)0)
 #define USE_BUTTON
+#define USE_LIGHT
 #define USE_COVER
 #define IRAM_ATTR
 
@@ -84,6 +85,7 @@ constexpr float DATA = 0.0f;
 #include "elero_mqtt/mqtt_adapter.h"
 #include "elero/esp_cover_action_button.h"
 #include "elero/esp_cover_shell.h"
+#include "elero/esp_light_shell.h"
 
 // Stub Elero methods (device_registry.cpp includes elero.h)
 namespace esphome {
@@ -211,6 +213,7 @@ static RfPacketInfo make_status_pkt(uint32_t src, uint8_t state_byte, float rssi
     pkt.timestamp_ms = esphome::millis();
     pkt.src = src;
     pkt.dst = 0xF0D008;
+    pkt.decoded_at_us = esp_timer_get_time();
     pkt.type = pkt::msg_type::STATUS;
     pkt.state = state_byte;
     pkt.rssi = rssi;
@@ -415,6 +418,24 @@ TEST_F(DeviceRegistryTest, LightCommand_CheckDelegatesToRequestCheck) {
 // COMMAND DISPATCH — Set Position
 // ═══════════════════════════════════════════════════════════════════════════════
 
+TEST_F(DeviceRegistryTest, NativeLightIgnoresReplacementInSameSlot) {
+    auto *original = add_light();
+    EspLightShell shell;
+    esphome::light::LightState state;
+    shell.set_device(original);
+    shell.set_registry(&registry_);
+    shell.set_light_state(&state);
+    shell.setup();
+    ASSERT_TRUE(registry_.remove(original->config.dst_address, DeviceType::LIGHT));
+    auto *replacement = add_light(0xC00002);
+    ASSERT_EQ(replacement, original);
+    unsigned published = state.publications;
+    shell.sync_and_publish(state_change::ALL);
+    EXPECT_EQ(state.publications, published);
+    shell.update_state(&state);
+    EXPECT_FALSE(replacement->sender.has_pending_commands());
+}
+
 TEST_F(DeviceRegistryTest, SetPosition_IntermediateTarget) {
     auto *dev = add_cover();
     // Use 0.75 (not 0.5) — boot position is Idle{0.5}, so set_position(0.5) would be a no-op
@@ -423,6 +444,39 @@ TEST_F(DeviceRegistryTest, SetPosition_IntermediateTarget) {
     auto &cover = std::get<CoverDevice>(dev->logic);
     EXPECT_FLOAT_EQ(cover.target_position, 0.75f);
     EXPECT_TRUE(std::holds_alternative<cover_sm::Opening>(cover.state));
+}
+
+TEST_F(DeviceRegistryTest, FullQueuePreservesAcceptedPositionAndReportsGroupFailure) {
+    auto *first = add_cover();
+    auto *second = add_cover(0xA00002);
+    const auto group = make_group_config("pair", "Pair", {first->config.dst_address, second->config.dst_address});
+    ASSERT_NE(registry_.upsert_group(group), nullptr);
+    ASSERT_TRUE(registry_.set_cover_position(*first, 0.75f));
+    for (unsigned i = 0; first->sender.queue_size() < pkt::limits::MAX_COMMAND_QUEUE; ++i)
+        ASSERT_TRUE(first->sender.enqueue(i % 2 ? pkt::command::UP : pkt::command::DOWN));
+    std::string error;
+    EXPECT_FALSE(registry_.set_group_position("pair", 0.25f, &error));
+    EXPECT_FALSE(error.empty());
+    const auto &cover = std::get<CoverDevice>(first->logic);
+    EXPECT_FLOAT_EQ(cover.target_position, 0.75f);
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Opening>(cover.state));
+    EXPECT_FLOAT_EQ(std::get<CoverDevice>(second->logic).target_position, 0.25f);
+}
+
+TEST_F(DeviceRegistryTest, BufferedStatusCannotStopNewMovement) {
+    auto *dev = add_cover();
+    mock_time_.advance(100);
+    auto report = make_status_pkt(dev->config.dst_address, pkt::state::STOPPED);
+    mock_time_.advance(1);
+    ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::UP));
+    registry_.on_rf_packet(report, report.timestamp_ms);
+    auto &cover = std::get<CoverDevice>(dev->logic);
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Opening>(cover.state));
+    EXPECT_LT(cover_sm::position(cover.state, mock_time_.millis(), cover_context(dev->config)), 1.0f);
+    mock_time_.advance(1);
+    report = make_status_pkt(dev->config.dst_address, pkt::state::STOPPED);
+    registry_.on_rf_packet(report, report.timestamp_ms);
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Stopping>(cover.state));
 }
 
 TEST_F(DeviceRegistryTest, SetPosition_EndpointHasNoTarget) {
@@ -695,6 +749,26 @@ TEST_F(DeviceRegistryTest, Loop_CoverMovementTimeout) {
     registry_.loop(mock_time_.millis());
 
     EXPECT_FALSE(cover_sm::is_moving(std::get<CoverDevice>(dev->logic).state));
+}
+
+TEST_F(DeviceRegistryTest, HiddenLightProcessesManualCommandAndFinishesDimming) {
+    auto cfg = make_light_config(0xC00002);
+    cfg.set_enabled(false);
+    auto *dev = registry_.upsert(cfg);
+    ASSERT_TRUE(registry_.command_light(*dev, pkt::command::UP));
+    mock_time_.advance(pkt::button::INTER_PACKET_MS);
+    registry_.loop(mock_time_.millis());
+    EXPECT_EQ(dev->sender.state(), CommandSender::State::TX_PENDING);
+
+    registry_.set_hub(nullptr);
+    dev->sender.clear_queue();
+    registry_.set_light_brightness(*dev, 0.5f);
+    mock_time_.advance(cfg.dim_duration_ms);
+    registry_.loop(mock_time_.millis());
+    EXPECT_FALSE(light_sm::is_dimming(std::get<LightDevice>(dev->logic).state));
+    const auto packets = drain_commands(*dev);
+    ASSERT_FALSE(packets.empty());
+    EXPECT_EQ(packets.back().payload[4], pkt::button::RELEASE);
 }
 
 TEST_F(DeviceRegistryTest, Loop_LightDimComplete_EnqueuesRelease) {
@@ -1536,6 +1610,14 @@ TEST_F(DeviceRegistryTest, CoverActionsRejectUnknownAndNonCoverSteps) {
     EXPECT_FALSE(registry_.command_cover_action(*light, "full_up"));
     EXPECT_FALSE(registry_.command_light(*light, pkt::command::FULL_UP));
     EXPECT_EQ(light->sender.queue_size(), 0u);
+}
+
+TEST_F(DeviceRegistryTest, AcceptedGroupMoveReplacesTimedTargetsOnAllMembers) {
+    Device *members[] = {add_cover(), add_cover(0xA00002)};
+    for (auto *member : members) ASSERT_TRUE(registry_.set_cover_position(*member, 0.75f));
+    ASSERT_TRUE(registry_.command_group(members, 2, pkt::command::UP));
+    for (auto *member : members)
+        EXPECT_EQ(std::get<CoverDevice>(member->logic).target_position, cover_sm::NO_TARGET);
 }
 
 TEST_F(DeviceRegistryTest, ManualActionsReplaceAnOldTimedPositionTarget) {

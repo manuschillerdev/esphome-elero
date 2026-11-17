@@ -44,7 +44,7 @@ class CommandSender : public TxClient {
         [[fallthrough]];
 
       case State::WAIT_DELAY:
-        if (!this->time_reached_(now, this->next_attempt_ms_)) {
+        if (now - this->last_tx_time_ < this->wait_ms_) {
           return;
         }
 
@@ -96,7 +96,7 @@ class CommandSender : public TxClient {
                  this->command_queue_.front().command.payload[4], this->command_.dst_addr, this->send_packets_);
         this->advance_queue_();
       } else {
-        this->next_attempt_ms_ = now + packet::button::INTER_PACKET_MS;
+        this->wait_ms_ = packet::button::INTER_PACKET_MS;
         this->state_ = State::WAIT_DELAY;
       }
     } else {
@@ -111,7 +111,7 @@ class CommandSender : public TxClient {
       } else {
         uint32_t backoff_ms = this->calculate_backoff_ms_();
         ESP_LOGD(this->log_tag_, "Backoff %" PRIu32 "ms before retry", backoff_ms);
-        this->next_attempt_ms_ = now + backoff_ms;
+        this->wait_ms_ = backoff_ms;
         this->state_ = State::WAIT_DELAY;
       }
     }
@@ -229,14 +229,10 @@ class CommandSender : public TxClient {
     this->send_packets_ = 0;
     this->send_retries_ = 0;
     this->last_tx_time_ = 0;
-    this->next_attempt_ms_ = 0;
+    this->wait_ms_ = 0;
 
     this->invalidate_tx_attempt();
     this->state_ = State::IDLE;
-  }
-
-  static bool time_reached_(uint32_t now, uint32_t deadline) {
-    return static_cast<int32_t>(now - deadline) >= 0;
   }
 
   uint32_t calculate_backoff_ms_() const {
@@ -253,9 +249,7 @@ class CommandSender : public TxClient {
     this->send_retries_ = 0;
     this->increase_counter_();
     this->state_ = this->command_queue_.empty() ? State::IDLE : State::WAIT_DELAY;
-    if (this->state_ == State::WAIT_DELAY) {
-      this->next_attempt_ms_ = this->last_tx_time_ + packet::button::INTER_PACKET_MS;
-    }
+    this->wait_ms_ = packet::button::INTER_PACKET_MS;
   }
 
   void increase_counter_() {
@@ -277,7 +271,7 @@ class CommandSender : public TxClient {
 
   State state_{State::IDLE};
   uint32_t last_tx_time_{0};
-  uint32_t next_attempt_ms_{packet::button::INTER_PACKET_MS};
+  uint32_t wait_ms_{packet::button::INTER_PACKET_MS};
   uint8_t send_packets_{0};
   uint8_t send_retries_{0};
   const char *log_tag_{"sender"};

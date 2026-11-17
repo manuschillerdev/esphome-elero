@@ -348,6 +348,9 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
 
   // Build RfPacketInfo
   RfPacketInfo pkt{};
+#ifdef USE_ESP32
+  pkt.decoded_at_us = esp_timer_get_time();
+#endif
   pkt.timestamp_ms = millis();
   pkt.src = r.src_addr;
   pkt.dst = r.dst_addr;
@@ -365,9 +368,6 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
   pkt.lqi = r.lqi;
   pkt.crc_ok = (r.crc_ok != 0);
   pkt.hop = r.hop;
-#ifdef USE_ESP32
-  pkt.decoded_at_us = esp_timer_get_time();
-#endif
   memcpy(pkt.payload, r.payload, sizeof(pkt.payload));
 
   // Copy raw bytes for WebSocket broadcast
@@ -460,9 +460,9 @@ void Elero::publish_stats_() {
   if (this->stats_rx_drops_)
     this->stats_rx_drops_->publish_state(this->stat_rx_drops_.load(std::memory_order_relaxed));
   if (this->stats_fifo_overflows_)
-    this->stats_fifo_overflows_->publish_state(this->stat_fifo_overflows_.load(std::memory_order_relaxed));
+    this->stats_fifo_overflows_->publish_state(this->driver_->overflow_count());
   if (this->stats_watchdog_)
-    this->stats_watchdog_->publish_state(this->stat_watchdog_recoveries_.load(std::memory_order_relaxed));
+    this->stats_watchdog_->publish_state(this->driver_->watchdog_count());
   if (this->stats_dispatch_latency_)
     this->stats_dispatch_latency_->publish_state(this->stat_dispatch_latency_us_);
   if (this->stats_queue_transit_)

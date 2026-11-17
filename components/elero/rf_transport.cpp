@@ -54,9 +54,8 @@ bool RfTransport::step(RfTransportPort &port) {
   const bool tx_failed = this->poll_tx_();
   // A fast reply can arrive while poll_tx restores RX routing.
   const bool rx_idle_after_tx = this->drain_rx_(port);
-  if (!this->active_ && rx_idle_after_tx && !this->driver_.failed() &&
-      this->driver_.check_health() != RadioHealth::OK) {
-    this->driver_.recover();
+  if (!this->active_ && rx_idle_after_tx && !this->driver_.failed()) {
+    this->driver_.run_watchdog();
   }
   return tx_failed;
 }

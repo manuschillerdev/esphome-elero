@@ -184,8 +184,6 @@ class Elero : public Component, private RfTransportPort {
   // Core 0 atomics (incremented on RF task, read on Core 1)
   std::atomic<uint32_t> stat_tx_recover_{0};
   std::atomic<uint32_t> stat_rx_drops_{0};
-  std::atomic<uint32_t> stat_fifo_overflows_{0};
-  std::atomic<uint32_t> stat_watchdog_recoveries_{0};
 
   // Core 1 only (incremented and read on main loop)
   uint32_t stat_tx_success_{0};

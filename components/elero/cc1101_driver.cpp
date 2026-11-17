@@ -220,7 +220,6 @@ void CC1101Driver::clear_recovery_failures_() {
 }
 
 void CC1101Driver::recover() {
-  this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
   if (this->flush_and_rx()) {
     this->clear_recovery_failures_();
     return;

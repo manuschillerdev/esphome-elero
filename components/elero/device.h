@@ -40,6 +40,7 @@ struct RfMeta {
 struct CoverDevice {
     cover_sm::State state{cover_sm::Idle{}}; ///< Default Idle{0.5} = unknown at boot
     PollTimer       poll;
+    int64_t last_motion_command_us{0};  ///< Ignore status decoded before a newer local movement or STOP.
     float           target_position{cover_sm::NO_TARGET};  ///< NO_TARGET = no target, 0..1 = intermediate target
     cover_sm::Operation last_direction{cover_sm::Operation::OPENING};  ///< For toggle logic
     bool            tilted{false};

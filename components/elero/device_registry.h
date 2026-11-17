@@ -106,8 +106,8 @@ class DeviceRegistry {
     bool step_cover(Device &dev, bool up);
 
     /// Set a cover's target position (0.0–1.0). Determines direction, sets target, starts movement.
-    void set_cover_position(Device &dev, float target);
-    void set_cover_position(uint32_t address, float target);
+    bool set_cover_position(Device &dev, float target);
+    bool set_cover_position(uint32_t address, float target);
 
     /// Recall the saved tilt preset (manual control, independent of HA tilt mode).
     bool command_cover_tilt(Device &dev);
@@ -278,6 +278,7 @@ class DeviceRegistry {
     void cancel_pending_commands_(Device &dev);
 
     /// Process cover device loop (polling, timeouts, position, command queue).
+    bool queue_cover_movement_(Device &dev, uint8_t cmd, float target, uint32_t now);
     void loop_cover_(Device &dev, CoverDevice &cover, uint32_t now);
 
     /// Process light device loop (dimming, command queue).

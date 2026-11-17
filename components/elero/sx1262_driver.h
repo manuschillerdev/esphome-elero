@@ -198,8 +198,6 @@ class Sx1262Driver : public RadioDriver,
 
   // ── Diagnostics ────────────────────────────────────────────────────────────
 
-  uint32_t overflow_count() const { return 0; }  // SX1262 has no FIFO overflow
-  uint32_t watchdog_count() const { return stat_watchdog_recoveries_.load(std::memory_order_relaxed); }
   uint32_t recover_count() const { return stat_tx_recover_.load(std::memory_order_relaxed); }
 
  private:
@@ -293,7 +291,6 @@ class Sx1262Driver : public RadioDriver,
 
   // ── Stats (atomic — incremented on Core 0, read from Core 1) ───────────────
 
-  std::atomic<uint32_t> stat_watchdog_recoveries_{0};
   std::atomic<uint32_t> stat_tx_recover_{0};
 };
 
