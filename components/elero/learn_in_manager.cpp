@@ -177,7 +177,8 @@ bool LearnInManager::prime_session_(const LearnInStartRequest &request) {
   command_.payload[0] = 0;
   command_.payload[1] = 0;
   packets_per_step_ = request.packets;
-  session_deadline_ms_ = get_time_provider().millis() + request.session_timeout_ms;
+  session_start_ms_ = get_time_provider().millis();
+  session_timeout_ms_ = request.session_timeout_ms;
   return true;
 }
 
@@ -188,7 +189,7 @@ bool LearnInManager::queue_step_(uint8_t cmd_byte, LearnInState pending_state) {
   queued_step_ = cmd_byte;
   sent_packets_ = 0;
   retries_ = 0;
-  next_attempt_ms_ = 0;
+  next_attempt_ms_ = get_time_provider().millis();
   if (pending_state == LearnInState::PROGRAMMING) {
     command_.type = packet::msg_type::PROGRAM;
     command_.type2 = packet::program::TYPE2;
@@ -231,7 +232,6 @@ void LearnInManager::reset_transport_() {
 void LearnInManager::reset_all_() {
   reset_transport_();
   packets_per_step_ = packet::program::PACKETS;
-  session_deadline_ms_ = 0;
   state_ = LearnInState::IDLE;
 }
 

@@ -54,7 +54,22 @@ TEST_F(LearnInManagerTest, RejectsInvalidStartRequest) {
   EXPECT_EQ(manager_.state(), LearnInState::IDLE);
 }
 
+TEST_F(LearnInManagerTest, SessionTimeoutAtClockWrap) {
+  mock_time_.current_time = UINT32_MAX - 99;
+  LearnInStartRequest req{};
+  req.src_addr = 1;
+  req.channel = 1;
+  req.session_timeout_ms = 100;
+  ASSERT_TRUE(manager_.start(req));
+  manager_.loop(mock_time_.millis(), &hub_);
+  ASSERT_EQ(hub_.request_count, 1);
+  mock_time_.advance(100);
+  manager_.loop(mock_time_.millis(), &hub_);
+  EXPECT_EQ(manager_.state(), LearnInState::TIMED_OUT);
+}
+
 TEST_F(LearnInManagerTest, FullLearnInFlowCompletes) {
+  mock_time_.advance(25u * 86400000u);
   LearnInStartRequest req{};
   req.src_addr = 0x17A753;
   req.channel = 5;

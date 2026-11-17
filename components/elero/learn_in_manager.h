@@ -67,8 +67,7 @@ class LearnInManager : public TxClient {
       return;
     }
 
-    if (is_active() && session_deadline_ms_ != 0 &&
-        time_reached_(now, session_deadline_ms_)) {
+    if (is_active() && now - session_start_ms_ >= session_timeout_ms_) {
       state_ = LearnInState::TIMED_OUT;
       reset_transport_();
       ESP_LOGW("elero.learn_in", "Learn-in session timed out");
@@ -123,7 +122,8 @@ class LearnInManager : public TxClient {
   uint8_t sent_packets_{0};
   uint8_t retries_{0};
   uint32_t next_attempt_ms_{0};
-  uint32_t session_deadline_ms_{0};
+  uint32_t session_start_ms_{0};
+  uint32_t session_timeout_ms_{0};
   bool tx_pending_{false};
 };
 
