@@ -77,7 +77,6 @@ class EleroWebServer : public Component, public OutputAdapter {
   // WebSocket helpers
   void ws_send(struct mg_connection *c, const char *event, const std::string &data);
   void ws_broadcast(const char *event, const std::string &data);
-  void ws_cleanup();
 
   // JSON builders
   std::string build_config_json();

@@ -156,9 +156,6 @@ void EleroWebServer::loop() {
   // Poll mongoose (non-blocking)
   mg_mgr_poll(&this->mgr_, 0);
 
-  // Clean up disconnected WebSocket clients
-  this->ws_cleanup();
-
   if (!this->enabled_ || this->ws_clients_.empty() || this->parent_ == nullptr) {
     return;
   }
@@ -371,7 +368,7 @@ void EleroWebServer::event_handler(struct mg_connection *c, int ev, void *ev_dat
 
   // Connection closed - clean up WebSocket client
   if (ev == MG_EV_CLOSE && c->data[0] == 'W') {
-    c->data[0] = 0;
+    std::erase(self->ws_clients_, c);
     ESP_LOGD(TAG, "WebSocket client disconnected");
   }
 }
@@ -531,13 +528,6 @@ void EleroWebServer::ws_broadcast(const char *event, const std::string &data) {
   for (auto *c : this->ws_clients_) {
     this->ws_send(c, event, data);
   }
-}
-
-void EleroWebServer::ws_cleanup() {
-  this->ws_clients_.erase(
-      std::remove_if(this->ws_clients_.begin(), this->ws_clients_.end(),
-                     [](struct mg_connection *c) { return c->is_closing || c->data[0] != 'W'; }),
-      this->ws_clients_.end());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
