@@ -751,6 +751,26 @@ TEST_F(DeviceRegistryTest, Loop_CoverMovementTimeout) {
     EXPECT_FALSE(cover_sm::is_moving(std::get<CoverDevice>(dev->logic).state));
 }
 
+TEST_F(DeviceRegistryTest, HiddenLightProcessesManualCommandAndFinishesDimming) {
+    auto cfg = make_light_config(0xC00002);
+    cfg.set_enabled(false);
+    auto *dev = registry_.upsert(cfg);
+    ASSERT_TRUE(registry_.command_light(*dev, pkt::command::UP));
+    mock_time_.advance(pkt::button::INTER_PACKET_MS);
+    registry_.loop(mock_time_.millis());
+    EXPECT_EQ(dev->sender.state(), CommandSender::State::TX_PENDING);
+
+    registry_.set_hub(nullptr);
+    dev->sender.clear_queue();
+    registry_.set_light_brightness(*dev, 0.5f);
+    mock_time_.advance(cfg.dim_duration_ms);
+    registry_.loop(mock_time_.millis());
+    EXPECT_FALSE(light_sm::is_dimming(std::get<LightDevice>(dev->logic).state));
+    const auto packets = drain_commands(*dev);
+    ASSERT_FALSE(packets.empty());
+    EXPECT_EQ(packets.back().payload[4], pkt::button::RELEASE);
+}
+
 TEST_F(DeviceRegistryTest, Loop_LightDimComplete_EnqueuesRelease) {
     auto *dev = add_light();
     registry_.command_light(*dev, pkt::command::UP);

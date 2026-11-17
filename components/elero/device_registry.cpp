@@ -829,10 +829,10 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
 void DeviceRegistry::loop(uint32_t now) {
     for (auto &dev : slots_) {
         if (!dev.active) continue;
-        if (!dev.config.is_enabled()) {
-            // Unpublished devices still accept explicit manual commands,
-            // especially STOP, but do not schedule background polling.
-            if (dev.is_cover() && hub_ != nullptr) dev.sender.process_queue(now, hub_, "elero.manual");
+        if (dev.is_cover() && !dev.config.is_enabled()) {
+            // Hidden covers accept manual commands without background polling.
+            // Lights must also finish timed dimming and send RELEASE.
+            if (hub_ != nullptr) dev.sender.process_queue(now, hub_, "elero.manual");
             continue;
         }
 

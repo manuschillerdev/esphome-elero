@@ -98,7 +98,7 @@ class EspLightShell : public light::LightOutput, public Component {
   void write_state(light::LightState *) override {}
 
   void sync_and_publish(uint16_t changes) {
-    if (!has_bound_device_() || !light_state_) return;
+    if (!has_bound_device_() || !device_->config.is_enabled() || !light_state_) return;
     const auto &pub = std::get<LightDevice>(device_->logic).published;
 
     if (changes & state_change::BRIGHTNESS) {
