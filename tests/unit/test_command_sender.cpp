@@ -275,6 +275,17 @@ TEST_F(CommandSenderTest, EnqueueRejectsWhenFull) {
 // TX Timing Tests
 // ============================================================================
 
+TEST_F(CommandSenderTest, FirstCommandAndPriorityStopCanTransmitAfter25Days) {
+  mock_time_.advance(25u * 86400000u);
+  ASSERT_TRUE(sender_.enqueue(packet::command::UP));
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  ASSERT_EQ(mock_hub_.recorded_commands.size(), 1u);
+  ASSERT_TRUE(sender_.enqueue(packet::command::STOP, 1, packet::msg_type::COMMAND, {}, true));
+  sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
+  ASSERT_EQ(mock_hub_.recorded_commands.size(), 2u);
+  EXPECT_EQ(mock_hub_.recorded_commands.back().payload[4], packet::command::STOP);
+}
+
 TEST_F(CommandSenderTest, WaitsForDelayBeforeTx) {
   sender_.enqueue(packet::command::UP);
 
