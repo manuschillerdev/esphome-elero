@@ -38,6 +38,7 @@
 #define LOG_PIN(msg, pin) ((void)0)
 #define ESP_LOGCONFIG(tag, format, ...) ((void)0)
 #define USE_BUTTON
+#define USE_LIGHT
 #define USE_COVER
 #define IRAM_ATTR
 
@@ -84,6 +85,7 @@ constexpr float DATA = 0.0f;
 #include "elero_mqtt/mqtt_adapter.h"
 #include "elero/esp_cover_action_button.h"
 #include "elero/esp_cover_shell.h"
+#include "elero/esp_light_shell.h"
 
 // Stub Elero methods (device_registry.cpp includes elero.h)
 namespace esphome {
@@ -414,6 +416,24 @@ TEST_F(DeviceRegistryTest, LightCommand_CheckDelegatesToRequestCheck) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMMAND DISPATCH — Set Position
 // ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_F(DeviceRegistryTest, NativeLightIgnoresReplacementInSameSlot) {
+    auto *original = add_light();
+    EspLightShell shell;
+    esphome::light::LightState state;
+    shell.set_device(original);
+    shell.set_registry(&registry_);
+    shell.set_light_state(&state);
+    shell.setup();
+    ASSERT_TRUE(registry_.remove(original->config.dst_address, DeviceType::LIGHT));
+    auto *replacement = add_light(0xC00002);
+    ASSERT_EQ(replacement, original);
+    unsigned published = state.publications;
+    shell.sync_and_publish(state_change::ALL);
+    EXPECT_EQ(state.publications, published);
+    shell.update_state(&state);
+    EXPECT_FALSE(replacement->sender.has_pending_commands());
+}
 
 TEST_F(DeviceRegistryTest, SetPosition_IntermediateTarget) {
     auto *dev = add_cover();

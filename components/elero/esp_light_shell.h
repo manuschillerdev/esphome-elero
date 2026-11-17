@@ -33,7 +33,10 @@ class EspLightShell : public light::LightOutput, public Component {
 
   // ── Binding (called by NvsAdapter at construction time) ──
   void set_registry(DeviceRegistry *r) { registry_ = r; }
-  void set_device(Device *d) { device_ = d; }
+  void set_device(Device *d) {
+    device_ = d;
+    address_ = d != nullptr ? d->config.dst_address : 0;
+  }
   void set_light_state(light::LightState *s) { light_state_ = s; }
 
   // ── Sensor setters (published from sync_and_publish via snapshot) ──
@@ -55,7 +58,7 @@ class EspLightShell : public light::LightOutput, public Component {
       refresh_button_->set_registry(registry_);
     }
 #endif
-    if (device_ && device_->active) {
+    if (has_bound_device_()) {
       sync_and_publish(state_change::ALL);
     }
     initialized_ = true;
@@ -64,6 +67,7 @@ class EspLightShell : public light::LightOutput, public Component {
   // ── ESPHome Light interface ────────────────────────────────
   light::LightTraits get_traits() override {
     auto traits = light::LightTraits();
+    if (!has_bound_device_()) return traits;
     const auto &cfg = device_->config;
     auto ctx = light_context(cfg);
     traits.set_supported_color_modes({
@@ -78,7 +82,7 @@ class EspLightShell : public light::LightOutput, public Component {
   // adapter and can echo reports or lose commands when an RF report arrives
   // between LightCall::perform() and the next LightState loop.
   void update_state(light::LightState *state) override {
-    if (!initialized_ || !device_ || !device_->is_light() || !registry_) return;
+    if (!initialized_ || !has_bound_device_() || !device_->config.is_enabled() || !registry_) return;
 
     float brightness;
     state->current_values_as_brightness(&brightness);
@@ -94,7 +98,7 @@ class EspLightShell : public light::LightOutput, public Component {
   void write_state(light::LightState *) override {}
 
   void sync_and_publish(uint16_t changes) {
-    if (!device_ || !device_->is_light() || !light_state_) return;
+    if (!has_bound_device_() || !light_state_) return;
     const auto &pub = std::get<LightDevice>(device_->logic).published;
 
     if (changes & state_change::BRIGHTNESS) {
@@ -135,6 +139,13 @@ class EspLightShell : public light::LightOutput, public Component {
 #ifdef USE_BUTTON
   RefreshButton *refresh_button_{nullptr};
 #endif
+
+ private:
+  bool has_bound_device_() const {
+    return device_ != nullptr && device_->active && device_->is_light() &&
+           device_->config.dst_address == address_;
+  }
+  uint32_t address_{0};
 };
 
 }  // namespace elero
