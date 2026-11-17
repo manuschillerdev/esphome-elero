@@ -445,6 +445,23 @@ TEST_F(DeviceRegistryTest, SetPosition_IntermediateTarget) {
     EXPECT_TRUE(std::holds_alternative<cover_sm::Opening>(cover.state));
 }
 
+TEST_F(DeviceRegistryTest, FullQueuePreservesAcceptedPositionAndReportsGroupFailure) {
+    auto *first = add_cover();
+    auto *second = add_cover(0xA00002);
+    const auto group = make_group_config("pair", "Pair", {first->config.dst_address, second->config.dst_address});
+    ASSERT_NE(registry_.upsert_group(group), nullptr);
+    ASSERT_TRUE(registry_.set_cover_position(*first, 0.75f));
+    for (unsigned i = 0; first->sender.queue_size() < pkt::limits::MAX_COMMAND_QUEUE; ++i)
+        ASSERT_TRUE(first->sender.enqueue(i % 2 ? pkt::command::UP : pkt::command::DOWN));
+    std::string error;
+    EXPECT_FALSE(registry_.set_group_position("pair", 0.25f, &error));
+    EXPECT_FALSE(error.empty());
+    const auto &cover = std::get<CoverDevice>(first->logic);
+    EXPECT_FLOAT_EQ(cover.target_position, 0.75f);
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Opening>(cover.state));
+    EXPECT_FLOAT_EQ(std::get<CoverDevice>(second->logic).target_position, 0.25f);
+}
+
 TEST_F(DeviceRegistryTest, SetPosition_EndpointHasNoTarget) {
     // Full open/close: blind handles the endpoint itself, no intermediate stop needed
     auto *dev = add_cover();

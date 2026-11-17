@@ -354,8 +354,9 @@ bool DeviceRegistry::command_cover(uint32_t address, uint8_t cmd_byte) {
     return dev != nullptr && command_cover(*dev, cmd_byte);
 }
 
-void DeviceRegistry::set_cover_position(uint32_t address, float target) {
-    if (auto *dev = find_entity_cover_(address)) set_cover_position(*dev, target);
+bool DeviceRegistry::set_cover_position(uint32_t address, float target) {
+    auto *dev = find_entity_cover_(address);
+    return dev != nullptr && set_cover_position(*dev, target);
 }
 
 bool DeviceRegistry::command_cover_tilt(uint32_t address, float target) {
@@ -402,59 +403,46 @@ bool DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte) {
         cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
         cover.target_position = cover_sm::NO_TARGET;
     } else {
-        if (!enqueue_or_warn_(dev, cmd_byte, packet::button::PACKETS,
-                              packet::msg_type::BUTTON,
-                              "command_cover(move)")) return false;
-        // A manual motion or preset replaces a previously timed position plan.
-        cover.target_position = cover_sm::NO_TARGET;
-        if (cmd_byte == packet::command::FULL_UP) cmd_byte = packet::command::UP;
-        if (cmd_byte == packet::command::FULL_DOWN) cmd_byte = packet::command::DOWN;
-        if (cmd_byte == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
-        if (cmd_byte == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
-        (void) enqueue_check_(dev, "command_cover(move)");
-        cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
-        cover.poll.on_command_sent(now);
+        return queue_cover_movement_(dev, cmd_byte, cover_sm::NO_TARGET, now);
     }
 
     notify_state_changed_(dev, now);
     return true;
 }
 
-void DeviceRegistry::set_cover_position(Device &dev, float target) {
-    // Unpublished covers do not run timed-position plans. Explicit manual
-    // directions and STOP use command_cover_action independently.
-    if (!dev.is_cover() || !dev.config.is_enabled()) return;
+bool DeviceRegistry::queue_cover_movement_(Device &dev, uint8_t cmd, float target, uint32_t now) {
+    if (!enqueue_or_warn_(dev, cmd, packet::button::PACKETS,
+                          packet::msg_type::BUTTON, "cover movement")) return false;
 
+    (void) enqueue_check_(dev, "cover movement");
     auto &cover = std::get<CoverDevice>(dev.logic);
-    auto ctx = cover_context(dev.config);
-    if (!cover_sm::has_position_tracking(ctx)) return;
-
-    uint32_t now = millis();
-
-    uint8_t cmd;
-    if (target >= cover_sm::POSITION_OPEN) {
-        cmd = packet::command::UP;
-        cover.target_position = cover_sm::NO_TARGET;  // Blind handles endpoint
-    } else if (target <= cover_sm::POSITION_CLOSED) {
-        cmd = packet::command::DOWN;
-        cover.target_position = cover_sm::NO_TARGET;  // Blind handles endpoint
-    } else {
-        float current = cover_sm::position(cover.state, now, ctx);
-        cmd = (target > current) ? packet::command::UP : packet::command::DOWN;
-        cover.target_position = target;
-    }
-    bool move_queued = enqueue_or_warn_(dev, cmd, packet::button::PACKETS,
-                                        packet::msg_type::BUTTON,
-                                        "set_cover_position");
-    (void) enqueue_check_(dev, "set_cover_position");
-    cover.state = cover_sm::on_command(cover.state, cmd, now, ctx);
+    cover.target_position = target;
+    if (cmd == packet::command::FULL_UP) cmd = packet::command::UP;
+    if (cmd == packet::command::FULL_DOWN) cmd = packet::command::DOWN;
     if (cmd == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
     if (cmd == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
-    if (move_queued) {
-        cover.poll.on_command_sent(now);
-    }
-
+    cover.state = cover_sm::on_command(cover.state, cmd, now, cover_context(dev.config));
+    cover.poll.on_command_sent(now);
     notify_state_changed_(dev, now);
+    return true;
+}
+
+bool DeviceRegistry::set_cover_position(Device &dev, float target) {
+    if (!dev.active || !dev.is_cover() || !dev.config.is_enabled() ||
+        !std::isfinite(target) || target < cover_sm::POSITION_CLOSED || target > cover_sm::POSITION_OPEN)
+        return false;
+    const auto ctx = cover_context(dev.config);
+    if (!cover_sm::has_position_tracking(ctx)) return false;
+
+    const uint32_t now = millis();
+    if (target == cover_sm::POSITION_OPEN)
+        return queue_cover_movement_(dev, packet::command::UP, cover_sm::NO_TARGET, now);
+    if (target == cover_sm::POSITION_CLOSED)
+        return queue_cover_movement_(dev, packet::command::DOWN, cover_sm::NO_TARGET, now);
+
+    const auto &cover = std::get<CoverDevice>(dev.logic);
+    const auto cmd = target > cover_sm::position(cover.state, now, ctx) ? packet::command::UP : packet::command::DOWN;
+    return queue_cover_movement_(dev, cmd, target, now);
 }
 
 bool DeviceRegistry::command_cover_tilt(Device &dev) {
@@ -1224,10 +1212,12 @@ bool DeviceRegistry::set_group_position(const char *id, float target, std::strin
         ESP_LOGW(TAG, "Group position rejected for '%s'", id != nullptr ? id : "<null>");
         return false;
     }
+    bool accepted = true;
     for (uint8_t i = 0; i < group->member_count; ++i) {
-        set_cover_position(*find(group->device_ids[i]), target);
+        if (!set_cover_position(*find(group->device_ids[i]), target)) accepted = false;
     }
-    return true;
+    if (!accepted && error != nullptr) *error = "One or more group members rejected the position command";
+    return accepted;
 }
 
 void DeviceRegistry::notify_group_states_(uint32_t now, bool force) {
