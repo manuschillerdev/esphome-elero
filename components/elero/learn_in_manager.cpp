@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cinttypes>
 #include "learn_in_manager.h"
 
@@ -31,128 +32,20 @@ const char *learn_in_state_str(LearnInState state) {
   return "unknown";
 }
 
-bool LearnInManager::start(const LearnInStartRequest &request) {
-  if (is_active() || is_busy()) {
-    ESP_LOGW(TAG, "Cannot start learn-in while state=%s", learn_in_state_str(state_));
-    return false;
-  }
-  if (!prime_session_(request)) {
-    return false;
-  }
-  return queue_step_(packet::command::PROGRAM, LearnInState::PROGRAMMING);
-}
-
-bool LearnInManager::confirm_up() {
-  if (state_ != LearnInState::WAIT_UP || is_busy()) {
-    ESP_LOGW(TAG, "confirm_up rejected in state=%s", learn_in_state_str(state_));
-    return false;
-  }
-  return queue_step_(packet::command::UP, LearnInState::CONFIRMING_UP);
-}
-
-bool LearnInManager::confirm_down() {
-  if (state_ != LearnInState::WAIT_DOWN || is_busy()) {
-    ESP_LOGW(TAG, "confirm_down rejected in state=%s", learn_in_state_str(state_));
-    return false;
-  }
-  return queue_step_(packet::command::DOWN, LearnInState::CONFIRMING_DOWN);
-}
-
-void LearnInManager::cancel() {
-  if (state_ == LearnInState::IDLE && !is_busy()) {
-    return;
-  }
-  reset_transport_();
-  state_ = LearnInState::CANCELLED;
-  ESP_LOGI(TAG, "Learn-in session cancelled");
-}
-
-void LearnInManager::on_tx_complete(bool success) {
-  if (!tx_pending_) {
-    return;
-  }
-
-  tx_pending_ = false;
-  uint32_t now = get_time_provider().millis();
-
-  if (success) {
-    retries_ = 0;
-    ++sent_packets_;
-
-    if (sent_packets_ < packets_per_step_) {
-      next_attempt_ms_ = now + packet::button::INTER_PACKET_MS;
-      return;
-    }
-
-    uint8_t completed_step = queued_step_;
-    reset_transport_();
-    increase_counter_();
-
-    switch (state_) {
-      case LearnInState::PROGRAMMING:
-        state_ = LearnInState::WAIT_UP;
-        break;
-      case LearnInState::CONFIRMING_UP:
-        state_ = LearnInState::WAIT_DOWN;
-        break;
-      case LearnInState::CONFIRMING_DOWN:
-        state_ = LearnInState::COMPLETE;
-        break;
-      default:
-        state_ = LearnInState::FAILED;
-        break;
-    }
-
-    ESP_LOGI(TAG, "Learn-in step complete cmd=0x%02x -> state=%s", completed_step,
-             learn_in_state_str(state_));
-    return;
-  }
-
-  ++retries_;
-  if (retries_ > packet::limits::SEND_RETRIES) {
-    fail_session_();
-    return;
-  }
-
-  next_attempt_ms_ = now + calculate_backoff_ms_();
-  ESP_LOGW(TAG, "Learn-in retry %u/%u for cmd=0x%02x", retries_,
-           packet::limits::SEND_RETRIES, queued_step_);
+LearnInState LearnInManager::state() const {
+  if (const auto *step = std::get_if<Sending>(&state_)) return step->phase;
+  return std::get<LearnInState>(state_);
 }
 
 bool LearnInManager::is_active() const {
-  return !is_terminal_() && state_ != LearnInState::IDLE;
+  return is_busy() || state() == LearnInState::WAIT_UP || state() == LearnInState::WAIT_DOWN;
 }
 
-bool LearnInManager::time_reached_(uint32_t now, uint32_t deadline) {
-  return static_cast<int32_t>(now - deadline) >= 0;
-}
-
-uint32_t LearnInManager::calculate_backoff_ms_() const {
-  uint8_t shift = (retries_ < 4) ? retries_ : 3;
-  uint32_t backoff_ms = packet::button::INTER_PACKET_MS << shift;
-  return (backoff_ms > packet::timing::MAX_BACKOFF_MS) ? packet::timing::MAX_BACKOFF_MS
-                                                        : backoff_ms;
-}
-
-bool LearnInManager::is_terminal_() const {
-  switch (state_) {
-    case LearnInState::COMPLETE:
-    case LearnInState::FAILED:
-    case LearnInState::CANCELLED:
-    case LearnInState::TIMED_OUT:
-      return true;
-    case LearnInState::IDLE:
-    case LearnInState::PROGRAMMING:
-    case LearnInState::WAIT_UP:
-    case LearnInState::CONFIRMING_UP:
-    case LearnInState::WAIT_DOWN:
-    case LearnInState::CONFIRMING_DOWN:
-      return false;
+bool LearnInManager::start(const LearnInStartRequest &request) {
+  if (is_active()) {
+    ESP_LOGW(TAG, "Cannot start learn-in while state=%s", learn_in_state_str(state()));
+    return false;
   }
-  return true;
-}
-
-bool LearnInManager::prime_session_(const LearnInStartRequest &request) {
   if (request.src_addr == 0) {
     ESP_LOGW(TAG, "Learn-in start rejected: src_addr missing");
     return false;
@@ -166,31 +59,37 @@ bool LearnInManager::prime_session_(const LearnInStartRequest &request) {
     return false;
   }
 
-  reset_all_();
   command_.counter = 1;
-  command_.dst_addr = 0;
   command_.src_addr = request.src_addr;
   command_.channel = request.channel;
-  command_.type = packet::msg_type::PROGRAM;
-  command_.type2 = packet::program::TYPE2;
-  command_.hop = packet::program::HOP;
-  command_.payload[0] = 0;
-  command_.payload[1] = 0;
   packets_per_step_ = request.packets;
   session_start_ms_ = get_time_provider().millis();
   session_timeout_ms_ = request.session_timeout_ms;
+  begin_step_(packet::command::PROGRAM, LearnInState::PROGRAMMING, LearnInState::WAIT_UP);
   return true;
 }
 
-bool LearnInManager::queue_step_(uint8_t cmd_byte, LearnInState pending_state) {
-  if (cmd_byte == packet::command::INVALID) {
+bool LearnInManager::confirm_up() {
+  if (state() != LearnInState::WAIT_UP) {
+    ESP_LOGW(TAG, "confirm_up rejected in state=%s", learn_in_state_str(state()));
     return false;
   }
-  queued_step_ = cmd_byte;
-  sent_packets_ = 0;
-  retries_ = 0;
-  next_attempt_ms_ = get_time_provider().millis();
-  if (pending_state == LearnInState::PROGRAMMING) {
+  begin_step_(packet::command::UP, LearnInState::CONFIRMING_UP, LearnInState::WAIT_DOWN);
+  return true;
+}
+
+bool LearnInManager::confirm_down() {
+  if (state() != LearnInState::WAIT_DOWN) {
+    ESP_LOGW(TAG, "confirm_down rejected in state=%s", learn_in_state_str(state()));
+    return false;
+  }
+  begin_step_(packet::command::DOWN, LearnInState::CONFIRMING_DOWN, LearnInState::COMPLETE);
+  return true;
+}
+
+void LearnInManager::begin_step_(uint8_t command, LearnInState phase, LearnInState on_success) {
+  command_.payload[4] = command;
+  if (phase == LearnInState::PROGRAMMING) {
     command_.type = packet::msg_type::PROGRAM;
     command_.type2 = packet::program::TYPE2;
     command_.hop = packet::program::HOP;
@@ -199,40 +98,57 @@ bool LearnInManager::queue_step_(uint8_t cmd_byte, LearnInState pending_state) {
     command_.type2 = packet::button::TYPE2;
     command_.hop = packet::button::HOP;
   }
-  state_ = pending_state;
+  state_ = Sending{phase, on_success, get_time_provider().millis()};
   ESP_LOGI(TAG, "Learn-in queued state=%s cmd=0x%02x src=0x%06" PRIx32 " ch=%u",
-           learn_in_state_str(state_), cmd_byte, command_.src_addr, command_.channel);
-  return true;
+           learn_in_state_str(phase), command, command_.src_addr, command_.channel);
 }
 
-void LearnInManager::fail_session_() {
-  ESP_LOGE(TAG, "Learn-in failed in state=%s cmd=0x%02x", learn_in_state_str(state_),
-           queued_step_);
-  reset_transport_();
-  state_ = LearnInState::FAILED;
+void LearnInManager::cancel() {
+  if (state() == LearnInState::IDLE) return;
+  finish_(LearnInState::CANCELLED);
+  ESP_LOGI(TAG, "Learn-in session cancelled");
 }
 
-void LearnInManager::increase_counter_() {
-  if (command_.counter >= packet::limits::COUNTER_MAX) {
-    command_.counter = 1;
-  } else {
-    ++command_.counter;
+void LearnInManager::finish_(LearnInState state) {
+  invalidate_tx_attempt();
+  state_ = state;
+}
+
+bool LearnInManager::time_reached_(uint32_t now, uint32_t deadline) {
+  return static_cast<int32_t>(now - deadline) >= 0;
+}
+
+void LearnInManager::on_tx_complete(bool success) {
+  auto *step = std::get_if<Sending>(&state_);
+  if (step == nullptr || step->next_attempt_ms) return;
+
+  const uint32_t now = get_time_provider().millis();
+  if (success) {
+    step->retries = 0;
+    if (++step->sent_packets < packets_per_step_) {
+      step->next_attempt_ms = now + packet::button::INTER_PACKET_MS;
+      return;
+    }
+
+    command_.counter = command_.counter >= packet::limits::COUNTER_MAX ? 1 : command_.counter + 1;
+    finish_(step->on_success);
+    ESP_LOGI(TAG, "Learn-in step complete cmd=0x%02x -> state=%s",
+             command_.payload[4], learn_in_state_str(state()));
+    return;
   }
-}
 
-void LearnInManager::reset_transport_() {
-  this->invalidate_tx_attempt();
-  queued_step_ = 0;
-  sent_packets_ = 0;
-  retries_ = 0;
-  next_attempt_ms_ = 0;
-  tx_pending_ = false;
-}
-
-void LearnInManager::reset_all_() {
-  reset_transport_();
-  packets_per_step_ = packet::program::PACKETS;
-  state_ = LearnInState::IDLE;
+  if (++step->retries > packet::limits::SEND_RETRIES) {
+    ESP_LOGE(TAG, "Learn-in failed in state=%s cmd=0x%02x",
+             learn_in_state_str(step->phase), command_.payload[4]);
+    finish_(LearnInState::FAILED);
+    return;
+  }
+  const auto shift = std::min<uint8_t>(step->retries, 3);
+  const auto backoff_ms = std::min<uint32_t>(packet::button::INTER_PACKET_MS << shift,
+                                             packet::timing::MAX_BACKOFF_MS);
+  step->next_attempt_ms = now + backoff_ms;
+  ESP_LOGW(TAG, "Learn-in retry %u/%u for cmd=0x%02x", step->retries,
+           packet::limits::SEND_RETRIES, command_.payload[4]);
 }
 
 }  // namespace esphome::elero
