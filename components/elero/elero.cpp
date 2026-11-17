@@ -348,6 +348,9 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
 
   // Build RfPacketInfo
   RfPacketInfo pkt{};
+#ifdef USE_ESP32
+  pkt.decoded_at_us = esp_timer_get_time();
+#endif
   pkt.timestamp_ms = millis();
   pkt.src = r.src_addr;
   pkt.dst = r.dst_addr;
@@ -365,9 +368,6 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
   pkt.lqi = r.lqi;
   pkt.crc_ok = (r.crc_ok != 0);
   pkt.hop = r.hop;
-#ifdef USE_ESP32
-  pkt.decoded_at_us = esp_timer_get_time();
-#endif
   memcpy(pkt.payload, r.payload, sizeof(pkt.payload));
 
   // Copy raw bytes for WebSocket broadcast

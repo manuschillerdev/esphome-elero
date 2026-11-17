@@ -2,6 +2,7 @@
 /// @brief DeviceRegistry implementation — CRUD, NVS, RF dispatch, loop, observer notification.
 
 #include <cinttypes>
+#include <esp_timer.h>
 #include "device_registry.h"
 #include "state_snapshot.h"
 #include "elero.h"
@@ -378,6 +379,7 @@ bool DeviceRegistry::step_cover(Device &dev, bool up) {
     // use channel addressing; no angle or lift position is inferred from a pulse.
     if (!dev.sender.enqueue_short_press(up ? packet::command::UP : packet::command::DOWN)) return false;
     auto &cover = std::get<CoverDevice>(dev.logic);
+    cover.last_motion_command_us = esp_timer_get_time();
     cover.target_position = cover_sm::NO_TARGET;
     cover.poll.on_command_sent(millis());
     return true;
@@ -400,6 +402,7 @@ bool DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte) {
                                 packet::msg_type::COMMAND,
                                 "command_cover(stop)")) return false;
         (void) enqueue_check_(dev, "command_cover(stop)");
+        cover.last_motion_command_us = esp_timer_get_time();
         cover.state = cover_sm::on_command(cover.state, cmd_byte, now, ctx);
         cover.target_position = cover_sm::NO_TARGET;
     } else {
@@ -412,6 +415,7 @@ bool DeviceRegistry::command_cover(Device &dev, uint8_t cmd_byte) {
 
 static void apply_cover_movement(Device &dev, uint8_t cmd, float target, uint32_t now) {
     auto &cover = std::get<CoverDevice>(dev.logic);
+    cover.last_motion_command_us = esp_timer_get_time();
     cover.target_position = target;
     if (cmd == packet::command::FULL_UP) cmd = packet::command::UP;
     if (cmd == packet::command::FULL_DOWN) cmd = packet::command::DOWN;
@@ -719,6 +723,10 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
         // Status packets: src is the blind/light reporting status
         Device *dev = find(pkt.src);
         if (dev && dev->active) {
+            // Raw packet observers above retain the original timestamp and RSSI.
+            // An older report cannot describe the result of a newer command.
+            if (const auto *cover = std::get_if<CoverDevice>(&dev->logic);
+                cover && pkt.decoded_at_us < cover->last_motion_command_us) return;
             const bool first_report = dev->rf.last_seen_ms == 0;
             dev->rf.last_seen_ms = now;
             dev->rf.last_rssi = pkt.rssi;
@@ -887,6 +895,7 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
                                     packet::msg_type::COMMAND,
                                     "loop_cover(target_stop)");
             (void) enqueue_check_(dev, "loop_cover(target_stop)");
+            cover.last_motion_command_us = esp_timer_get_time();
             cover.state = cover_sm::on_command(cover.state, packet::command::STOP, now, ctx);
             state_type_changed = true;
             cover.target_position = cover_sm::NO_TARGET;  // Clear target

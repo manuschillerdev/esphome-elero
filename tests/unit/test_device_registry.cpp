@@ -213,6 +213,7 @@ static RfPacketInfo make_status_pkt(uint32_t src, uint8_t state_byte, float rssi
     pkt.timestamp_ms = esphome::millis();
     pkt.src = src;
     pkt.dst = 0xF0D008;
+    pkt.decoded_at_us = esp_timer_get_time();
     pkt.type = pkt::msg_type::STATUS;
     pkt.state = state_byte;
     pkt.rssi = rssi;
@@ -460,6 +461,22 @@ TEST_F(DeviceRegistryTest, FullQueuePreservesAcceptedPositionAndReportsGroupFail
     EXPECT_FLOAT_EQ(cover.target_position, 0.75f);
     EXPECT_TRUE(std::holds_alternative<cover_sm::Opening>(cover.state));
     EXPECT_FLOAT_EQ(std::get<CoverDevice>(second->logic).target_position, 0.25f);
+}
+
+TEST_F(DeviceRegistryTest, BufferedStatusCannotStopNewMovement) {
+    auto *dev = add_cover();
+    mock_time_.advance(100);
+    auto report = make_status_pkt(dev->config.dst_address, pkt::state::STOPPED);
+    mock_time_.advance(1);
+    ASSERT_TRUE(registry_.command_cover(*dev, pkt::command::UP));
+    registry_.on_rf_packet(report, report.timestamp_ms);
+    auto &cover = std::get<CoverDevice>(dev->logic);
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Opening>(cover.state));
+    EXPECT_LT(cover_sm::position(cover.state, mock_time_.millis(), cover_context(dev->config)), 1.0f);
+    mock_time_.advance(1);
+    report = make_status_pkt(dev->config.dst_address, pkt::state::STOPPED);
+    registry_.on_rf_packet(report, report.timestamp_ms);
+    EXPECT_TRUE(std::holds_alternative<cover_sm::Stopping>(cover.state));
 }
 
 TEST_F(DeviceRegistryTest, SetPosition_EndpointHasNoTarget) {
