@@ -128,6 +128,16 @@ TEST_F(RfTransportTest, SaturationRetainsResultsAndContinuesRxAndRecovery) {
   EXPECT_EQ(radio.sent.size(), 10u);
 }
 
+TEST_F(RfTransportTest, DriverCountsOverflowAndWatchdogRecoveryOnce) {
+  radio.recover();  // Startup also restores receive mode.
+  EXPECT_EQ(radio.watchdog_count(), 0u);
+  radio.health = RadioHealth::FIFO_OVERFLOW;
+  transport.step(port);
+  transport.step(port);
+  EXPECT_EQ(radio.overflow_count(), 1u);
+  EXPECT_EQ(radio.watchdog_count(), 1u);
+}
+
 TEST_F(RfTransportTest, PartialReceiveDefersTxAndWatchdogUntilFrameCompletes) {
   port.enqueue(1);
   radio.partial = true;

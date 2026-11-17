@@ -460,9 +460,9 @@ void Elero::publish_stats_() {
   if (this->stats_rx_drops_)
     this->stats_rx_drops_->publish_state(this->stat_rx_drops_.load(std::memory_order_relaxed));
   if (this->stats_fifo_overflows_)
-    this->stats_fifo_overflows_->publish_state(this->stat_fifo_overflows_.load(std::memory_order_relaxed));
+    this->stats_fifo_overflows_->publish_state(this->driver_->overflow_count());
   if (this->stats_watchdog_)
-    this->stats_watchdog_->publish_state(this->stat_watchdog_recoveries_.load(std::memory_order_relaxed));
+    this->stats_watchdog_->publish_state(this->driver_->watchdog_count());
   if (this->stats_dispatch_latency_)
     this->stats_dispatch_latency_->publish_state(this->stat_dispatch_latency_us_);
   if (this->stats_queue_transit_)

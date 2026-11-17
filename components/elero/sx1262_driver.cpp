@@ -377,7 +377,6 @@ bool Sx1262Driver::restore_rx_() {
 }
 
 void Sx1262Driver::recover() {
-  this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
   if (this->restore_rx_()) {
     this->failed_resets_ = 0;
     return;

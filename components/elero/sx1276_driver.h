@@ -247,8 +247,6 @@ class Sx1276Driver : public RadioDriver,
 
   // ── Diagnostics ────────────────────────────────────────────────────────────
 
-  uint32_t overflow_count() const { return stat_fifo_overflows_.load(std::memory_order_relaxed); }
-  uint32_t watchdog_count() const { return stat_watchdog_recoveries_.load(std::memory_order_relaxed); }
   uint32_t recover_count() const { return stat_tx_recover_.load(std::memory_order_relaxed); }
 
  private:
@@ -328,8 +326,6 @@ class Sx1276Driver : public RadioDriver,
 
   // ── Stats (atomic — incremented on Core 0, read from Core 1) ───────────────
 
-  std::atomic<uint32_t> stat_fifo_overflows_{0};
-  std::atomic<uint32_t> stat_watchdog_recoveries_{0};
   std::atomic<uint32_t> stat_tx_recover_{0};
 };
 

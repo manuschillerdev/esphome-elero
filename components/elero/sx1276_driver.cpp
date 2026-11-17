@@ -213,7 +213,6 @@ RadioHealth Sx1276Driver::check_health() {
   // Check for FIFO overrun
   if (irq2 & sx1276::IRQ2_FIFO_OVERRUN) {
     ESP_LOGW(TAG, "Radio watchdog: FIFO overrun");
-    this->stat_fifo_overflows_.fetch_add(1, std::memory_order_relaxed);
     return RadioHealth::FIFO_OVERFLOW;
   }
 
@@ -243,7 +242,6 @@ RadioHealth Sx1276Driver::check_health() {
 }
 
 void Sx1276Driver::recover() {
-  this->stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
 
   ESP_LOGW(TAG, "recover: re-entering RX mode");
   this->rx_capture_active_ = false;

@@ -116,6 +116,18 @@ class RadioDriver {
   /// Recover from a bad state (flush FIFOs, re-enter RX, or full reset).
   virtual void recover() = 0;
 
+  void run_watchdog() {
+    const auto health = check_health();
+    if (health == RadioHealth::OK) return;
+    if (health == RadioHealth::FIFO_OVERFLOW) stat_fifo_overflows_.fetch_add(1, std::memory_order_relaxed);
+    stat_watchdog_recoveries_.fetch_add(1, std::memory_order_relaxed);
+    recover();
+  }
+
+  // Safe to read from the main loop while the radio task updates the counts.
+  uint32_t overflow_count() const { return stat_fifo_overflows_.load(std::memory_order_relaxed); }
+  uint32_t watchdog_count() const { return stat_watchdog_recoveries_.load(std::memory_order_relaxed); }
+
   // ── Frequency ──────────────────────────────────────────────────────────────
 
   /// Change frequency registers and reinitialize the radio.
@@ -140,6 +152,8 @@ class RadioDriver {
   virtual bool irq_rising_edge() const { return false; }  // CC1101 default
 
  protected:
+  std::atomic<uint32_t> stat_fifo_overflows_{0};
+  std::atomic<uint32_t> stat_watchdog_recoveries_{0};
   std::atomic<RadioMode> mode_{RadioMode::RX};
   bool failed_{false};                    ///< Set when recovery is exhausted
   std::atomic<bool> *rx_ready_{nullptr};  ///< ISR sets when RX packet available
