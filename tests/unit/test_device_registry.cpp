@@ -384,7 +384,7 @@ TEST_F(DeviceRegistryTest, RequestCheck_EnqueuesSingleCheck) {
 
     EXPECT_EQ(dev->sender.queue_size(), 1u);
     auto &cover = std::get<CoverDevice>(dev->logic);
-    EXPECT_TRUE(cover.poll.awaiting_response);
+    EXPECT_FALSE(cover.poll.should_poll(mock_time_.millis(), true));
 }
 
 TEST_F(DeviceRegistryTest, RequestCheck_InactiveDeviceIsNoOp) {
@@ -402,7 +402,7 @@ TEST_F(DeviceRegistryTest, CoverCommand_CheckDelegatesToRequestCheck) {
     // Should produce exactly 1 CHECK (via request_check), not 2
     EXPECT_EQ(dev->sender.queue_size(), 1u);
     auto &cover = std::get<CoverDevice>(dev->logic);
-    EXPECT_TRUE(cover.poll.awaiting_response);
+    EXPECT_FALSE(cover.poll.should_poll(mock_time_.millis(), true));
     // FSM should be unchanged (CHECK is not a movement command)
     EXPECT_TRUE(std::holds_alternative<cover_sm::Idle>(cover.state));
 }

@@ -654,7 +654,7 @@ The GDO0 interrupt handler (`Elero::interrupt`) is minimal and runs in IRAM:
 | **Idle** | 1 RF packet per CHECK, 5min interval (blind is mains-powered, always listening; retry via next poll) |
 | **Post-stop** | 1 RF packet CHECK after Stopping→Idle cooldown (verify actual resting position) |
 
-Blinds only respond to received packets during movement -- they do not broadcast unsolicited status updates. The PollTimer uses a boolean `awaiting_response` flag (not time-based).
+Blinds only respond to received packets during movement -- they do not broadcast unsolicited status updates. After the registry queues a command or a poll, `PollTimer` waits up to 2 seconds for a response. A response starts a new poll interval. If the wait expires, the normal poll schedule applies.
 
 ### Position and Brightness Tracking
 

@@ -20,10 +20,16 @@ class PollTimerTest : public ::testing::Test {
     PollTimer timer{};
 
     /// Timer with short interval for easier testing
-    PollTimer fast_timer{.interval_ms = 5000};
+    PollTimer fast_timer;
 
     /// Timer with stagger offset
-    PollTimer stagger_timer{.interval_ms = 10000, .offset_ms = 3000};
+    PollTimer stagger_timer;
+
+    void SetUp() override {
+        fast_timer.interval_ms = 5000;
+        stagger_timer.interval_ms = 10000;
+        stagger_timer.offset_ms = 3000;
+    }
 };
 
 // =============================================================================
@@ -32,7 +38,7 @@ class PollTimerTest : public ::testing::Test {
 
 TEST_F(PollTimerTest, ShouldNotPollBeforeIntervalElapsed) {
     // Simulate that we already polled at t=1000
-    timer.on_poll_sent(1000);
+    timer.on_poll_queued(1000);
     timer.on_rf_received(1500);  // Got response, clear awaiting
 
     // Well before default interval (300s), should not poll
@@ -42,7 +48,7 @@ TEST_F(PollTimerTest, ShouldNotPollBeforeIntervalElapsed) {
 }
 
 TEST_F(PollTimerTest, ShouldPollAfterIntervalElapsed) {
-    timer.on_poll_sent(1000);
+    timer.on_poll_queued(1000);
     timer.on_rf_received(1500);
 
     // on_rf_received sets last_poll_ms = 1500, so interval measured from there
@@ -51,7 +57,7 @@ TEST_F(PollTimerTest, ShouldPollAfterIntervalElapsed) {
 }
 
 TEST_F(PollTimerTest, ShouldPollWithCustomInterval) {
-    fast_timer.on_poll_sent(1000);
+    fast_timer.on_poll_queued(1000);
     fast_timer.on_rf_received(1500);
 
     // on_rf_received sets last_poll_ms = 1500, interval = 5000ms
@@ -64,7 +70,7 @@ TEST_F(PollTimerTest, ShouldPollWithCustomInterval) {
 // =============================================================================
 
 TEST_F(PollTimerTest, UsesMovingIntervalWhenMoving) {
-    fast_timer.on_poll_sent(1000);
+    fast_timer.on_poll_queued(1000);
     fast_timer.on_rf_received(1500);
 
     // With is_moving=true, uses POLL_INTERVAL_MOVING (2000ms) not interval_ms (5000ms)
@@ -73,7 +79,7 @@ TEST_F(PollTimerTest, UsesMovingIntervalWhenMoving) {
 }
 
 TEST_F(PollTimerTest, UsesIdleIntervalWhenNotMoving) {
-    fast_timer.on_poll_sent(1000);
+    fast_timer.on_poll_queued(1000);
     fast_timer.on_rf_received(1500);
 
     // With is_moving=false, uses interval_ms (5000ms)
@@ -90,10 +96,10 @@ TEST_F(PollTimerTest, MovingIntervalIs2Seconds) {
 // =============================================================================
 
 TEST_F(PollTimerTest, AfterCommandSentShouldNotPollDuringResponseWait) {
-    fast_timer.on_poll_sent(1000);
+    fast_timer.on_poll_queued(1000);
     fast_timer.on_rf_received(1500);
 
-    fast_timer.on_command_sent(10000);
+    fast_timer.on_command_queued(10000);
 
     // Within RESPONSE_WAIT_MS (2000ms), should_poll returns false
     EXPECT_FALSE(fast_timer.should_poll(10500, false));
@@ -102,7 +108,7 @@ TEST_F(PollTimerTest, AfterCommandSentShouldNotPollDuringResponseWait) {
 }
 
 TEST_F(PollTimerTest, AfterPollSentShouldNotPollDuringResponseWait) {
-    fast_timer.on_poll_sent(10000);
+    fast_timer.on_poll_queued(10000);
 
     // awaiting_response is true, within RESPONSE_WAIT_MS
     EXPECT_FALSE(fast_timer.should_poll(10500, false));
@@ -110,7 +116,7 @@ TEST_F(PollTimerTest, AfterPollSentShouldNotPollDuringResponseWait) {
 }
 
 TEST_F(PollTimerTest, TimeoutForcesRepollAfterResponseWait) {
-    fast_timer.on_command_sent(10000);
+    fast_timer.on_command_queued(10000);
 
     // After RESPONSE_WAIT_MS, timeout forces re-poll
     uint32_t timeout_time = 10000 + timing::RESPONSE_WAIT_MS;
@@ -119,19 +125,19 @@ TEST_F(PollTimerTest, TimeoutForcesRepollAfterResponseWait) {
 
 TEST_F(PollTimerTest, TimeoutClearsAwaitingResponse) {
     // Establish a baseline: poll, receive response, then send a command
-    fast_timer.on_poll_sent(5000);
+    fast_timer.on_poll_queued(5000);
     fast_timer.on_rf_received(5500);  // last_poll_ms = 5500
 
-    fast_timer.on_command_sent(10000);
+    fast_timer.on_command_queued(10000);
 
     uint32_t timeout_time = 10000 + timing::RESPONSE_WAIT_MS;
     EXPECT_TRUE(fast_timer.should_poll(timeout_time, false));
 
     // After timeout cleared awaiting_response, behavior returns to interval-based.
     // last_poll_ms is still 5500 (on_command_sent doesn't update it), so
-    // the caller must call on_poll_sent() after acting on the re-poll.
+    // the caller must call on_poll_queued() after acting on the re-poll.
     // Simulate that: on_poll_sent resets last_poll_ms, then verify interval.
-    fast_timer.on_poll_sent(timeout_time);
+    fast_timer.on_poll_queued(timeout_time);
     fast_timer.on_rf_received(timeout_time + 500);  // last_poll_ms = timeout_time + 500
 
     // Now interval-based: should not poll until interval_ms (5000) elapses
@@ -143,16 +149,8 @@ TEST_F(PollTimerTest, TimeoutClearsAwaitingResponse) {
 // 6. RF RESPONSE CLEARS AWAITING_RESPONSE
 // =============================================================================
 
-TEST_F(PollTimerTest, RfReceivedClearsAwaitingResponse) {
-    fast_timer.on_command_sent(10000);
-    EXPECT_TRUE(fast_timer.awaiting_response);
-
-    fast_timer.on_rf_received(10500);
-    EXPECT_FALSE(fast_timer.awaiting_response);
-}
-
 TEST_F(PollTimerTest, RfReceivedResetsLastPollMs) {
-    fast_timer.on_poll_sent(10000);
+    fast_timer.on_poll_queued(10000);
     fast_timer.on_rf_received(10500);
 
     // last_poll_ms is now 10500, so next poll should be at 10500 + 5000
@@ -165,7 +163,7 @@ TEST_F(PollTimerTest, RfReceivedResetsLastPollMs) {
 // =============================================================================
 
 TEST_F(PollTimerTest, FirstPollRespectsStaggerOffset) {
-    // last_poll_ms is 0 (never polled), so first poll uses offset
+    // The timer has no previous poll.
     EXPECT_FALSE(stagger_timer.should_poll(0, false));
     EXPECT_FALSE(stagger_timer.should_poll(2999, false));
     EXPECT_TRUE(stagger_timer.should_poll(3000, false));
@@ -173,7 +171,7 @@ TEST_F(PollTimerTest, FirstPollRespectsStaggerOffset) {
 }
 
 TEST_F(PollTimerTest, SubsequentPollsIgnoreOffset) {
-    stagger_timer.on_poll_sent(3000);
+    stagger_timer.on_poll_queued(3000);
     stagger_timer.on_rf_received(3500);
 
     // After first poll, uses interval_ms (10000ms), not offset
@@ -182,34 +180,12 @@ TEST_F(PollTimerTest, SubsequentPollsIgnoreOffset) {
 }
 
 // =============================================================================
-// 10. ON_POLL_SENT SETS AWAITING_RESPONSE
-// =============================================================================
-
-TEST_F(PollTimerTest, OnPollSentSetsAwaitingResponse) {
-    EXPECT_FALSE(fast_timer.awaiting_response);
-
-    fast_timer.on_poll_sent(5000);
-    EXPECT_TRUE(fast_timer.awaiting_response);
-}
-
-TEST_F(PollTimerTest, OnPollSentSetsLastPollMs) {
-    fast_timer.on_poll_sent(5000);
-    EXPECT_EQ(fast_timer.last_poll_ms, 5000u);
-}
-
-TEST_F(PollTimerTest, OnPollSentSetsLastCommandMs) {
-    fast_timer.on_poll_sent(5000);
-    EXPECT_EQ(fast_timer.last_command_ms, 5000u);
-}
-
-// =============================================================================
 // 9. TIMEOUT -> RE-POLL -> ON_POLL_SENT CYCLE
 // =============================================================================
 
 TEST_F(PollTimerTest, TimeoutClearsAwaitingButDoesNotForceRepoll) {
     // Step 1: Send initial poll (fast_timer.interval_ms = 5000)
-    fast_timer.on_poll_sent(1000);
-    EXPECT_TRUE(fast_timer.awaiting_response);
+    fast_timer.on_poll_queued(1000);
 
     // Step 2: Blind doesn't respond, we're in response wait
     EXPECT_FALSE(fast_timer.should_poll(2000, false));
@@ -219,7 +195,6 @@ TEST_F(PollTimerTest, TimeoutClearsAwaitingButDoesNotForceRepoll) {
     // force immediate re-poll (that caused TX storms). Falls through to
     // interval check: (3000 - 1000) = 2000 < 5000 → false.
     EXPECT_FALSE(fast_timer.should_poll(3000, false));
-    EXPECT_FALSE(fast_timer.awaiting_response);
 
     // Step 4: Normal interval eventually fires (1000 + 5000 = 6000)
     EXPECT_TRUE(fast_timer.should_poll(6000, false));
@@ -231,15 +206,13 @@ TEST_F(PollTimerTest, TimeoutClearsAwaitingButDoesNotForceRepoll) {
 
 TEST_F(PollTimerTest, RfResponseDuringWaitReturnToIntervalPolling) {
     // Step 1: Send command
-    fast_timer.on_command_sent(1000);
-    EXPECT_TRUE(fast_timer.awaiting_response);
+    fast_timer.on_command_queued(1000);
 
     // Step 2: In response wait
     EXPECT_FALSE(fast_timer.should_poll(1500, false));
 
     // Step 3: RF response received at t=1800 (within wait period)
     fast_timer.on_rf_received(1800);
-    EXPECT_FALSE(fast_timer.awaiting_response);
 
     // Step 4: Now back to interval-based polling from t=1800
     // Should not poll yet (interval_ms = 5000, last_poll = 1800)
@@ -252,7 +225,7 @@ TEST_F(PollTimerTest, RfResponseDuringWaitReturnToIntervalPolling) {
 
 TEST_F(PollTimerTest, CommandThenRfThenIntervalCycle) {
     // Full cycle: command -> wait -> RF response -> interval -> poll -> wait -> RF
-    fast_timer.on_command_sent(1000);
+    fast_timer.on_command_queued(1000);
     EXPECT_FALSE(fast_timer.should_poll(1500, false));
 
     fast_timer.on_rf_received(1800);
@@ -262,13 +235,11 @@ TEST_F(PollTimerTest, CommandThenRfThenIntervalCycle) {
     EXPECT_TRUE(fast_timer.should_poll(6801, false));
 
     // Send poll
-    fast_timer.on_poll_sent(6801);
-    EXPECT_TRUE(fast_timer.awaiting_response);
+    fast_timer.on_poll_queued(6801);
     EXPECT_FALSE(fast_timer.should_poll(7000, false));
 
     // RF response
     fast_timer.on_rf_received(7200);
-    EXPECT_FALSE(fast_timer.awaiting_response);
 
     // Back to interval from 7200
     EXPECT_FALSE(fast_timer.should_poll(10000, false));
@@ -283,23 +254,33 @@ TEST_F(PollTimerTest, DefaultTimerValues) {
     PollTimer t{};
     EXPECT_EQ(t.interval_ms, timing::DEFAULT_POLL_INTERVAL_MS);
     EXPECT_EQ(t.offset_ms, 0u);
-    EXPECT_EQ(t.last_poll_ms, 0u);
-    EXPECT_EQ(t.last_command_ms, 0u);
-    EXPECT_FALSE(t.awaiting_response);
 }
 
 TEST_F(PollTimerTest, FreshTimerFirstPollAtTimeZero) {
-    // last_poll_ms == 0, offset_ms == 0 => should poll at now >= 0
-    PollTimer t{.interval_ms = 5000};
+    // A new timer with no stagger can poll at boot.
+    PollTimer t;
     EXPECT_TRUE(t.should_poll(0, false));
 }
 
 TEST_F(PollTimerTest, OnCommandSentDoesNotResetLastPollMs) {
-    fast_timer.on_poll_sent(1000);
+    fast_timer.on_poll_queued(1000);
     fast_timer.on_rf_received(1500);
-    EXPECT_EQ(fast_timer.last_poll_ms, 1500u);
 
-    fast_timer.on_command_sent(3000);
-    // last_poll_ms should still be 1500, not overwritten by command
-    EXPECT_EQ(fast_timer.last_poll_ms, 1500u);
+    fast_timer.on_command_queued(3000);
+    EXPECT_FALSE(fast_timer.should_poll(6499, false));
+    EXPECT_TRUE(fast_timer.should_poll(6500, false));
+}
+
+TEST_F(PollTimerTest, PollAtClockWrapStartsNormalInterval) {
+    stagger_timer.on_poll_queued(0);
+    EXPECT_FALSE(stagger_timer.should_poll(9999, false));
+    EXPECT_TRUE(stagger_timer.should_poll(10000, false));
+}
+
+TEST_F(PollTimerTest, ResponseAtClockWrapStartsNormalInterval) {
+    fast_timer.on_command_queued(UINT32_MAX - 99);
+    EXPECT_FALSE(fast_timer.should_poll(UINT32_MAX, true));
+    fast_timer.on_rf_received(0);
+    EXPECT_FALSE(fast_timer.should_poll(timing::POLL_INTERVAL_MOVING - 1, true));
+    EXPECT_TRUE(fast_timer.should_poll(timing::POLL_INTERVAL_MOVING, true));
 }
