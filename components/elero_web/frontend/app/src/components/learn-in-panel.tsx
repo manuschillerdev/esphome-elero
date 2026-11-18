@@ -1,6 +1,6 @@
 import { useComputed, useSignal } from '@preact/signals'
 import { useEffect } from 'preact/hooks'
-import { learnIn, devices, hub } from '@/store'
+import { activeTab, learnIn, learnInReceivers, reviewLearnedCover, devices, hub } from '@/store'
 import { sendLearnInStart, sendLearnInConfirmUp, sendLearnInConfirmDown, sendLearnInCancel } from '@/ws'
 import { cn } from '@/lib/utils'
 import { Card } from './ui/card'
@@ -21,11 +21,12 @@ function isValidHexAddress(value: string) {
 const FALLBACK_SRC_ADDRESS = '0x000001'
 
 function stateLabel(state: string) {
+  if (state === 'complete') return 'DOWN sent'
   return state.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
 }
 
 function stateTone(state: string) {
-  if (state === 'complete') return 'bg-success/15 text-success'
+  if (state === 'complete') return 'bg-warning/20 text-warning-foreground'
   if (state === 'failed' || state === 'timed_out' || state === 'cancelled') return 'bg-destructive/10 text-destructive'
   if (state === 'wait_up' || state === 'wait_down') return 'bg-warning/20 text-warning-foreground'
   return 'bg-primary/10 text-primary'
@@ -56,6 +57,46 @@ function StepRow({
         </div>
         <p className="text-xs leading-relaxed text-muted-foreground">{detail}</p>
       </div>
+    </div>
+  )
+}
+
+function VerifyReceiver() {
+  const stopped = useSignal(false)
+  const address = useSignal('')
+  const receiver = address.value.trim().toLowerCase()
+  const existing = devices.value.get(receiver)
+  const valid = isValidHexAddress(receiver) && receiver !== '0x000000' && receiver !== learnIn.value.src_address
+
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      <label className="flex items-center gap-2">
+        <input type="checkbox" checked={stopped.value} onChange={(e) => { stopped.value = e.currentTarget.checked }} />
+        I saw the target blind stop after DOWN.
+      </label>
+      {stopped.value && hub.value.crud && (
+        <>
+          <label className={fieldClass}>
+            <span className={labelClass}>Receiver address</span>
+            <Input list="learn-in-receivers" value={address.value} placeholder="0xa831e5"
+              onInput={(e) => { address.value = e.currentTarget.value }} />
+          </label>
+          <datalist id="learn-in-receivers">
+            {learnInReceivers.value.filter((addr) => {
+              const device = devices.value.get(addr)
+              return !device || device.type === 'cover'
+            }).map((addr) => <option key={addr} value={addr} />)}
+          </datalist>
+          <p className="text-xs">Select the target receiver from the replies, or enter its known address. Check its settings in Manage, then select Save.</p>
+          {existing && existing.type !== 'cover' ? (
+            <p className="text-xs text-destructive">This address belongs to a {existing.type}. Enter the cover receiver address.</p>
+          ) : existing ? (
+            <Button variant="secondary" onClick={() => { activeTab.value = 'manage' }}>View existing cover in Manage</Button>
+          ) : (
+            <Button variant="secondary" disabled={!valid} onClick={() => { reviewLearnedCover(receiver) }}>Review cover in Manage</Button>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -223,38 +264,36 @@ export function LearnInPanel() {
         <div className="flex flex-col gap-3">
           <StepRow
             icon={Power}
-            title="1. Power-cycle the receiver"
-            detail="Turn mains power to the motor off for a few seconds, then back on. Many elero receivers stay in programming mode for about 5 minutes."
+            title="1. Prepare the receiver"
+            detail="Switch the target receiver off for a few seconds, then on. Start within 5 minutes. To add a remote without switching power off, hold UP, DOWN and P together for 3 seconds on a paired remote."
             active={active && state.state === 'programming'}
             done={['wait_up', 'confirming_up', 'wait_down', 'confirming_down', 'complete'].includes(state.state)}
           />
           <StepRow
             icon={RemoteControl}
             title="2. Send programming / P"
-            detail="Start the session to transmit the virtual remote's programming / P action."
+            detail="Select Start learn-in to send P. Watch the target blind. It will move up and down for about 2 minutes."
             active={active && (state.state === 'programming' || state.state === 'wait_up')}
             done={['wait_up', 'confirming_up', 'wait_down', 'confirming_down', 'complete'].includes(state.state)}
           />
           <StepRow
             icon={ChevronUp}
             title="3. Confirm upward movement"
-            detail="When the motor jogs or reacts, press Confirm UP to send the next required learn-in step."
+            detail="Press Confirm UP within 1 second of the start of upward travel."
             active={isWaitingUp || state.state === 'confirming_up'}
             done={['wait_down', 'confirming_down', 'complete'].includes(state.state)}
           />
           <StepRow
             icon={ChevronDown}
             title="4. Confirm downward movement"
-            detail="After the next prompt or motor response, press Confirm DOWN to finish the procedure."
+            detail="Press Confirm DOWN within 1 second of the start of downward travel. Check that the blind stops."
             active={isWaitingDown || state.state === 'confirming_down'}
             done={state.state === 'complete'}
           />
 
-          <div className={cn('rounded-lg border px-3 py-3 text-sm', state.state === 'complete' ? 'border-success/20 bg-success/5' : state.state === 'failed' || state.state === 'timed_out' || state.state === 'cancelled' ? 'border-destructive/20 bg-destructive/5' : 'border-border bg-muted/20')}>
+          <div className={cn('rounded-lg border px-3 py-3 text-sm', state.state === 'complete' ? 'border-warning/20 bg-warning/5' : state.state === 'failed' || state.state === 'timed_out' || state.state === 'cancelled' ? 'border-destructive/20 bg-destructive/5' : 'border-border bg-muted/20')}>
             <div className="flex items-center gap-2 font-medium">
-              {state.state === 'complete' ? (
-                <CheckCircle2 className="size-4 text-success" />
-              ) : state.busy ? (
+              {state.busy ? (
                 <Loader2 className="size-4 animate-spin text-primary" />
               ) : (
                 <Radio className="size-4 text-primary" />
@@ -262,17 +301,18 @@ export function LearnInPanel() {
               Session status: {stateLabel(state.state)}
             </div>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              {state.state === 'idle' && 'Ready to start after the target receiver has been power-cycled.'}
+              {state.state === 'idle' && 'Prepare the target receiver, then select Start learn-in.'}
               {state.state === 'programming' && 'Programming action is being transmitted.'}
-              {state.state === 'wait_up' && 'Motor should be ready for the first confirmation step. Press Confirm UP after movement.'}
+              {state.state === 'wait_up' && 'Watch for upward travel. Press Confirm UP within 1 second of its start.'}
               {state.state === 'confirming_up' && 'Sending UP confirmation.'}
-              {state.state === 'wait_down' && 'First confirmation accepted. Wait for the next motor response, then press Confirm DOWN.'}
+              {state.state === 'wait_down' && 'UP sent. Press Confirm DOWN within 1 second of the start of downward travel.'}
               {state.state === 'confirming_down' && 'Sending DOWN confirmation.'}
-              {state.state === 'complete' && 'Learn-in completed. The next UI step is device discovery / saving the resulting motor config.'}
+              {state.state === 'complete' && 'Did the target blind stop after DOWN? If it continues to move, repeat the procedure.'}
               {state.state === 'failed' && 'Transmission failed after retries. Check RF settings and whether the receiver is still in programming mode.'}
               {state.state === 'cancelled' && 'Session cancelled.'}
               {state.state === 'timed_out' && 'Session timed out. Power-cycle the receiver again and restart.'}
             </p>
+            {state.state === 'complete' && <VerifyReceiver />}
             <p className="mt-2 text-[11px] text-muted-foreground">
               Warning: if multiple receivers share the same mains line, they may all enter programming mode together.
             </p>

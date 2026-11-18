@@ -149,6 +149,12 @@ export const learnIn = signal<LearnInStateData>({
   busy: false,
 })
 
+// Addresses that replied to the virtual remote while the operator is pairing a cover.
+export const learnInReceivers = signal<string[]>([])
+// The radio can deliver the final receiver reply after the DOWN transmission callback.
+const FINAL_REPLY_GRACE_MS = 2000
+let finalReplyDeadline = 0
+
 export type ActiveTab = 'manage' | 'packets' | 'hub'
 
 export const activeTab = signal<ActiveTab>('manage')
@@ -302,7 +308,7 @@ export function setDevices(data: ConfigData) {
     groups.value = new Map((data.groups ?? []).map((group) => [group.id, groupToApp(group)]))
     hub.value = data.hub
     radio.value = data.radio
-    learnIn.value = { state: 'idle', active: false, busy: false }
+    onLearnInState({ state: 'idle', active: false, busy: false })
   })
 }
 
@@ -345,12 +351,19 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
     }
     if (!(next ?? devs).has(pkt.src)) mut().set(pkt.src, makeDevice({ address: pkt.src, type: 'remote' }))
   } else if (t === msg_type.STATUS || t === msg_type.STATUS_ALT) {
+    const session = learnIn.value
+    const status = resolveStateName(pkt.state)
+    const collecting = session.active || (session.state === 'complete' && Date.now() <= finalReplyDeadline)
+    if (collecting && session.src_address === pkt.dst &&
+        pkt.src !== session.src_address && status !== 'light_on' && status !== 'light_off' &&
+        !learnInReceivers.value.includes(pkt.src)) {
+      learnInReceivers.value = [...learnInReceivers.value, pkt.src]
+    }
     const existing = (next ?? devs).get(pkt.src)
     if (existing) {
       // Type correction: if we see a light state, correct cover→light
-      const name = resolveStateName(pkt.state)
       const correctedType: DeviceType =
-        (name === 'light_on' || name === 'light_off') ? 'light' : existing.type
+        (status === 'light_on' || status === 'light_off') ? 'light' : existing.type
       mut().set(pkt.src, { ...existing, type: correctedType, lastStatus: pkt })
     }
     // Do NOT create devices from status packets — byte offset 6 is not the RF channel.
@@ -441,7 +454,28 @@ export function onHubConfig(data: HubConfigEventData) {
 }
 
 export function onLearnInState(data: LearnInStateData) {
+  if (learnIn.value.active && data.state === 'complete') finalReplyDeadline = Date.now() + FINAL_REPLY_GRACE_MS
+  if (data.state === 'idle' || (data.state === 'programming' && learnIn.value.state !== 'programming')) {
+    learnInReceivers.value = []
+    finalReplyDeadline = 0
+  }
   learnIn.value = data
+}
+
+// The operator selects the receiver. A status packet supplies no pairing channel.
+export function reviewLearnedCover(address: string): boolean {
+  const session = learnIn.value
+  if (session.state !== 'complete' || !session.src_address || !session.channel ||
+      !/^0x[0-9a-f]{6}$/.test(address) || address === '0x000000' ||
+      address === session.src_address || devices.value.has(address)) return false
+
+  const cover = makeDevice({
+    address, type: 'cover', name: `Cover ${address}`, remote: session.src_address,
+    channel: session.channel, pairings: makePairings(session.src_address, session.channel),
+  })
+  devices.value = new Map(devices.value).set(address, cover)
+  activeTab.value = 'manage'
+  return true
 }
 
 export function onGroupUpserted(data: WireGroupConfig) {
