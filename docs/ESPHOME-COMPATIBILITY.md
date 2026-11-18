@@ -38,13 +38,13 @@ MQTT mode keeps its immediate device updates.
 
 ESPHome removed `EntityBase::set_name()` and runtime
 `Application::register_component()`. The native adapter now uses the public
-entity registration overloads, which accept the name and derive the same
-name-based object ID hash. Names are copied into firmware-lifetime storage so
+entity registration overloads. The radio address and device type determine
+the primary entity command key. Names are copied into firmware-lifetime storage so
 editing the registry cannot invalidate the strings held by ESPHome.
 
 Light states need ESPHome's component lifecycle for their loop, transitions,
-and scheduler. Code generation therefore registers 48 light-state component
-slots, matching the registry's device limit, before application setup. After
+and scheduler. Code generation therefore registers light-state component slots for up to
+48 devices and 16 groups before application setup. After
 NVS restoration, the adapter binds occupied light slots and registers only
 active, enabled devices as entities. Unoccupied slots disable their loops and
 are never exposed to Home Assistant. Cover shells have no periodic work and
@@ -55,7 +55,7 @@ so ordinary YAML entities can coexist with the NVS devices. Automatically
 created diagnostic sensors use the current entity registration API and also
 contribute to the sensor capacity.
 
-Native cover groups reserve another 16 cover entities. Their keys derive from
+Native groups can use up to 16 cover or light entities. Their keys derive from
 the stable group id in a separate namespace, so a group can share a display
 name with a cover. Group position is the average member position; position
 control requires travel durations on every member. Native group CRUD requires

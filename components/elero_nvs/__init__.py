@@ -1,11 +1,12 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.core import CORE
+from esphome.core.entity_helpers import register_device_class, register_unit_of_measurement
 
 from ..elero import CONF_ELERO_ID, CONF_REGISTRY_ID, DeviceRegistry, OutputAdapter, elero_ns
 
 DEPENDENCIES = ["elero"]
-AUTO_LOAD = ["json", "cover", "light", "button"]
+AUTO_LOAD = ["json", "cover", "light", "button", "binary_sensor", "sensor", "text_sensor"]
 CODEOWNERS = ["@manuschillerdev"]
 
 NvsAdapter = elero_ns.class_("NvsAdapter", cg.Component, OutputAdapter)
@@ -15,7 +16,7 @@ MAX_DEVICES = 48
 MAX_GROUPS = 16
 # Keep in sync with ELERO_COVER_ACTIONS; a C++ assertion checks the count.
 COVER_ACTION_BUTTON_COUNT = 4
-_LIGHT_SLOT_IDS = [f"light_slot_{i}_id" for i in range(MAX_DEVICES)]
+_LIGHT_SLOT_IDS = [f"light_slot_{i}_id" for i in range(MAX_DEVICES + MAX_GROUPS)]
 
 CONF_NVS_ADAPTER_ID = "nvs_adapter_id"
 
@@ -48,13 +49,25 @@ async def to_code(config):
         cg.add_define("USE_COVER")
         cg.add_define("USE_LIGHT")
         cg.add_define("USE_BUTTON")
+        cg.add_define("USE_SENSOR")
+        cg.add_define("USE_BINARY_SENSOR")
+        cg.add_define("USE_TEXT_SENSOR")
+        cg.add_define("USE_ENTITY_DEVICE_CLASS")
+        cg.add_define("USE_ENTITY_UNIT_OF_MEASUREMENT")
+        cg.add_define("ELERO_RSSI_CLASS", register_device_class("signal_strength"))
+        cg.add_define("ELERO_PROBLEM_CLASS", register_device_class("problem"))
+        cg.add_define("ELERO_DBM_UNIT", register_unit_of_measurement("dBm"))
         for _ in range(MAX_DEVICES):
+            CORE.register_platform_component("sensor", None)
+            CORE.register_platform_component("text_sensor", None)
+            CORE.register_platform_component("binary_sensor", None)
             CORE.register_platform_component("cover", None)
             CORE.register_platform_component("light", None)
         for _ in range(MAX_DEVICES * COVER_ACTION_BUTTON_COUNT):
             CORE.register_platform_component("button", None)
         for _ in range(MAX_GROUPS):
             CORE.register_platform_component("cover", None)
+            CORE.register_platform_component("light", None)
 
         adapter = cg.new_Pvariable(config[CONF_NVS_ADAPTER_ID])
         cg.add(adapter.set_registry(registry))

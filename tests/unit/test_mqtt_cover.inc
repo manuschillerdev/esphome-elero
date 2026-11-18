@@ -1,6 +1,8 @@
 // Included after the DeviceRegistryTest fixture so these tests exercise the
 // real registry, snapshot computation and MQTT adapter together.
 
+#include "elero_nvs/nvs_group_light.h"
+
 class FakeMqttPublisher : public MqttPublisher {
  public:
     std::map<std::string, std::string> retained;
@@ -22,6 +24,7 @@ class FakeMqttPublisher : public MqttPublisher {
         return true;
     }
     void unsubscribe(const char *topic) override { subscriptions.erase(topic); }
+    MqttAvailability availability() const override { return {"node/status", "ready", "gone"}; }
     bool is_connected() const override { return connected; }
     void deliver(const char *topic, const char *payload) {
         for (const auto &cb : subscriptions.at(topic)) cb(topic, payload);
@@ -317,7 +320,7 @@ TEST_F(MqttCoverTest, DiscoversFourStatelessActionsOnTheCoverDevice) {
         EXPECT_EQ(button["payload_press"].as<std::string>(), action);
         EXPECT_FALSE(button["retain"].as<bool>());
         EXPECT_TRUE(button["state_topic"].isNull());
-        EXPECT_EQ(button["availability_topic"].as<std::string>(), "elero/status");
+        EXPECT_EQ(button["availability_topic"].as<std::string>(), "node/status");
         EXPECT_EQ(button["device"]["identifiers"][0].as<std::string>(), "test-gateway_cover_a831e5");
         EXPECT_EQ(button["device"]["via_device"].as<std::string>(), "test-gateway");
     }
@@ -443,4 +446,77 @@ TEST_F(DeviceRegistryTest, NativeButtonReadsCurrentAddressConfigurationFromRegis
     EXPECT_EQ(commands.front().channel, 8);
     EXPECT_EQ(commands.front().payload[4], 0x21);
     EXPECT_EQ(commands.front().type, 0x6a);
+}
+
+TEST_F(MqttCoverTest, RejectsInvalidPositionTextBeforeMovingTheCover) {
+    auto *cover = add_cover();
+    for (const char *payload : {"", "bad", "45percent", "nan", "inf", "1e-200", "-1", "101"}) {
+        broker_.deliver(SET_POSITION_TOPIC, payload);
+        EXPECT_EQ(cover->sender.queue_size(), 0u) << payload;
+    }
+    broker_.deliver(SET_POSITION_TOPIC, "37.5");
+    EXPECT_FLOAT_EQ(std::get<CoverDevice>(cover->logic).target_position, 0.375f);
+}
+
+TEST_F(MqttCoverTest, GroupLightStateMatchesDiscoveryAndUsesTheClientWill) {
+    auto *lamp = add_light();
+    const auto group = make_group_config("lamps", "Lamps", {lamp->config.dst_address});
+    ASSERT_NE(registry_.upsert_group(group), nullptr);
+    JsonDocument doc;
+    ASSERT_FALSE(deserializeJson(doc, broker_.retained.at("homeassistant/light/test-gateway_group_lamps/config")));
+    const auto hub = doc["availability"][0];
+    EXPECT_EQ(hub["topic"].as<std::string>(), "node/status");
+    EXPECT_EQ(hub["payload_available"].as<std::string>(), "ready");
+    EXPECT_EQ(hub["payload_not_available"].as<std::string>(), "gone");
+    const auto state = doc["state_topic"].as<std::string>();
+    EXPECT_EQ(broker_.retained.at(state), doc["payload_off"].as<std::string>());
+    broker_.deliver(doc["command_topic"], doc["payload_on"]);
+    registry_.loop(mock_time_.millis());
+    EXPECT_EQ(broker_.retained.at(state), doc["payload_on"].as<std::string>());
+}
+
+TEST_F(MqttCoverTest, LightReportIsRetainedUntilRemoval) {
+    auto *lamp = add_light();
+    registry_.on_rf_packet(make_status_pkt(lamp->config.dst_address, pkt::state::LIGHT_ON), mock_time_.millis());
+    JsonDocument doc;
+    const char *topic = "elero/light/c41a2b/state";
+    ASSERT_FALSE(deserializeJson(doc, broker_.retained.at(topic)));
+    EXPECT_EQ(doc["state"].as<std::string>(), "ON");
+    ASSERT_TRUE(registry_.remove(lamp->config.dst_address, DeviceType::LIGHT));
+    EXPECT_FALSE(broker_.retained.contains(topic));
+}
+
+TEST_F(MqttCoverTest, ReconnectSkipsRemoteUntilSaved) {
+    registry_.on_rf_packet(make_command_pkt(0x123456, 0x345678, pkt::command::UP), mock_time_.millis());
+    const auto topic = "homeassistant/sensor/test-gateway_remote_123456/config";
+    broker_.connected = false;
+    mqtt_.loop();
+    broker_.connected = true;
+    mqtt_.loop();
+    mock_time_.advance(501);
+    mqtt_.loop();
+    EXPECT_FALSE(broker_.retained.contains(topic));
+    const auto config = registry_.find(0x123456, DeviceType::REMOTE)->config;
+    registry_.upsert(config);
+    EXPECT_TRUE(broker_.retained.contains(topic));
+}
+
+TEST_F(MqttCoverTest, NativeGroupLightRoutesCommandsAndReportsMemberStateWithoutAnEcho) {
+    auto *lamp = add_light();
+    const auto group = make_group_config("lamps", "Lamps", {lamp->config.dst_address});
+    ASSERT_NE(registry_.upsert_group(group), nullptr);
+    esphome::light::LightState state;
+    NvsGroupLight output(registry_, group.id, state);
+    output.update_state(&state);
+    EXPECT_EQ(lamp->sender.queue_size(), 0u);
+
+    output.setup();
+    state.current_values.set_state(true);
+    output.update_state(&state);
+    ASSERT_EQ(lamp->sender.queue_size(), 1u);
+    EXPECT_EQ(drain_commands(*lamp).front().payload[4], pkt::command::UP);
+    registry_.on_rf_packet(make_status_pkt(lamp->config.dst_address, pkt::state::LIGHT_OFF), mock_time_.millis());
+    output.sync_and_publish(registry_.group_snapshot(group, mock_time_.millis()));
+    EXPECT_FALSE(state.remote_values.is_on());
+    EXPECT_EQ(lamp->sender.queue_size(), 0u);
 }
