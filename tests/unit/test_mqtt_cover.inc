@@ -273,7 +273,7 @@ TEST_F(MqttCoverTest, BootDiscardsOldStateUntilMotorReports) {
     broker_.retained[STATE_TOPIC] = "open";
     broker_.retained[POSITION_TOPIC] = "100";
     broker_.retained[TILT_TOPIC] = "100";
-    add_cover();
+    restore_saved_covers({make_cover_config(0xA831E5)});
     EXPECT_FALSE(broker_.retained.contains(STATE_TOPIC));
     EXPECT_FALSE(broker_.retained.contains(POSITION_TOPIC));
     EXPECT_FALSE(broker_.retained.contains(TILT_TOPIC));
@@ -286,7 +286,7 @@ TEST_F(MqttCoverTest, StartupWhileDisconnectedClearsOldStateOnReconnect) {
     mqtt_.loop();
     broker_.retained[STATE_TOPIC] = "open";
     broker_.retained[POSITION_TOPIC] = "100";
-    add_cover();
+    restore_saved_covers({make_cover_config(0xA831E5)});
 
     broker_.connected = true;
     mqtt_.loop();
