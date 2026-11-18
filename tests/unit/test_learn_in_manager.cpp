@@ -183,6 +183,35 @@ TEST_F(LearnInManagerTest, CancelledSessionCompletionCannotCompleteNewSession) {
   EXPECT_EQ(manager_.state(), LearnInState::WAIT_UP);
 }
 
+TEST_F(LearnInManagerTest, BusyUntilAcceptedPacketCompletes) {
+  ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
+  hub_.queue_accepts = false;
+  manager_.loop(mock_time_.millis(), &hub_);
+  EXPECT_TRUE(manager_.is_busy());
+  EXPECT_EQ(hub_.client, nullptr);
+  EXPECT_FALSE(manager_.confirm_up());
+
+  hub_.queue_accepts = true;
+  manager_.loop(mock_time_.millis(), &hub_);
+  EXPECT_TRUE(manager_.is_busy());
+  hub_.complete(true);
+  EXPECT_FALSE(manager_.is_busy());
+  EXPECT_TRUE(manager_.is_active());
+  EXPECT_EQ(manager_.state(), LearnInState::WAIT_UP);
+  EXPECT_FALSE(manager_.start({0x17A753, 5, 1}));
+}
+
+TEST_F(LearnInManagerTest, TimeoutDiscardsInFlightStep) {
+  ASSERT_TRUE(manager_.start({0x17A753, 5, 1, 100}));
+  manager_.loop(mock_time_.millis(), &hub_);
+  mock_time_.advance(100);
+  manager_.loop(mock_time_.millis(), &hub_);
+  hub_.complete(true);
+  EXPECT_FALSE(manager_.is_busy());
+  EXPECT_FALSE(manager_.is_active());
+  EXPECT_EQ(manager_.state(), LearnInState::TIMED_OUT);
+}
+
 TEST_F(LearnInManagerTest, LongQueueWaitDoesNotRetryProgrammingStep) {
   ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
   manager_.loop(mock_time_.millis(), &hub_);

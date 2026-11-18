@@ -6,6 +6,8 @@
 #include "tx_client.h"
 #include "esphome/core/log.h"
 #include <cstdint>
+#include <optional>
+#include <variant>
 
 #ifdef UNIT_TEST
 #ifndef ESP_LOGV
@@ -68,63 +70,52 @@ class LearnInManager : public TxClient {
     }
 
     if (is_active() && now - session_start_ms_ >= session_timeout_ms_) {
-      state_ = LearnInState::TIMED_OUT;
-      reset_transport_();
+      finish_(LearnInState::TIMED_OUT);
       ESP_LOGW("elero.learn_in", "Learn-in session timed out");
       return;
     }
 
-    // Hardware deadlines belong to the driver; queued work waits without retries.
-    if (tx_pending_) return;
+    auto *step = std::get_if<Sending>(&state_);
+    if (step == nullptr || !step->next_attempt_ms ||
+        !time_reached_(now, *step->next_attempt_ms)) return;
 
-    if (queued_step_ == 0) {
-      return;
-    }
-
-    if (!time_reached_(now, next_attempt_ms_)) {
-      return;
-    }
-
-    command_.payload[4] = queued_step_;
     if (hub->request_tx(this, command_)) {
-      tx_pending_ = true;
+      step->next_attempt_ms.reset();
       ESP_LOGD("elero.learn_in",
                "TX queued state=%s cmd=0x%02x packet %u/%u src=0x%06" PRIx32 " ch=%u",
-               learn_in_state_str(state_), queued_step_, sent_packets_ + 1,
+               learn_in_state_str(step->phase), command_.payload[4], step->sent_packets + 1,
                packets_per_step_, command_.src_addr, command_.channel);
     }
   }
 
   void on_tx_complete(bool success) override;
 
-  [[nodiscard]] LearnInState state() const { return state_; }
+  [[nodiscard]] LearnInState state() const;
   [[nodiscard]] bool is_active() const;
-  [[nodiscard]] bool is_busy() const { return tx_pending_ || queued_step_ != 0; }
+  [[nodiscard]] bool is_busy() const { return std::holds_alternative<Sending>(state_); }
   [[nodiscard]] uint32_t src_addr() const { return command_.src_addr; }
   [[nodiscard]] uint8_t channel() const { return command_.channel; }
 
  private:
   [[nodiscard]] static bool time_reached_(uint32_t now, uint32_t deadline);
-  [[nodiscard]] uint32_t calculate_backoff_ms_() const;
-  [[nodiscard]] bool is_terminal_() const;
-  [[nodiscard]] bool prime_session_(const LearnInStartRequest &request);
-  [[nodiscard]] bool queue_step_(uint8_t cmd_byte, LearnInState pending_state);
-  void fail_session_();
-  void increase_counter_();
-  void reset_transport_();
-  void reset_all_();
+  struct Sending {
+    LearnInState phase;
+    LearnInState on_success;
+    // An accepted packet has no retry deadline until its completion arrives.
+    std::optional<uint32_t> next_attempt_ms;
+    uint8_t sent_packets{0};
+    uint8_t retries{0};
+  };
+
+  void begin_step_(uint8_t command, LearnInState phase, LearnInState on_success);
+  void finish_(LearnInState state);
 
   EleroCommand command_{1, 0, 0, 0, packet::msg_type::PROGRAM,
                         packet::program::TYPE2, packet::program::HOP, {0}};
-  LearnInState state_{LearnInState::IDLE};
+  std::variant<LearnInState, Sending> state_{LearnInState::IDLE};
   uint8_t packets_per_step_{packet::program::PACKETS};
-  uint8_t queued_step_{0};
-  uint8_t sent_packets_{0};
-  uint8_t retries_{0};
-  uint32_t next_attempt_ms_{0};
   uint32_t session_start_ms_{0};
   uint32_t session_timeout_ms_{0};
-  bool tx_pending_{false};
 };
 
 }  // namespace esphome::elero

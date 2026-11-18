@@ -149,7 +149,7 @@ void DeviceRegistry::restore_all() {
                 auto &cover = std::get<CoverDevice>(dev.logic);
                 cover.poll.offset_ms = cover_idx * packet::timing::POLL_OFFSET_SPACING;
                 if (queued) {
-                    cover.poll.on_poll_sent(now);
+                    cover.poll.on_poll_queued(now);
                 }
                 ++cover_idx;
             }
@@ -381,7 +381,7 @@ bool DeviceRegistry::step_cover(Device &dev, bool up) {
     auto &cover = std::get<CoverDevice>(dev.logic);
     cover.last_motion_command_us = esp_timer_get_time();
     cover.target_position = cover_sm::NO_TARGET;
-    cover.poll.on_command_sent(millis());
+    cover.poll.on_command_queued(millis());
     return true;
 }
 
@@ -422,7 +422,7 @@ static void apply_cover_movement(Device &dev, uint8_t cmd, float target, uint32_
     if (cmd == packet::command::UP) cover.last_direction = cover_sm::Operation::OPENING;
     if (cmd == packet::command::DOWN) cover.last_direction = cover_sm::Operation::CLOSING;
     cover.state = cover_sm::on_command(cover.state, cmd, now, cover_context(dev.config));
-    cover.poll.on_command_sent(now);
+    cover.poll.on_command_queued(now);
 }
 
 bool DeviceRegistry::queue_cover_movement_(Device &dev, uint8_t cmd, float target, uint32_t now) {
@@ -706,7 +706,7 @@ bool DeviceRegistry::request_check(Device &dev) {
     bool queued = enqueue_check_(dev, "request_check");
     if (queued && dev.is_cover()) {
         auto &cover = std::get<CoverDevice>(dev.logic);
-        cover.poll.on_poll_sent(millis());
+        cover.poll.on_poll_queued(millis());
     }
     return queued;
 }
@@ -865,7 +865,7 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
     bool moving = cover_sm::is_moving(cover.state);
     if (cover.poll.should_poll(now, moving)) {
         if (enqueue_check_(dev, "loop_cover(poll)")) {
-            cover.poll.on_poll_sent(now);
+            cover.poll.on_poll_queued(now);
         }
     }
 
@@ -873,7 +873,7 @@ void DeviceRegistry::loop_cover_(Device &dev, CoverDevice &cover, uint32_t now) 
     //    blind's actual resting position (frozen estimate may drift).
     if (state_type_changed && was_stopping && std::holds_alternative<cover_sm::Idle>(cover.state)) {
         if (enqueue_check_(dev, "loop_cover(post_stop_check)")) {
-            cover.poll.on_poll_sent(now);
+            cover.poll.on_poll_queued(now);
         }
     }
 
