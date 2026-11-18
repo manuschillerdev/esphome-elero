@@ -202,7 +202,7 @@ The manager advances from `CONFIRMING_DOWN` to `COMPLETE` on successful local TX
 callbacks. It does not process receiver RF acknowledgments or persist a new motor
 configuration in that transition. There is no source evidence here that the
 receiver accepted the new identity simply because the transport callback succeeded.
-The panel explicitly leaves discovery and saving configuration as a next step.
+The panel displays **DOWN sent**. The operator checks that the blind stopped, selects the receiver address, and saves the cover in Manage.
 [Completion transition](../../components/elero/learn_in_manager.cpp),
 [completion UI](../../components/elero_web/frontend/app/src/components/learn-in-panel.tsx)
 
@@ -225,19 +225,14 @@ revision, motor model, frequency and radio configuration.
 2. Start hub learn-in using its virtual identity; capture emitted P/UP/DOWN and
    all receiver responses, with movement timing annotations.
 3. Trigger the UP and DOWN confirmations within the manual's one-second windows,
-   and observe the receiver's final stop. A `COMPLETE` UI state alone is insufficient.
-4. Discover and save the receiver address with the same virtual source/channel
-   through the existing device configuration workflow.
+   and observe the receiver's final stop. Confirm this observation in the panel.
+4. Select the receiver address in Learn-In. Check that the draft cover has the session's remote address and channel. Save it in Manage.
 5. Verify normal UP, DOWN and STOP from that identity without pressing a physical
    remote, then reboot the hub and verify control again.
 6. Export and restore the saved configuration and confirm the source/channel
    association is retained. Record receiver-specific failures rather than
    generalizing across all Elero products.
 
-Safe documentation/UI improvements are to state the one-second confirmation
-windows precisely and describe completion as transmitted steps pending observed
-receiver acceptance. The present panel's generic “jogs or reacts” and “first
-confirmation accepted” wording omits that distinction.
 [Official procedure](https://www.elero.com/en/downloads-service/downloads/?cHash=19416ea19b003d4510544ed8c8638c8f&tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bdownload%5D=324),
 [current panel](../../components/elero_web/frontend/app/src/components/learn-in-panel.tsx)
 

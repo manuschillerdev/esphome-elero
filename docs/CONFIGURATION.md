@@ -111,6 +111,19 @@ flash, then add devices through the web UI:
 
 To restore from a backup (or migrate from older YAML): Hub → Backup & Restore → **Restore from backup**.
 
+### Pair a cover with the hub
+
+Open **Hub → Learn-In**. Prepare only the target receiver. Receivers on the same power supply can enter programming mode together.
+
+1. Switch the receiver off for a few seconds, then on. Start programming within about 5 minutes. To add a transmitter with a paired remote, hold **UP**, **DOWN** and **P** together on that remote for 3 seconds.
+2. Select **Start learn-in** to send **P** from the hub. The blind moves up and down for about 2 minutes.
+3. Select **Confirm UP movement** within 1 second of the start of upward travel.
+4. Select **Confirm DOWN movement** within 1 second of the start of downward travel. Check that the blind stops. If it continues to move, repeat the procedure.
+5. Confirm the stop in the panel. Select the target receiver address from the replies or enter its known address. Select **Review cover in Manage**. Check the remote and channel, give the cover a name, and select **Save**. For a cover already in Manage, check its remote and channel before saving.
+6. In native API mode, reboot the hub to register the new cover with Home Assistant. Check that the saved cover responds to a normal command.
+
+See the Elero transmitter instructions for the motor movements and the additional transmitter procedure. [VarioTel 2 manual, pages 11–13](https://www.elero.com/en/downloads-service/downloads/?cHash=af753ee20fbd7a77ee897b17bf8f1830&tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bdownload%5D=325)
+
 ### Per-device fields managed in the UI
 
 These are stored in `NvsDeviceConfig` (see `components/elero/nvs_config.h`)
