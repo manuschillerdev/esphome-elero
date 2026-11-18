@@ -207,16 +207,26 @@ struct MqttContext {
     dev["via_device"] = device_id;
   }
 
-  /// Add availability block so entities go unavailable when hub is offline.
-  void add_availability(JsonObject root) const {
-    root["availability_topic"] = topic_prefix + mqtt_topic::STATUS;
-    root["payload_available"] = "online";
-    root["payload_not_available"] = "offline";
-  }
+  // Discovery must use the same topic and payloads as the broker's last will.
+  void add_availability(JsonObject root, const std::string &group_status = {}) const {
+    const auto hub = mqtt->availability();
+    if (group_status.empty()) {
+      if (*hub.topic == '\0') return;
+      root["availability_topic"] = hub.topic;
+      root["payload_available"] = hub.online;
+      root["payload_not_available"] = hub.offline;
+      return;
+    }
 
-  /// Publish birth message on connect.
-  void publish_birth() const {
-    mqtt->publish((topic_prefix + mqtt_topic::STATUS).c_str(), "online", true);
+    auto list = root["availability"].to<JsonArray>();
+    if (*hub.topic != '\0') {
+      auto entry = list.add<JsonObject>();
+      entry["topic"] = hub.topic;
+      entry["payload_available"] = hub.online;
+      entry["payload_not_available"] = hub.offline;
+    }
+    list.add<JsonObject>()["topic"] = group_status;
+    root["availability_mode"] = "all";
   }
 };
 

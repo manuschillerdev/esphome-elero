@@ -4,7 +4,10 @@
 /// Publishes HA discovery configs, state updates, and subscribes to command topics.
 /// Reads all state from Device structs via the DeviceRegistry — no old entity classes.
 
+#include <charconv>
 #include <cinttypes>
+#include <cmath>
+#include <optional>
 #include "mqtt_adapter.h"
 #include "../elero/device.h"
 #include "../elero/cover_actions.h"
@@ -32,6 +35,16 @@ static const char *const LIGHT_STATE_OPTIONS[] = {
     "moving_up", "moving_down", "start_moving_up", "start_moving_down",
     "stopped", "blocking", "overheated", "timeout", "unknown",
 };
+
+static std::optional<float> parse_percentage(const char *payload) {
+    if (payload == nullptr) return {};
+    const char *end = payload + strlen(payload);
+    float percent;
+    const auto result = std::from_chars(payload, end, percent);
+    if (result.ec != std::errc{} || result.ptr != end || !std::isfinite(percent) ||
+        percent < 0.0f || percent > PERCENT_SCALE) return {};
+    return percent / PERCENT_SCALE;
+}
 
 static uint8_t mqtt_payload_to_command(const char *payload, DeviceType type) {
     if (payload == nullptr) return packet::command::INVALID;
@@ -152,6 +165,10 @@ void MqttAdapter::remove_all_discovery_(const Device &dev) {
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "state"));
         ctx_.remove_discovery(ha_discovery::BINARY_SENSOR, ctx_.object_id(DeviceType::COVER, addr, "problem"));
     } else if (dev.is_light()) {
+        for (const char *suffix : {mqtt_topic::STATE, mqtt_topic::RSSI, mqtt_topic::DEVICE_STATE,
+                                   mqtt_topic::PROBLEM, mqtt_topic::ATTRIBUTES}) {
+            ctx_.publish(DeviceType::LIGHT, addr, suffix, "", true);
+        }
         ctx_.unsubscribe(DeviceType::LIGHT, addr, mqtt_topic::SET);
 
         ctx_.remove_discovery(ha_discovery::LIGHT, ctx_.object_id(DeviceType::LIGHT, addr));
@@ -442,16 +459,16 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
             Device *d = registry_->find(addr, DeviceType::COVER);
             if (d == nullptr) return;
 
-            float target = static_cast<float>(atoi(payload)) / PERCENT_SCALE;
-            registry_->set_cover_position(*d, target);
+            const auto target = parse_percentage(payload);
+            if (!target || !registry_->set_cover_position(*d, *target)) {
+                ESP_LOGW(TAG, "Invalid position for 0x%06" PRIx32, addr);
+            }
         });
 
     ctx_.subscribe(DeviceType::COVER, addr, mqtt_topic::TILT,
         [this, addr](const char *, const char *payload) {
-            char *end = nullptr;
-            const float value = payload != nullptr ? strtof(payload, &end) : -1.0f;
-            if (payload == nullptr || end == payload || *end != '\0' ||
-                !registry_->command_cover_tilt(addr, value / PERCENT_SCALE)) {
+            const auto target = parse_percentage(payload);
+            if (!target || !registry_->command_cover_tilt(addr, *target)) {
                 ESP_LOGW(TAG, "Invalid tilt request for 0x%06" PRIx32, addr);
             }
         });
@@ -554,28 +571,28 @@ void MqttAdapter::publish_light_state_(const Device &dev, uint16_t changes) {
                 root["brightness"] = pub.brightness_pct;
             }
         });
-        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::STATE, payload, false);
+        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::STATE, payload, true);
     }
 
     if (changes & state_change::RSSI) {
         char rssi_buf[12];
         snprintf(rssi_buf, sizeof(rssi_buf), "%d", pub.rssi_rounded);
-        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::RSSI, rssi_buf, false);
+        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::RSSI, rssi_buf, true);
     }
 
     if (changes & state_change::STATE_STRING) {
-        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::DEVICE_STATE, pub.state_string, false);
+        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::DEVICE_STATE, pub.state_string, true);
     }
 
     if (changes & state_change::PROBLEM) {
-        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::PROBLEM, pub.is_problem ? ha_state::ON : ha_state::OFF, false);
+        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::PROBLEM, pub.is_problem ? ha_state::ON : ha_state::OFF, true);
     }
 
     if (changes & state_change::PROBLEM) {
         std::string attrs = json::build_json([&](JsonObject root) {
             root["problem_type"] = pub.problem_type;
         });
-        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::ATTRIBUTES, attrs, false);
+        ctx_.publish(DeviceType::LIGHT, addr, mqtt_topic::ATTRIBUTES, attrs, true);
     }
 
     ESP_LOGV(TAG, "light 0x%06" PRIx32 ": on=%d bri=%d state=%s rssi=%d",
@@ -726,18 +743,10 @@ void MqttAdapter::publish_group_discovery_(const NvsGroupConfig &group) {
                 root["device_class"] = ha_cover_class_str(static_cast<HaCoverClass>(first->config.ha_device_class));
             }
         } else {
-            root["payload_on"] = action::UP;
-            root["payload_off"] = action::DOWN;
-            root["state_on"] = "ON";
-            root["state_off"] = "OFF";
+            root["payload_on"] = ha_state::ON;
+            root["payload_off"] = ha_state::OFF;
         }
-        ctx_.add_availability(root);
-        const std::string hub_availability = root["availability_topic"].as<std::string>();
-        root.remove("availability_topic");
-        auto availability = root["availability"].to<JsonArray>();
-        availability.add<JsonObject>()["topic"] = hub_availability;
-        availability.add<JsonObject>()["topic"] = ctx_.group_topic(group.id, mqtt_topic::STATUS);
-        root["availability_mode"] = "all";
+        ctx_.add_availability(root, ctx_.group_topic(group.id, mqtt_topic::STATUS));
         JsonObject device = root["device"].to<JsonObject>();
         ctx_.add_hub_device_block(device);
     });
@@ -780,10 +789,8 @@ void MqttAdapter::subscribe_group_commands_(const NvsGroupConfig &group) {
     if (registry_->group_snapshot(group, millis()).supports_position) {
         ctx_.mqtt->subscribe(ctx_.group_topic(group.id, mqtt_topic::SET_POSITION).c_str(),
             [this, id](const char *, const char *payload) {
-                char *end = nullptr;
-                const float value = payload != nullptr ? strtof(payload, &end) : -1.0f;
-                if (payload == nullptr || end == payload || *end != '\0' ||
-                    !registry_->set_group_position(id.c_str(), value / PERCENT_SCALE)) {
+                const auto target = parse_percentage(payload);
+                if (!target || !registry_->set_group_position(id.c_str(), *target)) {
                     ESP_LOGW(TAG, "Invalid group position for '%s'", id.c_str());
                 }
             });
@@ -943,8 +950,7 @@ void MqttAdapter::finish_stale_cleanup_() {
     collected_topics_.clear();
     collected_topics_.shrink_to_fit();
 
-    // Now publish birth + gateway + all active discoveries
-    ctx_.publish_birth();
+    // Now publish the gateway and active discoveries
     publish_gateway_discovery_();
     publish_gateway_state_();
     republish_all_();
@@ -961,7 +967,7 @@ void MqttAdapter::collect_expected_topics_(std::vector<std::string> &out) const 
     if (registry_ == nullptr) return;
 
     registry_->for_each_active([&](const Device &dev) {
-        if (!dev.config.is_enabled()) return;
+        if (!dev.config.is_enabled() || dev.config.updated_at == 0) return;
         uint32_t addr = dev.config.dst_address;
 
         if (dev.is_cover()) {
@@ -1000,7 +1006,7 @@ void MqttAdapter::republish_all_() {
 
     // Re-publish discovery configs and re-subscribe to command topics (MQTT-specific)
     registry_->for_each_active([this](Device &dev) {
-        if (!dev.config.is_enabled()) return;
+        if (!dev.config.is_enabled() || dev.config.updated_at == 0) return;
 
         if (dev.is_cover()) {
             publish_cover_discovery_(dev);
