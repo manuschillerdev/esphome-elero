@@ -62,6 +62,8 @@ does not indicate failed decryption. Historical `0x45` group/all-channel
 captures and remaining semantic questions are documented in
 [the protocol issue investigation](research/elero-open-protocol-issues.md).
 
+See the [developer kit comparison](research/developer-kit-payloads.md) for USB key, gesture and status values and their radio evidence.
+
 All constants in `packet::command::` namespace.
 
 | Command | Byte | C++ Constant | Description |
@@ -87,14 +89,14 @@ All constants in `packet::state::` namespace.
 | TILT | `0x04` | `state::TILT` | Tilted |
 | BLOCKING | `0x05` | `state::BLOCKING` | Obstacle detected |
 | OVERHEATED | `0x06` | `state::OVERHEATED` | Motor overheated |
-| TIMEOUT | `0x07` | `state::TIMEOUT` | Communication timeout |
+| TIMEOUT | `0x07` | `state::TIMEOUT` | Timeout. The stick client describes a run-time stop. |
 | START_MOVING_UP | `0x08` | `state::START_MOVING_UP` | Starting upward movement |
 | START_MOVING_DOWN | `0x09` | `state::START_MOVING_DOWN` | Starting downward movement |
 | MOVING_UP | `0x0A` | `state::MOVING_UP` | Moving up |
 | MOVING_DOWN | `0x0B` | `state::MOVING_DOWN` | Moving down |
 | STOPPED | `0x0D` | `state::STOPPED` | Stopped |
-| TOP_TILT | `0x0E` | `state::TOP_TILT` | Open + tilted |
-| BOTTOM_TILT | `0x0F` | `state::BOTTOM_TILT` | Closed + tilted |
+| TOP_TILT | `0x0E` | `state::TOP_TILT` | Top end position coincides with the tilt/ventilation position |
+| BOTTOM_TILT | `0x0F` | `state::BOTTOM_TILT` | Bottom end position coincides with the intermediate position |
 | LIGHT_OFF | `0x10` | `state::LIGHT_OFF` | Switching receiver off |
 | LIGHT_ON | `0x11` | `state::LIGHT_ON` | Light on |
 

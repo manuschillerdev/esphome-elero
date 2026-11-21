@@ -149,6 +149,7 @@ an unobserved cover waits for an RF report instead of publishing a guessed posit
 
 - [Configuration Reference](docs/CONFIGURATION.md) -- full parameter tables for all modes
 - [Installation Guide](docs/INSTALLATION.md) -- step-by-step hardware setup
+- [Physical remote manuals](docs/manuals/README.md) -- find an Elero remote by model and search its operating instructions
 - [Backup &amp; Restore](docs/BACKUP-RESTORE.md) -- exporting/importing your NVS device list
 - [Migration from YAML devices](docs/MIGRATION-yaml-to-nvs.md) -- upgrading from pre-0.11.0
 - [Device Configs](docs/devices/) -- board-specific wiring and config
