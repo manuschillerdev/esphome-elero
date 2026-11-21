@@ -269,12 +269,13 @@ function sendManageCommand(device: Device, action: ManageCommand) {
     return
   }
 
+  const addressed = device.type === 'cover' && action === 'stop'
   sendRawCommand({
-    dst_address: device.address,
+    dst_address: addressed ? device.address : '0x000000',
     src_address: pairing.remote,
     channel: pairing.channel,
     command: rawCommandByAction[action],
-    msg_type: device.type === 'cover' && action === 'stop' ? msg_type.COMMAND : msg_type.BUTTON,
+    msg_type: addressed ? msg_type.COMMAND : msg_type.BUTTON,
   })
 }
 

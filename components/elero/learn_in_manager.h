@@ -52,6 +52,8 @@ enum class LearnInState : uint8_t {
   FAILED,
   CANCELLED,
   TIMED_OUT,
+  WAIT_FINAL_UP,
+  VERIFIED,
 };
 
 const char *learn_in_state_str(LearnInState state);
@@ -61,6 +63,7 @@ class LearnInManager : public TxClient {
   [[nodiscard]] bool start(const LearnInStartRequest &request);
   [[nodiscard]] bool confirm_up();
   [[nodiscard]] bool confirm_down();
+  [[nodiscard]] bool verify();
   void cancel();
 
   template<typename Hub>

@@ -81,10 +81,25 @@ TEST_F(MqttCoverTest, LightDiscoveryAdvertisesCanonicalSwitchingStateNames) {
     for (const auto value : doc["options"].as<JsonArrayConst>()) {
         options.emplace_back(value.as<const char *>());
     }
+    EXPECT_EQ(options.size(), 22u);
+    for (uint8_t status = 0; status <= 0x15; ++status) {
+        EXPECT_NE(std::find(options.begin(), options.end(), elero_state_to_string(status)), options.end());
+    }
     EXPECT_NE(std::find(options.begin(), options.end(), "light_off"), options.end());
     EXPECT_NE(std::find(options.begin(), options.end(), "light_on"), options.end());
     EXPECT_EQ(std::find(options.begin(), options.end(), "off"), options.end());
     EXPECT_EQ(std::find(options.begin(), options.end(), "on"), options.end());
+}
+
+TEST_F(MqttCoverTest, SceneEventUpdatesStatusSensorAndKeepsTheCoverClosed) {
+    auto cfg = make_cover_config(0xA831E5);
+    cfg.supports_tilt = 1;
+    registry_.upsert(cfg);
+    report_closed();
+    registry_.on_rf_packet(make_status_pkt(0xA831E5, 0x13), mock_time_.millis());
+    EXPECT_EQ(broker_.retained.at("elero/cover/a831e5/device_state"), "scene_started");
+    EXPECT_EQ(broker_.retained.at(STATE_TOPIC), "closed");
+    EXPECT_EQ(broker_.retained.at(TILT_TOPIC), "0");
 }
 
 class MqttFirstStatusTest : public MqttCoverTest, public ::testing::WithParamInterface<uint8_t> {};

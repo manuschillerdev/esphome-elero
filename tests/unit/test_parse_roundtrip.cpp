@@ -286,7 +286,7 @@ TEST(ButtonPacket, ParsesWithOneByteAddressing) {
 
   // Build a minimal valid button packet
   uint8_t raw[34] = {0};
-  uint8_t length = 0x1D;  // Same length as standard packet
+  uint8_t length = button::MSG_LENGTH;
   raw[pkt_offset::LENGTH] = length;
   raw[pkt_offset::COUNTER] = 1;
   raw[pkt_offset::TYPE] = msg_type::BUTTON;  // 0x44
@@ -313,14 +313,6 @@ TEST(ButtonPacket, ParsesWithOneByteAddressing) {
   // 1 destination, 1-byte address (for button packets)
   raw[pkt_offset::NUM_DESTS] = 1;
   raw[pkt_offset::FIRST_DEST] = 0x05;  // 1-byte dst
-
-  // Payload: 2 bytes header + 10 bytes payload data
-  // Payload starts at FIRST_DEST + 2 + dests_len = 17 + 2 + 1 = 20
-  size_t payload_start = pkt_offset::FIRST_DEST + 2 + 1;  // +2 for payload_1/2, +1 for 1-byte dest
-  // Fill with enough data for msg_decode (8 bytes) + 2 more
-  for (size_t i = 0; i < 10; i++) {
-    raw[payload_start + i] = 0x00;
-  }
 
   // Append RSSI + LQI
   raw[length + 1] = 0x64;
@@ -619,10 +611,12 @@ TEST(MultiDest, ButtonPacket_ThreeSingleByteDests) {
   raw[pkt_offset::FIRST_DEST + 1] = 0x06;
   raw[pkt_offset::FIRST_DEST + 2] = 0x07;
 
-  // Payload at FIRST_DEST + 2 + dests_len = 17 + 2 + 3 = 22
-  size_t payload_start = pkt_offset::FIRST_DEST + 2 + 3;
-  for (size_t i = 0; i < 10; i++) raw[payload_start + i] = 0x00;
-
+  const size_t prefix = pkt_offset::FIRST_DEST + 3;
+  raw[prefix] = 0x00;
+  raw[prefix + 1] = 0x03;
+  uint8_t block[8] = {0, 0, 0x10, 1, 2, 3, 4, 0};
+  protocol::msg_encode(block);
+  memcpy(raw + prefix + 2, block, sizeof(block));
   raw[length + 1] = 0x64;
   raw[length + 2] = 0x80;
   size_t raw_len = length + 3;
@@ -631,9 +625,34 @@ TEST(MultiDest, ButtonPacket_ThreeSingleByteDests) {
 
   ASSERT_TRUE(result.valid) << "reject_reason: " << (result.reject_reason ? result.reject_reason : "null");
   EXPECT_EQ(result.type, msg_type::BUTTON);
+  EXPECT_EQ(result.selectors[0], 5);
+  EXPECT_EQ(result.selectors[1], 6);
+  EXPECT_EQ(result.selectors[2], 7);
+  EXPECT_EQ(result.prefix[1], 3);
+  EXPECT_EQ(sizeof(result.payload), 8u);
+  EXPECT_EQ(result.command, 0x10);
+  EXPECT_EQ(result.payload[5], 3);
+  EXPECT_EQ(result.rssi_raw, 0x64);
+  EXPECT_TRUE(result.crc_ok);
   EXPECT_EQ(result.num_dests, 3);
   EXPECT_EQ(result.dests_len, 3u);  // 3 * 1 byte
   EXPECT_EQ(result.dst_addr, 0x05u);  // First 1-byte dest
+}
+
+TEST(MultiDest, UnknownTypeKeepsRawFrameMetadataWithoutDecoding) {
+  uint8_t raw[FIFO_LENGTH]{};
+  auto length = build_tx_packet(TxParams{}, raw);
+  raw[pkt_offset::TYPE] = 0x7e;
+  raw[length] = 0x91;
+  raw[length + 1] = 0xa5;
+  auto result = parse_packet(raw, length + 2);
+  EXPECT_TRUE(result.complete_frame);
+  EXPECT_FALSE(result.valid);
+  EXPECT_STREQ(result.reject_reason, "unsupported_type");
+  EXPECT_EQ(result.type, 0x7e);
+  EXPECT_EQ(result.rssi_raw, 0x91);
+  EXPECT_EQ(result.lqi, 0x25);
+  EXPECT_TRUE(result.crc_ok);
 }
 
 TEST(MultiDest, ZeroDestinations) {
@@ -655,7 +674,8 @@ TEST(MultiDest, ZeroDestinations) {
 
   auto result = parse_packet(raw, raw_len);
 
-  ASSERT_TRUE(result.valid) << "reject_reason: " << (result.reject_reason ? result.reject_reason : "null");
+  EXPECT_FALSE(result.valid);
+  EXPECT_TRUE(result.complete_frame);
   EXPECT_EQ(result.num_dests, 0);
   EXPECT_EQ(result.dests_len, 0u);
 }

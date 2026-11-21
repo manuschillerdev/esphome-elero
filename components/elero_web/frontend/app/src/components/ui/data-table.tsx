@@ -14,7 +14,7 @@ export interface Column<T> {
   /** Extract a sortable/filterable value from the row */
   value?: (row: T) => string | number
   /** Custom render for the cell */
-  render: (row: T) => ComponentChildren
+  render?: (row: T) => ComponentChildren
   /** Header alignment */
   align?: 'left' | 'right'
   /** Header className */
@@ -246,7 +246,7 @@ export function DataTable<T>({
                       )}
                       style={col.align === 'right' ? { textAlign: 'right' } : undefined}
                     >
-                      {col.render(row)}
+                      {col.render ? col.render(row) : col.value?.(row)}
                     </td>
                   ))}
                 </tr>

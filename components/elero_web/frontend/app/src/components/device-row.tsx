@@ -7,7 +7,7 @@ import { formatTime } from './packet-table'
 import { ChevronUp, Square, ChevronDown, Shrink, Lightbulb, LightbulbOff, Settings, RotateCcw, Save, Info, Trash2 } from './icons'
 import { cn } from '@/lib/utils'
 import {
-  updateDevice, getStateLabel, getCommandLabel, isCommandPacket, isSelectorPacket,
+  updateDevice, getStateLabel, packetCommandLabel, isCommandPacket, isSelectorPacket,
   rfPackets, hub, displayNames, devices,
   type Device, type RfPacketWithTimestamp,
 } from '@/store'
@@ -200,12 +200,25 @@ export function DeviceActions({ device, expanded, onToggleExpand }: {
 
 // ─── Expanded Settings Panel ────────────────────────────────────────────────
 
-function replayPacket(pkt: RfPacketWithTimestamp, device: Device) {
+function canReplay(pkt: RfPacketWithTimestamp) {
+  if (pkt.decoded !== true || pkt.prefix?.length !== 2) return false
+  if (isCommandPacket(pkt)) return pkt.destinations?.length === 1
+  return pkt.type === '0x44' && pkt.selectors?.length === 1 &&
+    Number(pkt.selectors[0]) === pkt.channel
+}
+
+function replayPacket(pkt: RfPacketWithTimestamp) {
+  if (!canReplay(pkt)) return
   sendRawCommand({
-    dst_address: device.address,
-    src_address: device.remote,
-    channel: device.channel,
-    command: pkt.command ?? '0x00',
+    dst_address: pkt.dst,
+    src_address: pkt.src,
+    channel: pkt.channel,
+    command: pkt.command,
+    msg_type: pkt.type,
+    type2: pkt.type2,
+    hop: pkt.hop,
+    payload_1: pkt.prefix?.[0],
+    payload_2: pkt.prefix?.[1],
   })
 }
 
@@ -414,7 +427,7 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
                 {commandPackets.map((pkt, i) => (
                   <tr key={`${pkt.t}-${i}`} className="group">
                     <td className="py-1.5 pr-3 text-muted-foreground">{formatTime(pkt.received_at)}</td>
-                    <td className="py-1.5 pr-3">{getCommandLabel(pkt.command)}</td>
+                    <td className="py-1.5 pr-3">{packetCommandLabel(pkt)}</td>
                     <td className="py-1.5 pr-3 text-muted-foreground">{pkt.type}</td>
                     <td className="py-1.5 pr-3 text-muted-foreground">{pkt.rssi?.toFixed(0) ?? '-'}</td>
                     <td className="py-1.5 text-right">
@@ -424,7 +437,8 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
                             variant="ghost"
                             size="icon"
                             className="size-6 text-muted-foreground hover:text-primary"
-                            onClick={() => replayPacket(pkt, device)}
+                            disabled={!canReplay(pkt)}
+                            onClick={() => replayPacket(pkt)}
                           >
                             <RotateCcw className="size-3" />
                           </Button>

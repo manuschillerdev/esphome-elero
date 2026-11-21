@@ -2,7 +2,7 @@
 interface RawPayload {
   'type': 'raw';
   /**
-   * 3-byte destination address (hex string)
+   * Receiver address, or zero or the channel selector for type 0x44
    * @example 0xa831e5
    */
   'dst_address': string;
@@ -27,22 +27,22 @@ interface RawPayload {
    */
   'payload_1'?: string;
   /**
-   * Payload byte 2 (hex string, default 0x04)
+   * Payload byte 2 (0x03 for a button, otherwise 0x04)
    * @example 0x04
    */
   'payload_2'?: string;
   /**
-   * Message type byte (hex string, default 0x6a)
+   * Message type byte (0x44, 0x69, or the default 0x6a)
    * @example 0x6a
    */
   'msg_type'?: string;
   /**
-   * Secondary type byte (hex string, default 0x00)
+   * Secondary type byte (default 0x10 for a button, otherwise 0x00)
    * @example 0x00
    */
   'type2'?: string;
   /**
-   * Hop count byte (hex string, default 0x0a)
+   * Hop count byte (default 0x00 for a button, otherwise 0x0a)
    * @example 0x0a
    */
   'hop'?: string;

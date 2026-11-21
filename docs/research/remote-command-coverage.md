@@ -1,0 +1,16 @@
+# Receiver feature coverage
+
+The hub can recall both stored positions and operate saved groups. The table lists receiver functions that still need a verified radio exchange. The Sombrero editor values describe the USB connection to the stick. Use a test receiver to check each radio operation. [Receiver experiments](https://github.com/manuschillerdev/esphome-elero/issues/91)
+
+| Function | Product and source | Hardware check |
+|---|---|---|
+| Save, overwrite, and clear both receiver presets | [COM, p. 3](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/com-series.pdf#page=3) | Recall each slot with the original remote after each change. Check the final height or slat angle. |
+| Set the short step duration | [Combio JA Pulse with VarioTel 2, p. 9](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/variotel-2.pdf#page=9) | Use the original remote for a later short step. Measure its duration. |
+| Open ordinary or synchronous learning from a paired remote | [ProLine 2 programming guide, p. 2](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/transmitter-programming.pdf#page=2) | Check which drives enter learning. Complete pairing and operate each drive independently. |
+| Select the next or previous receiver with S | [VarioSon, p. 4](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/varioson-868.pdf#page=4) | Check which drive responds to each selection and which drive pairs. |
+| End learning at the receiver, delete one link, or delete all links | [COM, pp. 2–3](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/com-series.pdf#page=2) | Check that learning ends. Test every original channel after each deletion on the designated receiver. |
+| Read or set Auto/Manual | [COM, p. 1](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/com-series.pdf#page=1) | Read the setting, change it, then test a timer or sensor command. |
+| Apply timer priority and shading control | [AstroTec bidi, p. 18](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/astrotec-868.pdf#page=18), [MultiTec Touch, p. 16](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/multitec-touch-868.pdf#page=16) | Check the response to the next timer or shading request in each mode. |
+| Send a native all-channel command | [COM, pp. 1–2](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/com-series.pdf) | Check each selected receiver and record the final position. |
+| Release a slider for a drive, blind, or dimmer | [COM, p. 1](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/com-series.pdf), [TempoSon, p. 4](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/temposon-868-slide.pdf#page=4) | Record continued travel, final slat position, or retained brightness for the relevant load. |
+| Run receiver-specific scenes | [MultiTec Touch, p. 22](https://github.com/manuschillerdev/esphome-elero/blob/c9941a0/docs/manuals/en/multitec-touch-868.pdf#page=22) | Check the stored positions. Run the scene and record the final height and slat position. |

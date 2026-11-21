@@ -4,7 +4,7 @@ import { type Column } from './ui/data-table'
 import { Blinds, Lightbulb, Copy, CheckCircle2, RemoteControl } from './icons'
 import {
   isStatusPacket, isCommandPacket, isSelectorPacket,
-  getMsgTypeLabel, getCommandLabel, getStateLabel, showToast,
+  getMsgTypeLabel, packetCommandLabel, getStateLabel, showToast,
   type RfPacketWithTimestamp, type AppDeviceType,
 } from '@/store'
 import { cn, copyText } from '@/lib/utils'
@@ -87,6 +87,10 @@ export function AddressCell({ addr, name, deviceType }: { addr: string; name?: s
 
 // ─── Full column set (used by Debug tab) ────────────────────────────────────
 
+function receiverAddresses(pkt: RfPacketWithTimestamp): string[] {
+  return pkt.destinations ?? (isCommandPacket(pkt) || isStatusPacket(pkt) ? [pkt.dst] : [])
+}
+
 export function buildFullColumns(
   configNames: Record<string, string>,
   addressTypes: Record<string, AppDeviceType>,
@@ -103,9 +107,15 @@ export function buildFullColumns(
       render: (pkt) => <AddressCell addr={pkt.src} name={configNames[pkt.src]} deviceType={addressTypes[pkt.src] ?? 'unknown'} />,
     },
     {
-      key: 'destination', label: 'Destination', sortable: true, filter: 'select',
-      value: (pkt) => configNames[pkt.dst] || pkt.dst,
-      render: (pkt) => <AddressCell addr={pkt.dst} name={configNames[pkt.dst]} deviceType={addressTypes[pkt.dst] ?? 'unknown'} />,
+      key: 'destinations', label: 'Receiver addresses', sortable: true,
+      value: (pkt) => receiverAddresses(pkt).join(' '),
+      render: (pkt) => receiverAddresses(pkt).map(addr => (
+        <AddressCell addr={addr} name={configNames[addr]} deviceType={addressTypes[addr] ?? 'unknown'} />
+      )),
+    },
+    {
+      key: 'selectors', label: 'Channel selectors',
+      value: (pkt) => pkt.selectors?.join(' ') ?? '',
     },
     {
       key: 'channel', label: 'CH', sortable: true, filter: 'select',
@@ -115,12 +125,12 @@ export function buildFullColumns(
     {
       key: 'type', label: 'Type', sortable: true, filter: 'select',
       value: (pkt) => getMsgTypeLabel(pkt.type),
-      render: (pkt) => <span className="text-muted-foreground">{getMsgTypeLabel(pkt.type)}</span>,
+      render: (pkt) => <span className="text-muted-foreground">{getMsgTypeLabel(pkt.type) === pkt.type ? pkt.type : `${pkt.type} ${getMsgTypeLabel(pkt.type)}`}</span>,
     },
     {
       key: 'command', label: 'Command', sortable: true, filter: 'select',
-      value: (pkt) => (isCommandPacket(pkt) || isSelectorPacket(pkt)) ? getCommandLabel(pkt.command) : '',
-      render: (pkt) => <span className="text-muted-foreground">{(isCommandPacket(pkt) || isSelectorPacket(pkt)) ? getCommandLabel(pkt.command) : '-'}</span>,
+      value: (pkt) => (isCommandPacket(pkt) || isSelectorPacket(pkt)) ? packetCommandLabel(pkt) : '',
+      render: (pkt) => <span className="text-muted-foreground">{(isCommandPacket(pkt) || isSelectorPacket(pkt)) ? packetCommandLabel(pkt) : '-'}</span>,
     },
     {
       key: 'state', label: 'State', sortable: true, filter: 'select',
@@ -131,6 +141,16 @@ export function buildFullColumns(
       key: 'rssi', label: 'RSSI', sortable: true,
       value: (pkt) => pkt.rssi ?? 0,
       render: (pkt) => <span className="text-muted-foreground">{pkt.rssi?.toFixed(1) ?? '-'}</span>,
+    },
+    {
+      key: 'prefix', label: 'Prefix', value: (pkt) => pkt.prefix?.join(' ') ?? '',
+    },
+    {
+      key: 'decoded', label: 'Decoded bytes',
+      value: (pkt) => pkt.decoded === false ? 'Unsupported layout' : pkt.decoded_bytes?.join(' ') ?? '',
+    },
+    {
+      key: 'lqi', label: 'Link quality', value: (pkt) => pkt.lqi ?? '',
     },
     {
       key: 'actions', label: '',
@@ -159,18 +179,18 @@ export function buildCompactColumns(
     {
       key: 'type', label: 'Type', sortable: true,
       value: (pkt) => getMsgTypeLabel(pkt.type),
-      render: (pkt) => <span className="text-muted-foreground">{getMsgTypeLabel(pkt.type)}</span>,
+      render: (pkt) => <span className="text-muted-foreground">{getMsgTypeLabel(pkt.type) === pkt.type ? pkt.type : `${pkt.type} ${getMsgTypeLabel(pkt.type)}`}</span>,
     },
     {
       key: 'detail', label: 'Detail', sortable: true,
       value: (pkt) => {
         if (isStatusPacket(pkt)) return getStateLabel(pkt.state)
-        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return getCommandLabel(pkt.command)
+        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return packetCommandLabel(pkt)
         return ''
       },
       render: (pkt) => {
         if (isStatusPacket(pkt)) return <span className="text-muted-foreground">{getStateLabel(pkt.state)}</span>
-        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return <span className="text-muted-foreground">{getCommandLabel(pkt.command)}</span>
+        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return <span className="text-muted-foreground">{packetCommandLabel(pkt)}</span>
         return <span className="text-muted-foreground">-</span>
       },
     },

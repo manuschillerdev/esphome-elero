@@ -566,6 +566,95 @@ TEST_F(DeviceRegistryTest, RfStatus_UpdatesMetadataAndTransitionsFsm) {
     EXPECT_TRUE(cover_sm::is_moving(std::get<CoverDevice>(dev->logic).state));
 }
 
+TEST_F(DeviceRegistryTest, InformationalRepliesChangeOnlyTheClosedCoverStatusSensor) {
+    auto *dev = add_cover();
+    mock_time_.advance(1);
+    auto report = [&](uint8_t status) {
+        registry_.on_rf_packet(make_status_pkt(dev->config.dst_address, status), mock_time_.millis());
+    };
+    report(0x04);
+    report(0x0f);
+    const std::pair<uint8_t, const char *> replies[] = {
+        {0x0c, "delete_in_remote"}, {0x12, "scene_set"}, {0x13, "scene_started"},
+        {0x14, "scene_stopped"}, {0x15, "scene_error"}, {0xfe, "unknown"},
+    };
+    for (auto [status, label] : replies) {
+        adapter_.clear();
+        report(status);
+        const auto snap = compute_cover_snapshot(*dev, mock_time_.millis());
+        EXPECT_STREQ(snap.state_string, label);
+        EXPECT_STREQ(snap.ha_state, "closed");
+        EXPECT_FLOAT_EQ(snap.position, 0);
+        EXPECT_FALSE(snap.tilted);
+        ASSERT_EQ(adapter_.last_changes.size(), 1u);
+        EXPECT_EQ(adapter_.last_changes.front(), state_change::STATE_STRING);
+    }
+}
+
+TEST_F(DeviceRegistryTest, UnsupportedFrameGoesOnlyToPacketObservers) {
+    auto *dev = add_cover();
+    adapter_.clear();
+    auto rf = make_status_pkt(dev->config.dst_address, pkt::state::TOP);
+    rf.raw_only = true;
+    registry_.on_rf_packet(rf, 1000);
+    EXPECT_EQ(adapter_.rf_packets, 1);
+    EXPECT_TRUE(adapter_.state_changed.empty());
+    EXPECT_EQ(dev->rf.last_seen_ms, 0u);
+    rf.type = pkt::msg_type::BUTTON;
+    rf.src = 0x123456;
+    registry_.on_rf_packet(rf, 1001);
+    EXPECT_EQ(registry_.find(rf.src), nullptr);
+}
+
+TEST_F(DeviceRegistryTest, TimedDimReleasesOnceDespiteRepeatedOnReports) {
+    auto *dev = add_light();
+    registry_.set_hub(nullptr);  // Drain each queued command through the recording radio.
+    auto report = [&](uint8_t status) {
+        registry_.on_rf_packet(make_status_pkt(dev->config.dst_address, status), mock_time_.millis());
+    };
+    for (float target : {0.8f, 0.3f}) {
+        registry_.set_light_brightness(*dev, target);
+        const auto press = drain_commands(*dev);
+        ASSERT_EQ(press.size(), pkt::button::PACKETS);
+        EXPECT_EQ(press.front().payload[4], target == 0.8f ? pkt::command::UP : pkt::command::DOWN);
+        mock_time_.advance(100);
+        report(0x11);
+        report(0x11);
+        registry_.loop(mock_time_.millis());
+        EXPECT_EQ(dev->sender.queue_size(), 0u);
+        mock_time_.advance(dev->config.dim_duration_ms);
+        registry_.loop(mock_time_.millis());
+        report(0x11);
+        registry_.loop(mock_time_.millis());
+        EXPECT_EQ(dev->sender.queue_size(), 1u);
+        const auto release = drain_commands(*dev);
+        ASSERT_EQ(release.size(), pkt::button::PACKETS);
+        for (const auto &cmd : release) {
+            EXPECT_EQ(cmd.type, pkt::msg_type::BUTTON);
+            EXPECT_EQ(cmd.payload[4], pkt::button::RELEASE);
+            EXPECT_EQ(cmd.counter, release.front().counter);
+        }
+        EXPECT_FLOAT_EQ(compute_light_snapshot(*dev, mock_time_.millis()).brightness, target);
+    }
+    registry_.set_light_brightness(*dev, 0.9f);
+    drain_commands(*dev);
+    report(0x10);
+    mock_time_.advance(dev->config.dim_duration_ms);
+    registry_.loop(mock_time_.millis());
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+    EXPECT_FALSE(compute_light_snapshot(*dev, mock_time_.millis()).is_on);
+
+    registry_.set_light_brightness(*dev, 0.75f);
+    report(0x11);
+    registry_.set_light_brightness(*dev, 0.0f);
+    const auto off = drain_commands(*dev);
+    ASSERT_EQ(off.size(), pkt::button::PACKETS);
+    EXPECT_EQ(off.front().payload[4], pkt::command::DOWN);
+    mock_time_.advance(dev->config.dim_duration_ms);
+    registry_.loop(mock_time_.millis());
+    EXPECT_EQ(dev->sender.queue_size(), 0u);
+}
+
 TEST_F(DeviceRegistryTest, LightRfSnapshotsSerializeContractStateNames) {
     auto *dev = add_light();
     const std::array<std::pair<uint8_t, const char *>, 2> cases{{

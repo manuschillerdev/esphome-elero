@@ -29,6 +29,7 @@ constexpr float NO_TARGET = -1.0f;        ///< No intermediate target position
 
 struct Idle {
     float position{0.5f};  ///< Position (0=closed, 1=open, 0.5=unknown at boot)
+    bool bottom_reported{false};  ///< A zero estimate alone cannot confirm the bottom endpoint.
 };
 
 struct Opening {

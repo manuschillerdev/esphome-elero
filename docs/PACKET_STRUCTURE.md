@@ -87,16 +87,39 @@ All constants in `packet::state::` namespace.
 | TILT | `0x04` | `state::TILT` | Tilted |
 | BLOCKING | `0x05` | `state::BLOCKING` | Obstacle detected |
 | OVERHEATED | `0x06` | `state::OVERHEATED` | Motor overheated |
-| TIMEOUT | `0x07` | `state::TIMEOUT` | Communication timeout |
+| TIMEOUT | `0x07` | `state::TIMEOUT` | Receiver timeout |
 | START_MOVING_UP | `0x08` | `state::START_MOVING_UP` | Starting upward movement |
 | START_MOVING_DOWN | `0x09` | `state::START_MOVING_DOWN` | Starting downward movement |
 | MOVING_UP | `0x0A` | `state::MOVING_UP` | Moving up |
 | MOVING_DOWN | `0x0B` | `state::MOVING_DOWN` | Moving down |
+| DELETE_IN_REMOTE | `0x0C` | `state::DELETE_IN_REMOTE` | Delete in remote |
 | STOPPED | `0x0D` | `state::STOPPED` | Stopped |
 | TOP_TILT | `0x0E` | `state::TOP_TILT` | Open + tilted |
-| BOTTOM_TILT | `0x0F` | `state::BOTTOM_TILT` | Closed + tilted |
+| BOTTOM_TILT | `0x0F` | `state::BOTTOM_TILT` | Bottom coincides with the stored intermediate position |
 | LIGHT_OFF | `0x10` | `state::LIGHT_OFF` | Switching receiver off |
 | LIGHT_ON | `0x11` | `state::LIGHT_ON` | Light on |
+| SCENE_SET | `0x12` | `state::SCENE_SET` | Scene set |
+| SCENE_STARTED | `0x13` | `state::SCENE_STARTED` | Scene started |
+| SCENE_STOPPED | `0x14` | `state::SCENE_STOPPED` | Scene stopped |
+| SCENE_ERROR | `0x15` | `state::SCENE_ERROR` | Scene error |
+
+The status sensor keeps the name `bottom_tilt` for existing automations.
+Reply `0x0F` means the bottom endpoint coincides with the stored intermediate position.
+Reply `0x07` can indicate a stop at the end of the run time. The hub must receive a reply to report this value.
+The status sensor reports scene and remote memory events. These events give no position or direction.
+
+## Packet inspection
+
+The packet view shows the type and key in hexadecimal. On this hub, `44 / 00` releases a button.
+An addressed `6A / 00` requests status. A group frame with `45 / 10` does not identify the physical button action.
+The `selectors` field gives the channel list in transmission order. The `destinations` field gives the 24-bit receiver addresses.
+The two prefix bytes precede the eight decoded bytes. The radio supplies signal strength and link quality separately.
+For an unsupported layout, inspect the raw bytes. The hub skips device updates for that frame.
+
+Raw transmit accepts an addressed command (`6A` or `69`) or a single channel button (`44`).
+For a button, set the destination to zero or to the channel selector. Use prefix `00 03`.
+For explicit full travel (`21` or `41`), use type `6A`, type2 `10`, and hop `00`.
+The same rules apply to saved and unknown addresses.
 
 ## Message Types
 

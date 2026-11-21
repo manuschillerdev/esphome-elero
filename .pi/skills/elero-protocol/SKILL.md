@@ -257,7 +257,7 @@ hardware acceptance. This does not establish support on every receiver variant.
 | TILT | 0x04 | Tilted position |
 | BLOCKING | 0x05 | Blocked / obstacle detected |
 | OVERHEATED | 0x06 | Motor overheated |
-| TIMEOUT | 0x07 | Communication timeout |
+| TIMEOUT | 0x07 | Receiver timeout |
 | START_MOVING_UP | 0x08 | Starting upward movement |
 | START_MOVING_DOWN | 0x09 | Starting downward movement |
 | MOVING_UP | 0x0A | Currently moving up |

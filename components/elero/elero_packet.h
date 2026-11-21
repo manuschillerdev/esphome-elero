@@ -116,16 +116,21 @@ constexpr uint8_t INTERMEDIATE = 0x03;        ///< Intermediate position
 constexpr uint8_t TILT = 0x04;                ///< Tilted position
 constexpr uint8_t BLOCKING = 0x05;            ///< Obstacle detected
 constexpr uint8_t OVERHEATED = 0x06;          ///< Motor overheated
-constexpr uint8_t TIMEOUT = 0x07;             ///< Communication timeout
+constexpr uint8_t TIMEOUT = 0x07;             ///< Receiver timeout
 constexpr uint8_t START_MOVING_UP = 0x08;     ///< Starting upward movement
 constexpr uint8_t START_MOVING_DOWN = 0x09;   ///< Starting downward movement
 constexpr uint8_t MOVING_UP = 0x0a;           ///< Currently moving up
 constexpr uint8_t MOVING_DOWN = 0x0b;         ///< Currently moving down
+constexpr uint8_t DELETE_IN_REMOTE = 0x0c;
 constexpr uint8_t STOPPED = 0x0d;             ///< Stopped (after movement)
 constexpr uint8_t TOP_TILT = 0x0e;            ///< Open + tilted
 constexpr uint8_t BOTTOM_TILT = 0x0f;         ///< Closed + stored intermediate position
 constexpr uint8_t LIGHT_OFF = 0x10;           ///< Switching receiver off
 constexpr uint8_t LIGHT_ON = 0x11;            ///< Switching receiver on
+constexpr uint8_t SCENE_SET = 0x12;
+constexpr uint8_t SCENE_STARTED = 0x13;
+constexpr uint8_t SCENE_STOPPED = 0x14;
+constexpr uint8_t SCENE_ERROR = 0x15;
 }  // namespace state
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -207,10 +212,13 @@ constexpr uint8_t R20_DECREMENT = 0x22;       ///< R20 decrement per byte
 
 // ─── Parse Result ───────────────────────────────────────────────────────────
 
+constexpr uint8_t GROUP_MAX_DESTS = MAX_PACKET_SIZE - button::GROUP_BASE_LENGTH;
+
 /// Result of parsing an RF packet.
-/// All fields are populated if valid==true, otherwise only reject_reason is set.
+/// A complete frame with an unsupported layout retains its header and radio metadata.
 struct ParseResult {
   bool valid{false};
+  bool complete_frame{false};
   const char* reject_reason{nullptr};
 
   // Header fields
@@ -240,7 +248,9 @@ struct ParseResult {
   uint8_t crc_ok{0};      ///< CRC status (1=OK)
 
   // Payload (after decryption)
-  uint8_t payload[10]{0}; ///< Decrypted payload bytes
+  uint8_t selectors[GROUP_MAX_DESTS]{};
+  uint8_t prefix[2]{};
+  uint8_t payload[8]{}; ///< Decrypted payload bytes
   uint8_t command{0};     ///< Command byte (for command/selector packets)
   uint8_t state{0};       ///< State byte (for status packets)
 };
@@ -495,7 +505,6 @@ size_t build_program_packet(const ProgramTxParams& params, uint8_t* out_buf);
 
 /// Supported selector-group limit, shared by TX and RX on every chipset.
 /// Wire bytes include the length byte and two CRC bytes.
-constexpr uint8_t GROUP_MAX_DESTS = MAX_PACKET_SIZE - button::GROUP_BASE_LENGTH;
 static_assert(MAX_PACKET_SIZE + 3 <= FIFO_LENGTH);
 
 /// Parameters for building a 0x44 group button TX packet (multi-dest).
@@ -576,6 +585,9 @@ struct EleroCommand {
 };
 
 namespace packet {
+/// Return an error if the raw request cannot be represented by its envelope.
+const char *raw_command_error(const EleroCommand &cmd);
+
 /// Build the requested envelope into a FIFO_LENGTH buffer; zero rejects invalid size.
 size_t build_command_packet(const EleroCommand &cmd, uint8_t *out_buf);
 }  // namespace packet

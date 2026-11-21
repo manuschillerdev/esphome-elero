@@ -1055,6 +1055,8 @@ TEST_F(CommandSenderTest, ButtonType_SetsCorrectType2AndHop) {
 }
 
 TEST_F(CommandSenderTest, CommandType_SetsCorrectType2AndHop) {
+  sender_.command().type2 = 0x12;
+  sender_.command().hop = 0x25;
   sender_.enqueue(packet::command::CHECK, packet::button::PACKETS, packet::msg_type::COMMAND);
   mock_time_.advance(packet::button::INTER_PACKET_MS);
   sender_.process_queue(mock_time_.millis(), &mock_hub_, "test");
@@ -1062,8 +1064,8 @@ TEST_F(CommandSenderTest, CommandType_SetsCorrectType2AndHop) {
   ASSERT_EQ(mock_hub_.recorded_commands.size(), 1u);
   auto &cmd = mock_hub_.recorded_commands[0];
   EXPECT_EQ(cmd.type, packet::msg_type::COMMAND);
-  EXPECT_EQ(cmd.type2, packet::defaults::TYPE2);  // 0x00
-  EXPECT_EQ(cmd.hop, packet::defaults::HOP);      // 0x0a
+  EXPECT_EQ(cmd.type2, 0x12);
+  EXPECT_EQ(cmd.hop, 0x25);
 }
 
 TEST_F(CommandSenderTest, DuplicateCollapse_SameCmdDifferentType_NotCollapsed) {

@@ -16,6 +16,24 @@ interface RfData {
    */
   'dst': string;
   /**
+   * False for a complete frame with an unsupported layout.
+   */
+  'decoded'?: boolean;
+  /**
+   * Ordered one-byte channel selectors.
+   */
+  'selectors'?: string[];
+  'prefix'?: string[];
+  'decoded_bytes'?: string[];
+  /**
+   * Radio link quality, from 0 to 127.
+   */
+  'lqi'?: number;
+  /**
+   * The radio checksum passed.
+   */
+  'crc_ok'?: boolean;
+  /**
    * All 24-bit destinations for addressed packets. Empty for selector envelopes.
    */
   'destinations'?: string[];
@@ -43,8 +61,8 @@ interface RfData {
   'type2': string;
   /**
    * Command byte (hex string, for command/selector packets):
-   * - `0x00` — check (request status)
-   * - `0x10` — stop
+   * - `0x00` — button release on 0x44, status request on 0x6a
+   * - `0x10` — STOP key (the physical gesture on 0x45 is unknown)
    * - `0x20` — up/open
    * - `0x24` — tilt
    * - `0x40` — down/close
@@ -54,7 +72,7 @@ interface RfData {
    * - `0x84` — programming/P targeted action
    * @example 0x20
    */
-  'command': string;
+  'command'?: string;
   /**
    * State byte (hex string, for status packets):
    * - `0x00` — unknown
@@ -64,19 +82,24 @@ interface RfData {
    * - `0x04` — tilt
    * - `0x05` — blocking (obstacle)
    * - `0x06` — overheated
-   * - `0x07` — timeout
+   * - `0x07` — receiver timeout or end of run time
    * - `0x08` — start moving up
    * - `0x09` — start moving down
    * - `0x0a` — moving up
    * - `0x0b` — moving down
+   * - `0x0c` — delete in remote
    * - `0x0d` — stopped
    * - `0x0e` — top + tilted
    * - `0x0f` — bottom + stored intermediate position
    * - `0x10` — light off
    * - `0x11` — light on
+   * - `0x12` — scene set
+   * - `0x13` — scene started
+   * - `0x14` — scene stopped
+   * - `0x15` — scene error
    * @example 0x01
    */
-  'state': string;
+  'state'?: string;
   /**
    * Rolling counter value from packet (0-255)
    * @example 42
@@ -93,7 +116,7 @@ interface RfData {
    */
   'hop': string;
   /**
-   * Space-separated hex bytes of the raw packet
+   * Length byte and packet body in hex. Radio metadata is separate.
    * @example 1d 2a 6a 00 0a 01 05 a8 31 e5 ...
    */
   'raw': string;

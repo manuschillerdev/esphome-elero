@@ -109,6 +109,9 @@ channels:
         $ref: "#/components/messages/learnInConfirmUpMessage"
       learnInConfirmDownMessage:
         $ref: "#/components/messages/learnInConfirmDownMessage"
+      learnInVerifyMessage:
+        $ref: "#/components/messages/learnInVerifyMessage"
+
       learnInCancelMessage:
         $ref: "#/components/messages/learnInCancelMessage"
 
@@ -392,6 +395,15 @@ operations:
     messages:
       - $ref: "#/channels/eleroWs/messages/learnInConfirmDownMessage"
 
+  sendLearnInVerify:
+    action: send
+    channel:
+      $ref: "#/channels/eleroWs"
+    summary: Record the operator check
+    description: The operator checked that the drive stopped and the new channel controls it.
+    messages:
+      - $ref: "#/channels/eleroWs/messages/learnInVerifyMessage"
+
   sendLearnInCancel:
     action: send
     channel:
@@ -622,6 +634,14 @@ components:
       contentType: application/json
       payload:
         $ref: "#/components/schemas/LearnInConfirmDownPayload"
+
+    learnInVerifyMessage:
+      name: learn_in_verify
+      title: Learn-In Verify Message
+      summary: Record the operator check
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/LearnInVerifyPayload"
 
     learnInCancelMessage:
       name: learn_in_cancel
@@ -1105,7 +1125,7 @@ components:
     RfData:
       type: object
       additionalProperties: false
-      required: [t, src, dst, channel, type, type2, command, state, cnt, rssi, hop, raw]
+      required: [t, src, dst, channel, type, type2, cnt, rssi, hop, raw]
       properties:
         t:
           type: integer
@@ -1119,6 +1139,29 @@ components:
           type: string
           description: Destination address (hex string). Blind for commands, remote for status.
           examples: ["0xb42f01"]
+        decoded:
+          type: boolean
+          description: False for a complete frame with an unsupported layout.
+        selectors:
+          type: array
+          description: Ordered one-byte channel selectors.
+          items: { type: string }
+        prefix:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { type: string }
+        decoded_bytes:
+          type: array
+          minItems: 8
+          maxItems: 8
+          items: { type: string }
+        lqi:
+          type: integer
+          description: Radio link quality, from 0 to 127.
+        crc_ok:
+          type: boolean
+          description: The radio checksum passed.
         destinations:
           type: array
           description: All 24-bit destinations for addressed packets. Empty for selector envelopes.
@@ -1149,8 +1192,8 @@ components:
           type: string
           description: |
             Command byte (hex string, for command/selector packets):
-            - `0x00` — check (request status)
-            - `0x10` — stop
+            - `0x00` — button release on 0x44, status request on 0x6a
+            - `0x10` — STOP key (the physical gesture on 0x45 is unknown)
             - `0x20` — up/open
             - `0x24` — tilt
             - `0x40` — down/close
@@ -1170,16 +1213,21 @@ components:
             - `0x04` — tilt
             - `0x05` — blocking (obstacle)
             - `0x06` — overheated
-            - `0x07` — timeout
+            - `0x07` — receiver timeout or end of run time
             - `0x08` — start moving up
             - `0x09` — start moving down
             - `0x0a` — moving up
             - `0x0b` — moving down
+            - `0x0c` — delete in remote
             - `0x0d` — stopped
             - `0x0e` — top + tilted
             - `0x0f` — bottom + stored intermediate position
             - `0x10` — light off
             - `0x11` — light on
+            - `0x12` — scene set
+            - `0x13` — scene started
+            - `0x14` — scene stopped
+            - `0x15` — scene error
           examples: ["0x01"]
         cnt:
           type: integer
@@ -1196,7 +1244,7 @@ components:
           examples: ["0x0a"]
         raw:
           type: string
-          description: Space-separated hex bytes of the raw packet
+          description: Length byte and packet body in hex. Radio metadata is separate.
           examples: ["1d 2a 6a 00 0a 01 05 a8 31 e5 ..."]
 
     DeviceUpsertedData:
@@ -1366,6 +1414,12 @@ components:
       required: [state, active, busy]
       description: Thin snapshot of the backend learn-in session.
       properties:
+        first_direction_pending:
+          type: boolean
+          description: Both direction buttons are available for the first movement.
+        verified:
+          type: boolean
+          description: The operator checked that the drive stopped and the new channel controls it.
         state:
           $ref: "#/components/schemas/LearnInState"
         active:
@@ -1410,7 +1464,7 @@ components:
           const: raw
         dst_address:
           type: string
-          description: 3-byte destination address (hex string)
+          description: Receiver address, or zero or the channel selector for type 0x44
           examples: ["0xa831e5"]
         src_address:
           type: string
@@ -1430,19 +1484,19 @@ components:
           examples: ["0x00"]
         payload_2:
           type: string
-          description: Payload byte 2 (hex string, default 0x04)
+          description: Payload byte 2 (0x03 for a button, otherwise 0x04)
           examples: ["0x04"]
         msg_type:
           type: string
-          description: Message type byte (hex string, default 0x6a)
+          description: Message type byte (0x44, 0x69, or the default 0x6a)
           examples: ["0x6a"]
         type2:
           type: string
-          description: Secondary type byte (hex string, default 0x00)
+          description: Secondary type byte (default 0x10 for a button, otherwise 0x00)
           examples: ["0x00"]
         hop:
           type: string
-          description: Hop count byte (hex string, default 0x0a)
+          description: Hop count byte (default 0x00 for a button, otherwise 0x0a)
           examples: ["0x0a"]
 
     LearnInStartPayload:
@@ -1488,6 +1542,15 @@ components:
         type:
           type: string
           const: learn_in_confirm_down
+
+    LearnInVerifyPayload:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: learn_in_verify
 
     LearnInCancelPayload:
       type: object
@@ -2000,7 +2063,7 @@ components:
     LearnInState:
       type: string
       enum: [idle, programming, wait_up, confirming_up, wait_down, confirming_down, complete, failed, cancelled, timed_out]
-      description: Backend learn-in session state.
+      description: Backend learn-in session state. Complete means the hub sent the final confirmation. See verified for the operator check.
 
     CoverTiltMode:
       type: string
@@ -2042,16 +2105,22 @@ components:
         - start_moving_down
         - moving_up
         - moving_down
+        - delete_in_remote
         - stopped
         - top_tilt
         - bottom_tilt
         - light_off
         - light_on
+        - scene_set
+        - scene_started
+        - scene_stopped
+        - scene_error
       description: |
         RF state name as returned by elero_state_to_string().
         Maps 1:1 to the protocol state bytes:
           0x00=unknown, 0x01=top, 0x02=bottom, 0x03=intermediate,
           0x04=tilt, 0x05=blocking, 0x06=overheated, 0x07=timeout,
           0x08=start_moving_up, 0x09=start_moving_down, 0x0a=moving_up,
-          0x0b=moving_down, 0x0d=stopped, 0x0e=top_tilt,
-          0x0f=bottom_tilt, 0x10=light_off, 0x11=light_on
+          0x0b=moving_down, 0x0c=delete_in_remote, 0x0d=stopped, 0x0e=top_tilt,
+          0x0f=bottom_tilt, 0x10=light_off, 0x11=light_on,
+          0x12=scene_set, 0x13=scene_started, 0x14=scene_stopped, 0x15=scene_error

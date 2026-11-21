@@ -47,11 +47,16 @@ const STATE_HEX: Record<string, RfStateName> = {
   '0x09': 'start_moving_down',
   '0x0a': 'moving_up',
   '0x0b': 'moving_down',
+  '0x0c': 'delete_in_remote',
   '0x0d': 'stopped',
   '0x0e': 'top_tilt',
   '0x0f': 'bottom_tilt',
   '0x10': 'light_off',
   '0x11': 'light_on',
+  '0x12': 'scene_set',
+  '0x13': 'scene_started',
+  '0x14': 'scene_stopped',
+  '0x15': 'scene_error',
 }
 
 /// Resolve a state value (hex byte or snake_case name) to its canonical RfStateName.
@@ -75,6 +80,8 @@ const MSG_TYPE_LABELS: Record<string, string> = Object.fromEntries(
 export function getStateLabel(state: string | undefined, deviceType?: DeviceType): string {
   if (!state) return 'UNKNOWN'
   const name = resolveStateName(state)
+  if (name === 'bottom_tilt') return 'BOTTOM + INTERMEDIATE'
+  if (name === 'timeout') return 'RECEIVER TIMEOUT'
   // Switching states are distinct from the cover endpoint at 0x0f.
   if (deviceType === 'light') {
     if (name === 'light_off') return 'OFF'
@@ -88,6 +95,16 @@ export function getCommandLabel(hexCmd: string | undefined): string {
   return COMMAND_LABELS[hexCmd.toLowerCase()] ?? hexCmd
 }
 
+export function packetCommandLabel(pkt: RfData): string {
+  const key = pkt.command?.toLowerCase()
+  if (!key || pkt.decoded === false) return ''
+  const type = pkt.type.toLowerCase()
+  let label = getCommandLabel(key)
+  if (type === msg_type.BUTTON && key === command.CHECK) label = 'RELEASE'
+  if (type === msg_type.BUTTON_GROUP && key === command.STOP) label = 'Gesture unknown'
+  return label === key ? key : `${key} ${label}`
+}
+
 export function getMsgTypeLabel(hexType: string | undefined): string {
   if (!hexType) return ''
   return MSG_TYPE_LABELS[hexType.toLowerCase()] ?? hexType
@@ -96,20 +113,24 @@ export function getMsgTypeLabel(hexType: string | undefined): string {
 // ─── Packet Type Guards ─────────────────────────────────────────────────────
 
 export function isStatusPacket(pkt: RfData): boolean {
+  if (pkt.decoded === false) return false
   const t = pkt.type?.toLowerCase()
   return t === msg_type.STATUS || t === msg_type.STATUS_ALT
 }
 
 export function isCommandPacket(pkt: RfData): boolean {
+  if (pkt.decoded === false) return false
   const t = pkt.type?.toLowerCase()
   return t === msg_type.COMMAND || t === msg_type.COMMAND_ALT
 }
 
 export function isButtonPacket(pkt: RfData): boolean {
+  if (pkt.decoded === false) return false
   return pkt.type?.toLowerCase() === msg_type.BUTTON
 }
 
 export function isSelectorPacket(pkt: RfData): boolean {
+  if (pkt.decoded === false) return false
   const t = pkt.type?.toLowerCase()
   return t === msg_type.BUTTON || t === msg_type.BUTTON_GROUP || t === msg_type.PROGRAM
 }

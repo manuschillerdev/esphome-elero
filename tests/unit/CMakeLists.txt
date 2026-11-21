@@ -183,7 +183,8 @@ endforeach()
 add_executable(test_rf_transport test_rf_transport.cpp
   ${COMPONENTS_DIR}/elero/rf_transport.cpp ${ELERO_PACKET_SRC} ${ELERO_TIME_PROVIDER_SRC})
 target_compile_definitions(test_rf_transport PRIVATE UNIT_TEST)
-target_link_libraries(test_rf_transport GTest::gtest_main)
+target_include_directories(test_rf_transport BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/mqtt_stubs)
+target_link_libraries(test_rf_transport GTest::gtest_main ArduinoJson)
 
 # Discover all tests
 include(GoogleTest)

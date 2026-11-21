@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { beforeEach, test } from 'node:test'
 import { addRfPacket, devices, onStateChanged, rfPackets, resolveStateName as storeStateName } from '../src/store'
-import { getStateLabel, resolveStateName } from '../src/lib/protocol'
+import { packetCommandLabel, getStateLabel, resolveStateName } from '../src/lib/protocol'
 import { envelope } from '../mock-contract'
 import type { RfData, StateChangedData } from '../src/generated'
 
@@ -26,7 +26,19 @@ await test('literal switching states have the correct labels in both decoders', 
   }
   assert.equal(getStateLabel('0x10', 'light'), 'OFF')
   assert.equal(getStateLabel('0x11', 'light'), 'ON')
-  assert.equal(getStateLabel('0x0f', 'cover'), 'BOTTOM_TILT')
+  assert.equal(getStateLabel('0x0f', 'cover'), 'BOTTOM + INTERMEDIATE')
+})
+
+await test('Sombrero status bytes have a display label and a valid snapshot name', () => {
+  const cases = [
+    ['0x0c', 'delete_in_remote'], ['0x12', 'scene_set'], ['0x13', 'scene_started'],
+    ['0x14', 'scene_stopped'], ['0x15', 'scene_error'],
+  ] as const
+  for (const [byte, state] of cases) {
+    assert.equal(resolveStateName(byte), state)
+    assert.equal(getStateLabel(byte), state.toUpperCase())
+    assert.doesNotThrow(() => envelope('state_changed', { address, device_type: 'cover', state }))
+  }
 })
 
 await test('a cover endpoint report does not change the discovered device to a light', () => {
@@ -59,4 +71,21 @@ await test('the contract rejects noncanonical switching snapshot names', () => {
     const data = { address, device_type: 'light', state } as StateChangedData
     assert.throws(() => envelope('state_changed', data), /allowed values/)
   }
+})
+
+await test('packet details distinguish releases, polls, and group observations', () => {
+  for (const [type, key, label] of [
+    ['0x44', '0x00', '0x00 RELEASE'],
+    ['0x6a', '0x00', '0x00 CHECK'],
+    ['0x45', '0x10', '0x10 Gesture unknown'],
+  ]) {
+    assert.equal(packetCommandLabel({ ...packet, type, command: key }), label)
+  }
+  const raw = { ...packet, src: '0x888888', dst: '0x999999', decoded: false, command: undefined, state: undefined }
+  assert.doesNotThrow(() => envelope('rf', raw))
+  addRfPacket(raw)
+  assert.equal(rfPackets.value.at(-1), raw)
+  assert.equal(devices.value.has(raw.src), false)
+  assert.equal(devices.value.has(raw.dst), false)
+  assert.equal(packetCommandLabel(raw), '')
 })
