@@ -47,11 +47,16 @@ const STATE_HEX: Record<string, RfStateName> = {
   '0x09': 'start_moving_down',
   '0x0a': 'moving_up',
   '0x0b': 'moving_down',
+  '0x0c': 'delete_in_remote',
   '0x0d': 'stopped',
   '0x0e': 'top_tilt',
   '0x0f': 'bottom_tilt',
   '0x10': 'light_off',
   '0x11': 'light_on',
+  '0x12': 'scene_set',
+  '0x13': 'scene_started',
+  '0x14': 'scene_stopped',
+  '0x15': 'scene_error',
 }
 
 /// Resolve a state value (hex byte or snake_case name) to its canonical RfStateName.

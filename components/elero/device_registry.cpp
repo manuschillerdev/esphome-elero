@@ -749,8 +749,7 @@ void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t 
 
             // Track tilt state from RF
             if (state_byte == packet::state::TILT ||
-                state_byte == packet::state::TOP_TILT ||
-                state_byte == packet::state::BOTTOM_TILT) {
+                state_byte == packet::state::TOP_TILT) {
                 cover.tilted = true;
             } else if (state_byte == packet::state::TOP ||
                        state_byte == packet::state::BOTTOM ||

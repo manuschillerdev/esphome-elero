@@ -31,6 +31,8 @@ const char *elero_state_to_string(uint8_t state) {
       return "moving_up";
     case packet::state::MOVING_DOWN:
       return "moving_down";
+    case packet::state::DELETE_IN_REMOTE:
+      return "delete_in_remote";
     case packet::state::STOPPED:
       return "stopped";
     case packet::state::TOP_TILT:
@@ -41,6 +43,14 @@ const char *elero_state_to_string(uint8_t state) {
       return "light_off";
     case packet::state::LIGHT_ON:
       return "light_on";
+    case packet::state::SCENE_SET:
+      return "scene_set";
+    case packet::state::SCENE_STARTED:
+      return "scene_started";
+    case packet::state::SCENE_STOPPED:
+      return "scene_stopped";
+    case packet::state::SCENE_ERROR:
+      return "scene_error";
     default:
       return "unknown";
   }

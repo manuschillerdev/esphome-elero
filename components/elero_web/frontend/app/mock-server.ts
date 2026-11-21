@@ -15,7 +15,8 @@ const hex = (value: number, width = 2) => `0x${value.toString(16).padStart(width
 const stateBytes: Record<RfStateName, number> = {
   unknown: 0, top: 1, bottom: 2, intermediate: 3, tilt: 4, blocking: 5,
   overheated: 6, timeout: 7, start_moving_up: 8, start_moving_down: 9,
-  moving_up: 10, moving_down: 11, stopped: 13, top_tilt: 14, bottom_tilt: 15, light_off: 16, light_on: 17,
+  moving_up: 10, moving_down: 11, delete_in_remote: 12, stopped: 13, top_tilt: 14, bottom_tilt: 15, light_off: 16, light_on: 17,
+  scene_set: 18, scene_started: 19, scene_stopped: 20, scene_error: 21,
 }
 const defaults = { command_up: '0x20', command_down: '0x40', command_stop: '0x10', command_check: '0x00', command_tilt: '0x24' }
 type Motion = { from: number; target: number; started: number; duration: number }
@@ -214,7 +215,7 @@ function act(device: Device, action: DeviceAction, source: Device['source'] = 'h
   if (action === 'step_up' || action === 'step_down') {
     device.state = 'stopped'
   } else if (action === 'stop') device.state = device.config.device_type === 'cover' ? 'stopped' : device.value > 0 ? 'light_on' : 'light_off'
-  else if (action === 'tilt') device.state = device.value === 1 ? 'top_tilt' : device.value === 0 ? 'bottom_tilt' : 'tilt'
+  else if (action === 'tilt') device.state = device.value === 1 ? 'top_tilt' : 'tilt'
   else if (action === 'on' || action === 'off') { device.value = action === 'on' ? 1 : 0; device.state = action === 'on' ? 'light_on' : 'light_off' }
   else {
     const target = action === 'int' ? 0.5 : ['up', 'open', 'dim_up', 'full_up'].includes(action) ? 1 : 0

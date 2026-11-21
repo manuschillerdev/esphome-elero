@@ -620,6 +620,20 @@ TEST_F(DeviceRegistryTest, RfStatus_IdenticalPacket_Suppressed) {
     EXPECT_EQ(adapter_.state_changed.size(), 0u);
 }
 
+TEST_F(DeviceRegistryTest, BottomIntermediateReportPreservesTiltAndConfirmsClosed) {
+    auto *dev = add_cover();
+    ASSERT_NE(dev, nullptr);
+    auto &cover = std::get<CoverDevice>(dev->logic);
+    for (bool tilted : {false, true}) {
+        cover.tilted = tilted;
+        cover.state = cover_sm::Stopping{0.5f, mock_time_.millis()};
+        registry_.on_rf_packet(make_status_pkt(dev->config.dst_address, 0x0f), mock_time_.millis());
+        ASSERT_TRUE(std::holds_alternative<cover_sm::Idle>(cover.state));
+        EXPECT_FLOAT_EQ(std::get<cover_sm::Idle>(cover.state).position, cover_sm::POSITION_CLOSED);
+        EXPECT_EQ(cover.tilted, tilted);
+    }
+}
+
 TEST_F(DeviceRegistryTest, RfStatus_NotifiesOnDifferentStateByte) {
     // Different state byte = real state change, must notify adapters.
     add_cover();

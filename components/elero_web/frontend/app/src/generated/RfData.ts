@@ -69,11 +69,16 @@ interface RfData {
    * - `0x09` — start moving down
    * - `0x0a` — moving up
    * - `0x0b` — moving down
+   * - `0x0c` — delete in remote
    * - `0x0d` — stopped
    * - `0x0e` — top + tilted
    * - `0x0f` — bottom + stored intermediate position
    * - `0x10` — light off
    * - `0x11` — light on
+   * - `0x12` — scene set
+   * - `0x13` — scene started
+   * - `0x14` — scene stopped
+   * - `0x15` — scene error
    * @example 0x01
    */
   'state': string;

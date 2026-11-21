@@ -29,6 +29,18 @@ await test('literal switching states have the correct labels in both decoders', 
   assert.equal(getStateLabel('0x0f', 'cover'), 'BOTTOM_TILT')
 })
 
+await test('Sombrero status bytes have a display label and a valid snapshot name', () => {
+  const cases = [
+    ['0x0c', 'delete_in_remote'], ['0x12', 'scene_set'], ['0x13', 'scene_started'],
+    ['0x14', 'scene_stopped'], ['0x15', 'scene_error'],
+  ] as const
+  for (const [byte, state] of cases) {
+    assert.equal(resolveStateName(byte), state)
+    assert.equal(getStateLabel(byte), state.toUpperCase())
+    assert.doesNotThrow(() => envelope('state_changed', { address, device_type: 'cover', state }))
+  }
+})
+
 await test('a cover endpoint report does not change the discovered device to a light', () => {
   addRfPacket({ ...packet, src: address, dst: remote, type: '0xca', state: '0x0f' })
   assert.equal(devices.value.get(address)?.type, 'cover')

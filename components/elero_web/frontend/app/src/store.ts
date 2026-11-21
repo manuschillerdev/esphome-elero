@@ -1,6 +1,6 @@
 import { signal, computed, batch } from '@preact/signals'
-import { formatFrequency, command, msg_type } from './lib/protocol'
-export { getStateLabel, parseFreq, command, msg_type, getCommandLabel, getMsgTypeLabel } from './lib/protocol'
+import { formatFrequency, command, msg_type, resolveStateName } from './lib/protocol'
+export { resolveStateName, getStateLabel, parseFreq, command, msg_type, getCommandLabel, getMsgTypeLabel } from './lib/protocol'
 import type {
   ConfigData, RfData, DeviceType, CrudEventData, DeviceUpsertedData,
   StateChangedData, FreqConfig, HubMode, HubConfig, HubConfigEventData, RadioConfig,
@@ -12,37 +12,6 @@ import type {
 // Re-export generated types used by components
 export type { RfData, DeviceType, BlindConfig, LightConfig, FreqConfig, HubMode, HubConfig, RadioConfig, CrudEventData, DeviceUpsertedData, StateChangedData, RfStateName, LearnInStateData }
 export type GroupConfig = WireGroupConfig & { updated_at: number | null }
-
-// ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
-
-/// Hex byte → RfStateName (from AsyncAPI spec). Single source of truth for
-/// normalizing RF packet state bytes to the canonical snake_case names that
-/// state_changed events already use.
-const STATE_HEX: Record<string, RfStateName> = {
-  '0x00': 'unknown',
-  '0x01': 'top',
-  '0x02': 'bottom',
-  '0x03': 'intermediate',
-  '0x04': 'tilt',
-  '0x05': 'blocking',
-  '0x06': 'overheated',
-  '0x07': 'timeout',
-  '0x08': 'start_moving_up',
-  '0x09': 'start_moving_down',
-  '0x0a': 'moving_up',
-  '0x0b': 'moving_down',
-  '0x0d': 'stopped',
-  '0x0e': 'top_tilt',
-  '0x0f': 'bottom_tilt',
-  '0x10': 'light_off',
-  '0x11': 'light_on',
-}
-
-/// Resolve a state value (hex byte or snake_case name) to its canonical RfStateName.
-export function resolveStateName(raw: string | undefined): RfStateName | undefined {
-  if (!raw) return undefined
-  return STATE_HEX[raw.toLowerCase()] ?? (raw as RfStateName)
-}
 
 // ─── Packet Helpers ──────────────────────────────────────────────────────────
 
