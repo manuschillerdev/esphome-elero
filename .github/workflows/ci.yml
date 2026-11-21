@@ -50,7 +50,7 @@ jobs:
       - name: Verify bundled frontend is tracked and up to date
         run: |
           git ls-files --error-unmatch components/elero_web/elero_web_ui.h
-          git diff --exit-code -- components/elero_web/elero_web_ui.h
+          git diff --exit-code -- components/elero_web/elero_web_ui.h components/elero/elero_status_names.h components/elero_web/frontend/app/src/generated
 
   # ESPHome compile tests for each platform
   esphome-compile:

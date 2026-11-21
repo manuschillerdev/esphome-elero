@@ -121,11 +121,16 @@ constexpr uint8_t START_MOVING_UP = 0x08;     ///< Starting upward movement
 constexpr uint8_t START_MOVING_DOWN = 0x09;   ///< Starting downward movement
 constexpr uint8_t MOVING_UP = 0x0a;           ///< Currently moving up
 constexpr uint8_t MOVING_DOWN = 0x0b;         ///< Currently moving down
+constexpr uint8_t DELETE_IN_REMOTE = 0x0c;
 constexpr uint8_t STOPPED = 0x0d;             ///< Stopped (after movement)
 constexpr uint8_t TOP_TILT = 0x0e;            ///< Open + tilted
 constexpr uint8_t BOTTOM_TILT = 0x0f;         ///< Closed + stored intermediate position
 constexpr uint8_t LIGHT_OFF = 0x10;           ///< Switching receiver off
 constexpr uint8_t LIGHT_ON = 0x11;            ///< Switching receiver on
+constexpr uint8_t SCENE_SET = 0x12;
+constexpr uint8_t SCENE_STARTED = 0x13;
+constexpr uint8_t SCENE_STOPPED = 0x14;
+constexpr uint8_t SCENE_ERROR = 0x15;
 }  // namespace state
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -536,7 +541,7 @@ enum class CoverOp : uint8_t {
 /// Result of mapping an Elero state byte to cover state.
 struct CoverStateResult {
   float position;           ///< Cover position (0.0=closed, 1.0=open, -1.0=unchanged)
-  float tilt;               ///< Tilt position (0.0=closed, 1.0=tilted)
+  float tilt;               ///< Tilt position (0.0=closed, 1.0=tilted, -1.0=unchanged)
   CoverOp operation;        ///< Cover operation state
   bool is_warning;          ///< True if state indicates a warning condition
   const char* warning_msg;  ///< Warning message (nullptr if no warning)

@@ -26,7 +26,7 @@ static elero::Device make_cover_device(float position = sm::POSITION_CLOSED,
     dev.logic = elero::CoverDevice{};
     auto &cover = std::get<elero::CoverDevice>(dev.logic);
     cover.state = sm::Idle{position};
-    dev.rf.last_state_raw = last_state_raw;
+    dev.rf.record_status(last_state_raw);
     dev.rf.last_rssi = rssi;
     dev.rf.last_seen_ms = 1000;
     return dev;
@@ -46,7 +46,7 @@ static elero::Device make_light_device(bool on = false,
     } else {
         light.state = lsm::Off{};
     }
-    dev.rf.last_state_raw = last_state_raw;
+    dev.rf.record_status(last_state_raw);
     dev.rf.last_rssi = -60.0f;
     dev.rf.last_seen_ms = 2000;
     return dev;

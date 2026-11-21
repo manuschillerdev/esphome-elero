@@ -1,3 +1,4 @@
+import {HaCoverState} from './HaCoverState';
 import {CoverMovementMode} from './CoverMovementMode';
 import {CoverTiltMode} from './CoverTiltMode';
 interface BlindConfig {
@@ -54,7 +55,11 @@ interface BlindConfig {
    */
   'position'?: number;
   /**
-   * Last known state byte (hex string, e.g. "0x01" = top)
+   * HA-compatible cover state. Cover only.
+   */
+  'ha_state'?: HaCoverState;
+  /**
+   * Last reported receiver status name, or a hexadecimal byte from older firmware
    * @example 0x0d
    */
   'state'?: string;

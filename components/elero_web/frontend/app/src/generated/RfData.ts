@@ -1,4 +1,4 @@
-
+import {RfStateName} from './RfStateName';
 interface RfData {
   /**
    * Timestamp in milliseconds since boot (millis())
@@ -56,27 +56,15 @@ interface RfData {
    */
   'command': string;
   /**
-   * State byte (hex string, for status packets):
-   * - `0x00` — unknown
-   * - `0x01` — top (fully open)
-   * - `0x02` — bottom (fully closed)
-   * - `0x03` — intermediate
-   * - `0x04` — tilt
-   * - `0x05` — blocking (obstacle)
-   * - `0x06` — overheated
-   * - `0x07` — timeout
-   * - `0x08` — start moving up
-   * - `0x09` — start moving down
-   * - `0x0a` — moving up
-   * - `0x0b` — moving down
-   * - `0x0d` — stopped
-   * - `0x0e` — top + tilted
-   * - `0x0f` — bottom + stored intermediate position
-   * - `0x10` — light off
-   * - `0x11` — light on
+   * Raw hexadecimal status byte. For a status packet, state_name gives the firmware's decoded name.
    * @example 0x01
    */
   'state': string;
+  /**
+   * Receiver status name returned by elero_state_to_string().
+   * The enum index is the numeric status byte.
+   */
+  'state_name'?: RfStateName;
   /**
    * Rolling counter value from packet (0-255)
    * @example 42

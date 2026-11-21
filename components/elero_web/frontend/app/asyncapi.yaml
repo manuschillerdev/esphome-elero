@@ -949,9 +949,11 @@ components:
           type: number
           format: float
           description: Last known cover position (0.0 = closed, 1.0 = open)
+        ha_state:
+          $ref: "#/components/schemas/HaCoverState"
         state:
           type: string
-          description: Last known state byte (hex string, e.g. "0x01" = top)
+          description: Last reported receiver status name, or a hexadecimal byte from older firmware
           examples: ["0x0d"]
         rssi:
           type: number
@@ -1028,7 +1030,7 @@ components:
           description: Whether the light is currently on
         state:
           type: string
-          description: Last known state byte (hex string)
+          description: Last reported receiver status name, or a hexadecimal byte from older firmware
           examples: ["0x10"]
         rssi:
           type: number
@@ -1161,26 +1163,10 @@ components:
           examples: ["0x20"]
         state:
           type: string
-          description: |
-            State byte (hex string, for status packets):
-            - `0x00` — unknown
-            - `0x01` — top (fully open)
-            - `0x02` — bottom (fully closed)
-            - `0x03` — intermediate
-            - `0x04` — tilt
-            - `0x05` — blocking (obstacle)
-            - `0x06` — overheated
-            - `0x07` — timeout
-            - `0x08` — start moving up
-            - `0x09` — start moving down
-            - `0x0a` — moving up
-            - `0x0b` — moving down
-            - `0x0d` — stopped
-            - `0x0e` — top + tilted
-            - `0x0f` — bottom + stored intermediate position
-            - `0x10` — light off
-            - `0x11` — light on
+          description: Raw hexadecimal status byte. For a status packet, state_name gives the firmware's decoded name.
           examples: ["0x01"]
+        state_name:
+          $ref: "#/components/schemas/RfStateName"
         cnt:
           type: integer
           description: Rolling counter value from packet (0-255)
@@ -2028,6 +2014,7 @@ components:
       description: Type of device (cover, light, or remote control)
 
     RfStateName:
+      # Each enum index is the status byte. Older hubs only send this byte.
       type: string
       enum:
         - unknown
@@ -2042,16 +2029,16 @@ components:
         - start_moving_down
         - moving_up
         - moving_down
+        - delete_in_remote
         - stopped
         - top_tilt
         - bottom_tilt
         - light_off
         - light_on
+        - scene_set
+        - scene_started
+        - scene_stopped
+        - scene_error
       description: |
-        RF state name as returned by elero_state_to_string().
-        Maps 1:1 to the protocol state bytes:
-          0x00=unknown, 0x01=top, 0x02=bottom, 0x03=intermediate,
-          0x04=tilt, 0x05=blocking, 0x06=overheated, 0x07=timeout,
-          0x08=start_moving_up, 0x09=start_moving_down, 0x0a=moving_up,
-          0x0b=moving_down, 0x0d=stopped, 0x0e=top_tilt,
-          0x0f=bottom_tilt, 0x10=light_off, 0x11=light_on
+        Receiver status name returned by elero_state_to_string().
+        The enum index is the numeric status byte.

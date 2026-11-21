@@ -730,7 +730,7 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
             const bool first_report = dev->rf.last_seen_ms == 0;
             dev->rf.last_seen_ms = now;
             dev->rf.last_rssi = pkt.rssi;
-            dev->rf.last_state_raw = pkt.state;
+            dev->rf.record_status(pkt.state);
             dispatch_status_(*dev, pkt.state, now, first_report);
         }
     } else if (packet::carries_command(pkt.type)) {
@@ -749,8 +749,7 @@ void DeviceRegistry::dispatch_status_(Device &dev, uint8_t state_byte, uint32_t 
 
             // Track tilt state from RF
             if (state_byte == packet::state::TILT ||
-                state_byte == packet::state::TOP_TILT ||
-                state_byte == packet::state::BOTTOM_TILT) {
+                state_byte == packet::state::TOP_TILT) {
                 cover.tilted = true;
             } else if (state_byte == packet::state::TOP ||
                        state_byte == packet::state::BOTTOM ||

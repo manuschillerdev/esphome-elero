@@ -92,11 +92,16 @@ All constants in `packet::state::` namespace.
 | START_MOVING_DOWN | `0x09` | `state::START_MOVING_DOWN` | Starting downward movement |
 | MOVING_UP | `0x0A` | `state::MOVING_UP` | Moving up |
 | MOVING_DOWN | `0x0B` | `state::MOVING_DOWN` | Moving down |
+| DELETE_IN_REMOTE | `0x0C` | `state::DELETE_IN_REMOTE` | Delete in remote |
 | STOPPED | `0x0D` | `state::STOPPED` | Stopped |
 | TOP_TILT | `0x0E` | `state::TOP_TILT` | Open + tilted |
-| BOTTOM_TILT | `0x0F` | `state::BOTTOM_TILT` | Closed + tilted |
+| BOTTOM_TILT | `0x0F` | `state::BOTTOM_TILT` | Bottom end position coincides with the intermediate position. Tilt is unchanged. |
 | LIGHT_OFF | `0x10` | `state::LIGHT_OFF` | Switching receiver off |
 | LIGHT_ON | `0x11` | `state::LIGHT_ON` | Light on |
+| SCENE_SET | `0x12` | `state::SCENE_SET` | Scene set |
+| SCENE_STARTED | `0x13` | `state::SCENE_STARTED` | Scene started |
+| SCENE_STOPPED | `0x14` | `state::SCENE_STOPPED` | Scene stopped |
+| SCENE_ERROR | `0x15` | `state::SCENE_ERROR` | Scene error |
 
 ## Message Types
 

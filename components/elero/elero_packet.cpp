@@ -321,7 +321,7 @@ CoverStateResult map_cover_state(uint8_t elero_state) {
 
     case state::BOTTOM_TILT:
       r.position = 0.0f;
-      r.tilt = 1.0f;
+      r.tilt = -1.0f;  // This endpoint report gives no tilt information.
       r.operation = CoverOp::IDLE;
       break;
 

@@ -375,7 +375,7 @@ TEST(CoverStateMapping, MapState_TopTilt) {
 TEST(CoverStateMapping, MapState_BottomTilt) {
   auto result = map_cover_state(state::BOTTOM_TILT);
   EXPECT_FLOAT_EQ(result.position, 0.0f);
-  EXPECT_FLOAT_EQ(result.tilt, 1.0f);
+  EXPECT_FLOAT_EQ(result.tilt, -1.0f);
   EXPECT_EQ(result.operation, CoverOp::IDLE);
 }
 

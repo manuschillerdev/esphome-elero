@@ -26,11 +26,13 @@ static const char *const COVER_STATE_OPTIONS[] = {
     "top", "bottom", "intermediate", "tilt", "top_tilt", "bottom_tilt",
     "moving_up", "moving_down", "start_moving_up", "start_moving_down",
     "stopped", "blocking", "overheated", "timeout", "unknown",
+    "delete_in_remote", "scene_set", "scene_started", "scene_stopped", "scene_error",
 };
 static const char *const LIGHT_STATE_OPTIONS[] = {
     "light_off", "light_on", "top", "bottom", "intermediate",
     "moving_up", "moving_down", "start_moving_up", "start_moving_down",
     "stopped", "blocking", "overheated", "timeout", "unknown",
+    "delete_in_remote", "scene_set", "scene_started", "scene_stopped", "scene_error",
 };
 
 static uint8_t mqtt_payload_to_command(const char *payload, DeviceType type) {
