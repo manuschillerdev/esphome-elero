@@ -4,7 +4,15 @@ import {LearnInState} from './LearnInState';
  */
 interface LearnInStateData {
   /**
-   * Backend learn-in session state.
+   * Both direction buttons are available for the first movement.
+   */
+  'first_direction_pending'?: boolean;
+  /**
+   * The operator checked that the drive stopped and the new channel controls it.
+   */
+  'verified'?: boolean;
+  /**
+   * Backend learn-in session state. Complete means the hub sent the final confirmation. See verified for the operator check.
    */
   'state': LearnInState;
   /**

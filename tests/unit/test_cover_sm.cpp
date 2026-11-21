@@ -324,9 +324,25 @@ TEST_F(CoverSmTest, ClosingCmdUpReversesWithSnapshotPosition) {
     EXPECT_NEAR(std::get<sm::Opening>(s).start_position, 0.7f, 0.01f);
 }
 
-TEST_F(CoverSmTest, ClosingCmdTiltReversesToOpening) {
+TEST_F(CoverSmTest, PresetRecallWaitsForReportedDirection) {
+    for (float start : {0.2f, 0.8f}) {
+        auto s = sm::on_command(sm::Idle{start}, pkt::command::TILT, 100, ctx);
+        EXPECT_FLOAT_EQ(sm::position(s, 2000, ctx), start);
+        auto direction = start < 0.5f ? pkt::state::MOVING_UP : pkt::state::MOVING_DOWN;
+        EXPECT_TRUE(sm::is_moving(sm::on_rf_status(s, direction, 2000, ctx)));
+    }
     auto s = sm::on_command(sm::Closing{1.0f, 0}, pkt::command::TILT, 5000, ctx);
-    ASSERT_TRUE(std::holds_alternative<sm::Opening>(s));
+    ASSERT_TRUE(std::holds_alternative<sm::Idle>(s));
+    EXPECT_FLOAT_EQ(sm::position(s, 6000, ctx), 0.5f);
+}
+
+TEST_F(CoverSmTest, EndpointsOverrideStopCooldown) {
+    sm::State s = sm::Stopping{0.5f, 100};
+    for (uint8_t report : {0x01, 0x02, 0x0e, 0x0f}) {
+        auto next = sm::on_rf_status(s, report, 101, ctx);
+        ASSERT_TRUE(std::holds_alternative<sm::Idle>(next));
+        EXPECT_FLOAT_EQ(std::get<sm::Idle>(next).position, report == 1 || report == 14 ? 1.0f : 0.0f);
+    }
 }
 
 TEST_F(CoverSmTest, StoppingCmdOverridesCooldownWithCorrectPosition) {

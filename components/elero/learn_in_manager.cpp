@@ -12,6 +12,7 @@ const char *learn_in_state_str(LearnInState state) {
       return "idle";
     case LearnInState::PROGRAMMING:
       return "programming";
+    case LearnInState::WAIT_FINAL_UP:
     case LearnInState::WAIT_UP:
       return "wait_up";
     case LearnInState::CONFIRMING_UP:
@@ -20,6 +21,7 @@ const char *learn_in_state_str(LearnInState state) {
       return "wait_down";
     case LearnInState::CONFIRMING_DOWN:
       return "confirming_down";
+    case LearnInState::VERIFIED:
     case LearnInState::COMPLETE:
       return "complete";
     case LearnInState::FAILED:
@@ -38,7 +40,8 @@ LearnInState LearnInManager::state() const {
 }
 
 bool LearnInManager::is_active() const {
-  return is_busy() || state() == LearnInState::WAIT_UP || state() == LearnInState::WAIT_DOWN;
+  return is_busy() || state() == LearnInState::WAIT_UP ||
+         state() == LearnInState::WAIT_DOWN || state() == LearnInState::WAIT_FINAL_UP;
 }
 
 bool LearnInManager::start(const LearnInStartRequest &request) {
@@ -70,20 +73,22 @@ bool LearnInManager::start(const LearnInStartRequest &request) {
 }
 
 bool LearnInManager::confirm_up() {
-  if (state() != LearnInState::WAIT_UP) {
+  if (state() != LearnInState::WAIT_UP && state() != LearnInState::WAIT_FINAL_UP) {
     ESP_LOGW(TAG, "confirm_up rejected in state=%s", learn_in_state_str(state()));
     return false;
   }
-  begin_step_(packet::command::UP, LearnInState::CONFIRMING_UP, LearnInState::WAIT_DOWN);
+  begin_step_(packet::command::UP, LearnInState::CONFIRMING_UP,
+              state() == LearnInState::WAIT_FINAL_UP ? LearnInState::COMPLETE : LearnInState::WAIT_DOWN);
   return true;
 }
 
 bool LearnInManager::confirm_down() {
-  if (state() != LearnInState::WAIT_DOWN) {
+  if (state() != LearnInState::WAIT_DOWN && state() != LearnInState::WAIT_UP) {
     ESP_LOGW(TAG, "confirm_down rejected in state=%s", learn_in_state_str(state()));
     return false;
   }
-  begin_step_(packet::command::DOWN, LearnInState::CONFIRMING_DOWN, LearnInState::COMPLETE);
+  begin_step_(packet::command::DOWN, LearnInState::CONFIRMING_DOWN,
+              state() == LearnInState::WAIT_UP ? LearnInState::WAIT_FINAL_UP : LearnInState::COMPLETE);
   return true;
 }
 
@@ -103,8 +108,14 @@ void LearnInManager::begin_step_(uint8_t command, LearnInState phase, LearnInSta
            learn_in_state_str(phase), command, command_.src_addr, command_.channel);
 }
 
+bool LearnInManager::verify() {
+  if (state() != LearnInState::COMPLETE) return false;
+  finish_(LearnInState::VERIFIED);
+  return true;
+}
+
 void LearnInManager::cancel() {
-  if (state() == LearnInState::IDLE) return;
+  if (!is_active()) return;
   finish_(LearnInState::CANCELLED);
   ESP_LOGI(TAG, "Learn-in session cancelled");
 }

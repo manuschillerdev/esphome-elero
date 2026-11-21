@@ -113,6 +113,27 @@ TEST_F(LearnInManagerTest, FullLearnInFlowCompletes) {
   EXPECT_EQ(manager_.state(), LearnInState::COMPLETE);
 }
 
+TEST_F(LearnInManagerTest, DownFirstNeedsUpAndOperatorVerification) {
+  ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
+  auto transmit = [&] (uint8_t key) {
+    manager_.loop(mock_time_.millis(), &hub_);
+    EXPECT_EQ(hub_.last_cmd.payload[4], key);
+    hub_.complete(true);
+  };
+  transmit(packet::command::PROGRAM);
+  ASSERT_TRUE(manager_.confirm_down());
+  EXPECT_FALSE(manager_.confirm_down());
+  transmit(packet::command::DOWN);
+  EXPECT_FALSE(manager_.confirm_down());
+  EXPECT_FALSE(manager_.verify());
+  ASSERT_TRUE(manager_.confirm_up());
+  transmit(packet::command::UP);
+  EXPECT_FALSE(manager_.confirm_up());
+  EXPECT_EQ(manager_.state(), LearnInState::COMPLETE);
+  EXPECT_TRUE(manager_.verify());
+  EXPECT_EQ(manager_.state(), LearnInState::VERIFIED);
+}
+
 TEST_F(LearnInManagerTest, ConfirmOrderIsEnforced) {
   LearnInStartRequest req{};
   req.src_addr = 0x17A753;

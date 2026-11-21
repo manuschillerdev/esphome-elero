@@ -2,6 +2,7 @@
 #include <deque>
 #include <vector>
 #include "elero/rf_transport.h"
+#include "elero_web/raw_command.h"
 #define ESP_LOGV(tag, format, ...) ((void)0)
 #define ESP_LOGVV(tag, format, ...) ((void)0)
 #define ESP_LOGD(tag, format, ...) ((void)0)
@@ -99,6 +100,70 @@ class RfTransportTest : public ::testing::Test {
   void SetUp() override { set_time_provider(&time); time.advance(20); }
   void TearDown() override { set_time_provider(nullptr); }
 };
+}
+
+TEST_F(RfTransportTest, RawRequestPreservesHeaderAndPayloadOnTheRadio) {
+  JsonDocument doc;
+  ASSERT_FALSE(deserializeJson(doc, R"({"src_address":"0x123456","dst_address":"0xabcdef",
+    "channel":8,"command":"0x44","msg_type":"0x69","type2":"0x12","hop":"0x25",
+    "payload_1":"0x34","payload_2":"0x56"})"));
+  RfTaskRequest req{};
+  ASSERT_EQ(parse_raw_command(doc.as<JsonObjectConst>(), req.cmd), nullptr);
+  port.requests.push_back(req);
+  transport.step(port);
+  ASSERT_EQ(radio.sent.size(), 1u);
+  auto bytes = radio.sent.front();
+  ASSERT_EQ(bytes.size(), 30u);
+  bytes.insert(bytes.end(), {0x64, 0x87});
+  const auto frame = packet::parse_packet(bytes.data(), bytes.size());
+  ASSERT_TRUE(frame.valid);
+  EXPECT_EQ(frame.src_addr, 0x123456u);
+  EXPECT_EQ(frame.dst_addr, 0xabcdefu);
+  EXPECT_EQ(frame.channel, 8);
+  EXPECT_EQ(frame.type, 0x69);
+  EXPECT_EQ(frame.type2, 0x12);
+  EXPECT_EQ(frame.hop, 0x25);
+  EXPECT_EQ(frame.command, 0x44);
+  EXPECT_EQ(frame.prefix[0], 0x34);
+  EXPECT_EQ(frame.prefix[1], 0x56);
+
+  doc["msg_type"] = "0x45";
+  EXPECT_NE(parse_raw_command(doc.as<JsonObjectConst>(), req.cmd), nullptr);
+  port.requests.push_back(req);
+  transport.step(port);
+  EXPECT_EQ(radio.sent.size(), 1u);
+}
+
+TEST_F(RfTransportTest, RawButtonAndFullTravelRequireRepresentableFields) {
+  JsonDocument doc;
+  ASSERT_FALSE(deserializeJson(doc, R"({"src_address":"0x123456","channel":7,
+    "dst_address":"0x000000","command":"0x00","msg_type":"0x44"})"));
+  RfTaskRequest req{};
+  ASSERT_EQ(parse_raw_command(doc.as<JsonObjectConst>(), req.cmd), nullptr);
+  port.requests.push_back(req);
+  transport.step(port);
+  ASSERT_EQ(radio.sent.size(), 1u);
+  auto bytes = radio.sent[0];
+  ASSERT_EQ(bytes.size(), 28u);
+  EXPECT_EQ(bytes[17], 7);
+  EXPECT_EQ(bytes[18], 0);
+  EXPECT_EQ(bytes[19], 3);
+  doc["payload_2"] = "0x04";
+  EXPECT_NE(parse_raw_command(doc.as<JsonObjectConst>(), req.cmd), nullptr);
+
+  doc["msg_type"] = "0x6a";
+  doc["dst_address"] = "0xabcdef";
+  doc["command"] = "0x41";
+  EXPECT_NE(parse_raw_command(doc.as<JsonObjectConst>(), req.cmd), nullptr);
+  doc["type2"] = "0x10";
+  doc["hop"] = "0x00";
+  ASSERT_EQ(parse_raw_command(doc.as<JsonObjectConst>(), req.cmd), nullptr);
+  port.requests.push_back(req);
+  transport.step(port);
+  ASSERT_EQ(radio.sent.size(), 2u);
+  EXPECT_EQ(radio.sent[1][2], 0x6a);
+  EXPECT_EQ(radio.sent[1][3], 0x10);
+  EXPECT_EQ(radio.sent[1][4], 0);
 }
 
 TEST_F(RfTransportTest, SaturationRetainsResultsAndContinuesRxAndRecovery) {

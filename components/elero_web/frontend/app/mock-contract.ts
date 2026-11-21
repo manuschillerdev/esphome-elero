@@ -5,7 +5,7 @@ import type {
   CmdPayload, RawPayload, UpsertDevicePayload, RemoveDevicePayload,
   UpsertGroupPayload, RemoveGroupPayload, GroupCmdPayload, RestartPayload,
   SetHubConfigPayload, ExportConfigPayload, ImportConfigPayload, LearnInStartPayload,
-  LearnInConfirmUpPayload, LearnInConfirmDownPayload, LearnInCancelPayload,
+  LearnInConfirmUpPayload, LearnInConfirmDownPayload, LearnInVerifyPayload, LearnInCancelPayload,
   ConfigData, RfData, DeviceUpsertedData, CrudEventData, GroupConfig,
   GroupRemovedData, GroupStateData, StateChangedData, ErrorData, HubConfigEventData,
   ConfigSnapshot, ImportResult, LearnInStateData, LogData,
@@ -14,7 +14,7 @@ import type {
 export type ClientMessage = CmdPayload | RawPayload | UpsertDevicePayload | RemoveDevicePayload
   | UpsertGroupPayload | RemoveGroupPayload | GroupCmdPayload | RestartPayload
   | SetHubConfigPayload | ExportConfigPayload | ImportConfigPayload | LearnInStartPayload
-  | LearnInConfirmUpPayload | LearnInConfirmDownPayload | LearnInCancelPayload
+  | LearnInConfirmUpPayload | LearnInConfirmDownPayload | LearnInVerifyPayload | LearnInCancelPayload
 
 export interface Events {
   config: ConfigData

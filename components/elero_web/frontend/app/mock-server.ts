@@ -15,7 +15,8 @@ const hex = (value: number, width = 2) => `0x${value.toString(16).padStart(width
 const stateBytes: Record<RfStateName, number> = {
   unknown: 0, top: 1, bottom: 2, intermediate: 3, tilt: 4, blocking: 5,
   overheated: 6, timeout: 7, start_moving_up: 8, start_moving_down: 9,
-  moving_up: 10, moving_down: 11, stopped: 13, top_tilt: 14, bottom_tilt: 15, light_off: 16, light_on: 17,
+  moving_up: 10, moving_down: 11, delete_in_remote: 12, stopped: 13, top_tilt: 14, bottom_tilt: 15, light_off: 16, light_on: 17,
+  scene_set: 18, scene_started: 19, scene_stopped: 20, scene_error: 21,
 }
 const defaults = { command_up: '0x20', command_down: '0x40', command_stop: '0x10', command_check: '0x00', command_tilt: '0x24' }
 type Motion = { from: number; target: number; started: number; duration: number }
@@ -95,7 +96,7 @@ function snapshot(device: Device): StateChangedData {
     is_problem: problem, problem_type: problem ? device.state as 'blocking' | 'overheated' | 'timeout' : 'none' }
   if (c.device_type === 'remote') return common
   if (c.device_type === 'light') return { ...common, is_on: device.value > 0, brightness: device.value }
-  return { ...common, position: device.value, device_class: 'shutter', tilted: device.state.includes('tilt'),
+  return { ...common, position: device.value, device_class: 'shutter', tilted: device.state === 'tilt' || device.state === 'top_tilt',
     ha_state: device.motion ? device.motion.target > device.value ? 'opening' : 'closing'
       : device.value === 0 ? 'closed' : device.value === 1 ? 'open' : 'stopped' }
 }
@@ -155,6 +156,12 @@ function rf(device: Device, command = '0x00', transmitting = false, overrides: P
     type: transmitting ? '0x44' : '0xca', type2: transmitting ? '0x10' : '0x00', command,
     state: transmitting ? '0x00' : hex(stateBytes[device.state]), cnt: counter = (counter % 255) + 1,
     rssi: device.rssi, hop: transmitting ? '0x00' : c.hop ?? '0x0a', raw: '', ...overrides }
+  const selector = ['0x44', '0x45', '0x70'].includes(data.type)
+  data.decoded = true
+  data.selectors = selector ? [hex(data.channel)] : []
+  data.destinations = selector ? [] : [data.dst]
+  if (selector) data.dst = hex(data.channel, 6)
+  data.prefix ??= ['0x00', selector ? '0x03' : '0x04']
   // Diagnostic bytes only, deliberately not presented as an encrypted over-the-air packet.
   data.raw = [data.cnt, data.channel, Number(data.type), Number(data.type2), Number(data.command), Number(data.state)]
     .map(byte => hex(byte).slice(2)).join(' ')
@@ -294,7 +301,8 @@ function restore(s: ConfigSnapshot): ImportResult {
 }
 function learnState(state: LearnInState) {
   const active = ['programming', 'wait_up', 'confirming_up', 'wait_down', 'confirming_down'].includes(state)
-  learn = { ...learn, state, active, busy: ['programming', 'confirming_up', 'confirming_down'].includes(state) }
+  const first_direction_pending = learn.state === 'programming' && state === 'wait_up'
+  learn = { ...learn, state, active, first_direction_pending, busy: ['programming', 'confirming_up', 'confirming_down'].includes(state) }
   if (!active) { clearTimeout(learnStep); clearTimeout(learnTimeout) }
   broadcast('learn_in_state', learn); log(`Learn-in: ${state}`)
 }
@@ -310,14 +318,26 @@ function handle(ws: WebSocket, m: ClientMessage) {
   switch (m.type) {
     case 'cmd': act(find(m.address), m.action); break
     case 'raw': {
-      const src = address(m.src_address), dst = address(m.dst_address)
+      const src = address(m.src_address)
+      const type = m.msg_type?.toLowerCase() ?? '0x6a'
+      const button = type === '0x44'
+      const channel = m.channel ?? 0
+      const dst = button && Number(m.dst_address) === 0 ? hex(channel, 6) : address(m.dst_address)
       if (m.channel !== undefined && (m.channel < 0 || m.channel > 255)) throw new Error('Raw channel must be 0..255')
       for (const key of ['command', 'payload_1', 'payload_2', 'msg_type', 'type2', 'hop'] as const) {
         if (m[key] !== undefined && !/^0x[\da-f]{1,2}$/i.test(m[key]!)) throw new Error(`Invalid raw byte: ${key}`)
       }
-      const target = devices.get(dst)
+      if (!button && type !== '0x69' && type !== '0x6a') throw new Error('Unsupported raw transmit type')
+      const prefix = [m.payload_1 ?? '0x00', m.payload_2 ?? (button ? '0x03' : '0x04')]
+      const type2 = m.type2 ?? (button ? '0x10' : '0x00')
+      const hop = m.hop ?? (button ? '0x00' : '0x0a')
+      if (button && (!channel || Number(dst) !== channel || Number(prefix[0]) !== 0 || Number(prefix[1]) !== 3))
+        throw new Error('A button needs a channel selector and prefix 00 03')
+      if ([0x21, 0x41].includes(Number(m.command)) && (type !== '0x6a' || Number(type2) !== 16 || Number(hop) !== 0))
+        throw new Error('Full travel needs type 6A, type2 10 and hop 00')
+      const target = button ? [...devices.values()].find(d => d.config.src_address === src && d.config.channel === channel) : devices.get(dst)
       rf(target ?? { config: { device_type: 'cover', dst_address: dst, src_address: src }, value: 0, state: 'unknown', source: 'hub', lastSeen: 0, rssi: -70, updatedAt: 0 }, m.command ?? '0x00', true,
-        { src, dst, channel: m.channel ?? 0, type: m.msg_type ?? '0x6a', type2: m.type2 ?? '0x00', hop: m.hop ?? '0x0a' })
+        { src, dst, channel, type, type2, hop, prefix })
       if (target) {
         const actions: DeviceAction[] = target.config.device_type === 'cover' ? ['check', 'stop', 'up', 'down', 'tilt', 'int'] : ['check', 'stop', 'on', 'off', 'dim_up', 'dim_down']
         const action = actions.find(a => Number(commandByte(target, a)) === Number(m.command ?? '0x00'))
@@ -369,16 +389,20 @@ function handle(ws: WebSocket, m: ClientMessage) {
     case 'learn_in_start':
       if (learn.active) throw new Error('Learn-in already active')
       if (m.session_timeout_ms !== undefined && (m.session_timeout_ms <= 0 || m.session_timeout_ms > 0x7fffffff)) throw new Error('Invalid session timeout')
-      learn = { ...learn, src_address: address(m.src_address), channel: m.channel }
+      learn = { ...learn, verified: false, src_address: address(m.src_address), channel: m.channel }
       learnTransition('programming', 'wait_up')
       learnTimeout = setTimeout(() => learnState('timed_out'), m.session_timeout_ms ?? 300000)
       break
     case 'learn_in_confirm_up':
       if (learn.state !== 'wait_up') throw new Error('Learn-in is not waiting for up confirmation')
-      learnTransition('confirming_up', 'wait_down'); break
+      learnTransition('confirming_up', learn.first_direction_pending ? 'wait_down' : 'complete'); break
     case 'learn_in_confirm_down':
-      if (learn.state !== 'wait_down') throw new Error('Learn-in is not waiting for down confirmation')
-      learnTransition('confirming_down', 'complete'); break
+      if (learn.state !== 'wait_down' && !learn.first_direction_pending) throw new Error('Learn-in is not waiting for down confirmation')
+      learnTransition('confirming_down', learn.first_direction_pending ? 'wait_up' : 'complete'); break
+    case 'learn_in_verify':
+      if (learn.state !== 'complete' || learn.verified) throw new Error('No confirmation to verify')
+      learn = { ...learn, verified: true }
+      broadcast('learn_in_state', learn); break
     case 'learn_in_cancel': if (learn.active) learnState('cancelled'); else send(ws, 'learn_in_state', learn); break
     case 'restart':
       restarting = true; log('Restarting gateway')
@@ -430,8 +454,10 @@ controls.on('line', line => {
     else {
       if (!c.state || !(c.state in stateBytes)) throw new Error('Expected a documented RF state name')
       if (c.rssi !== undefined && (!Number.isFinite(c.rssi) || c.rssi < -130 || c.rssi > 0)) throw new Error('RSSI must be -130..0')
-      settle(d); d.motion = undefined; d.state = c.state
-      if (c.state === 'top' || c.state === 'top_tilt' || c.state === 'light_on') d.value = 1
+      settle(d)
+      if (c.state !== 'light_on' && !c.state.startsWith('scene_') && c.state !== 'delete_in_remote') d.motion = undefined
+      d.state = c.state
+      if (c.state === 'top' || c.state === 'top_tilt' || (c.state === 'light_on' && !d.motion && d.value === 0)) d.value = 1
       if (c.state === 'bottom' || c.state === 'bottom_tilt' || c.state === 'light_off') d.value = 0
       if (['moving_up', 'start_moving_up', 'moving_down', 'start_moving_down'].includes(c.state)) {
         const target = c.state.endsWith('_up') ? 1 : 0

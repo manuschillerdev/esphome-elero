@@ -1,6 +1,7 @@
 #include <cinttypes>
 #include "elero_web_server.h"
 #include "web_json.h"
+#include "raw_command.h"
 #include "elero_web_ui.h"
 #include "../elero/elero_packet.h"
 #include "../elero/elero_strings.h"
@@ -461,45 +462,21 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
     if (type == "learn_in_start") { this->handle_learn_in_start_(c, root); return true; }
     if (type == "learn_in_confirm_up") { this->handle_learn_in_confirm_up_(c); return true; }
     if (type == "learn_in_confirm_down") { this->handle_learn_in_confirm_down_(c); return true; }
+    if (type == "learn_in_verify") {
+      if (this->parent_ != nullptr && this->parent_->verify_learn_in())
+        this->ws_broadcast("learn_in_state", this->build_learn_in_state_json_());
+      else
+        this->ws_send(c, "error", "{\"msg\":\"No confirmation to verify\"}");
+      return true;
+    }
     if (type == "learn_in_cancel") { this->handle_learn_in_cancel_(c); return true; }
     if (type == "restart") { App.safe_reboot(); return true; }
 
     if (type == "raw") {
-      uint32_t dst_addr = parse_hex32(root, "dst_address");
-      uint32_t src_addr = parse_hex32(root, "src_address");
-      uint8_t channel = parse_hex_or(root, "channel", 0);
-      uint8_t raw_command = parse_hex_or(root, "command", 0);
-      uint8_t msg_type = parse_hex_or(root, "msg_type", packet::msg_type::COMMAND);
-
-      // Button broadcasts (0x44) don't need dst_address — they use channel addressing
-      bool is_broadcast = (msg_type == packet::msg_type::BUTTON);
-      if (src_addr == 0 || (!is_broadcast && dst_addr == 0)) {
-        ESP_LOGW(TAG, "Raw TX missing required fields");
-        return false;
-      }
-
-      // Route through registry for known devices (non-blocking, coordinated TX)
-      auto *registry = this->parent_->get_registry();
-      if (registry != nullptr) {
-        Device *dev = registry->find(dst_addr);
-        if (dev != nullptr) {
-          if (!this->dispatch_device_command_(*dev, raw_command)) {
-            this->ws_send(c, "error", "{\"msg\":\"Command queue full\"}");
-          }
-          return true;
-        }
-      }
-
-      // Unknown address → raw TX (blocking, debug only)
-      uint8_t payload_1 = parse_hex_or(root, "payload_1", packet::defaults::PAYLOAD_1);
-      uint8_t payload_2 = parse_hex_or(root, "payload_2", packet::defaults::PAYLOAD_2);
-      uint8_t type2_val = parse_hex_or(root, "type2", packet::defaults::TYPE2);
-      uint8_t hop = parse_hex_or(root, "hop", packet::defaults::HOP);
-
-      bool success = this->parent_->send_raw_command(
-          dst_addr, src_addr, channel, raw_command,
-          payload_1, payload_2, msg_type, type2_val, hop);
-      ESP_LOGI(TAG, "Raw TX to 0x%06" PRIx32 " cmd=0x%02x: %s", dst_addr, raw_command, success ? "OK" : "FAIL");
+      EleroCommand cmd{};
+      const char *error = parse_raw_command(root, cmd);
+      if (!error && !this->parent_->send_raw_command(cmd)) error = "Radio queue full";
+      if (error) this->ws_send(c, "error", build_web_json([&](JsonObject out) { out["msg"] = error; }));
       return true;
     }
 
@@ -655,8 +632,19 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
     root["channel"] = pkt.channel;
     root["type"] = hex_str8(pkt.type);
     root["type2"] = hex_str8(pkt.type2);
-    root["command"] = hex_str8(pkt.command);
-    root["state"] = hex_str8(pkt.state);
+    root["decoded"] = !pkt.raw_only;
+    if (!pkt.raw_only) {
+      root["command"] = hex_str8(pkt.command);
+      root["state"] = hex_str8(pkt.state);
+      auto selectors = root["selectors"].to<JsonArray>();
+      for (uint8_t i = 0; i < pkt.num_selectors; ++i) selectors.add(hex_str8(pkt.selectors[i]));
+      auto prefix = root["prefix"].to<JsonArray>();
+      for (auto byte : pkt.prefix) prefix.add(hex_str8(byte));
+      auto payload = root["decoded_bytes"].to<JsonArray>();
+      for (auto byte : pkt.payload) payload.add(hex_str8(byte));
+    }
+    root["lqi"] = pkt.lqi;
+    root["crc_ok"] = pkt.crc_ok;
     root["cnt"] = pkt.cnt;
     root["rssi"] = round_rssi(pkt.rssi);
     root["hop"] = hex_str8(pkt.hop);
@@ -712,6 +700,8 @@ std::string EleroWebServer::build_learn_in_state_json_() const {
   const auto &learn_in = this->parent_->learn_in();
   return build_web_json([&](JsonObject root) {
     root["state"] = learn_in_state_str(this->parent_->learn_in_state());
+    root["first_direction_pending"] = this->parent_->learn_in_state() == LearnInState::WAIT_UP;
+    root["verified"] = this->parent_->learn_in_state() == LearnInState::VERIFIED;
     root["active"] = this->parent_->is_learn_in_active();
     root["busy"] = learn_in.is_busy();
     if (learn_in.src_addr() != 0) {

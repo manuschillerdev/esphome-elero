@@ -35,6 +35,14 @@ TEST(StateToString, AllKnownStates) {
   EXPECT_STREQ(elero_state_to_string(state::LIGHT_ON), "light_on");
 }
 
+TEST(StateToString, SombreroStatusBytes) {
+  EXPECT_STREQ(elero_state_to_string(0x0c), "delete_in_remote");
+  EXPECT_STREQ(elero_state_to_string(0x12), "scene_set");
+  EXPECT_STREQ(elero_state_to_string(0x13), "scene_started");
+  EXPECT_STREQ(elero_state_to_string(0x14), "scene_stopped");
+  EXPECT_STREQ(elero_state_to_string(0x15), "scene_error");
+}
+
 TEST(StateToString, UnknownState) {
   EXPECT_STREQ(elero_state_to_string(state::UNKNOWN), "unknown");
   EXPECT_STREQ(elero_state_to_string(0xFF), "unknown");

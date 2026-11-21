@@ -78,7 +78,7 @@ Computed by: compute_cover_snapshot(const Device &dev, uint32_t now)
 | Field | Type | Derived From | Used By Native | Used By MQTT | Used By WebSocket |
 |-------|------|-------------|----------------|--------------|-------------------|
 | `position` | `float` | `cover_sm::position(state, now, ctx)` | `cover.position` | `/position` topic | `config` event |
-| `ha_state` | `const char*` | `ha_cover_state_str(op, pos)` | — (uses `operation`) | `/state` topic | `config` event |
+| `ha_state` | `const char*` | `ha_cover_state_str(op, bottom_reported)` | — (uses `operation`) | `/state` topic | `config` event |
 | `operation` | `cover_sm::Operation` | `cover_sm::operation(state)` | `current_operation` enum | — (uses `ha_state`) | — |
 | `tilted` | `bool` | `CoverDevice::tilted` | `cover.tilt` | `/attributes` JSON | `config` event |
 | `is_problem` | `bool` | `is_problem_state(rf.last_state_raw)` | hub sensor map | `/problem` topic | `config` event |

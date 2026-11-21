@@ -98,7 +98,7 @@ void Elero::receive_frame(const uint8_t *frame, size_t fifo_count) {
       break;
     }
 
-    auto pkt = this->decode_packet(frame + offset, fifo_count - offset);
+    auto pkt = this->decode_packet(frame + offset, total);
     if (pkt) {
 #ifdef USE_ESP32
       if (xQueueSend(this->rx_queue_handle_, &(*pkt), 0) != pdPASS) {
@@ -333,20 +333,13 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
 
   // Use the existing pure parse_packet() function
   ParseResult r = parse_packet(buf, buf_len);
-  if (!r.valid) {
+  if (!r.valid && !r.complete_frame) {
     if (r.reject_reason) {
       ESP_LOGV(TAG, "Packet rejected: %s", r.reject_reason);
     }
     return {};
   }
 
-  // Extract fields relevant to this packet type
-  bool has_command = carries_command(r.type);
-  bool is_status_pkt = is_status_packet(r.type);
-  uint8_t command = has_command ? r.command : 0;
-  uint8_t state = is_status_pkt ? r.state : 0;
-
-  // Build RfPacketInfo
   RfPacketInfo pkt{};
 #ifdef USE_ESP32
   pkt.decoded_at_us = esp_timer_get_time();
@@ -354,24 +347,30 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
   pkt.timestamp_ms = millis();
   pkt.src = r.src_addr;
   pkt.dst = r.dst_addr;
-  if (uses_three_byte_address_envelope(r.type)) {
+  pkt.raw_only = !r.valid;
+  if (r.valid && uses_one_byte_selector_envelope(r.type)) {
+    pkt.num_selectors = r.num_dests;
+    memcpy(pkt.selectors, r.selectors, r.num_dests);
+  }
+  if (r.valid && uses_three_byte_address_envelope(r.type)) {
     pkt.num_address_dests = r.num_dests;
     memcpy(pkt.dst_addrs, r.dst_addrs, sizeof(pkt.dst_addrs));
   }
   pkt.channel = r.channel;
   pkt.type = r.type;
   pkt.type2 = r.type2;
-  pkt.command = command;
-  pkt.state = state;
+  pkt.command = r.command;
+  pkt.state = r.state;
   pkt.cnt = r.counter;
   pkt.rssi = r.rssi;
   pkt.lqi = r.lqi;
   pkt.crc_ok = (r.crc_ok != 0);
   pkt.hop = r.hop;
+  memcpy(pkt.prefix, r.prefix, sizeof(pkt.prefix));
   memcpy(pkt.payload, r.payload, sizeof(pkt.payload));
 
   // Copy raw bytes for WebSocket broadcast
-  size_t raw_total = static_cast<size_t>(r.length) + PACKET_TOTAL_OVERHEAD;
+  size_t raw_total = static_cast<size_t>(r.length) + 1;
   pkt.raw_len = (raw_total <= CC1101_FIFO_LENGTH) ? static_cast<uint8_t>(raw_total) : CC1101_FIFO_LENGTH;
   memcpy(pkt.raw, buf, pkt.raw_len);
 
@@ -385,8 +384,12 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
   const int64_t dispatch_start_us = esp_timer_get_time();
 #endif
 
-  ESP_LOGV(TAG_RF, "RX src=0x%06" PRIx32 " dst=0x%06" PRIx32 " type=0x%02x cmd=0x%02x state=0x%02x cnt=%u",
-           pkt.src, pkt.dst, pkt.type, pkt.command, pkt.state, pkt.cnt);
+  if (pkt.raw_only) {
+    ESP_LOGV(TAG_RF, "RX unsupported layout type=0x%02x cnt=%u", pkt.type, pkt.cnt);
+  } else {
+    ESP_LOGV(TAG_RF, "RX src=0x%06" PRIx32 " dst=0x%06" PRIx32 " type=0x%02x cmd=0x%02x state=0x%02x cnt=%u",
+             pkt.src, pkt.dst, pkt.type, pkt.command, pkt.state, pkt.cnt);
+  }
 
   // Dispatch through unified device registry (state machines, adapters, observers)
   if (this->registry_ != nullptr) {
@@ -408,11 +411,7 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
 
 bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t channel, uint8_t command,
                               uint8_t payload_1, uint8_t payload_2, uint8_t type, uint8_t type2, uint8_t hop) {
-#ifdef USE_ESP32
-  static uint8_t raw_msg_cnt = 1;
-
   EleroCommand cmd{};
-  cmd.counter = raw_msg_cnt;
   cmd.dst_addr = dst_addr;
   cmd.src_addr = src_addr;
   cmd.channel = channel;
@@ -423,22 +422,15 @@ bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t chann
   cmd.payload[1] = payload_2;
   cmd.payload[4] = command;
 
-  // Fire-and-forget via RF task queue (no blocking, no completion callback)
-  RfTaskRequest req{};
-  req.type = RfTaskRequest::Type::TX;
-  req.cmd = cmd;
-  req.client = nullptr;  // No completion callback
+  return send_raw_command(cmd);
+}
 
-  if (xQueueSend(this->tx_queue_handle_, &req, 0) == pdPASS) {
-    ++raw_msg_cnt;
-    if (raw_msg_cnt > packet::limits::COUNTER_MAX)
-      raw_msg_cnt = 1;
-    return true;
-  }
-  return false;
-#else
-  return false;
-#endif
+bool Elero::send_raw_command(EleroCommand cmd) {
+  static uint8_t counter = 1;
+  cmd.counter = counter;
+  if (packet::raw_command_error(cmd) || !request_tx(nullptr, cmd)) return false;
+  counter = counter >= packet::limits::COUNTER_MAX ? 1 : counter + 1;
+  return true;
 }
 
 // ─── RF Stats Publishing ──────────────────────────────────────────────────────

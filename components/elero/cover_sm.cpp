@@ -90,26 +90,22 @@ static bool is_rf_stopped(uint8_t s) {
 State on_rf_status(const State &state, uint8_t state_byte, uint32_t now,
                    const Context &ctx) {
     const uint8_t s = state_byte;
+    if (s == packet::state::TOP || s == packet::state::TOP_TILT) return Idle{POSITION_OPEN};
+    if (s == packet::state::BOTTOM || s == packet::state::BOTTOM_TILT) return Idle{POSITION_CLOSED, true};
 
     return std::visit(overloaded{
         // ── From Idle ──────────────────────────────────────────────
         [&](const Idle &idle) -> State {
-            if (s == packet::state::TOP) return Idle{POSITION_OPEN};
-            if (s == packet::state::BOTTOM) return Idle{POSITION_CLOSED};
-            if (s == packet::state::TOP_TILT) return Idle{POSITION_OPEN};
-            if (s == packet::state::BOTTOM_TILT) return Idle{POSITION_CLOSED};
             if (is_rf_moving_up(s)) return Opening{idle.position, now};
             if (is_rf_moving_down(s)) return Closing{idle.position, now};
-            // TILT, INTERMEDIATE, warnings — stay idle
+            if (s == packet::state::TILT || s == packet::state::INTERMEDIATE)
+                return Idle{idle.position};
+            // Other replies supply no new position.
             return state;
         },
 
         // ── From Opening ───────────────────────────────────────────
         [&](const Opening &opening) -> State {
-            if (s == packet::state::TOP) return Idle{POSITION_OPEN};
-            if (s == packet::state::BOTTOM) return Idle{POSITION_CLOSED};
-            if (s == packet::state::TOP_TILT) return Idle{POSITION_OPEN};
-            if (s == packet::state::BOTTOM_TILT) return Idle{POSITION_CLOSED};
             if (s == packet::state::TILT) {
                 float pos = position_during_opening(
                     opening.start_position, opening.start_ms,
@@ -135,10 +131,6 @@ State on_rf_status(const State &state, uint8_t state_byte, uint32_t now,
 
         // ── From Closing ───────────────────────────────────────────
         [&](const Closing &closing) -> State {
-            if (s == packet::state::BOTTOM) return Idle{POSITION_CLOSED};
-            if (s == packet::state::TOP) return Idle{POSITION_OPEN};
-            if (s == packet::state::TOP_TILT) return Idle{POSITION_OPEN};
-            if (s == packet::state::BOTTOM_TILT) return Idle{POSITION_CLOSED};
             if (s == packet::state::TILT) {
                 float pos = position_during_closing(
                     closing.start_position, closing.start_ms,
@@ -166,8 +158,6 @@ State on_rf_status(const State &state, uint8_t state_byte, uint32_t now,
         [&](const Stopping &) -> State {
             // During cooldown, only definitive endpoint states are respected.
             // Transient MOVING_UP/DOWN are ignored (they're echoes from before STOP).
-            if (s == packet::state::TOP) return Idle{POSITION_OPEN};
-            if (s == packet::state::BOTTOM) return Idle{POSITION_CLOSED};
             return state;
         },
     }, state);
@@ -179,10 +169,12 @@ State on_command(const State &state, uint8_t cmd_byte, uint32_t now,
                  const Context &ctx) {
     const uint8_t cmd = cmd_byte;
     float pos = position(state, now, ctx);
+    if (cmd == packet::command::TILT && !std::holds_alternative<Idle>(state))
+        return Idle{pos};  // A preset can be on either side of the current position.
 
     return std::visit(overloaded{
         [&](const Idle &) -> State {
-            if (cmd == packet::command::UP || cmd == packet::command::TILT)
+            if (cmd == packet::command::UP)
                 return Opening{pos, now};
             if (cmd == packet::command::DOWN)
                 return Closing{pos, now};
@@ -200,14 +192,14 @@ State on_command(const State &state, uint8_t cmd_byte, uint32_t now,
         [&](const Closing &) -> State {
             if (cmd == packet::command::STOP)
                 return Stopping{pos, now};
-            if (cmd == packet::command::UP || cmd == packet::command::TILT)
+            if (cmd == packet::command::UP)
                 return Opening{pos, now};  // Reverse
             return state;
         },
 
         [&](const Stopping &) -> State {
             // User commands override cooldown
-            if (cmd == packet::command::UP || cmd == packet::command::TILT)
+            if (cmd == packet::command::UP)
                 return Opening{pos, now};
             if (cmd == packet::command::DOWN)
                 return Closing{pos, now};

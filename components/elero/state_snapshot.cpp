@@ -14,11 +14,8 @@ CoverStateSnapshot compute_cover_snapshot(const Device &dev, uint32_t now) {
     float pos = cover_sm::position(cover.state, now, ctx);
     auto op = cover_sm::operation(cover.state);
 
-    // Stopping = user just hit stop. Don't let stale last_state_raw (still
-    // BOTTOM from before movement) show "closed" — blind is mid-travel.
-    const char *ha_state = std::holds_alternative<cover_sm::Stopping>(cover.state)
-        ? "open"
-        : ha_cover_state_str(op, dev.rf.last_state_raw);
+    const auto *idle = std::get_if<cover_sm::Idle>(&cover.state);
+    const char *ha_state = ha_cover_state_str(op, idle && idle->bottom_reported);
 
     auto *pt = problem_type_str(dev.rf.last_state_raw);
 

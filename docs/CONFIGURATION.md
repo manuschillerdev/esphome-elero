@@ -162,6 +162,8 @@ all adapters, calibrated position commands, and saved groups.
 | Saved tilt / intermediate preset | `command_tilt` / `0x44` | Existing channel-button path |
 | Stop / status query | `command_stop` / `command_check` | Existing receiver-addressed path |
 
+Ordinary receiver-addressed commands use the saved `type2` and `hop` values.
+Channel buttons use `type2=0x10` and `hop=0x00`.
 Full-travel packets use `type2=0x10`, `hop=0x00`, as in the captured long-press
 transactions. Each full-travel action uses the existing three-packet repetition
 and follow-up CHECK. A short step uses three press packets followed by three
@@ -448,3 +450,16 @@ switch:
 After flashing, open `http://<device-ip>/elero` to add devices.
 
 See also: [Installation Guide](INSTALLATION.md) | [Backup &amp; Restore](BACKUP-RESTORE.md) | [Migration from YAML](MIGRATION-yaml-to-nvs.md) | [README](../README.md) | [Example YAML](../example.yaml)
+
+## Pair a receiver
+
+Put the target receiver into learning mode. Select its virtual remote address and channel in **Learn-In**.
+Select **Start learn-in**. Watch the drive. For the general ProLine 2 procedure, confirm UP first, then DOWN.
+For a COM receiver, confirm the first matching direction, then the opposite direction.
+Press each button within one second of the start of movement in that direction.
+
+**Confirmation sent** means the hub sent both direction commands. Check that the drive stopped.
+Operate the drive with the new channel. Select **I verified the drive stopped and the channel works** to record the result for this session.
+**Cancel** stops the hub session. The receiver can stay in learning mode until its timer expires.
+
+See the [receiver feature coverage](research/remote-command-coverage.md) for product instructions and hardware checks.

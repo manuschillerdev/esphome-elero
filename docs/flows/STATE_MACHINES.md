@@ -599,14 +599,14 @@ Brightness is derived from `(state, now, config.dim_duration)` -- never stored. 
 | `0x04` | `TILT` | Tilted |
 | `0x05` | `BLOCKING` | Mechanical blockage detected |
 | `0x06` | `OVERHEATED` | Motor thermal protection |
-| `0x07` | `TIMEOUT` | Movement timeout |
+| `0x07` | `TIMEOUT` | Receiver timeout |
 | `0x08` | `START_MOVING_UP` | Beginning upward movement |
 | `0x09` | `START_MOVING_DOWN` | Beginning downward movement |
 | `0x0A` | `MOVING_UP` | Continuing upward movement |
 | `0x0B` | `MOVING_DOWN` | Continuing downward movement |
 | `0x0D` | `STOPPED` | Stopped by command |
 | `0x0E` | `TOP_TILT` | Fully open + tilted |
-| `0x0F` | `BOTTOM_TILT` | Fully closed + tilted |
+| `0x0F` | `BOTTOM_TILT` | Bottom coincides with the stored intermediate position |
 
 ---
 

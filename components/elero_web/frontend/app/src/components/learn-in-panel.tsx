@@ -1,7 +1,7 @@
 import { useComputed, useSignal } from '@preact/signals'
 import { useEffect } from 'preact/hooks'
 import { learnIn, devices, hub } from '@/store'
-import { sendLearnInStart, sendLearnInConfirmUp, sendLearnInConfirmDown, sendLearnInCancel } from '@/ws'
+import { sendLearnInStart, sendLearnInConfirmUp, sendLearnInConfirmDown, sendLearnInVerify, sendLearnInCancel } from '@/ws'
 import { cn } from '@/lib/utils'
 import { Card } from './ui/card'
 import { Badge } from './ui/badge'
@@ -25,7 +25,7 @@ function stateLabel(state: string) {
 }
 
 function stateTone(state: string) {
-  if (state === 'complete') return 'bg-success/15 text-success'
+  if (state === 'complete') return 'bg-muted text-foreground'
   if (state === 'failed' || state === 'timed_out' || state === 'cancelled') return 'bg-destructive/10 text-destructive'
   if (state === 'wait_up' || state === 'wait_down') return 'bg-warning/20 text-warning-foreground'
   return 'bg-primary/10 text-primary'
@@ -80,7 +80,9 @@ export function LearnInPanel() {
   ))
 
   const isWaitingUp = state.state === 'wait_up'
-  const isWaitingDown = state.state === 'wait_down'
+  const isWaitingDown = state.first_direction_pending || state.state === 'wait_down'
+  const label = state.state === 'complete' ? (state.verified ? 'Pairing verified' : 'Confirmation sent')
+    : state.first_direction_pending ? 'Waiting for movement' : stateLabel(state.state)
   const isBusy = state.busy
   const active = state.active
   const canStart = !active && !isBusy && formValid.value
@@ -116,7 +118,7 @@ export function LearnInPanel() {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-card-foreground">Learn-In</h2>
-            <Badge className={cn('border-0 font-medium', stateTone(state.state))}>{stateLabel(state.state)}</Badge>
+            <Badge className={cn('border-0 font-medium', stateTone(state.state))}>{label}</Badge>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             Pair a motor using a virtual remote. Isolate the target receiver before sending the programming action.
@@ -232,47 +234,43 @@ export function LearnInPanel() {
             icon={RemoteControl}
             title="2. Send programming / P"
             detail="Start the session to transmit the virtual remote's programming / P action."
-            active={active && (state.state === 'programming' || state.state === 'wait_up')}
+            active={state.state === 'programming'}
             done={['wait_up', 'confirming_up', 'wait_down', 'confirming_down', 'complete'].includes(state.state)}
           />
           <StepRow
             icon={ChevronUp}
-            title="3. Confirm upward movement"
-            detail="When the motor jogs or reacts, press Confirm UP to send the next required learn-in step."
-            active={isWaitingUp || state.state === 'confirming_up'}
-            done={['wait_down', 'confirming_down', 'complete'].includes(state.state)}
-          />
-          <StepRow
-            icon={ChevronDown}
-            title="4. Confirm downward movement"
-            detail="After the next prompt or motor response, press Confirm DOWN to finish the procedure."
-            active={isWaitingDown || state.state === 'confirming_down'}
+            title="3. Confirm both directions"
+            detail="For the general procedure, confirm UP first. For COM receivers, confirm the first direction you see. Press each button within one second of movement in that direction."
+            active={isWaitingUp || !!isWaitingDown || state.state.startsWith('confirming_')}
             done={state.state === 'complete'}
           />
 
-          <div className={cn('rounded-lg border px-3 py-3 text-sm', state.state === 'complete' ? 'border-success/20 bg-success/5' : state.state === 'failed' || state.state === 'timed_out' || state.state === 'cancelled' ? 'border-destructive/20 bg-destructive/5' : 'border-border bg-muted/20')}>
+          <div className={cn('rounded-lg border px-3 py-3 text-sm', state.verified ? 'border-success/20 bg-success/5' : state.state === 'failed' || state.state === 'timed_out' || state.state === 'cancelled' ? 'border-destructive/20 bg-destructive/5' : 'border-border bg-muted/20')}>
             <div className="flex items-center gap-2 font-medium">
-              {state.state === 'complete' ? (
+              {state.verified ? (
                 <CheckCircle2 className="size-4 text-success" />
               ) : state.busy ? (
                 <Loader2 className="size-4 animate-spin text-primary" />
               ) : (
                 <Radio className="size-4 text-primary" />
               )}
-              Session status: {stateLabel(state.state)}
+              Session status: {label}
             </div>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
               {state.state === 'idle' && 'Ready to start after the target receiver has been power-cycled.'}
               {state.state === 'programming' && 'Programming action is being transmitted.'}
-              {state.state === 'wait_up' && 'Motor should be ready for the first confirmation step. Press Confirm UP after movement.'}
+              {state.state === 'wait_up' && (state.first_direction_pending ? 'Watch the drive. Confirm the matching direction.' : 'Confirm UP when upward travel starts.')}
               {state.state === 'confirming_up' && 'Sending UP confirmation.'}
-              {state.state === 'wait_down' && 'First confirmation accepted. Wait for the next motor response, then press Confirm DOWN.'}
+              {state.state === 'wait_down' && 'UP sent. Confirm DOWN when downward travel starts.'}
               {state.state === 'confirming_down' && 'Sending DOWN confirmation.'}
-              {state.state === 'complete' && 'Learn-in completed. The next UI step is device discovery / saving the resulting motor config.'}
+              {state.state === 'complete' && (state.verified ? 'You verified the drive and channel.' : 'The hub sent the final confirmation. Check that the drive stopped. Test the new channel.')}
               {state.state === 'failed' && 'Transmission failed after retries. Check RF settings and whether the receiver is still in programming mode.'}
-              {state.state === 'cancelled' && 'Session cancelled.'}
+              {state.state === 'cancelled' && 'The hub stopped this session. The receiver can stay in learning mode until its timer expires.'}
               {state.state === 'timed_out' && 'Session timed out. Power-cycle the receiver again and restart.'}
             </p>
+            {state.state === 'complete' && !state.verified && (
+              <Button variant="secondary" onClick={sendLearnInVerify}>I verified the drive stopped and the channel works</Button>
+            )}
             <p className="mt-2 text-[11px] text-muted-foreground">
               Warning: if multiple receivers share the same mains line, they may all enter programming mode together.
             </p>

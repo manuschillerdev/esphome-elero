@@ -201,7 +201,7 @@ function PacketSummary({
   dstOptions: Array<{ label: string; address: string; channel: number; kind: 'Blind' | 'Light' }>
   srcOptions: Array<{ label: string; address: string }>
 }) {
-  const cmdPreset = COMMAND_PRESETS.find((p) => p.value === cmd)
+  const cmdPreset = msgType.toLowerCase() === '0x44' && Number(cmd) === 0 ? { label: 'Release' } : COMMAND_PRESETS.find((p) => p.value === cmd)
   const isCustomCmd = !cmdPreset
   const dst = dstOptions.find((d) => d.address === dstAddr)
   const src = srcOptions.find((s) => s.address === srcAddr)

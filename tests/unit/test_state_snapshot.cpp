@@ -25,7 +25,7 @@ static elero::Device make_cover_device(float position = sm::POSITION_CLOSED,
     dev.config.ha_device_class = 0;  // shutter
     dev.logic = elero::CoverDevice{};
     auto &cover = std::get<elero::CoverDevice>(dev.logic);
-    cover.state = sm::Idle{position};
+    cover.state = sm::Idle{position, last_state_raw == pkt::state::BOTTOM || last_state_raw == pkt::state::BOTTOM_TILT};
     dev.rf.last_state_raw = last_state_raw;
     dev.rf.last_rssi = rssi;
     dev.rf.last_seen_ms = 1000;
@@ -240,31 +240,11 @@ TEST(LightSnapshot, RssiPassthrough) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // FSM IDLE + RF state byte → HA state
-TEST(HaCoverState, IdleTopIsOpen) {
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::TOP), "open");
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::TOP_TILT), "open");
-}
-
-TEST(HaCoverState, IdleBottomIsClosed) {
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::BOTTOM), "closed");
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::BOTTOM_TILT), "closed");
-}
-
-TEST(HaCoverState, IdleNonEndpointIsOpen) {
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::STOPPED), "open");
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::INTERMEDIATE), "open");
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, pkt::state::UNKNOWN), "open");
-}
-
-// FSM OPENING/CLOSING → HA state (optimistic, regardless of raw state)
-TEST(HaCoverState, FsmOpeningIsOpening) {
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::OPENING, pkt::state::STOPPED), "opening");
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::OPENING, pkt::state::MOVING_UP), "opening");
-}
-
-TEST(HaCoverState, FsmClosingIsClosing) {
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::CLOSING, pkt::state::STOPPED), "closing");
-    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::CLOSING, pkt::state::MOVING_DOWN), "closing");
+TEST(HaCoverState, UsesConfirmedEndpointWhenIdleAndDirectionWhenMoving) {
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, true), "closed");
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::IDLE, false), "open");
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::OPENING, false), "opening");
+    EXPECT_STREQ(elero::ha_cover_state_str(sm::Operation::CLOSING, false), "closing");
 }
 
 TEST(ProblemState, BlockingIsProblem) {

@@ -70,7 +70,7 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   }
 
   // Check we have enough data for header (need at least FIRST_DEST bytes for basic header)
-  if (raw_len < pkt_offset::FIRST_DEST) {
+  if (raw_len < pkt_offset::FIRST_DEST || r.length < pkt_offset::NUM_DESTS) {
     r.reject_reason = "truncated_header";
     return r;
   }
@@ -91,6 +91,14 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   // Destination count
   r.num_dests = raw[pkt_offset::NUM_DESTS];
 
+  r.complete_frame = static_cast<size_t>(r.length) + CC1101_APPEND_SIZE < raw_len;
+  if (r.complete_frame) {
+    r.rssi_raw = raw[r.length + 1];  // +1 because length byte is at [0]
+    r.rssi = calc_rssi(r.rssi_raw);
+    r.lqi = raw[r.length + CC1101_APPEND_SIZE] & cc1101_status::LQI_MASK;
+    r.crc_ok = (raw[r.length + CC1101_APPEND_SIZE] & cc1101_status::CRC_OK_BIT) ? 1 : 0;
+  }
+
   // Validate destination count
   if (r.num_dests > GROUP_MAX_DESTS) {
     r.reject_reason = "too_many_dests";
@@ -104,62 +112,51 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
       return r;
     }
     r.dests_len = r.num_dests * ADDR_SIZE;
-    if (raw_len >= pkt_offset::FIRST_DEST + ADDR_SIZE) {
-      r.dst_addr = extract_addr(&raw[pkt_offset::FIRST_DEST]);
-    }
   } else if (uses_one_byte_selector_envelope(r.type)) {
     r.dests_len = r.num_dests;
-    if (raw_len >= pkt_offset::FIRST_DEST + 1) {
-      r.dst_addr = raw[pkt_offset::FIRST_DEST];
-    }
   } else {
     r.reject_reason = "unsupported_type";
     return r;
   }
 
-  // Sanity check: payload access bounds
-  // msg_decode accesses 8 bytes starting at FIRST_DEST + 2 + dests_len
-  // Highest index is FIRST_DEST + 2 + dests_len + 7 = 26 + dests_len
-  constexpr size_t PAYLOAD_OFFSET_FROM_DESTS = 2;  // payload_1 and payload_2
-  constexpr size_t ENCRYPTED_SECTION_SIZE = 8;     // 8 bytes processed by msg_decode
-  size_t payload_end_idx = pkt_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + r.dests_len + ENCRYPTED_SECTION_SIZE - 1;
-  if (payload_end_idx > r.length || payload_end_idx >= FIFO_LENGTH) {
+  const size_t prefix_start = pkt_offset::FIRST_DEST + r.dests_len;
+  const size_t payload_start = prefix_start + sizeof(r.prefix);
+  const size_t payload_end = payload_start + sizeof(r.payload);
+  const size_t frame_end = static_cast<size_t>(r.length) + 1;
+  if (payload_end > frame_end) {
     r.reject_reason = "dests_len_too_long";
     return r;
   }
 
-  // Check we have enough raw data for payload
-  size_t payload_start = pkt_offset::FIRST_DEST + PAYLOAD_OFFSET_FROM_DESTS + r.dests_len;
-  size_t payload_end = payload_start + 10;  // 10-byte payload buffer
   if (payload_end > raw_len) {
     r.reject_reason = "truncated_payload";
     return r;
   }
 
   // Check RSSI/LQI bounds (at length+1 and length+2)
-  if (r.length + CC1101_APPEND_SIZE >= raw_len) {
+  if (!r.complete_frame) {
     r.reject_reason = "rssi_oob";
     return r;
   }
 
-  // Extract RSSI and LQI (appended by CC1101 after packet data)
-  if (uses_three_byte_address_envelope(r.type)) {
-    for (uint8_t i = 0; i < r.num_dests; ++i) {
-      r.dst_addrs[i] = extract_addr(&raw[pkt_offset::FIRST_DEST + i * ADDR_SIZE]);
-    }
+  if (payload_end != frame_end || r.num_dests == 0) {
+    r.reject_reason = "unsupported_layout";
+    return r;
   }
 
-  r.rssi_raw = raw[r.length + 1];  // +1 because length byte is at [0]
-  r.rssi = calc_rssi(r.rssi_raw);
-  r.lqi = raw[r.length + CC1101_APPEND_SIZE] & cc1101_status::LQI_MASK;
-  r.crc_ok = (raw[r.length + CC1101_APPEND_SIZE] & cc1101_status::CRC_OK_BIT) ? 1 : 0;
+  const uint8_t *destinations = &raw[pkt_offset::FIRST_DEST];
+  if (uses_three_byte_address_envelope(r.type)) {
+    for (uint8_t i = 0; i < r.num_dests; ++i)
+      r.dst_addrs[i] = extract_addr(destinations + i * ADDR_SIZE);
+    r.dst_addr = r.dst_addrs[0];
+  } else {
+    memcpy(r.selectors, destinations, r.num_dests);
+    r.dst_addr = r.selectors[0];  // Legacy first-selector field.
+  }
 
-  // Copy payload and decrypt
-  // Note: We need a mutable copy for msg_decode
-  uint8_t payload_buf[10];
-  memcpy(payload_buf, &raw[payload_start], 10);
-  protocol::msg_decode(payload_buf);
-  memcpy(r.payload, payload_buf, 10);
+  memcpy(r.prefix, &raw[prefix_start], sizeof(r.prefix));
+  memcpy(r.payload, &raw[payload_start], sizeof(r.payload));
+  protocol::msg_decode(r.payload);
 
   // Extract command/state based on packet type
   if (carries_command(r.type)) {
@@ -321,7 +318,6 @@ CoverStateResult map_cover_state(uint8_t elero_state) {
 
     case state::BOTTOM_TILT:
       r.position = 0.0f;
-      r.tilt = 1.0f;
       r.operation = CoverOp::IDLE;
       break;
 
@@ -353,7 +349,7 @@ CoverStateResult map_cover_state(uint8_t elero_state) {
 
     case state::TIMEOUT:
       r.is_warning = true;
-      r.warning_msg = "Communication timeout";
+      r.warning_msg = "Receiver timeout";
       r.operation = CoverOp::IDLE;
       break;
 
@@ -364,6 +360,25 @@ CoverStateResult map_cover_state(uint8_t elero_state) {
   }
 
   return r;
+}
+
+const char *raw_command_error(const EleroCommand &cmd) {
+  if (cmd.src_addr == 0 || cmd.src_addr > 0xffffff) return "Invalid source address";
+  if (cmd.type == msg_type::BUTTON) {
+    if (cmd.channel == 0 || (cmd.dst_addr != 0 && cmd.dst_addr != cmd.channel))
+      return "A button packet needs a channel selector as its destination";
+    if (cmd.payload[0] != 0 || cmd.payload[1] != 3)
+      return "A button packet needs prefix 00 03";
+  } else if (!is_command_packet(cmd.type)) {
+    return "Unsupported raw transmit type";
+  } else if (cmd.dst_addr == 0 || cmd.dst_addr > 0xffffff) {
+    return "Invalid receiver address";
+  }
+  if (cmd.payload[4] == command::FULL_UP || cmd.payload[4] == command::FULL_DOWN) {
+    if (cmd.type != msg_type::COMMAND || cmd.type2 != button::TYPE2 || cmd.hop != button::HOP)
+      return "Full travel needs type 6A, type2 10 and hop 00";
+  }
+  return nullptr;
 }
 
 size_t build_command_packet(const EleroCommand &cmd, uint8_t *out_buf) {
@@ -397,7 +412,7 @@ size_t build_command_packet(const EleroCommand &cmd, uint8_t *out_buf) {
     params.type2 = cmd.type2;
     params.hop = cmd.hop;
     return packet::build_button_packet(params, out_buf);
-  } else {
+  } else if (is_command_packet(cmd.type)) {
     packet::TxParams params;
     params.counter = cmd.counter;
     params.dst_addr = cmd.dst_addr;
@@ -411,6 +426,7 @@ size_t build_command_packet(const EleroCommand &cmd, uint8_t *out_buf) {
     params.payload_2 = cmd.payload[1];
     return packet::build_tx_packet(params, out_buf);
   }
+  return 0;
 }
 
 }  // namespace esphome::elero::packet

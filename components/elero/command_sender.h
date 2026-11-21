@@ -139,12 +139,11 @@ class CommandSender : public TxClient {
     cmd.counter = 0;  // Assigned at transmission time, shared by all repetitions.
     cmd.payload[4] = cmd_byte;
     cmd.type = type;
-    cmd.type2 = type == packet::msg_type::BUTTON ? packet::button::TYPE2 : packet::defaults::TYPE2;
-    cmd.hop = type == packet::msg_type::BUTTON ? packet::button::HOP : packet::defaults::HOP;
-    if (type == packet::msg_type::COMMAND &&
-        (cmd_byte == packet::command::FULL_UP || cmd_byte == packet::command::FULL_DOWN)) {
-      // Captured VarioCom long presses retain button header fields while
-      // switching from selector addressing to a 24-bit receiver address.
+    // Addressed commands keep the configured header. Channel buttons and
+    // explicit full travel use the header observed for those envelopes.
+    if (type == packet::msg_type::BUTTON ||
+        (type == packet::msg_type::COMMAND &&
+         (cmd_byte == packet::command::FULL_UP || cmd_byte == packet::command::FULL_DOWN))) {
       cmd.type2 = packet::button::TYPE2;
       cmd.hop = packet::button::HOP;
     }
@@ -266,7 +265,7 @@ class CommandSender : public TxClient {
     bool operator==(const QueueEntry &) const = default;
   };
 
-  EleroCommand command_{1, 0, 0, 0, 0, 0, 0, {0}};
+  EleroCommand command_{1, 0, 0, 0, 0, packet::defaults::TYPE2, packet::defaults::HOP, {0}};
   std::deque<QueueEntry> command_queue_;
 
   State state_{State::IDLE};

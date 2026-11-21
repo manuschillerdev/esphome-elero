@@ -21,17 +21,13 @@ namespace elero {
 
 static const char *const TAG = "elero.mqtt.adapter";
 
-// Enum options for HA device_class: enum sensors
-static const char *const COVER_STATE_OPTIONS[] = {
-    "top", "bottom", "intermediate", "tilt", "top_tilt", "bottom_tilt",
-    "moving_up", "moving_down", "start_moving_up", "start_moving_down",
-    "stopped", "blocking", "overheated", "timeout", "unknown",
-};
-static const char *const LIGHT_STATE_OPTIONS[] = {
-    "light_off", "light_on", "top", "bottom", "intermediate",
-    "moving_up", "moving_down", "start_moving_up", "start_moving_down",
-    "stopped", "blocking", "overheated", "timeout", "unknown",
-};
+// Both diagnostic sensors can publish any receiver reply, including scene events.
+static void add_receiver_states(JsonObject root) {
+    auto options = root["options"].to<JsonArray>();
+    for (unsigned status = packet::state::UNKNOWN; status <= packet::state::SCENE_ERROR; ++status) {
+        options.add(elero_state_to_string(status));
+    }
+}
 
 static uint8_t mqtt_payload_to_command(const char *payload, DeviceType type) {
     if (payload == nullptr) return packet::command::INVALID;
@@ -315,8 +311,7 @@ void MqttAdapter::publish_cover_discovery_(const Device &dev) {
         root["device_class"] = "enum";
         root["entity_category"] = "diagnostic";
         root["icon"] = "mdi:state-machine";
-        auto opts = root["options"].to<JsonArray>();
-        for (auto *s : COVER_STATE_OPTIONS) opts.add(s);
+        add_receiver_states(root);
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
         ctx_.add_child_device_block(device, DeviceType::COVER, addr, dev.config.name);
@@ -515,8 +510,7 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
         root["device_class"] = "enum";
         root["entity_category"] = "diagnostic";
         root["icon"] = "mdi:state-machine";
-        auto opts = root["options"].to<JsonArray>();
-        for (auto *s : LIGHT_STATE_OPTIONS) opts.add(s);
+        add_receiver_states(root);
         ctx_.add_availability(root);
         JsonObject device = root["device"].to<JsonObject>();
         ctx_.add_child_device_block(device, DeviceType::LIGHT, addr, dev.config.name);
