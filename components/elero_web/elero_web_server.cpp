@@ -657,6 +657,7 @@ std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
     root["type2"] = hex_str8(pkt.type2);
     root["command"] = hex_str8(pkt.command);
     root["state"] = hex_str8(pkt.state);
+    if (packet::is_status_packet(pkt.type)) root["state_name"] = elero_state_to_string(pkt.state);
     root["cnt"] = pkt.cnt;
     root["rssi"] = round_rssi(pkt.rssi);
     root["hop"] = hex_str8(pkt.hop);

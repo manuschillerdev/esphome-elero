@@ -1,3 +1,4 @@
+import { rfStatusNames } from './src/generated/rf-status-names'
 import { createInterface } from 'node:readline'
 import { WebSocketServer, WebSocket } from 'ws'
 import { envelope, readCommand, type ClientMessage, type Events } from './mock-contract'
@@ -12,16 +13,10 @@ const PORT = Number(process.env.MOCK_PORT ?? 8080)
 const DEFAULT_NAME = 'Mock Elero Gateway'
 const STEP_MS = 300
 const hex = (value: number, width = 2) => `0x${value.toString(16).padStart(width, '0')}`
-const stateBytes: Record<RfStateName, number> = {
-  unknown: 0, top: 1, bottom: 2, intermediate: 3, tilt: 4, blocking: 5,
-  overheated: 6, timeout: 7, start_moving_up: 8, start_moving_down: 9,
-  moving_up: 10, moving_down: 11, delete_in_remote: 12, stopped: 13, top_tilt: 14, bottom_tilt: 15, light_off: 16, light_on: 17,
-  scene_set: 18, scene_started: 19, scene_stopped: 20, scene_error: 21,
-}
 const defaults = { command_up: '0x20', command_down: '0x40', command_stop: '0x10', command_check: '0x00', command_tilt: '0x24' }
 type Motion = { from: number; target: number; started: number; duration: number }
 type Device = {
-  config: DeviceSnapshot; value: number; state: RfStateName; motion?: Motion;
+  config: DeviceSnapshot; value: number; state: RfStateName; motion?: Motion; tilted?: boolean; operatingState?: RfStateName;
   source: 'unknown' | 'hub' | 'remote'; lastSeen: number; rssi: number; updatedAt: number; published?: string;
 }
 let boot = Date.now()
@@ -88,15 +83,19 @@ function configEvent(device: Device): DeviceUpsertedData {
   return { ...rf, open_ms: c.open_duration_ms ?? 0, close_ms: c.close_duration_ms ?? 0, poll_ms: 300000,
     supports_tilt: c.supports_tilt ?? false, movement_mode: c.movement_mode ?? 'standard', tilt_mode: c.tilt_mode ?? 'preset', ...Object.fromEntries(Object.keys(defaults).map(key => [key, c[key as keyof DeviceSnapshot] ?? defaults[key as keyof typeof defaults]])) }
 }
+function isReceiverEvent(state: RfStateName) {
+  return state === 'delete_in_remote' || state.startsWith('scene_')
+}
 function snapshot(device: Device): StateChangedData {
   const c = device.config
-  const problem = ['blocking', 'overheated', 'timeout'].includes(device.state)
+  const condition = device.operatingState ?? device.state
+  const problem = ['blocking', 'overheated', 'timeout'].includes(condition)
   const common: StateChangedData = { address: c.dst_address, device_type: c.device_type,
     state: device.state, command_source: device.source, rssi: device.rssi, last_seen: device.lastSeen,
-    is_problem: problem, problem_type: problem ? device.state as 'blocking' | 'overheated' | 'timeout' : 'none' }
+    is_problem: problem, problem_type: problem ? condition as 'blocking' | 'overheated' | 'timeout' : 'none' }
   if (c.device_type === 'remote') return common
   if (c.device_type === 'light') return { ...common, is_on: device.value > 0, brightness: device.value }
-  return { ...common, position: device.value, device_class: 'shutter', tilted: device.state.includes('tilt'),
+  return { ...common, position: device.value, device_class: 'shutter', tilted: device.tilted ?? false,
     ha_state: device.motion ? device.motion.target > device.value ? 'opening' : 'closing'
       : device.value === 0 ? 'closed' : device.value === 1 ? 'open' : 'stopped' }
 }
@@ -120,7 +119,7 @@ function config(): ConfigData {
   for (const device of devices.values()) {
     const c = configEvent(device)
     const { device_type: type, ...entry } = c
-    const live = { rssi: device.rssi, last_seen: device.lastSeen, state: hex(stateBytes[device.state]) }
+    const live = snapshot(device)
     if (type === 'cover') data.blinds.push({ ...entry, name: c.name ?? '', channel: c.channel!, remote: c.remote!, enabled: c.enabled!,
       open_ms: c.open_ms!, close_ms: c.close_ms!, poll_ms: c.poll_ms!, supports_tilt: c.supports_tilt!, movement_mode: device.config.movement_mode ?? 'standard', tilt_mode: device.config.tilt_mode ?? 'preset', ...live, position: device.value })
     else if (type === 'light') data.lights.push({ ...entry, name: c.name ?? '', channel: c.channel!, remote: c.remote!, enabled: c.enabled!, dim_ms: c.dim_ms!, ...live, brightness: device.value, is_on: device.value > 0 })
@@ -154,8 +153,14 @@ function rf(device: Device, command = '0x00', transmitting = false, overrides: P
   const data: RfData = { t: now(), src: transmitting ? c.src_address ?? '0x000001' : c.dst_address,
     dst: transmitting ? c.dst_address : c.src_address ?? '0x000001', channel: c.channel ?? 1,
     type: transmitting ? '0x44' : '0xca', type2: transmitting ? '0x10' : '0x00', command,
-    state: transmitting ? '0x00' : hex(stateBytes[device.state]), cnt: counter = (counter % 255) + 1,
+    state: transmitting ? '0x00' : hex(rfStatusNames.indexOf(device.state)), cnt: counter = (counter % 255) + 1,
     rssi: device.rssi, hop: transmitting ? '0x00' : c.hop ?? '0x0a', raw: '', ...overrides }
+  if (!transmitting) {
+    data.state_name = device.state
+    if (!isReceiverEvent(device.state)) device.operatingState = device.state
+    if (device.state === 'tilt' || device.state === 'top_tilt') device.tilted = true
+    if (['top', 'bottom', 'moving_up', 'moving_down', 'start_moving_up', 'start_moving_down'].includes(device.state)) device.tilted = false
+  }
   // Diagnostic bytes only, deliberately not presented as an encrypted over-the-air packet.
   data.raw = [data.cnt, data.channel, Number(data.type), Number(data.type2), Number(data.command), Number(data.state)]
     .map(byte => hex(byte).slice(2)).join(' ')
@@ -429,9 +434,11 @@ controls.on('line', line => {
     const d = find(c.address)
     if (c.action) act(d, c.action, 'remote')
     else {
-      if (!c.state || !(c.state in stateBytes)) throw new Error('Expected a documented RF state name')
+      if (!c.state || !rfStatusNames.includes(c.state)) throw new Error('Expected a documented RF state name')
       if (c.rssi !== undefined && (!Number.isFinite(c.rssi) || c.rssi < -130 || c.rssi > 0)) throw new Error('RSSI must be -130..0')
-      settle(d); d.motion = undefined; d.state = c.state
+      settle(d)
+      if (!isReceiverEvent(c.state)) d.motion = undefined
+      d.state = c.state
       if (c.state === 'top' || c.state === 'top_tilt' || c.state === 'light_on') d.value = 1
       if (c.state === 'bottom' || c.state === 'bottom_tilt' || c.state === 'light_off') d.value = 0
       if (['moving_up', 'start_moving_up', 'moving_down', 'start_moving_down'].includes(c.state)) {

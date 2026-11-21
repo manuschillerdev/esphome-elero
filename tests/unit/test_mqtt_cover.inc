@@ -444,3 +444,43 @@ TEST_F(DeviceRegistryTest, NativeButtonReadsCurrentAddressConfigurationFromRegis
     EXPECT_EQ(commands.front().payload[4], 0x21);
     EXPECT_EQ(commands.front().type, 0x6a);
 }
+
+TEST_F(MqttCoverTest, ReceiverStatusReachesMqttAndWebWithoutChangingClosedCover) {
+    auto *dev = add_cover();
+    ASSERT_NE(dev, nullptr);
+    struct StatusCase { uint8_t byte; const char *name; };
+    const StatusCase cases[] = {
+        {0x0f, "bottom_tilt"}, {0x0c, "delete_in_remote"}, {0x12, "scene_set"},
+        {0x13, "scene_started"}, {0x14, "scene_stopped"}, {0x15, "scene_error"},
+    };
+    for (const auto type : {pkt::msg_type::STATUS, pkt::msg_type::STATUS_ALT}) {
+        for (const auto &[byte, name] : cases) {
+            SCOPED_TRACE(name);
+            // Synthetic input to the receiver parser, including the two FIFO status bytes.
+            pkt::TxParams params{};
+            params.type = type;
+            params.src_addr = dev->config.dst_address;
+            uint8_t frame[pkt::FIFO_LENGTH]{};
+            const size_t size = pkt::build_tx_packet(params, frame);
+            uint8_t block[8]{};
+            block[pkt::payload_offset::STATE] = byte;
+            protocol::msg_encode(block);
+            std::copy_n(block, sizeof(block), frame + pkt::tx_offset::CRYPTO_CODE);
+            frame[size + 1] = 0x80;
+            const auto decoded = pkt::parse_packet(frame, size + 2);
+            ASSERT_TRUE(decoded.valid);
+            auto report = make_status_pkt(decoded.src_addr, decoded.state);
+            report.type = decoded.type;
+            registry_.on_rf_packet(report, mock_time_.millis());
+
+            const auto snapshot = compute_cover_snapshot(*dev, mock_time_.millis());
+            JsonDocument json;
+            snapshot.to_json(json.to<JsonObject>());
+            EXPECT_EQ(json["state"].as<std::string>(), name);
+            EXPECT_EQ(json["ha_state"].as<std::string>(), "closed");
+            EXPECT_FALSE(json["tilted"].as<bool>());
+            EXPECT_EQ(broker_.retained.at(STATE_TOPIC), "closed");
+            EXPECT_EQ(broker_.retained.at("elero/cover/a831e5/device_state"), name);
+        }
+    }
+}

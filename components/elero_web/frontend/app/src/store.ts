@@ -79,7 +79,7 @@ export interface Device extends CoverCommandBytes {
   movement_mode: 'standard' | 'step'
   tilt_mode: 'preset' | 'step'
   dim_ms: number
-  lastStatus: RfPacketWithTimestamp | null
+  lastStatus: { state?: string; rssi?: number; ha_state?: StateChangedData['ha_state'] } | null
 }
 
 // ─── Primary Signals ────────────────────────────────────────────────────────
@@ -197,7 +197,7 @@ function blindToDevice(b: BlindConfig): Device {
     movement_mode: b.movement_mode ?? 'standard',
     tilt_mode: b.tilt_mode ?? 'preset',
     lastStatus: b.state && b.state !== '0x00'
-      ? { state: b.state, rssi: b.rssi } as RfPacketWithTimestamp
+      ? { state: b.state, rssi: b.rssi, ha_state: b.ha_state }
       : null,
   })
 }
@@ -207,7 +207,7 @@ function lightToDevice(l: LightConfig): Device {
     address: l.address, type: 'light', updated_at: l.updated_at || null, enabled: l.enabled,
     name: l.name, channel: l.channel, remote: l.remote, pairings: makePairings(l.remote, l.channel), dim_ms: l.dim_ms,
     lastStatus: l.state && l.state !== '0x00'
-      ? { state: l.state, rssi: l.rssi } as RfPacketWithTimestamp
+      ? { state: l.state, rssi: l.rssi }
       : null,
   })
 }
@@ -239,7 +239,7 @@ export function setDevices(data: ConfigData) {
       remote: existing?.remote || device.remote,
       channel: existing?.remote ? existing.channel : device.channel,
       pairings: mergePairings(existing?.pairings, device.pairings),
-      lastStatus: existing?.lastStatus ?? device.lastStatus,
+      lastStatus: device.lastStatus ?? existing?.lastStatus ?? null,
     })
   }
   for (const l of data.lights) {
@@ -251,7 +251,7 @@ export function setDevices(data: ConfigData) {
       remote: existing?.remote || device.remote,
       channel: existing?.remote ? existing.channel : device.channel,
       pairings: mergePairings(existing?.pairings, device.pairings),
-      lastStatus: existing?.lastStatus ?? device.lastStatus,
+      lastStatus: device.lastStatus ?? existing?.lastStatus ?? null,
     })
   }
   for (const r of data.remotes ?? []) {
@@ -317,10 +317,11 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
     const existing = (next ?? devs).get(pkt.src)
     if (existing) {
       // Type correction: if we see a light state, correct cover→light
-      const name = resolveStateName(pkt.state)
+      const name = pkt.state_name ?? resolveStateName(pkt.state)
       const correctedType: DeviceType =
         (name === 'light_on' || name === 'light_off') ? 'light' : existing.type
-      mut().set(pkt.src, { ...existing, type: correctedType, lastStatus: pkt })
+      const lastStatus = { ...existing.lastStatus, state: name ?? pkt.state, rssi: pkt.rssi }
+      mut().set(pkt.src, { ...existing, type: correctedType, lastStatus })
     }
     // Do NOT create devices from status packets — byte offset 6 is not the RF channel.
     // Discovery happens from COMMAND packets only (which carry correct channel).
@@ -391,15 +392,12 @@ export function onStateChanged(data: StateChangedData) {
 
   const next = new Map(devices.value)
 
-  // Build a synthetic lastStatus from the snapshot so the UI updates immediately.
-  // This is the optimistic update — overridden by the next real RF packet.
   const lastStatus = {
     ...existing.lastStatus,
     state: data.state,
     ha_state: data.ha_state,
     rssi: data.rssi,
-    received_at: Date.now(),
-  } as RfPacketWithTimestamp
+  }
 
   next.set(data.address, { ...existing, lastStatus })
   devices.value = next

@@ -2,58 +2,13 @@
 /// @brief String conversion functions for Elero protocol constants.
 
 #include "elero_strings.h"
-#include "elero_packet.h"
+#include "elero_status_names.h"
 #include <cstring>
 
 namespace esphome::elero {
 
 const char *elero_state_to_string(uint8_t state) {
-  switch (state) {
-    case packet::state::TOP:
-      return "top";
-    case packet::state::BOTTOM:
-      return "bottom";
-    case packet::state::INTERMEDIATE:
-      return "intermediate";
-    case packet::state::TILT:
-      return "tilt";
-    case packet::state::BLOCKING:
-      return "blocking";
-    case packet::state::OVERHEATED:
-      return "overheated";
-    case packet::state::TIMEOUT:
-      return "timeout";
-    case packet::state::START_MOVING_UP:
-      return "start_moving_up";
-    case packet::state::START_MOVING_DOWN:
-      return "start_moving_down";
-    case packet::state::MOVING_UP:
-      return "moving_up";
-    case packet::state::MOVING_DOWN:
-      return "moving_down";
-    case packet::state::DELETE_IN_REMOTE:
-      return "delete_in_remote";
-    case packet::state::STOPPED:
-      return "stopped";
-    case packet::state::TOP_TILT:
-      return "top_tilt";
-    case packet::state::BOTTOM_TILT:
-      return "bottom_tilt";
-    case packet::state::LIGHT_OFF:
-      return "light_off";
-    case packet::state::LIGHT_ON:
-      return "light_on";
-    case packet::state::SCENE_SET:
-      return "scene_set";
-    case packet::state::SCENE_STARTED:
-      return "scene_started";
-    case packet::state::SCENE_STOPPED:
-      return "scene_stopped";
-    case packet::state::SCENE_ERROR:
-      return "scene_error";
-    default:
-      return "unknown";
-  }
+  return state < ELERO_STATUS_NAMES.size() ? ELERO_STATUS_NAMES[state] : ELERO_STATUS_NAMES[packet::state::UNKNOWN];
 }
 
 const char *elero_command_to_string(uint8_t command) {

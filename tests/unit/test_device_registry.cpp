@@ -620,6 +620,19 @@ TEST_F(DeviceRegistryTest, RfStatus_IdenticalPacket_Suppressed) {
     EXPECT_EQ(adapter_.state_changed.size(), 0u);
 }
 
+TEST_F(DeviceRegistryTest, SceneAndDeletionReportsPreserveLightLevelAndFault) {
+    auto *dev = add_light();
+    ASSERT_NE(dev, nullptr);
+    for (uint8_t state : {0x11, 0x06, 0x0c, 0x12, 0x13, 0x14, 0x15}) {
+        registry_.on_rf_packet(make_status_pkt(dev->config.dst_address, state), mock_time_.millis());
+        const auto snapshot = compute_light_snapshot(*dev, mock_time_.millis());
+        EXPECT_TRUE(snapshot.is_on);
+        EXPECT_FLOAT_EQ(snapshot.brightness, 1.0f);
+        EXPECT_EQ(snapshot.is_problem, state != 0x11);
+        EXPECT_STREQ(snapshot.state_string, elero_state_to_string(state));
+    }
+}
+
 TEST_F(DeviceRegistryTest, BottomIntermediateReportPreservesTiltAndConfirmsClosed) {
     auto *dev = add_cover();
     ASSERT_NE(dev, nullptr);

@@ -730,7 +730,7 @@ void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
             const bool first_report = dev->rf.last_seen_ms == 0;
             dev->rf.last_seen_ms = now;
             dev->rf.last_rssi = pkt.rssi;
-            dev->rf.last_state_raw = pkt.state;
+            dev->rf.record_status(pkt.state);
             dispatch_status_(*dev, pkt.state, now, first_report);
         }
     } else if (packet::carries_command(pkt.type)) {
