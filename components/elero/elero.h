@@ -56,7 +56,8 @@ struct RfPacketInfo {
   uint8_t lqi;            ///< Link Quality Indicator (0-127)
   bool crc_ok;            ///< CRC status from CC1101 appended byte
   uint8_t hop;
-  uint8_t payload[10];
+  uint8_t payload[packet::COMMAND_BLOCK_SIZE];
+  uint8_t trailing_length{0};  ///< In raw, immediately before the two radio status bytes.
   uint8_t raw_len;
   uint8_t raw[CC1101_FIFO_LENGTH];
 };
@@ -98,7 +99,9 @@ class Elero : public Component, private RfTransportPort {
                                       uint8_t payload_2 = packet::defaults::PAYLOAD_2,
                                       uint8_t type = packet::msg_type::COMMAND,
                                       uint8_t type2 = packet::defaults::TYPE2,
-                                      uint8_t hop = packet::defaults::HOP);
+                                      uint8_t hop = packet::defaults::HOP,
+                                      std::span<const uint8_t> destinations = {},
+                                      std::span<const uint8_t> trailing = {});
 
   // Learn-in / provisioning primitives.
   [[nodiscard]] bool start_learn_in(const LearnInStartRequest &request) {

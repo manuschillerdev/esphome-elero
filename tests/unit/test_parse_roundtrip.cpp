@@ -691,31 +691,80 @@ TEST(ParseEdgeCases, ExactMinimumValidPacket) {
   ASSERT_TRUE(result.valid);
 }
 
-TEST(ParseEdgeCases, RssiOutOfBounds) {
-  // To trigger "rssi_oob", we need:
-  //   payload_end <= raw_len (pass payload check)
-  //   length + CC1101_APPEND_SIZE >= raw_len (fail RSSI check)
-  //
-  // For a standard 1-dest command packet (length=0x1D=29):
-  //   payload_end = 17 + 2 + 3 + 10 = 32
-  //   rssi_oob needs: 29 + 2 >= raw_len → raw_len <= 31
-  // These conflict (need raw_len >= 32 AND <= 31), so RSSI check is
-  // unreachable for this packet shape.
-  //
-  // Trigger it with a larger length value and fewer dests:
-  // Use length=0x30 (48), type=COMMAND, num_dests=1
-  // payload_end = 17 + 2 + 3 + 10 = 32 (same, doesn't depend on length)
-  // rssi_oob needs: 48 + 2 >= raw_len → raw_len <= 49
-  // So raw_len in [32..49] will pass payload but fail RSSI.
-  uint8_t raw[50] = {0};
-  raw[pkt_offset::LENGTH] = 0x30;  // length = 48
-  raw[pkt_offset::TYPE] = msg_type::COMMAND;
-  raw[pkt_offset::NUM_DESTS] = 1;
-  raw[pkt_offset::SRC_ADDR] = 0x01;
-  raw[pkt_offset::FIRST_DEST] = 0x01;
+TEST(VariableFrame, AddressAndSelectorListsShareTheBodyLimitWithTrailingBytes) {
+  const uint8_t types[] = {msg_type::BUTTON, msg_type::BUTTON_GROUP, msg_type::PROGRAM,
+                           msg_type::COMMAND, msg_type::COMMAND_ALT, msg_type::STATUS, msg_type::STATUS_ALT};
+  for (auto type : types) {
+    const size_t width = uses_one_byte_selector_envelope(type) ? 1 : ADDR_SIZE;
+    uint8_t destinations[MAX_VARIABLE_BYTES];
+    uint8_t extra[MAX_VARIABLE_BYTES];
+    for (size_t i = 0; i < MAX_VARIABLE_BYTES; ++i) {
+      destinations[i] = i + 1;
+      extra[i] = 0xd0 + i;
+    }
+    for (size_t count = 1; count * width <= MAX_VARIABLE_BYTES; ++count) {
+      const size_t dest_size = count * width;
+      for (size_t n = 0; n <= MAX_VARIABLE_BYTES - dest_size; ++n) {
+        SCOPED_TRACE(::testing::Message() << unsigned(type) << "/" << count << "/" << n);
+        EleroCommand cmd{};
+        cmd.type = type;
+        cmd.channel = 0xff;
+        cmd.payload[4] = command::UP;
+        ASSERT_TRUE(cmd.set_frame_data({destinations, dest_size}, {extra, n}));
+        uint8_t raw[FIFO_LENGTH]{};
+        const size_t size = build_command_packet(cmd, raw);
+        ASSERT_EQ(size, 27 + dest_size + n);
+        ASSERT_EQ(raw[0], size - 1);
+        EXPECT_EQ(raw[16], count);
+        EXPECT_EQ(memcmp(raw + 17, destinations, dest_size), 0);
+        EXPECT_EQ(memcmp(raw + size - n, extra, n), 0);
+        raw[size] = 0x67;
+        raw[size + 1] = 0xba;
+        const auto result = parse_packet(raw, size + 2);
+        ASSERT_TRUE(result.valid);
+        EXPECT_EQ(result.trailing.length, n);
+        EXPECT_EQ(memcmp(result.trailing.bytes, extra, n), 0);
+        EXPECT_EQ(result.rssi_raw, 0x67);
+        EXPECT_EQ(result.lqi, 0x3a);
+        EXPECT_EQ(result.crc_ok, 1);
+        EXPECT_EQ(result.payload[payload_offset::COMMAND], command::UP);
+        if (width == ADDR_SIZE) {
+          for (size_t i = 0; i < count; ++i) {
+            EXPECT_EQ(result.dst_addrs[i], extract_addr(destinations + i * width));
+          }
+        }
+      }
+    }
+  }
+}
 
-  // Provide 40 bytes: enough for payload (32) but not for RSSI at [49],[50]
-  auto result = parse_packet(raw, 40);
+TEST(VariableFrame, RejectsShortBlocksTruncatedTailsAndOversizedRequests) {
+  EleroCommand cmd{};
+  cmd.type = msg_type::COMMAND;
+  const uint8_t one[] = {0xe1};
+  ASSERT_TRUE(cmd.set_frame_data({}, one));
+  uint8_t raw[FIFO_LENGTH]{};
+  const size_t size = build_command_packet(cmd, raw);
+  ASSERT_EQ(size, 31u);
+  EXPECT_STREQ(parse_packet(raw, size - 1).reject_reason, "truncated_payload");
+  raw[0] = 28;  // Only seven encoded bytes fit.
+  EXPECT_FALSE(parse_packet(raw, size + 2).valid);
+
+  uint8_t bytes[MAX_VARIABLE_BYTES]{};
+  EXPECT_FALSE(cmd.set_frame_data(one, {}));  // Partial address.
+  EXPECT_FALSE(cmd.set_frame_data({}, bytes));  // The implicit address needs three bytes.
+  EXPECT_EQ(cmd.trailing_length, 1);
+  EXPECT_EQ(build_command_packet(cmd, raw), size);
+  EXPECT_EQ(raw[size - 1], one[0]);
+  cmd.num_dests = ELERO_MAX_ADDRESS_DESTS + 1;
+  raw[0] = 0xab;
+  EXPECT_EQ(build_command_packet(cmd, raw), 0u);
+  EXPECT_EQ(raw[0], 0xab);
+}
+
+TEST(ParseEdgeCases, RssiOutOfBounds) {
+  auto raw = build_parseable_packet(TxParams{});
+  auto result = parse_packet(raw.data, raw.len - 1);
   EXPECT_FALSE(result.valid);
   EXPECT_STREQ(result.reject_reason, "rssi_oob");
 }

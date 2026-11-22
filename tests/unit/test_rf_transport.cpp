@@ -200,6 +200,33 @@ TEST_F(RfTransportTest, CancelledCompletionCannotCompleteNewAttempt) {
   EXPECT_EQ(client.calls, 1u);
 }
 
+TEST_F(RfTransportTest, RawSelectorListAndTailReachTheRadio) {
+  port.enqueue(1);
+  auto &cmd = port.requests.front().cmd;
+  cmd.type = packet::msg_type::BUTTON_GROUP;
+  cmd.channel = 0xff;
+  cmd.payload[1] = 0x03;
+  cmd.payload[4] = packet::command::UP;
+  const uint8_t selectors[] = {0x11, 0x22, 0x03};
+  const uint8_t tail[] = {0xd1, 0xd2};
+  ASSERT_TRUE(cmd.set_frame_data(selectors, tail));
+
+  transport.step(port);
+  ASSERT_EQ(radio.sent.size(), 1u);
+  const auto &frame = radio.sent.front();
+  ASSERT_EQ(frame.size(), 32u);
+  EXPECT_EQ(frame[0], 31);
+  EXPECT_EQ(frame[2], 0x45);
+  EXPECT_EQ(frame[6], 0xff);
+  EXPECT_EQ(frame[16], 3);
+  EXPECT_EQ(frame[17], 0x11);
+  EXPECT_EQ(frame[18], 0x22);
+  EXPECT_EQ(frame[19], 0x03);
+  EXPECT_EQ(frame[21], 0x03);
+  EXPECT_EQ(frame[30], 0xd1);
+  EXPECT_EQ(frame[31], 0xd2);
+}
+
 TEST_F(RfTransportTest, InvalidGroupNeverReusesPreviousPacket) {
   port.enqueue(1);
   transport.step(port);

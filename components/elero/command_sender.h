@@ -133,7 +133,11 @@ class CommandSender : public TxClient {
                              uint8_t type = packet::msg_type::BUTTON,
                              std::span<const uint8_t> channels = {},
                              bool priority = false) {
-    if (channels.size() > packet::GROUP_MAX_DESTS) return false;
+    const bool selector = packet::uses_one_byte_selector_envelope(type);
+    if (!channels.empty() && !selector) return false;
+    const size_t dest_size = channels.empty() ? (selector ? 1 : packet::ADDR_SIZE) : channels.size();
+    if (dest_size > packet::MAX_VARIABLE_BYTES ||
+        this->command_.trailing_length > packet::MAX_VARIABLE_BYTES - dest_size) return false;
     QueueEntry entry{this->command_, packets};
     auto &cmd = entry.command;
     cmd.counter = 0;  // Assigned at transmission time, shared by all repetitions.
@@ -149,8 +153,8 @@ class CommandSender : public TxClient {
       cmd.hop = packet::button::HOP;
     }
     cmd.num_dests = static_cast<uint8_t>(channels.size());
-    std::fill(std::begin(cmd.dest_channels), std::end(cmd.dest_channels), 0);
-    std::copy(channels.begin(), channels.end(), cmd.dest_channels);
+    std::fill(std::begin(cmd.frame_data), std::end(cmd.frame_data) - cmd.trailing_length, 0);
+    std::copy(channels.begin(), channels.end(), cmd.frame_data);
     if (!channels.empty()) cmd.channel = channels.front();
     if (!priority && !this->command_queue_.empty() && this->command_queue_.back() == entry) {
       return true;
@@ -198,13 +202,13 @@ class CommandSender : public TxClient {
         if (cmd.num_dests == 0) {
           changed = remove = cmd.channel == channel;
         } else {
-          auto *end = std::remove(cmd.dest_channels, cmd.dest_channels + cmd.num_dests, channel);
-          const auto count = static_cast<uint8_t>(end - cmd.dest_channels);
+          auto *end = std::remove(cmd.frame_data, cmd.frame_data + cmd.num_dests, channel);
+          const auto count = static_cast<uint8_t>(end - cmd.frame_data);
           changed = count != cmd.num_dests;
           cmd.num_dests = count;
           remove = count == 0;
-          if (count != 0) cmd.channel = cmd.dest_channels[0];
-          std::fill(end, std::end(cmd.dest_channels), 0);
+          if (count != 0) cmd.channel = cmd.frame_data[0];
+          std::fill(end, std::end(cmd.frame_data) - cmd.trailing_length, 0);
         }
       } else if (cmd.type == packet::msg_type::COMMAND) {
         changed = remove = cmd.dst_addr == dst;

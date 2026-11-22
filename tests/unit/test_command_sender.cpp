@@ -179,8 +179,8 @@ TEST_F(CommandSenderTest, QueuedGroupsKeepRecipientsAcrossChecksAndTemplateChang
     } else {
       EXPECT_EQ(cmd.payload[4], i < 3 ? packet::command::UP : packet::command::DOWN);
       EXPECT_EQ(cmd.num_dests, 2);
-      EXPECT_EQ(cmd.dest_channels[0], 1);
-      EXPECT_EQ(cmd.dest_channels[1], i < 3 ? 2 : 3);
+      EXPECT_EQ(cmd.frame_data[0], 1);
+      EXPECT_EQ(cmd.frame_data[1], i < 3 ? 2 : 3);
     }
   }
 }
@@ -194,8 +194,8 @@ TEST_F(CommandSenderTest, DuplicateDetectionIncludesRecipientsAndRepetitions) {
   ASSERT_TRUE(sender_.enqueue(packet::command::UP, 2, packet::msg_type::BUTTON, second));
   drain();
   ASSERT_EQ(mock_hub_.recorded_commands.size(), 4u);
-  EXPECT_EQ(mock_hub_.recorded_commands[0].dest_channels[1], 2);
-  EXPECT_EQ(mock_hub_.recorded_commands[1].dest_channels[1], 3);
+  EXPECT_EQ(mock_hub_.recorded_commands[0].frame_data[1], 2);
+  EXPECT_EQ(mock_hub_.recorded_commands[1].frame_data[1], 3);
 }
 
 TEST_F(CommandSenderTest, CancelTargetDuringTxPreservesOtherChannelsAndIgnoresOldCompletion) {
@@ -226,7 +226,7 @@ TEST_F(CommandSenderTest, CancelTargetDuringTxPreservesOtherChannelsAndIgnoresOl
       EXPECT_EQ(cmd.payload[4], packet::command::UP);
       EXPECT_EQ(cmd.num_dests, 1);
       EXPECT_EQ(cmd.channel, 7);
-      EXPECT_EQ(cmd.dest_channels[0], 7);
+      EXPECT_EQ(cmd.frame_data[0], 7);
     }
   }
 }
