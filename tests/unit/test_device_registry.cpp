@@ -104,7 +104,8 @@ void Elero::setup() {}
 void Elero::loop() {}
 void Elero::dump_config() {}
 void Elero::dispatch_packet(const RfPacketInfo &) {}
-bool Elero::send_raw_command(uint32_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t) { return false; }
+bool Elero::send_raw_command(uint32_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t,
+                             std::span<const uint8_t>, std::span<const uint8_t>) { return false; }
 void Elero::reinit_frequency(uint8_t, uint8_t, uint8_t) {}
 
 }  // namespace elero
@@ -1072,8 +1073,8 @@ TEST_F(DeviceRegistryTest, CommandGroup_QueuesRecipientsWithoutMutatingTemplate)
     ASSERT_EQ(commands.size(), 4u);  // Three group presses, one targeted CHECK.
     const auto &cmd = commands.front();
     EXPECT_EQ(cmd.num_dests, 2);
-    EXPECT_EQ(cmd.dest_channels[0], 1);
-    EXPECT_EQ(cmd.dest_channels[1], 3);
+    EXPECT_EQ(cmd.frame_data[0], 1);
+    EXPECT_EQ(cmd.frame_data[1], 3);
     EXPECT_EQ(commands.back().type, pkt::msg_type::COMMAND);
     EXPECT_EQ(commands.back().num_dests, 0);
 }
@@ -1117,8 +1118,8 @@ TEST_F(DeviceRegistryTest, CommandGroup_BackToBackGroupsAndIndividualKeepTheirTa
         } else if (i < 8) {
             EXPECT_EQ(cmd.payload[4], i < 4 ? pkt::command::UP : pkt::command::DOWN);
             EXPECT_EQ(cmd.num_dests, 2);
-            EXPECT_EQ(cmd.dest_channels[0], 1);
-            EXPECT_EQ(cmd.dest_channels[1], i < 4 ? 2 : 3);
+            EXPECT_EQ(cmd.frame_data[0], 1);
+            EXPECT_EQ(cmd.frame_data[1], i < 4 ? 2 : 3);
         } else {
             EXPECT_EQ(cmd.num_dests, 0);
             EXPECT_EQ(cmd.channel, 1);
@@ -1163,7 +1164,7 @@ TEST_F(DeviceRegistryTest, GroupStopCancelsOverlappingGroupsAndPreservesOtherTar
             // Only B's un-cancelled movement remains, even in A's sender.
             EXPECT_EQ(cmd.num_dests, 1);
             EXPECT_EQ(cmd.channel, 2);
-            EXPECT_EQ(cmd.dest_channels[0], 2);
+            EXPECT_EQ(cmd.frame_data[0], 2);
             uint8_t frame[pkt::FIFO_LENGTH]{};
             ASSERT_GT(pkt::build_command_packet(cmd, frame), 0u);
             EXPECT_EQ(frame[17], 2);  // Remaining selector actually encoded on wire.
@@ -1247,7 +1248,7 @@ TEST_F(DeviceRegistryTest, SourceUpdateCancelsOldGroupTargetAndPreservesOtherMem
         EXPECT_EQ(cmd.channel, 1);
         if (cmd.type == pkt::msg_type::BUTTON) {
             ASSERT_EQ(cmd.num_dests, 1);
-            EXPECT_EQ(cmd.dest_channels[0], 1);
+            EXPECT_EQ(cmd.frame_data[0], 1);
         }
     }
     const auto stopped = drain_commands(*edited);
@@ -1274,8 +1275,8 @@ TEST_F(DeviceRegistryTest, RenamePreservesQueuedGroupMovement) {
     ASSERT_EQ(commands.size(), 4u);
     EXPECT_EQ(commands.front().payload[4], pkt::command::UP);
     EXPECT_EQ(commands.front().num_dests, 2);
-    EXPECT_EQ(commands.front().dest_channels[0], 1);
-    EXPECT_EQ(commands.front().dest_channels[1], 2);
+    EXPECT_EQ(commands.front().frame_data[0], 1);
+    EXPECT_EQ(commands.front().frame_data[1], 2);
     EXPECT_EQ(drain_commands(*edited).size(), 1u);  // CHECK remains queued.
 }
 
@@ -1401,8 +1402,8 @@ TEST_F(DeviceRegistryTest, CommandSavedGroup_PartitionsByRemote) {
     ASSERT_EQ(first.size(), 4u);
     ASSERT_EQ(second.size(), 4u);
     EXPECT_EQ(first.front().num_dests, 2);
-    EXPECT_EQ(first.front().dest_channels[0], 1);
-    EXPECT_EQ(first.front().dest_channels[1], 3);
+    EXPECT_EQ(first.front().frame_data[0], 1);
+    EXPECT_EQ(first.front().frame_data[1], 3);
     EXPECT_EQ(second.front().num_dests, 0);
     EXPECT_GE(adapter_.state_changed.size(), 3u);
 }

@@ -369,6 +369,7 @@ optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) 
   pkt.crc_ok = (r.crc_ok != 0);
   pkt.hop = r.hop;
   memcpy(pkt.payload, r.payload, sizeof(pkt.payload));
+  pkt.trailing_length = r.trailing.length;
 
   // Copy raw bytes for WebSocket broadcast
   size_t raw_total = static_cast<size_t>(r.length) + PACKET_TOTAL_OVERHEAD;
@@ -407,7 +408,8 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
 
 
 bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t channel, uint8_t command,
-                              uint8_t payload_1, uint8_t payload_2, uint8_t type, uint8_t type2, uint8_t hop) {
+                              uint8_t payload_1, uint8_t payload_2, uint8_t type, uint8_t type2, uint8_t hop,
+                              std::span<const uint8_t> destinations, std::span<const uint8_t> trailing) {
 #ifdef USE_ESP32
   static uint8_t raw_msg_cnt = 1;
 
@@ -422,6 +424,7 @@ bool Elero::send_raw_command(uint32_t dst_addr, uint32_t src_addr, uint8_t chann
   cmd.payload[0] = payload_1;
   cmd.payload[1] = payload_2;
   cmd.payload[4] = command;
+  if (!cmd.set_frame_data(destinations, trailing)) return false;
 
   // Fire-and-forget via RF task queue (no blocking, no completion callback)
   RfTaskRequest req{};

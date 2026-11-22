@@ -111,7 +111,7 @@ class LearnInManager : public TxClient {
   void finish_(LearnInState state);
 
   EleroCommand command_{1, 0, 0, 0, packet::msg_type::PROGRAM,
-                        packet::program::TYPE2, packet::program::HOP, {0}};
+                        packet::program::TYPE2, packet::program::HOP, {0, packet::button::SINGLE_PAYLOAD_2}};
   std::variant<LearnInState, Sending> state_{LearnInState::IDLE};
   uint8_t packets_per_step_{packet::program::PACKETS};
   uint32_t session_start_ms_{0};

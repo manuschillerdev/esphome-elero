@@ -169,7 +169,7 @@ TEST_F(RadioDriverTest, Sx1276LargestSupportedGroupReachesHardwareTx) {
   EleroCommand cmd{};
   cmd.type = packet::msg_type::BUTTON;
   cmd.num_dests = packet::GROUP_MAX_DESTS;
-  for (uint8_t i = 0; i < cmd.num_dests; ++i) cmd.dest_channels[i] = i + 1;
+  for (uint8_t i = 0; i < cmd.num_dests; ++i) cmd.frame_data[i] = i + 1;
   uint8_t buffer[packet::FIFO_LENGTH]{};
   const size_t size = packet::build_command_packet(cmd, buffer);
   ASSERT_EQ(size, packet::MAX_PACKET_SIZE + 1u);

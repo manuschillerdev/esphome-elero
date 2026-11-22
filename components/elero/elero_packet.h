@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <span>
 #include "elero_protocol.h"
 
 namespace esphome::elero::packet {
@@ -29,10 +30,33 @@ namespace esphome::elero::packet {
 // PACKET SIZE LIMITS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Packet header offsets (shared by TX and RX — bytes 0-16 are identical)
+namespace pkt_offset {
+constexpr size_t LENGTH = 0;        // Packet length byte (value excludes this byte)
+constexpr size_t COUNTER = 1;       // Rolling counter
+constexpr size_t TYPE = 2;          // Message type (0x6a=cmd, 0xca=status, etc.)
+constexpr size_t TYPE2 = 3;         // Secondary type byte
+constexpr size_t HOP = 4;           // Hop count
+constexpr size_t SYS = 5;           // System address (always 0x01)
+constexpr size_t CHANNEL = 6;       // RF channel
+constexpr size_t SRC_ADDR = 7;      // Source address (3 bytes, big-endian)
+constexpr size_t BWD_ADDR = 10;     // Backward address (3 bytes)
+constexpr size_t FWD_ADDR = 13;     // Forward address (3 bytes)
+constexpr size_t NUM_DESTS = 16;    // Number of destinations
+constexpr size_t FIRST_DEST = 17;   // Start of destination address(es)
+}  // namespace pkt_offset
+
+/// Address size in bytes (big-endian 24-bit addresses)
+constexpr size_t ADDR_SIZE = 3;
+
 constexpr uint8_t MAX_PACKET_SIZE = 57;       ///< Maximum supported packet body length
 constexpr uint8_t FIFO_LENGTH = 64;           ///< CC1101 FIFO size
 constexpr uint8_t MIN_PACKET_SIZE = 4;        ///< Minimum valid packet length
-constexpr uint8_t ELERO_MAX_ADDRESS_DESTS = (MAX_PACKET_SIZE - 26) / 3;
+constexpr size_t PREFIX_SIZE = 2;
+constexpr size_t COMMAND_BLOCK_SIZE = 8;
+constexpr size_t FIXED_BODY_SIZE = pkt_offset::FIRST_DEST - 1 + PREFIX_SIZE + COMMAND_BLOCK_SIZE;
+constexpr size_t MAX_VARIABLE_BYTES = MAX_PACKET_SIZE - FIXED_BODY_SIZE;
+constexpr uint8_t ELERO_MAX_ADDRESS_DESTS = MAX_VARIABLE_BYTES / ADDR_SIZE;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // RSSI CALCULATION
@@ -180,13 +204,14 @@ constexpr uint8_t COUNTER_MAX = 255;          ///< Counter wrap-around value
 // ═══════════════════════════════════════════════════════════════════════════════
 
 namespace button {
+constexpr uint8_t SINGLE_PAYLOAD_2 = 0x03;        ///< Second prefix byte for a single button press or P
 constexpr uint8_t RELEASE = 0x00;                 ///< Release command byte (stops dimming)
 constexpr uint8_t PACKETS = 3;                    ///< 3 packets per button phase
 constexpr uint32_t INTER_PACKET_MS = 10;          ///< 10ms between button packet repeats
 constexpr uint8_t MSG_LENGTH = 0x1B;              ///< Button packet length (27 bytes)
 constexpr uint8_t TYPE2 = 0x10;                   ///< type2 for button packets
 constexpr uint8_t HOP = 0x00;                     ///< hop count for button packets
-constexpr uint8_t GROUP_BASE_LENGTH = 26;         ///< Group 0x44 base length (len = 26 + N)
+constexpr uint8_t GROUP_BASE_LENGTH = FIXED_BODY_SIZE;         ///< Group 0x44 base length (len = 26 + N)
 constexpr uint8_t GROUP_CHANNEL = 0x00;           ///< Channel byte for group packets (group marker)
 }  // namespace button
 
@@ -209,6 +234,12 @@ constexpr uint8_t R20_INITIAL = 0xFE;         ///< Initial R20 value for encodin
 constexpr uint8_t R20_SECOND = 0xBA;          ///< Second R20 value (after first 2 bytes)
 constexpr uint8_t R20_DECREMENT = 0x22;       ///< R20 decrement per byte
 }  // namespace crypto
+
+/// Bytes after the encoded block, within the declared radio frame.
+struct FrameTail {
+  uint8_t length{0};
+  uint8_t bytes[MAX_VARIABLE_BYTES]{};
+};
 
 // ─── Parse Result ───────────────────────────────────────────────────────────
 
@@ -245,7 +276,8 @@ struct ParseResult {
   uint8_t crc_ok{0};      ///< CRC status (1=OK)
 
   // Payload (after decryption)
-  uint8_t payload[10]{0}; ///< Decrypted payload bytes
+  uint8_t payload[COMMAND_BLOCK_SIZE]{};
+  FrameTail trailing{};
   uint8_t command{0};     ///< Command byte (for command/selector packets)
   uint8_t state{0};       ///< State byte (for status packets)
 };
@@ -348,22 +380,6 @@ constexpr uint16_t TX_CRYPTO_MASK = crypto::MASK;        ///< 16-bit mask
 constexpr uint8_t TX_SYS_ADDR = defaults::SYS_ADDR;      ///< System address byte
 constexpr uint8_t TX_DEST_COUNT = defaults::DEST_COUNT;  ///< Single destination
 
-/// Packet header offsets (shared by TX and RX — bytes 0-16 are identical)
-namespace pkt_offset {
-constexpr size_t LENGTH = 0;        // Packet length byte (value excludes this byte)
-constexpr size_t COUNTER = 1;       // Rolling counter
-constexpr size_t TYPE = 2;          // Message type (0x6a=cmd, 0xca=status, etc.)
-constexpr size_t TYPE2 = 3;         // Secondary type byte
-constexpr size_t HOP = 4;           // Hop count
-constexpr size_t SYS = 5;           // System address (always 0x01)
-constexpr size_t CHANNEL = 6;       // RF channel
-constexpr size_t SRC_ADDR = 7;      // Source address (3 bytes, big-endian)
-constexpr size_t BWD_ADDR = 10;     // Backward address (3 bytes)
-constexpr size_t FWD_ADDR = 13;     // Forward address (3 bytes)
-constexpr size_t NUM_DESTS = 16;    // Number of destinations
-constexpr size_t FIRST_DEST = 17;   // Start of destination address(es)
-}  // namespace pkt_offset
-
 /// TX-specific offsets (fixed layout: always 1 destination, 3-byte addressing)
 /// For RX, destination count varies so offsets 17+ are computed dynamically.
 namespace tx_offset {
@@ -393,9 +409,6 @@ constexpr size_t FIXED_03 = 19;      // Always 0x03
 constexpr size_t CRYPTO_CODE = 20;   // Start of 8-byte encrypted section
 }  // namespace btn_offset
 
-/// Address size in bytes (big-endian 24-bit addresses)
-constexpr size_t ADDR_SIZE = 3;
-
 /// CC1101 appends 2 bytes after packet data: RSSI (1 byte) + LQI with CRC bit (1 byte)
 constexpr uint8_t CC1101_APPEND_SIZE = 2;
 
@@ -415,6 +428,12 @@ constexpr size_t COMMAND2 = 3;      // Secondary command byte
 constexpr size_t STATE = 6;         // State byte (for 0xCA/0xC9 packets, from blinds)
 constexpr size_t PARITY = 7;        // Parity byte
 }  // namespace payload_offset
+
+/// Default second prefix byte when a caller supplies no explicit value.
+constexpr uint8_t default_payload_2(uint8_t type, uint8_t num_dests = 1) {
+  if (type == msg_type::PROGRAM || (type == msg_type::BUTTON && num_dests <= 1)) return button::SINGLE_PAYLOAD_2;
+  return defaults::PAYLOAD_2;
+}
 
 /// Parameters for building a TX packet.
 struct TxParams {
@@ -450,7 +469,7 @@ inline uint16_t calc_crypto_code(uint8_t counter) {
 ///
 /// @param params Command parameters
 /// @param out_buf Output buffer (must be at least 30 bytes)
-/// @return Packet length (always TX_MSG_LENGTH + 1 = 30)
+/// @return Packet length including the length byte (28 for selectors, 30 for addresses)
 size_t build_tx_packet(const TxParams& params, uint8_t* out_buf);
 
 /// Parameters for building a 0x44 button TX packet (PRESS/RELEASE for dimming).
@@ -500,7 +519,7 @@ size_t build_program_packet(const ProgramTxParams& params, uint8_t* out_buf);
 
 /// Supported selector-group limit, shared by TX and RX on every chipset.
 /// Wire bytes include the length byte and two CRC bytes.
-constexpr uint8_t GROUP_MAX_DESTS = MAX_PACKET_SIZE - button::GROUP_BASE_LENGTH;
+constexpr uint8_t GROUP_MAX_DESTS = MAX_VARIABLE_BYTES;
 static_assert(MAX_PACKET_SIZE + 3 <= FIFO_LENGTH);
 
 /// Parameters for building a 0x44 group button TX packet (multi-dest).
@@ -573,10 +592,17 @@ struct EleroCommand {
   uint8_t hop;
   uint8_t payload[10];
 
-  // ── Group TX (0x44 multi-dest) ──
-  uint8_t num_dests{0};                                    ///< 0 = single-dest (default), >1 = group
-  uint8_t dest_channels[packet::GROUP_MAX_DESTS]{};        ///< Channel IDs for group TX
+  // Explicit destinations in wire order: one byte per selector or three per address.
+  uint8_t num_dests{0};  ///< 0 uses channel or dst_addr
+  // Store destinations at the start and any trailing bytes at the end. Together they
+  // must fit the same frame budget, even while the command waits in the radio queue.
+  uint8_t frame_data[packet::MAX_VARIABLE_BYTES]{};
+  uint8_t trailing_length{0};
 
+  /// Supply a packed destination list and any opaque bytes after the command block.
+  /// An empty list uses the command's channel or single destination address.
+  [[nodiscard]] bool set_frame_data(std::span<const uint8_t> destination_bytes,
+                                    std::span<const uint8_t> trailing_bytes);
   bool operator==(const EleroCommand &) const = default;
 };
 

@@ -133,7 +133,15 @@ class CommandSender : public TxClient {
                              uint8_t type = packet::msg_type::BUTTON,
                              std::span<const uint8_t> channels = {},
                              bool priority = false) {
-    if (channels.size() > packet::GROUP_MAX_DESTS) return false;
+    const bool selector = packet::uses_one_byte_selector_envelope(type);
+    if (channels.empty() && selector && this->command_.type == type) {
+      if (this->command_.num_dests > packet::GROUP_MAX_DESTS) return false;
+      channels = {this->command_.frame_data, this->command_.num_dests};
+    }
+    if (!channels.empty() && !selector) return false;
+    const size_t dest_size = channels.empty() ? (selector ? 1 : packet::ADDR_SIZE) : channels.size();
+    if (dest_size > packet::MAX_VARIABLE_BYTES ||
+        this->command_.trailing_length > packet::MAX_VARIABLE_BYTES - dest_size) return false;
     QueueEntry entry{this->command_, packets};
     auto &cmd = entry.command;
     cmd.counter = 0;  // Assigned at transmission time, shared by all repetitions.
@@ -149,9 +157,9 @@ class CommandSender : public TxClient {
       cmd.hop = packet::button::HOP;
     }
     cmd.num_dests = static_cast<uint8_t>(channels.size());
-    std::fill(std::begin(cmd.dest_channels), std::end(cmd.dest_channels), 0);
-    std::copy(channels.begin(), channels.end(), cmd.dest_channels);
-    if (!channels.empty()) cmd.channel = channels.front();
+    std::fill(std::begin(cmd.frame_data), std::end(cmd.frame_data) - cmd.trailing_length, 0);
+    std::copy(channels.begin(), channels.end(), cmd.frame_data);
+    set_button_header_(cmd);
     if (!priority && !this->command_queue_.empty() && this->command_queue_.back() == entry) {
       return true;
     }
@@ -194,17 +202,17 @@ class CommandSender : public TxClient {
       auto &cmd = it->command;
       bool changed = false;
       bool remove = false;
-      if (cmd.type == packet::msg_type::BUTTON && cmd.src_addr == src) {
+      if (packet::uses_one_byte_selector_envelope(cmd.type) && cmd.src_addr == src) {
         if (cmd.num_dests == 0) {
           changed = remove = cmd.channel == channel;
         } else {
-          auto *end = std::remove(cmd.dest_channels, cmd.dest_channels + cmd.num_dests, channel);
-          const auto count = static_cast<uint8_t>(end - cmd.dest_channels);
+          auto *end = std::remove(cmd.frame_data, cmd.frame_data + cmd.num_dests, channel);
+          const auto count = static_cast<uint8_t>(end - cmd.frame_data);
           changed = count != cmd.num_dests;
           cmd.num_dests = count;
           remove = count == 0;
-          if (count != 0) cmd.channel = cmd.dest_channels[0];
-          std::fill(end, std::end(cmd.dest_channels), 0);
+          if (changed && !remove) set_button_header_(cmd);
+          std::fill(end, std::end(cmd.frame_data) - cmd.trailing_length, 0);
         }
       } else if (cmd.type == packet::msg_type::COMMAND) {
         changed = remove = cmd.dst_addr == dst;
@@ -224,6 +232,16 @@ class CommandSender : public TxClient {
   const EleroCommand &command() const { return this->command_; }
 
  private:
+  // Ordinary button commands use canonical headers. Raw callers supply their own.
+  static void set_button_header_(EleroCommand &cmd) {
+    if (cmd.type != packet::msg_type::BUTTON && cmd.type != packet::msg_type::PROGRAM) return;
+    cmd.payload[0] = packet::defaults::PAYLOAD_1;
+    cmd.payload[1] = packet::default_payload_2(cmd.type, cmd.num_dests);
+    if (cmd.type == packet::msg_type::BUTTON && cmd.num_dests != 0) {
+      cmd.channel = cmd.num_dests == 1 ? cmd.frame_data[0] : packet::button::GROUP_CHANNEL;
+    }
+  }
+
   void reset_attempt_() {
     if (this->state_ == State::TX_PENDING || this->send_packets_ != 0) this->increase_counter_();
     this->send_packets_ = 0;
