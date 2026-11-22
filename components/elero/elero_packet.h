@@ -204,6 +204,7 @@ constexpr uint8_t COUNTER_MAX = 255;          ///< Counter wrap-around value
 // ═══════════════════════════════════════════════════════════════════════════════
 
 namespace button {
+constexpr uint8_t SINGLE_PAYLOAD_2 = 0x03;        ///< Second prefix byte for a single button press or P
 constexpr uint8_t RELEASE = 0x00;                 ///< Release command byte (stops dimming)
 constexpr uint8_t PACKETS = 3;                    ///< 3 packets per button phase
 constexpr uint32_t INTER_PACKET_MS = 10;          ///< 10ms between button packet repeats
@@ -427,6 +428,12 @@ constexpr size_t COMMAND2 = 3;      // Secondary command byte
 constexpr size_t STATE = 6;         // State byte (for 0xCA/0xC9 packets, from blinds)
 constexpr size_t PARITY = 7;        // Parity byte
 }  // namespace payload_offset
+
+/// Default second prefix byte when a caller supplies no explicit value.
+constexpr uint8_t default_payload_2(uint8_t type, uint8_t num_dests = 1) {
+  if (type == msg_type::PROGRAM || (type == msg_type::BUTTON && num_dests <= 1)) return button::SINGLE_PAYLOAD_2;
+  return defaults::PAYLOAD_2;
+}
 
 /// Parameters for building a TX packet.
 struct TxParams {

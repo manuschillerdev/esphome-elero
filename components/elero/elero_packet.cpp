@@ -48,8 +48,7 @@ size_t build_command_packet(const EleroCommand &cmd, uint8_t *out) {
   out[pkt_offset::TYPE2] = cmd.type2;
   out[pkt_offset::HOP] = cmd.hop;
   out[pkt_offset::SYS] = TX_SYS_ADDR;
-  const bool group_button = cmd.type == msg_type::BUTTON && count > 1;
-  out[pkt_offset::CHANNEL] = group_button ? button::GROUP_CHANNEL : cmd.channel;
+  out[pkt_offset::CHANNEL] = cmd.channel;
   write_addr(&out[pkt_offset::SRC_ADDR], cmd.src_addr);
   write_addr(&out[pkt_offset::BWD_ADDR], cmd.src_addr);
   write_addr(&out[pkt_offset::FWD_ADDR], cmd.src_addr);
@@ -62,14 +61,8 @@ size_t build_command_packet(const EleroCommand &cmd, uint8_t *out) {
     write_addr(&out[pkt_offset::FIRST_DEST], cmd.dst_addr);
   }
 
-  // The normal button and programming paths have fixed prefix values.
-  if (cmd.type == msg_type::BUTTON || cmd.type == msg_type::PROGRAM) {
-    out[prefix] = 0;
-    out[prefix + 1] = group_button ? defaults::PAYLOAD_2 : 0x03;
-  } else {
-    out[prefix] = cmd.payload[0];
-    out[prefix + 1] = cmd.payload[1];
-  }
+  out[prefix] = cmd.payload[0];
+  out[prefix + 1] = cmd.payload[1];
   auto *encoded = &out[block];
   memset(encoded, 0, COMMAND_BLOCK_SIZE);
   const uint16_t code = calc_crypto_code(cmd.counter);
@@ -204,13 +197,15 @@ size_t build_tx_packet(const TxParams& params, uint8_t* out_buf) {
 size_t build_button_packet(const ButtonTxParams& params, uint8_t* out_buf) {
   return build_tx_packet({.counter = params.counter, .src_addr = params.src_addr,
                           .channel = params.channel, .type = msg_type::BUTTON,
-                          .type2 = params.type2, .hop = params.hop, .command = params.command}, out_buf);
+                          .type2 = params.type2, .hop = params.hop, .command = params.command,
+                          .payload_2 = button::SINGLE_PAYLOAD_2}, out_buf);
 }
 
 size_t build_program_packet(const ProgramTxParams& params, uint8_t* out_buf) {
   return build_tx_packet({.counter = params.counter, .src_addr = params.src_addr,
                           .channel = params.channel, .type = msg_type::PROGRAM,
-                          .type2 = params.type2, .hop = params.hop, .command = params.command}, out_buf);
+                          .type2 = params.type2, .hop = params.hop, .command = params.command,
+                          .payload_2 = button::SINGLE_PAYLOAD_2}, out_buf);
 }
 
 size_t build_group_button_packet(const GroupButtonTxParams& params, uint8_t* out_buf) {
@@ -219,6 +214,8 @@ size_t build_group_button_packet(const GroupButtonTxParams& params, uint8_t* out
   cmd.counter = params.counter;
   cmd.src_addr = params.src_addr;
   cmd.type = msg_type::BUTTON;
+  cmd.channel = button::GROUP_CHANNEL;
+  cmd.payload[1] = defaults::PAYLOAD_2;
   cmd.type2 = params.type2;
   cmd.hop = params.hop;
   cmd.payload[4] = params.command;

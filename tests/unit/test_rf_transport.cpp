@@ -227,6 +227,53 @@ TEST_F(RfTransportTest, RawSelectorListAndTailReachTheRadio) {
   EXPECT_EQ(frame[31], 0xd2);
 }
 
+TEST_F(RfTransportTest, RawButtonAndProgramPreserveExplicitChannelAndPrefix) {
+  const uint8_t selectors[] = {1, 2};
+  const uint8_t tail[] = {0xab};
+  for (auto type : {packet::msg_type::BUTTON, packet::msg_type::PROGRAM}) {
+    port.enqueue(1);
+    auto &cmd = port.requests.front().cmd;
+    cmd.type = type;
+    cmd.channel = 0xff;
+    cmd.payload[0] = 0x12;
+    cmd.payload[1] = 0x34;
+    ASSERT_TRUE(cmd.set_frame_data(selectors, tail));
+    transport.step(port);
+    ASSERT_FALSE(radio.sent.empty());
+    const auto &frame = radio.sent.back();
+    ASSERT_EQ(frame.size(), 30u);
+    EXPECT_EQ(frame[2], type);
+    EXPECT_EQ(frame[6], 0xff);
+    EXPECT_EQ(frame[17], 1);
+    EXPECT_EQ(frame[18], 2);
+    EXPECT_EQ(frame[19], 0x12);
+    EXPECT_EQ(frame[20], 0x34);
+    EXPECT_EQ(frame.back(), 0xab);
+  }
+}
+
+TEST_F(RfTransportTest, CancelSelectorFromTemplateKeepsOtherSelectorAndTail) {
+  CommandSender sender;
+  auto &cmd = sender.command();
+  cmd.type = packet::msg_type::BUTTON_GROUP;
+  cmd.channel = 0xff;
+  cmd.src_addr = 0x123456;
+  const uint8_t selectors[] = {1, 2};
+  const uint8_t tail[] = {0xab};
+  ASSERT_TRUE(cmd.set_frame_data(selectors, tail));
+  ASSERT_TRUE(sender.enqueue(packet::command::UP, 1, cmd.type));
+  sender.cancel_target(cmd.src_addr, 2, 0);
+  sender.process_queue(100, &port, "test");
+  transport.step(port);
+  ASSERT_EQ(radio.sent.size(), 1u);
+  const auto &frame = radio.sent.front();
+  ASSERT_EQ(frame.size(), 29u);
+  EXPECT_EQ(frame[6], 0xff);
+  EXPECT_EQ(frame[16], 1);
+  EXPECT_EQ(frame[17], 1);
+  EXPECT_EQ(frame.back(), 0xab);
+}
+
 TEST_F(RfTransportTest, InvalidGroupNeverReusesPreviousPacket) {
   port.enqueue(1);
   transport.step(port);

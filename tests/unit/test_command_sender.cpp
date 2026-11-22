@@ -179,6 +179,8 @@ TEST_F(CommandSenderTest, QueuedGroupsKeepRecipientsAcrossChecksAndTemplateChang
     } else {
       EXPECT_EQ(cmd.payload[4], i < 3 ? packet::command::UP : packet::command::DOWN);
       EXPECT_EQ(cmd.num_dests, 2);
+      EXPECT_EQ(cmd.channel, 0);
+      EXPECT_EQ(cmd.payload[1], 0x04);
       EXPECT_EQ(cmd.frame_data[0], 1);
       EXPECT_EQ(cmd.frame_data[1], i < 3 ? 2 : 3);
     }
@@ -226,9 +228,40 @@ TEST_F(CommandSenderTest, CancelTargetDuringTxPreservesOtherChannelsAndIgnoresOl
       EXPECT_EQ(cmd.payload[4], packet::command::UP);
       EXPECT_EQ(cmd.num_dests, 1);
       EXPECT_EQ(cmd.channel, 7);
+      EXPECT_EQ(cmd.payload[1], 0x03);
       EXPECT_EQ(cmd.frame_data[0], 7);
     }
   }
+}
+
+TEST_F(CommandSenderTest, CancelTargetPrunesSelectorListsAndKeepsTheirHeaderChannel) {
+  const uint8_t selectors[] = {1, 2};
+  sender_.command().channel = 0xff;
+  for (auto type : {packet::msg_type::BUTTON_GROUP, packet::msg_type::PROGRAM}) {
+    ASSERT_TRUE(sender_.enqueue(packet::command::UP, 1, type, selectors));
+  }
+  sender_.cancel_target(0xABCDEF, 2, 0);
+  drain();
+  ASSERT_EQ(mock_hub_.recorded_commands.size(), 2u);
+  for (const auto &cmd : mock_hub_.recorded_commands) {
+    EXPECT_EQ(cmd.channel, 0xff);
+    ASSERT_EQ(cmd.num_dests, 1);
+    EXPECT_EQ(cmd.frame_data[0], 1);
+  }
+}
+
+TEST_F(CommandSenderTest, CancelTargetDropsLastOrImplicitSelectorOnlyForMatchingSource) {
+  const uint8_t only[] = {5};
+  for (auto type : {packet::msg_type::BUTTON_GROUP, packet::msg_type::PROGRAM}) {
+    ASSERT_TRUE(sender_.enqueue(packet::command::UP, 1, type, only));
+    ASSERT_TRUE(sender_.enqueue(packet::command::DOWN, 1, type));
+  }
+  sender_.cancel_target(0x111111, 5, 0);
+  EXPECT_EQ(sender_.queue_size(), 4u);
+  sender_.cancel_target(0xABCDEF, 5, 0);
+  EXPECT_EQ(sender_.queue_size(), 0u);
+  drain();
+  EXPECT_TRUE(mock_hub_.recorded_commands.empty());
 }
 
 TEST_F(CommandSenderTest, PriorityStopHasRoomInFullQueueAndRunsFirst) {

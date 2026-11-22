@@ -492,7 +492,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 
       // Unknown address → raw TX (blocking, debug only)
       uint8_t payload_1 = parse_hex_or(root, "payload_1", packet::defaults::PAYLOAD_1);
-      uint8_t payload_2 = parse_hex_or(root, "payload_2", packet::defaults::PAYLOAD_2);
+      uint8_t payload_2 = parse_hex_or(root, "payload_2", packet::default_payload_2(msg_type));
       uint8_t type2_val = parse_hex_or(root, "type2", packet::defaults::TYPE2);
       uint8_t hop = parse_hex_or(root, "hop", packet::defaults::HOP);
 
