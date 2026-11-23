@@ -1729,7 +1729,7 @@ TEST_F(DeviceRegistryTest, UnpublishedCoverStillAcceptsAndTransmitsExplicitStop)
     auto config = dev->config;
     config.set_enabled(false);
     registry_.upsert(config);
-    ASSERT_TRUE(registry_.command_cover_action(*dev, "stop"));
+    ASSERT_TRUE(registry_.command_cover_action(config.dst_address, "stop"));
     for (int i = 0; dev->sender.is_busy() && i < 100; ++i) {
         mock_time_.advance(pkt::button::INTER_PACKET_MS);
         tick_registry();
