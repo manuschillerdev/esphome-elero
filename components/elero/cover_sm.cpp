@@ -179,10 +179,14 @@ State on_command(const State &state, uint8_t cmd_byte, uint32_t now,
                  const Context &ctx) {
     const uint8_t cmd = cmd_byte;
     float pos = position(state, now, ctx);
+    // The receiver stores the preset. Its next report supplies the direction.
+    if (cmd == packet::command::TILT || cmd == packet::command::INTERMEDIATE)
+        return Idle{pos};
+
 
     return std::visit(overloaded{
         [&](const Idle &) -> State {
-            if (cmd == packet::command::UP || cmd == packet::command::TILT)
+            if (cmd == packet::command::UP)
                 return Opening{pos, now};
             if (cmd == packet::command::DOWN)
                 return Closing{pos, now};
@@ -200,14 +204,14 @@ State on_command(const State &state, uint8_t cmd_byte, uint32_t now,
         [&](const Closing &) -> State {
             if (cmd == packet::command::STOP)
                 return Stopping{pos, now};
-            if (cmd == packet::command::UP || cmd == packet::command::TILT)
+            if (cmd == packet::command::UP)
                 return Opening{pos, now};  // Reverse
             return state;
         },
 
         [&](const Stopping &) -> State {
             // User commands override cooldown
-            if (cmd == packet::command::UP || cmd == packet::command::TILT)
+            if (cmd == packet::command::UP)
                 return Opening{pos, now};
             if (cmd == packet::command::DOWN)
                 return Closing{pos, now};
