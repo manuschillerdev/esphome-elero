@@ -64,12 +64,14 @@ class LearnInManager : public TxClient {
   void cancel();
 
   template<typename Hub>
-  void loop(uint32_t now, Hub *hub) {
-    if (hub == nullptr) {
+  void loop(Hub *hub) {
+    if (hub == nullptr || !is_active()) {
       return;
     }
 
-    if (is_active() && now - session_start_ms_ >= session_timeout_ms_) {
+    // A web request can start this session during the registry loop.
+    const uint32_t now = get_time_provider().millis();
+    if (now - session_start_ms_ >= session_timeout_ms_) {
       finish_(LearnInState::TIMED_OUT);
       ESP_LOGW("elero.learn_in", "Learn-in session timed out");
       return;
