@@ -1,6 +1,7 @@
 #include <cinttypes>
 #include "elero_web_server.h"
 #include "web_json.h"
+#include "web_raw_tx.h"
 #include "elero_web_ui.h"
 #include "../elero/elero_packet.h"
 #include "../elero/elero_strings.h"
@@ -82,24 +83,6 @@ static uint32_t derive_default_virtual_remote_address() {
 #else
   return 0x000001;
 #endif
-}
-
-/// Parse hex string ("0xNN" or decimal) to uint8_t, returning default if missing/null
-static uint8_t parse_hex_or(JsonObject root, const char *key, uint8_t def) {
-  if (!root[key]) return def;
-  if (root[key].is<const char *>()) {
-    return (uint8_t) strtoul(root[key].as<const char *>(), nullptr, 0);
-  }
-  return root[key].as<uint8_t>();
-}
-
-/// Parse hex string ("0xNNNNNN" or decimal) to uint32_t, returning 0 if missing
-static uint32_t parse_hex32(JsonObject root, const char *key) {
-  if (!root[key]) return 0;
-  if (root[key].is<const char *>()) {
-    return (uint32_t) strtoul(root[key].as<const char *>(), nullptr, 0);
-  }
-  return root[key].as<uint32_t>();
 }
 
 /// Parse "cover"/"light"/"remote" into DeviceType enum. Returns false if invalid.
@@ -465,41 +448,9 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
     if (type == "restart") { App.safe_reboot(); return true; }
 
     if (type == "raw") {
-      uint32_t dst_addr = parse_hex32(root, "dst_address");
-      uint32_t src_addr = parse_hex32(root, "src_address");
-      uint8_t channel = parse_hex_or(root, "channel", 0);
-      uint8_t raw_command = parse_hex_or(root, "command", 0);
-      uint8_t msg_type = parse_hex_or(root, "msg_type", packet::msg_type::COMMAND);
-
-      // Button broadcasts (0x44) don't need dst_address — they use channel addressing
-      bool is_broadcast = (msg_type == packet::msg_type::BUTTON);
-      if (src_addr == 0 || (!is_broadcast && dst_addr == 0)) {
-        ESP_LOGW(TAG, "Raw TX missing required fields");
-        return false;
+      if (const char *error = submit_raw_tx(root, *this->parent_)) {
+        this->ws_send(c, "error", build_web_json([&](JsonObject data) { data["msg"] = error; }));
       }
-
-      // Route through registry for known devices (non-blocking, coordinated TX)
-      auto *registry = this->parent_->get_registry();
-      if (registry != nullptr) {
-        Device *dev = registry->find(dst_addr);
-        if (dev != nullptr) {
-          if (!this->dispatch_device_command_(*dev, raw_command)) {
-            this->ws_send(c, "error", "{\"msg\":\"Command queue full\"}");
-          }
-          return true;
-        }
-      }
-
-      // Unknown address → raw TX (blocking, debug only)
-      uint8_t payload_1 = parse_hex_or(root, "payload_1", packet::defaults::PAYLOAD_1);
-      uint8_t payload_2 = parse_hex_or(root, "payload_2", packet::default_payload_2(msg_type));
-      uint8_t type2_val = parse_hex_or(root, "type2", packet::defaults::TYPE2);
-      uint8_t hop = parse_hex_or(root, "hop", packet::defaults::HOP);
-
-      bool success = this->parent_->send_raw_command(
-          dst_addr, src_addr, channel, raw_command,
-          payload_1, payload_2, msg_type, type2_val, hop);
-      ESP_LOGI(TAG, "Raw TX to 0x%06" PRIx32 " cmd=0x%02x: %s", dst_addr, raw_command, success ? "OK" : "FAIL");
       return true;
     }
 

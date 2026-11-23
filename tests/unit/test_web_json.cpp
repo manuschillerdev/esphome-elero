@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "elero_web/web_json.h"
+#include "elero_web/web_raw_tx.h"
 
 using esphome::elero::build_web_json;
 
@@ -38,4 +39,38 @@ TEST(WebJson, FullDeviceListAndEnvelopeExceedEspHomeSerializationCap) {
 
 TEST(WebJson, EmptyDocumentRemainsValid) {
   EXPECT_EQ(build_web_json([](JsonObject) {}), "{}");
+}
+
+namespace {
+struct RawTxSink {
+  esphome::elero::packet::TxParams frame{};
+  bool accepts{true};
+  bool send_raw_command(uint32_t dst, uint32_t src, uint8_t channel, uint8_t command,
+                        uint8_t first, uint8_t second, uint8_t type, uint8_t type2, uint8_t hop) {
+    frame = {.dst_addr = dst, .src_addr = src, .channel = channel, .type = type, .type2 = type2,
+             .hop = hop, .command = command, .payload_1 = first, .payload_2 = second};
+    return accepts;
+  }
+};
+}  // namespace
+
+TEST(WebJson, RawRequestSubmitsEverySuppliedFieldToRadioQueue) {
+  JsonDocument doc;
+  ASSERT_FALSE(deserializeJson(doc, R"({"type":"raw","src_address":"0xABCDEF","dst_address":"0x123456",
+      "channel":7,"command":"0x10","msg_type":"0x69","type2":"0x12","hop":"0x33",
+      "payload_1":"0x56","payload_2":"0x78"})"));
+  RawTxSink sink;
+  auto root = doc.as<JsonObject>();
+  ASSERT_EQ(esphome::elero::submit_raw_tx(root, sink), nullptr);
+  EXPECT_EQ(sink.frame.dst_addr, 0x123456u);
+  EXPECT_EQ(sink.frame.src_addr, 0xABCDEFu);
+  EXPECT_EQ(sink.frame.channel, 7);
+  EXPECT_EQ(sink.frame.command, 0x10);
+  EXPECT_EQ(sink.frame.type, 0x69);
+  EXPECT_EQ(sink.frame.type2, 0x12);
+  EXPECT_EQ(sink.frame.hop, 0x33);
+  EXPECT_EQ(sink.frame.payload_1, 0x56);
+  EXPECT_EQ(sink.frame.payload_2, 0x78);
+  sink.accepts = false;
+  EXPECT_NE(esphome::elero::submit_raw_tx(root, sink), nullptr);
 }
