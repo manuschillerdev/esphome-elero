@@ -294,7 +294,7 @@ CoverStateResult map_cover_state(uint8_t elero_state) {
 
     case state::TIMEOUT:
       r.is_warning = true;
-      r.warning_msg = "Communication timeout";
+      r.warning_msg = "Stopped at end of run time";
       r.operation = CoverOp::IDLE;
       break;
 
