@@ -48,8 +48,10 @@ bool supports_brightness(const Context &ctx) {
 State on_rf_status(const State &state, uint8_t state_byte, uint32_t now,
                    const Context &ctx) {
     // Definitive on/off from RF
-    if (state_byte == packet::state::LIGHT_ON ||
-        state_byte == packet::state::TOP) {
+    if (state_byte == packet::state::LIGHT_ON && is_on(state)) {
+        return state;  // The receiver reports power only. Keep the dim timer and level.
+    }
+    if (state_byte == packet::state::LIGHT_ON || state_byte == packet::state::TOP) {
         return On{1.0f};
     }
     if (state_byte == packet::state::LIGHT_OFF ||
