@@ -67,8 +67,9 @@ export function getStateLabel(state: string | undefined, deviceType?: DeviceType
   return (name && STATE_LABELS[name]) ?? state
 }
 
-export function getCommandLabel(hexCmd: string | undefined): string {
+export function getCommandLabel(hexCmd: string | undefined, frameType?: string): string {
   if (!hexCmd) return ''
+  if (frameType?.toLowerCase() === msg_type.BUTTON && hexCmd.toLowerCase() === command.CHECK) return 'RELEASE'
   return COMMAND_LABELS[hexCmd.toLowerCase()] ?? hexCmd
 }
 

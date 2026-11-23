@@ -412,7 +412,7 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
                 {commandPackets.map((pkt, i) => (
                   <tr key={`${pkt.t}-${i}`} className="group">
                     <td className="py-1.5 pr-3 text-muted-foreground">{formatTime(pkt.received_at)}</td>
-                    <td className="py-1.5 pr-3">{getCommandLabel(pkt.command)}</td>
+                    <td className="py-1.5 pr-3">{getCommandLabel(pkt.command, pkt.type)}</td>
                     <td className="py-1.5 pr-3 text-muted-foreground">{pkt.type}</td>
                     <td className="py-1.5 pr-3 text-muted-foreground">{pkt.rssi?.toFixed(0) ?? '-'}</td>
                     <td className="py-1.5 text-right">
