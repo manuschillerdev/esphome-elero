@@ -166,7 +166,7 @@ State on_rf_status(const State &state, uint8_t state_byte, uint32_t now,
         [&](const Stopping &) -> State {
             // During cooldown, only definitive endpoint states are respected.
             // Transient MOVING_UP/DOWN are ignored (they're echoes from before STOP).
-            if (s == packet::state::TOP) return Idle{POSITION_OPEN};
+            if (s == packet::state::TOP || s == packet::state::TOP_TILT) return Idle{POSITION_OPEN};
             if (s == packet::state::BOTTOM || s == packet::state::BOTTOM_TILT) return Idle{POSITION_CLOSED};
             return state;
         },

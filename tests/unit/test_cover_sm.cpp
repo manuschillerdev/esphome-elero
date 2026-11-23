@@ -535,3 +535,9 @@ TEST_F(CoverSmTest, RapidStopThenResumeFromStoppingState) {
     ASSERT_TRUE(std::holds_alternative<sm::Opening>(s));
     EXPECT_NEAR(std::get<sm::Opening>(s).start_position, 0.3f, 0.01f);
 }
+
+TEST_F(CoverSmTest, TopTiltAfterStopSetsOpenPositionDuringCooldown) {
+    auto s = sm::on_rf_status(sm::Stopping{0.4f, 100}, pkt::state::TOP_TILT, 200, ctx);
+    ASSERT_TRUE(std::holds_alternative<sm::Idle>(s));
+    EXPECT_FLOAT_EQ(std::get<sm::Idle>(s).position, 1.0f);
+}

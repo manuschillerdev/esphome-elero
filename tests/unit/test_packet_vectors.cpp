@@ -426,7 +426,7 @@ TEST(CoverStateMapping, MapState_Overheated) {
 TEST(CoverStateMapping, MapState_Timeout) {
   auto result = map_cover_state(state::TIMEOUT);
   EXPECT_TRUE(result.is_warning);
-  EXPECT_STREQ(result.warning_msg, "Communication timeout");
+  EXPECT_STREQ(result.warning_msg, "Stopped at end of run time");
   EXPECT_EQ(result.operation, CoverOp::IDLE);
 }
 
