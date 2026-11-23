@@ -2106,3 +2106,30 @@ TEST_F(DeviceRegistryTest, TiltCapabilityEditPreservesAnUnrelatedOpenCommand) {
         EXPECT_TRUE(cover_sm::is_moving(cover.state));
     }
 }
+
+TEST_F(DeviceRegistryTest, RepeatedOnReportsPreserveDimTargetAndScheduledRelease) {
+    registry_.set_hub(nullptr);  // Inspect the queued commands after the deadline.
+    for (bool dim_down : {false, true}) {
+        SCOPED_TRACE(dim_down);
+        const auto addr = dim_down ? 0xC00011u : 0xC00010u;
+        auto *dev = add_light(addr);
+        if (dim_down) {
+            registry_.on_rf_packet(make_status_pkt(addr, pkt::state::LIGHT_ON), mock_time_.millis());
+        }
+        registry_.set_light_brightness(*dev, 0.5f);
+        auto &light = std::get<LightDevice>(dev->logic);
+        for (int i = 0; i < 2; ++i) {
+            mock_time_.advance(500);
+            registry_.on_rf_packet(make_status_pkt(addr, pkt::state::LIGHT_ON), mock_time_.millis());
+            ASSERT_TRUE(light_sm::is_dimming(light.state));
+        }
+        mock_time_.advance(2000);
+        registry_.loop(mock_time_.millis());
+        ASSERT_TRUE(std::holds_alternative<light_sm::On>(light.state));
+        EXPECT_FLOAT_EQ(std::get<light_sm::On>(light.state).brightness, 0.5f);
+        const auto packets = drain_commands(*dev);
+        EXPECT_EQ(std::count_if(packets.begin(), packets.end(), [](const auto &cmd) {
+            return cmd.payload[4] == pkt::button::RELEASE;
+        }), pkt::button::PACKETS);
+    }
+}
