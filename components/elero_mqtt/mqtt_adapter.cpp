@@ -4,7 +4,10 @@
 /// Publishes HA discovery configs, state updates, and subscribes to command topics.
 /// Reads all state from Device structs via the DeviceRegistry — no old entity classes.
 
+#include <charconv>
 #include <cinttypes>
+#include <cmath>
+#include <cstring>
 #include "mqtt_adapter.h"
 #include "../elero/device.h"
 #include "../elero/cover_actions.h"
@@ -444,8 +447,16 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
             Device *d = registry_->find(addr, DeviceType::COVER);
             if (d == nullptr) return;
 
-            float target = static_cast<float>(atoi(payload)) / PERCENT_SCALE;
-            registry_->set_cover_position(*d, target);
+            if (payload == nullptr) return;
+            const char *end = payload + std::strlen(payload);
+            float percent{};
+            const auto result = std::from_chars(payload, end, percent);
+            if (result.ec != std::errc{} || result.ptr != end ||
+                !std::isfinite(percent) || percent < 0.0f || percent > PERCENT_SCALE) {
+                ESP_LOGW(TAG, "Invalid position for 0x%06" PRIx32, addr);
+                return;
+            }
+            registry_->set_cover_position(*d, percent / PERCENT_SCALE);
         });
 
     ctx_.subscribe(DeviceType::COVER, addr, mqtt_topic::TILT,
