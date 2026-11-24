@@ -81,10 +81,13 @@ struct LightStateSnapshot {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 struct RemoteStateSnapshot {
+    uint8_t  last_frame_type;
     uint8_t  last_command;
     uint32_t last_target;
     uint8_t  last_channel;
     float    rssi;
+
+    const char *command_name() const { return elero_rf_command_name(last_frame_type, last_command); }
 };
 
 // Derived membership state, shared by every output adapter. Integer positions

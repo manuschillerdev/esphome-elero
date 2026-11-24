@@ -97,6 +97,7 @@ constexpr float DATA = 0.0f;
 #include "elero_mqtt/mqtt_adapter.h"
 #define ELERO_COVER_ACTION_BUTTON_COUNT 4  // Supplied by elero_nvs codegen on ESP32.
 #include "elero_nvs/nvs_adapter.h"
+#include "elero_web/web_json.h"
 
 // Stub Elero methods (device_registry.cpp includes elero.h)
 namespace esphome {

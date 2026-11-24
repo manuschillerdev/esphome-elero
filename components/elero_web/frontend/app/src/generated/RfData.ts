@@ -1,3 +1,4 @@
+import {RfCommandName} from './RfCommandName';
 import {RfStateName} from './RfStateName';
 interface RfData {
   /**
@@ -42,19 +43,14 @@ interface RfData {
    */
   'type2': string;
   /**
-   * Command byte (hex string, for command/selector packets):
-   * - `0x00` — check (request status)
-   * - `0x10` — stop
-   * - `0x20` — up/open
-   * - `0x24` — tilt
-   * - `0x40` — down/close
-   * - `0x44` — intermediate position
-   * - `0x80` — programming/P selector action
-   * - `0x81` — programming/P group selector action
-   * - `0x84` — programming/P targeted action
+   * Raw command key. Its meaning depends on the frame type.
    * @example 0x20
    */
   'command': string;
+  /**
+   * Command meaning decoded by the hub from the frame type and key.
+   */
+  'command_name'?: RfCommandName;
   /**
    * Raw hexadecimal status byte. For a status packet, state_name gives the firmware's decoded name.
    * @example 0x01

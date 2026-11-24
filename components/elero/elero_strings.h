@@ -54,6 +54,8 @@ inline float round_rssi(float rssi) {
 
 const char *elero_state_to_string(uint8_t state);
 const char *elero_command_to_string(uint8_t command);
+/// Returns nullptr if the frame has no known command meaning.
+const char *elero_rf_command_name(uint8_t type, uint8_t key);
 
 /// Convert action string ("up", "down", "stop", etc.) to command byte.
 /// Returns 0xFF if action is not recognized.

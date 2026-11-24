@@ -4,12 +4,14 @@
 class FakeMqttPublisher : public MqttPublisher {
  public:
     std::map<std::string, std::string> retained;
+    std::pair<std::string, std::string> last_publication;
     std::map<std::string, std::vector<std::function<void(const char *, const char *)>>> subscriptions;
     bool connected{true};
     std::vector<std::string> cleared_topics;
 
     bool publish(const char *topic, const char *payload, bool retain) override {
         if (!connected) return false;
+        last_publication = {topic, payload};
         if (retain) {
             if (payload[0] == '\0') { retained.erase(topic); cleared_topics.emplace_back(topic); }
             else retained[topic] = payload;
@@ -482,5 +484,36 @@ TEST_F(MqttCoverTest, ReceiverStatusReachesMqttAndWebWithoutChangingClosedCover)
             EXPECT_EQ(broker_.retained.at(STATE_TOPIC), "closed");
             EXPECT_EQ(broker_.retained.at("elero/cover/a831e5/device_state"), name);
         }
+    }
+}
+
+TEST_F(MqttCoverTest, SameRemoteKeyPublishesReleaseThenCheckAcrossAdapters) {
+    auto cfg = make_cover_config(0x123456, "Patio remote");
+    cfg.type = DeviceType::REMOTE;
+    ASSERT_NE(registry_.upsert(cfg), nullptr);
+    NvsAdapter native;
+    native.set_registry(&registry_);
+    registry_.add_adapter(&native);
+    native.setup();
+    ASSERT_EQ(esphome::App.text_sensors.size(), 1u);
+    const auto &sensor = esphome::App.text_sensors.front();
+    EXPECT_TRUE(sensor->state.empty());
+
+    auto frame = make_command_pkt(cfg.dst_address, 0xABCDEF, 0x00);
+    for (auto [type, name] : {std::pair{pkt::msg_type::BUTTON, "release"},
+                              std::pair{pkt::msg_type::COMMAND, "check"}}) {
+        frame.type = type;
+        JsonDocument ws;
+        write_rf_command_fields(ws.to<JsonObject>(), frame.type, frame.command);
+        EXPECT_EQ(ws["command"].as<std::string>(), "0x00");
+        EXPECT_EQ(ws["command_name"].as<std::string>(), name);
+
+        registry_.on_rf_packet(frame, mock_time_.millis());
+        EXPECT_EQ(sensor->state, name);
+        ASSERT_EQ(broker_.last_publication.first, "elero/remote/123456/state");
+        JsonDocument mqtt;
+        ASSERT_FALSE(deserializeJson(mqtt, broker_.last_publication.second));
+        EXPECT_EQ(mqtt["last_command"].as<std::string>(), "0x00");
+        EXPECT_EQ(mqtt["last_command_name"].as<std::string>(), name);
     }
 }

@@ -5,7 +5,7 @@ from esphome.core import CORE
 from ..elero import CONF_ELERO_ID, CONF_REGISTRY_ID, DeviceRegistry, OutputAdapter, elero_ns
 
 DEPENDENCIES = ["elero"]
-AUTO_LOAD = ["json", "cover", "light", "button"]
+AUTO_LOAD = ["json", "cover", "light", "button", "text_sensor"]
 CODEOWNERS = ["@manuschillerdev"]
 
 NvsAdapter = elero_ns.class_("NvsAdapter", cg.Component, OutputAdapter)
@@ -48,9 +48,11 @@ async def to_code(config):
         cg.add_define("USE_COVER")
         cg.add_define("USE_LIGHT")
         cg.add_define("USE_BUTTON")
+        cg.add_define("USE_TEXT_SENSOR")
         for _ in range(MAX_DEVICES):
             CORE.register_platform_component("cover", None)
             CORE.register_platform_component("light", None)
+            CORE.register_platform_component("text_sensor", None)
         for _ in range(MAX_DEVICES * COVER_ACTION_BUTTON_COUNT):
             CORE.register_platform_component("button", None)
         for _ in range(MAX_GROUPS):

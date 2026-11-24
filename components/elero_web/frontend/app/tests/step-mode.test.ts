@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { beforeEach, test } from 'node:test'
 import { readCommand, envelope } from '../mock-contract'
-import { devices, onDeviceUpserted, updateDevice, getCommandLabel as storeCommandLabel } from '../src/store'
+import { devices, onDeviceUpserted, updateDevice } from '../src/store'
 import { getCommandLabel } from '../src/lib/protocol'
 
 const address = '0x123456'
@@ -28,10 +28,6 @@ await test('contract accepts independent step and full travel actions', () => {
   for (const action of ['step_up', 'step_down', 'full_up', 'full_down']) {
     assert.equal(readCommand(JSON.stringify({ type: 'cmd', address, action })).type, 'cmd')
   }
-  assert.equal(getCommandLabel('0x21'), 'FULL_UP')
-  assert.equal(getCommandLabel('0x41'), 'FULL_DOWN')
-  assert.equal(storeCommandLabel('0x21'), 'FULL_UP')
-  assert.equal(storeCommandLabel('0x41'), 'FULL_DOWN')
 })
 
 await test('contract preserves mode in save and backup, and rejects unknown modes', () => {
@@ -43,8 +39,8 @@ await test('contract preserves mode in save and backup, and rejects unknown mode
   assert.doesNotThrow(() => envelope('device_upserted', { address, device_type: 'cover', movement_mode: 'step' }))
 })
 
-await test('button release and status query have distinct packet labels', () => {
-  assert.equal(getCommandLabel('0x00', '0x44'), 'RELEASE')
-  assert.equal(getCommandLabel('0x00', '0x6A'), 'CHECK')
-  assert.equal(getCommandLabel('0x10', '0x44'), 'STOP')
+await test('packet labels display the hub name and fall back to the raw key', () => {
+  assert.equal(getCommandLabel({ command: '0x00', command_name: 'release' }), 'RELEASE')
+  assert.equal(getCommandLabel({ command: '0x00', command_name: 'check' }), 'CHECK')
+  assert.equal(getCommandLabel({ command: '0x00' }), '0x00')
 })

@@ -781,6 +781,7 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
         existing->rf.last_seen_ms = now;
         existing->rf.last_rssi = pkt.rssi;
         auto &remote = std::get<RemoteDevice>(existing->logic);
+        remote.last_frame_type = pkt.type;
         remote.last_command = pkt.command;
         remote.last_target = pkt.dst;
         remote.last_channel = pkt.channel;
@@ -806,6 +807,7 @@ void DeviceRegistry::track_remote_(const RfPacketInfo &pkt, uint32_t now) {
 
     init_device(*slot, cfg);
     auto &remote = std::get<RemoteDevice>(slot->logic);
+    remote.last_frame_type = pkt.type;
     remote.last_command = pkt.command;
     remote.last_target = pkt.dst;
     remote.last_channel = pkt.channel;

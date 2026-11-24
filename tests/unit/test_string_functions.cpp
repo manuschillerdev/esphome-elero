@@ -71,6 +71,14 @@ TEST(CommandToString, AllKnownCommands) {
   EXPECT_STREQ(elero_command_to_string(command::PROGRAM_TARGET), "PROGRAM_TARGET");
 }
 
+TEST(CommandToString, RadioLabelsRequireARecognizedFrameAndKey) {
+  EXPECT_STREQ(elero_rf_command_name(msg_type::COMMAND_ALT, command::CHECK), "check");
+  EXPECT_STREQ(elero_rf_command_name(msg_type::BUTTON_GROUP, command::STOP), "stop");
+  EXPECT_EQ(elero_rf_command_name(msg_type::BUTTON_GROUP, command::CHECK), nullptr);
+  EXPECT_EQ(elero_rf_command_name(msg_type::STATUS, command::STOP), nullptr);
+  EXPECT_EQ(elero_rf_command_name(msg_type::COMMAND, 0xff), nullptr);
+}
+
 TEST(CommandToString, UnknownCommand) {
   EXPECT_STREQ(elero_command_to_string(0xFF), "UNKNOWN");
   EXPECT_STREQ(elero_command_to_string(0x99), "UNKNOWN");

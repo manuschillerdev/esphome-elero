@@ -1,31 +1,8 @@
 import { rfStatusNames } from '../generated/rf-status-names'
 import type { DeviceType, FreqConfig, RfData, RfStateName } from '@/generated'
 
-// ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
-
-export const msg_type = {
-  BUTTON: '0x44',
-  BUTTON_GROUP: '0x45',
-  COMMAND: '0x6a',
-  COMMAND_ALT: '0x69',
-  PROGRAM: '0x70',
-  STATUS: '0xca',
-  STATUS_ALT: '0xc9',
-} as const
-
-export const command = {
-  CHECK: '0x00',
-  STOP: '0x10',
-  UP: '0x20',
-  FULL_UP: '0x21',
-  FULL_DOWN: '0x41',
-  TILT: '0x24',
-  DOWN: '0x40',
-  INTERMEDIATE: '0x44',
-  PROGRAM: '0x80',
-  PROGRAM_GROUP: '0x81',
-  PROGRAM_TARGET: '0x84',
-} as const
+import { command, msg_type } from '../generated/rf-wire'
+export { command, msg_type }
 
 /** Commands that indicate a real user action (not a status poll). */
 export const DISCOVERY_COMMANDS: Set<string> = new Set([
@@ -49,9 +26,6 @@ const STATE_LABELS: Record<string, string> = {
   scene_stopped: 'Scene stopped',
   scene_error: 'Scene error',
 }
-const COMMAND_LABELS: Record<string, string> = Object.fromEntries(
-  Object.entries(command).map(([k, v]) => [v, k])
-)
 const MSG_TYPE_LABELS: Record<string, string> = Object.fromEntries(
   Object.entries(msg_type).map(([k, v]) => [v, k])
 )
@@ -67,10 +41,8 @@ export function getStateLabel(state: string | undefined, deviceType?: DeviceType
   return (name && STATE_LABELS[name]) ?? state
 }
 
-export function getCommandLabel(hexCmd: string | undefined, frameType?: string): string {
-  if (!hexCmd) return ''
-  if (frameType?.toLowerCase() === msg_type.BUTTON && hexCmd.toLowerCase() === command.CHECK) return 'RELEASE'
-  return COMMAND_LABELS[hexCmd.toLowerCase()] ?? hexCmd
+export function getCommandLabel(pkt: Pick<RfData, 'command' | 'command_name'>): string {
+  return pkt.command_name?.toUpperCase() ?? pkt.command
 }
 
 export function getMsgTypeLabel(hexType: string | undefined): string {

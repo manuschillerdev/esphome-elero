@@ -1,3 +1,4 @@
+import { commandKeys, msg_type } from './src/generated/rf-wire'
 import { rfStatusNames } from './src/generated/rf-status-names'
 import { createInterface } from 'node:readline'
 import { WebSocketServer, WebSocket } from 'ws'
@@ -155,6 +156,10 @@ function rf(device: Device, command = '0x00', transmitting = false, overrides: P
     type: transmitting ? '0x44' : '0xca', type2: transmitting ? '0x10' : '0x00', command,
     state: transmitting ? '0x00' : hex(rfStatusNames.indexOf(device.state)), cnt: counter = (counter % 255) + 1,
     rssi: device.rssi, hop: transmitting ? '0x00' : c.hop ?? '0x0a', raw: '', ...overrides }
+  if (transmitting && data.type !== msg_type.STATUS && data.type !== msg_type.STATUS_ALT) {
+    data.command_name = commandKeys.find(entry => entry.byte === data.command &&
+      (!('frames' in entry) || entry.frames.some(type => type === data.type)))?.name
+  }
   if (!transmitting) {
     data.state_name = device.state
     if (!isReceiverEvent(device.state)) device.operatingState = device.state

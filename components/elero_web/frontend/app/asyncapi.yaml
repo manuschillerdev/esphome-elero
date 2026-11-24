@@ -1133,6 +1133,7 @@ components:
           examples: [5]
         type:
           type: string
+          x-wire-types: {BUTTON: "0x44", BUTTON_GROUP: "0x45", COMMAND: "0x6a", COMMAND_ALT: "0x69", PROGRAM: "0x70", STATUS: "0xca", STATUS_ALT: "0xc9"}
           description: |
             Message type byte (hex string):
             - `0x44` — button press/release selector packet
@@ -1149,18 +1150,10 @@ components:
           examples: ["0x00"]
         command:
           type: string
-          description: |
-            Command byte (hex string, for command/selector packets):
-            - `0x00` — check (request status)
-            - `0x10` — stop
-            - `0x20` — up/open
-            - `0x24` — tilt
-            - `0x40` — down/close
-            - `0x44` — intermediate position
-            - `0x80` — programming/P selector action
-            - `0x81` — programming/P group selector action
-            - `0x84` — programming/P targeted action
+          description: Raw command key. Its meaning depends on the frame type.
           examples: ["0x20"]
+        command_name:
+          $ref: "#/components/schemas/RfCommandName"
         state:
           type: string
           description: Raw hexadecimal status byte. For a status packet, state_name gives the firmware's decoded name.
@@ -2012,6 +2005,24 @@ components:
       type: string
       enum: [cover, light, remote]
       description: Type of device (cover, light, or remote control)
+
+    RfCommandName:
+      type: string
+      description: Command meaning decoded by the hub from the frame type and key.
+      enum: [check, release, stop, up, full_up, full_down, tilt, down, intermediate, program, program_group, program_target]
+      x-wire-keys:
+        check: {byte: "0x00", frames: [COMMAND, COMMAND_ALT]}
+        release: {byte: "0x00", frames: [BUTTON]}
+        stop: {byte: "0x10"}
+        up: {byte: "0x20"}
+        full_up: {byte: "0x21"}
+        full_down: {byte: "0x41"}
+        tilt: {byte: "0x24"}
+        down: {byte: "0x40"}
+        intermediate: {byte: "0x44"}
+        program: {byte: "0x80"}
+        program_group: {byte: "0x81"}
+        program_target: {byte: "0x84"}
 
     RfStateName:
       # Each enum index is the status byte. Older hubs only send this byte.

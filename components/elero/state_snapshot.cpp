@@ -38,6 +38,7 @@ CoverStateSnapshot compute_cover_snapshot(const Device &dev, uint32_t now) {
 RemoteStateSnapshot compute_remote_snapshot(const Device &dev) {
     const auto &remote = std::get<RemoteDevice>(dev.logic);
     return RemoteStateSnapshot{
+        .last_frame_type = remote.last_frame_type,
         .last_command = remote.last_command,
         .last_target = remote.last_target,
         .last_channel = remote.last_channel,
@@ -178,7 +179,8 @@ uint16_t diff_and_update_remote(const RemoteStateSnapshot &snap, RemoteDevice::P
     // RSSI is bucketed to whole dB so link-quality jitter doesn't churn publishes.
     uint16_t changes = 0;
 
-    if (pub.last_command != snap.last_command) {
+    if (pub.last_frame_type != snap.last_frame_type || pub.last_command != snap.last_command) {
+        pub.last_frame_type = snap.last_frame_type;
         changes |= state_change::REMOTE_ACTIVITY;
         pub.last_command = snap.last_command;
     }

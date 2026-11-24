@@ -119,8 +119,8 @@ export function buildFullColumns(
     },
     {
       key: 'command', label: 'Command', sortable: true, filter: 'select',
-      value: (pkt) => (isCommandPacket(pkt) || isSelectorPacket(pkt)) ? getCommandLabel(pkt.command, pkt.type) : '',
-      render: (pkt) => <span className="text-muted-foreground">{(isCommandPacket(pkt) || isSelectorPacket(pkt)) ? getCommandLabel(pkt.command, pkt.type) : '-'}</span>,
+      value: (pkt) => (isCommandPacket(pkt) || isSelectorPacket(pkt)) ? getCommandLabel(pkt) : '',
+      render: (pkt) => <span className="text-muted-foreground">{(isCommandPacket(pkt) || isSelectorPacket(pkt)) ? getCommandLabel(pkt) : '-'}</span>,
     },
     {
       key: 'state', label: 'State', sortable: true, filter: 'select',
@@ -165,12 +165,12 @@ export function buildCompactColumns(
       key: 'detail', label: 'Detail', sortable: true,
       value: (pkt) => {
         if (isStatusPacket(pkt)) return getStateLabel(pkt.state_name ?? pkt.state)
-        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return getCommandLabel(pkt.command, pkt.type)
+        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return getCommandLabel(pkt)
         return ''
       },
       render: (pkt) => {
         if (isStatusPacket(pkt)) return <span className="text-muted-foreground">{getStateLabel(pkt.state_name ?? pkt.state)}</span>
-        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return <span className="text-muted-foreground">{getCommandLabel(pkt.command, pkt.type)}</span>
+        if (isCommandPacket(pkt) || isSelectorPacket(pkt)) return <span className="text-muted-foreground">{getCommandLabel(pkt)}</span>
         return <span className="text-muted-foreground">-</span>
       },
     },

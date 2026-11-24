@@ -394,7 +394,8 @@ elero_mqtt:
 
 Notes:
 - Devices added through the web UI appear in HA immediately (no reboot).
-- Auto-discovered remotes (from observed RF) are **not** published until you save them.
+- Save a discovered remote to publish its activity to Home Assistant. In MQTT mode, its signal-strength entity has a raw `last_command` attribute and a `last_command_name` attribute for recognized frames.
+- A button release and a status request both use key `0x00`. The hub publishes `release` for a `0x44` button frame and `check` for a `0x6A` command frame. The web packet view uses the same name.
 
 ### Native API mode: `elero_nvs`
 
@@ -408,6 +409,7 @@ elero_nvs:
 No configuration parameters — including the component enables it.
 
 Notes:
+- Save a remote and reboot to register its **Last command** text sensor. It shows the command name decoded by the hub.
 - On boot, active NVS devices are registered as ESPHome cover/light entities.
 - ESPHome can't add entities after the initial API connection — adding/removing devices via the UI requires a reboot to surface the change to HA. The UI prompts for this automatically.
 - 48-slot pool is pre-allocated (`MAX_DEVICES`); empty slots have negligible runtime cost.

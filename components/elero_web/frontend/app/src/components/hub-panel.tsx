@@ -1,5 +1,6 @@
 import { useSignal, useSignalEffect, useComputed } from '@preact/signals'
-import type { ConfigSnapshot } from '@/generated'
+import { command as keyByte, commandKeys, msg_type } from '@/generated/rf-wire'
+import type { ConfigSnapshot, RfCommandName } from '@/generated'
 import { Card } from './ui/card'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
@@ -13,14 +14,19 @@ import { sendRawCommand, sendSetHubConfig, sendExportConfig, sendImportConfig } 
 
 // ─── Command Presets ────────────────────────────────────────────────────────
 
-const COMMAND_PRESETS = [
-  { label: 'CHECK', value: '0x00', desc: 'Request status' },
-  { label: 'STOP', value: '0x10', desc: 'Stop movement / stop dimming' },
-  { label: 'UP / ON', value: '0x20', desc: 'Open blind / turn light on / dim up' },
-  { label: 'TILT', value: '0x24', desc: 'Tilt position' },
-  { label: 'DOWN / OFF', value: '0x40', desc: 'Close blind / turn light off / dim down' },
-  { label: 'INT', value: '0x44', desc: 'Intermediate position' },
-] as const
+const presetLabels: Partial<Record<RfCommandName, string>> = {
+  check: 'CHECK', release: 'RELEASE', stop: 'STOP', up: 'UP / ON',
+  tilt: 'TILT', down: 'DOWN / OFF', intermediate: 'INT',
+}
+
+function commandPresets(type: string) {
+  return commandKeys.flatMap(entry => {
+    const label = presetLabels[entry.name]
+    if (!label) return []
+    if ('frames' in entry && !entry.frames.some(frame => frame === type.toLowerCase())) return []
+    return [{ label, value: entry.byte }]
+  })
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -156,10 +162,10 @@ const FIELD_DESCRIPTIONS: Record<string, string> = {
   dst_address: '3-byte destination address of the blind or light motor (e.g. 0xa831e5)',
   src_address: '3-byte source address of the paired remote control (e.g. 0x17a753)',
   channel: 'RF channel number (0-255) the blind listens on',
-  command: 'Command byte: CHECK (0x00), STOP (0x10), UP (0x20), TILT (0x24), DOWN (0x40), INT (0x44)',
+  command: 'Command key for the selected frame type',
   payload_1: 'First payload byte — device-specific, usually 0x00',
   payload_2: 'Second payload byte — device-specific, usually 0x04',
-  type: 'Message type: COMMAND (0x6a), COMMAND_ALT (0x69), BUTTON (0x44), STATUS (0xca/0xc9)',
+  type: 'Radio frame type',
   type2: 'Secondary type byte — usually 0x00',
   hop: 'Hop counter — decremented on retransmit, default 0x0a',
 }
@@ -182,7 +188,7 @@ function FieldLabel({ name }: { name: string }) {
   )
 }
 
-const PAYLOAD_DEFAULTS = { payload_1: '0x00', payload_2: '0x04', type: '0x6a', type2: '0x00', hop: '0x0a' }
+const PAYLOAD_DEFAULTS = { payload_1: '0x00', payload_2: '0x04', type: msg_type.COMMAND, type2: '0x00', hop: '0x0a' }
 
 function PacketSummary({
   dstAddr, srcAddr, channel, command: cmd,
@@ -201,7 +207,7 @@ function PacketSummary({
   dstOptions: Array<{ label: string; address: string; channel: number; kind: 'Blind' | 'Light' }>
   srcOptions: Array<{ label: string; address: string }>
 }) {
-  const cmdPreset = COMMAND_PRESETS.find((p) => p.value === cmd)
+  const cmdPreset = commandPresets(msgType).find((p) => p.value === cmd)
   const isCustomCmd = !cmdPreset
   const dst = dstOptions.find((d) => d.address === dstAddr)
   const src = srcOptions.find((s) => s.address === srcAddr)
@@ -267,10 +273,11 @@ function RawTxCard() {
   const dstAddr = useSignal('0x')
   const srcAddr = useSignal('0x')
   const channel = useSignal(1)
-  const command = useSignal('0x00')
+  const command = useSignal<string>(keyByte.CHECK)
   const payload1 = useSignal('0x00')
   const payload2 = useSignal('0x04')
-  const type = useSignal('0x6a')
+  const type = useSignal<string>(msg_type.COMMAND)
+  const presets = commandPresets(type.value)
   const type2 = useSignal('0x00')
   const hop = useSignal('0x0a')
   const sent = useSignal(false)
@@ -412,7 +419,7 @@ function RawTxCard() {
               </td>
               <td className={tdClass}>
                 <select
-                  value={COMMAND_PRESETS.some((p) => p.value === command.value) ? command.value : ''}
+                  value={presets.some((p) => p.value === command.value) ? command.value : ''}
                   onChange={(e) => {
                     const val = (e.target as HTMLSelectElement).value
                     if (val) command.value = val
@@ -421,7 +428,7 @@ function RawTxCard() {
                   style={{ backgroundImage: selectChevronBg }}
                 >
                   <option value="" disabled>from presets...</option>
-                  {COMMAND_PRESETS.map((p) => (
+                  {presets.map((p) => (
                     <option key={p.value} value={p.value}>{p.label} ({p.value})</option>
                   ))}
                 </select>

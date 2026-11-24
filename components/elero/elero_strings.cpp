@@ -3,6 +3,7 @@
 
 #include "elero_strings.h"
 #include "elero_status_names.h"
+#include "elero_command_names.h"
 #include <cstring>
 
 namespace esphome::elero {
@@ -12,32 +13,11 @@ const char *elero_state_to_string(uint8_t state) {
 }
 
 const char *elero_command_to_string(uint8_t command) {
-  switch (command) {
-    case packet::command::CHECK:
-      return "CHECK";
-    case packet::command::STOP:
-      return "STOP";
-    case packet::command::FULL_UP:
-      return "FULL_UP";
-    case packet::command::FULL_DOWN:
-      return "FULL_DOWN";
-    case packet::command::UP:
-      return "UP";
-    case packet::command::TILT:
-      return "TILT";
-    case packet::command::DOWN:
-      return "DOWN";
-    case packet::command::INTERMEDIATE:
-      return "INTERMEDIATE";
-    case packet::command::PROGRAM:
-      return "PROGRAM";
-    case packet::command::PROGRAM_GROUP:
-      return "PROGRAM_GROUP";
-    case packet::command::PROGRAM_TARGET:
-      return "PROGRAM_TARGET";
-    default:
-      return "UNKNOWN";
-  }
+  return decode_command_names(packet::msg_type::COMMAND, command).legacy;
+}
+
+const char *elero_rf_command_name(uint8_t type, uint8_t key) {
+  return decode_command_names(type, key).name;
 }
 
 uint8_t elero_action_to_command(const char *action) {

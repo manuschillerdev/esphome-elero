@@ -17,6 +17,7 @@
 #include "../elero/cover_actions.h"
 #include "../elero/output_adapter.h"
 #include "esphome/components/light/light_state.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #include <array>
 #include <string>
 
@@ -94,6 +95,22 @@ class NvsGroupCover final : public cover::Cover {
   std::string id_;
 };
 
+// Bind by address as well as slot. A slot can be reused before the next reboot.
+class NvsRemoteCommandSensor final : public text_sensor::TextSensor {
+ public:
+  explicit NvsRemoteCommandSensor(uint32_t address) : address_(address) {}
+  void publish_command(const Device &dev) {
+    if (dev.config.dst_address != address_ || !dev.config.is_enabled()) return;
+    const auto snapshot = compute_remote_snapshot(dev);
+    if (snapshot.last_frame_type == 0) return;  // No frame since boot.
+    const char *name = snapshot.command_name();
+    publish_state(name != nullptr ? name : "unknown");
+  }
+
+ private:
+  uint32_t address_;
+};
+
 class NvsAdapter : public Component, public OutputAdapter {
  public:
   float get_setup_priority() const override {
@@ -121,6 +138,8 @@ class NvsAdapter : public Component, public OutputAdapter {
       cover_shells_[idx]->sync_and_publish(changes);
     } else if (dev.is_light() && light_shells_[idx] != nullptr) {
       light_shells_[idx]->sync_and_publish(changes);
+    } else if (dev.is_remote() && (changes & state_change::REMOTE_ACTIVITY) && remote_sensors_[idx]) {
+      remote_sensors_[idx]->publish_command(dev);
     }
   }
 
@@ -139,6 +158,14 @@ class NvsAdapter : public Component, public OutputAdapter {
       } else if (dev->is_light()) {
         create_light_(dev, i);
         ++lights;
+      } else if (dev->is_remote() && dev->config.updated_at != 0) {
+        const auto address = dev->config.dst_address;
+        auto *sensor = new NvsRemoteCommandSensor(address);
+        remote_sensors_[i] = sensor;
+        names_[i] = std::string(dev->config.name) + " Last command";
+        const auto object_id = "elero_remote_" + hex_str(address) + "_last_command";
+        App.register_text_sensor(sensor, names_[i].c_str(), fnv1_hash(object_id), 0);
+        sensor->publish_command(*dev);
       }
     }
 
@@ -201,6 +228,7 @@ class NvsAdapter : public Component, public OutputAdapter {
   }
 
   DeviceRegistry *registry_{nullptr};
+  std::array<NvsRemoteCommandSensor *, DeviceRegistry::MAX_DEVICES> remote_sensors_{};
   std::array<EspCoverShell *, DeviceRegistry::MAX_DEVICES> cover_shells_{};
   std::array<EspLightShell *, DeviceRegistry::MAX_DEVICES> light_shells_{};
   std::array<NvsLightState *, DeviceRegistry::MAX_DEVICES> light_states_{};

@@ -84,6 +84,7 @@ struct LightDevice {
 };
 
 struct RemoteDevice {
+    uint8_t  last_frame_type{0};
     uint8_t  last_command{0};
     uint32_t last_target{0};
     uint8_t  last_channel{0};
@@ -94,6 +95,7 @@ struct RemoteDevice {
     /// full publish — see docs/ELERO_GROUP_INVESTIGATION.md §8.1.
     /// Sentinel defaults guarantee non-zero diff on first publish.
     struct Published {
+        uint8_t  last_frame_type{0};
         uint8_t  last_command{0xFF};
         uint32_t last_target{0xFFFFFFFF};
         uint8_t  last_channel{0xFF};

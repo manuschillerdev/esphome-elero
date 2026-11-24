@@ -656,7 +656,7 @@ void MqttAdapter::publish_remote_state_(const Device &dev) {
     if (!ctx_.mqtt->is_connected()) return;
 
     uint32_t addr = dev.config.dst_address;
-    const auto &remote = std::get<RemoteDevice>(dev.logic);
+    const auto remote = compute_remote_snapshot(dev);
 
     std::string payload = json::build_json([&](JsonObject root) {
         root["rssi"] = dev.rf.last_rssi;
@@ -664,6 +664,7 @@ void MqttAdapter::publish_remote_state_(const Device &dev) {
         root["title"] = dev.config.name;
         root["last_channel"] = remote.last_channel;
         root["last_command"] = hex_str8(remote.last_command);
+        if (const char *name = remote.command_name()) root["last_command_name"] = name;
         root["last_target"] = hex_str(remote.last_target);
     });
 

@@ -8,6 +8,7 @@
 
 #include "esphome/components/button/button.h"
 #include "esphome/components/cover/cover.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/helpers.h"
 
 namespace esphome {
@@ -23,6 +24,10 @@ class Application {
     std::unique_ptr<cover::Cover> entity;
   };
   std::vector<RegisteredCover> covers;
+  std::vector<std::shared_ptr<text_sensor::TextSensor>> text_sensors;
+  template <typename Sensor> void register_text_sensor(Sensor *entity, const char *, uint32_t, uint32_t) {
+    text_sensors.emplace_back(std::shared_ptr<Sensor>(entity));
+  }
   std::vector<std::unique_ptr<button::Button>> buttons;
 
   std::string get_name() const { return "test-gateway"; }
