@@ -74,9 +74,11 @@ void Elero::receive_frame(const uint8_t *frame, size_t fifo_count) {
   int64_t drain_start_us = esp_timer_get_time();
 #endif
 
-  // Log raw bytes at VERBOSE level for analysis
+#ifdef ESPHOME_LOG_HAS_VERBOSE
+  char hex[format_hex_pretty_size(packet::FIFO_LENGTH)];
   ESP_LOGV(TAG, "RAW RX %d bytes: %s", static_cast<int>(fifo_count),
-           format_hex_pretty(frame, fifo_count).c_str());
+           format_hex_pretty_to(hex, frame, fifo_count, '.'));
+#endif
 
   // Parse multiple packets from the buffer
   size_t offset = 0;

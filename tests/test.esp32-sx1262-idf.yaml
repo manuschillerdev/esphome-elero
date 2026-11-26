@@ -6,6 +6,7 @@ esp32:
   framework:
     type: esp-idf
 logger:
+  level: VERBOSE
 external_components:
   - source:
       type: local
