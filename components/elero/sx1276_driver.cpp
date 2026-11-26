@@ -299,8 +299,11 @@ bool Sx1276Driver::tx_prepare_for_fsm() {
   this->tx_buf_[raw_total] = static_cast<uint8_t>(crc >> 8);
   this->tx_buf_[raw_total + 1] = static_cast<uint8_t>(crc & 0xFF);
 
+#ifdef ESPHOME_LOG_HAS_DEBUG
+  char hex[format_hex_pretty_size(sizeof(this->tx_buf_))];
   ESP_LOGD(TAG, "TX raw [%d]: %s", static_cast<int>(tx_total),
-           format_hex_pretty(this->tx_buf_, tx_total).c_str());
+           format_hex_pretty_to(hex, this->tx_buf_, tx_total, '.'));
+#endif
 
   cc1101_pn9_whiten(this->tx_buf_, tx_total);
 
