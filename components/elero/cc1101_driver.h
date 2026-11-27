@@ -130,6 +130,7 @@ class CC1101Driver : public RadioDriver,
   Cc1101TxTerminalResult tx_terminal_result_{Cc1101TxTerminalResult::None};
   uint32_t tx_state_enter_time_{0};
   uint8_t tx_verify_retry_count_{0};
+  bool tx_strobe_sent_{false};
   uint8_t tx_buf_[CC1101_FIFO_LENGTH];  ///< Copy of packet for TX
   uint8_t rx_packet_length_{0};  ///< Consumed length byte; body stays in hardware until complete.
   uint32_t rx_packet_started_ms_{0};
@@ -150,6 +151,7 @@ class CC1101Driver : public RadioDriver,
   // ── TX timing / recovery escalation ───────────────────────────────────────
 
   static constexpr uint8_t TX_START_PROOF_POLLS = 20;
+  static constexpr uint32_t TX_CHANNEL_TIMEOUT_MS = 25;
   static constexpr uint32_t TX_DONE_TIMEOUT_MS = 50;
   static constexpr uint32_t RX_READY_TIMEOUT_MS = 25;
 

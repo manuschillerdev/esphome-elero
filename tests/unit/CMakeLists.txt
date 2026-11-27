@@ -160,6 +160,7 @@ target_link_libraries(test_cc1101_tx_fsm GTest::gtest_main)
 # CC1101 TX helper semantics (fallback success, strict TXBYTES, RX restore)
 add_executable(test_cc1101_driver_tx
   test_cc1101_driver_tx.cpp
+  ${COMPONENTS_DIR}/elero/rf_transport.cpp
   ${ELERO_PACKET_SRC}
 )
 target_compile_definitions(test_cc1101_driver_tx PRIVATE UNIT_TEST)

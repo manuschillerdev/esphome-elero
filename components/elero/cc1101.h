@@ -111,6 +111,7 @@ constexpr uint8_t CC1101_RSSI = 0x34;            // Received Signal Strength Ind
 constexpr uint8_t CC1101_MARCSTATE = 0x35;       // Main Radio Control State Machine State
 constexpr uint8_t CC1101_WORTIME1 = 0x36;        // High Byte of WOR Time
 constexpr uint8_t CC1101_WORTIME0 = 0x37;        // Low Byte of WOR Time
+constexpr uint8_t CC1101_PKTSTATUS_CCA = 0x10;  // Clear channel indication (bit 4)
 constexpr uint8_t CC1101_PKTSTATUS = 0x38;       // Current GDOx Status and Packet Status
 constexpr uint8_t CC1101_VCO_VC_DAC = 0x39;      // Current Setting from PLL Calibration Module
 constexpr uint8_t CC1101_TXBYTES = 0x3A;         // Underflow and Number of Bytes
