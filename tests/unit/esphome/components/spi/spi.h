@@ -14,11 +14,14 @@ inline std::deque<uint8_t> read_bytes;
 inline std::vector<uint8_t> writes;
 inline std::function<uint8_t(uint8_t)> transfer_handler;
 
+inline std::function<uint8_t(uint8_t)> read_register;
+
 inline void reset() {
   transfer_bytes.clear();
   read_bytes.clear();
   writes.clear();
   transfer_handler = {};
+  read_register = {};
 }
 }  // namespace test_support
 
@@ -45,7 +48,7 @@ class SPIDevice {
   }
   uint8_t read_byte() {
     if (test_support::read_bytes.empty()) {
-      return 0;
+      return test_support::read_register ? test_support::read_register(test_support::writes.back()) : 0;
     }
     uint8_t out = test_support::read_bytes.front();
     test_support::read_bytes.pop_front();

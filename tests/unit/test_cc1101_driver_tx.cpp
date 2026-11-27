@@ -293,7 +293,8 @@ TEST_F(Cc1101DriverTxHelperTest, DrainStopsWhenReadPermanentlyFailsRadio) {
 }
 
 TEST_F(Cc1101DriverTxHelperTest, LargestSupportedGroupReachesHardwareTx) {
-  esphome::spi::test_support::read_bytes = {CC1101_MARCSTATE_IDLE, CC1101_MARCSTATE_TX};
+  esphome::spi::test_support::read_bytes = {0, 0, CC1101_MARCSTATE_RX, CC1101_MARCSTATE_RX,
+                                           CC1101_PKTSTATUS_CCA, CC1101_MARCSTATE_TX};
   EleroCommand cmd{};
   cmd.type = packet::msg_type::BUTTON;
   cmd.num_dests = packet::GROUP_MAX_DESTS;
@@ -305,4 +306,105 @@ TEST_F(Cc1101DriverTxHelperTest, LargestSupportedGroupReachesHardwareTx) {
   EXPECT_EQ(driver_.mode(), RadioMode::TX);
   const auto &writes = esphome::spi::test_support::writes;
   EXPECT_NE(std::search(writes.begin(), writes.end(), buffer, buffer + size), writes.end());
+}
+
+#include "elero/rf_transport.h"
+
+namespace {
+class OneRequest : public RfTransportPort {
+ public:
+  bool take_request(RfTaskRequest &request) override {
+    if (taken) return false;
+    taken = true;
+    request.attempt = 19;
+    return true;
+  }
+  bool publish_completion(const TxResult &result) override {
+    results.push_back(result);
+    return true;
+  }
+  void receive_frame(const uint8_t *, size_t) override {}
+  bool taken{false};
+  std::vector<TxResult> results;
+};
+}
+
+TEST_F(Cc1101DriverTxHelperTest, ClearChannelAssessmentFromRequestToCompletion) {
+  struct Scenario {
+    const char *name;
+    unsigned clear_at;
+    bool reject_first_strobe;
+    bool finish_before_poll;
+  };
+  for (const Scenario scenario : {Scenario{"clear", 0, false, false},
+                                  Scenario{"busy then clear", 8, false, false},
+                                  Scenario{"always busy", 1000, false, false},
+                                  Scenario{"channel changed before STX", 0, true, false},
+                                  Scenario{"short frame", 0, false, true}}) {
+    SCOPED_TRACE(scenario.name);
+    const auto clear_at = scenario.clear_at;
+    unsigned strobes = 0;
+    time_.reset();
+    uint8_t state = CC1101_MARCSTATE_RX;
+    unsigned transmissions = 0;
+    unsigned busy_transmissions = 0;
+    bool loaded = false;
+    bool observed_idle_during_busy_rx = false;
+    esphome::spi::test_support::transfer_handler = [&](uint8_t command) -> uint8_t {
+      if (command == CC1101_SIDLE) {
+        if (!loaded && time_.millis() < clear_at) observed_idle_during_busy_rx = true;
+        state = CC1101_MARCSTATE_IDLE;
+      }
+      if (command == CC1101_SRX) state = CC1101_MARCSTATE_RX;
+      if (command == CC1101_SFTX) loaded = false;
+      if (command == (CC1101_TXFIFO | CC1101_WRITE_BURST)) loaded = true;
+      if (command == CC1101_STX) {
+        ++strobes;
+        EXPECT_TRUE(loaded);
+        const bool busy = time_.millis() < clear_at || (scenario.reject_first_strobe && strobes == 1);
+        // TI CC1101 section 17.5 applies CCA only to an STX issued in RX.
+        if (state == CC1101_MARCSTATE_IDLE || (state == CC1101_MARCSTATE_RX && !busy)) {
+          busy_transmissions += busy;
+          ++transmissions;
+          state = scenario.finish_before_poll ? CC1101_MARCSTATE_RX : CC1101_MARCSTATE_TX;
+          loaded = false;
+        }
+      }
+      return 0;
+    };
+    esphome::spi::test_support::read_register = [&](uint8_t address) -> uint8_t {
+      const auto reg = address & 0x3f;
+      if (reg == CC1101_PKTSTATUS) return time_.millis() >= clear_at ? 0x10 : 0;
+      if (reg == CC1101_TXBYTES) return loaded ? 28 : 0;
+      if (reg != CC1101_MARCSTATE) return 0;
+      const auto reported = state;
+      if (state == CC1101_MARCSTATE_TX) state = CC1101_MARCSTATE_RX;
+      return reported;
+    };
+    RfTransport transport(driver_, rx_ready_, tx_done_);
+    OneRequest port;
+    for (unsigned tick = 0; tick < 100; ++tick) {
+      transport.step(port);
+      time_.advance(1);
+    }
+    ASSERT_EQ(port.results.size(), 1u);
+    EXPECT_EQ(port.results.front().attempt, 19u);
+    EXPECT_EQ(port.results.front().success, clear_at < 100);
+    EXPECT_EQ(busy_transmissions, 0u);
+    EXPECT_FALSE(observed_idle_during_busy_rx);
+    EXPECT_EQ(strobes, transmissions + (scenario.reject_first_strobe ? 1u : 0u));
+    EXPECT_EQ(transmissions, clear_at < 100 ? 1u : 0u);
+    EXPECT_EQ(state, CC1101_MARCSTATE_RX);
+    EXPECT_EQ(driver_.mode(), RadioMode::RX);
+    // A complete frame must still pass through the RX path after each case.
+    auto &bytes = esphome::spi::test_support::read_bytes;
+    bytes = {30, 30, 27};
+    for (uint8_t n = 1; n <= 27; ++n) bytes.push_back(n);
+    bytes.push_back(0x64);
+    bytes.push_back(0x80);
+    uint8_t received[64]{};
+    ASSERT_EQ(driver_.read_fifo(received, sizeof(received)), 30u);
+    EXPECT_EQ(received[0], 27);
+    EXPECT_EQ(received[29], 0x80);
+  }
 }
