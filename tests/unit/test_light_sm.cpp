@@ -95,11 +95,10 @@ TEST_F(LightSmTest, RfLightOffCancelsDimmingUp) {
     ASSERT_TRUE(std::holds_alternative<sm::Off>(s));
 }
 
-TEST_F(LightSmTest, RfLightOnCancelsDimmingDown) {
-    // Dimming down → RF says on → jumps to On{1.0}
-    auto s = sm::on_rf_status(sm::DimmingDown{0.8f, 0.3f, 0}, pkt::state::LIGHT_ON, 5000, ctx);
+TEST_F(LightSmTest, RfLightOnPreservesKnownBrightness) {
+    auto s = sm::on_rf_status(sm::On{0.35f}, pkt::state::LIGHT_ON, 1000, ctx);
     ASSERT_TRUE(std::holds_alternative<sm::On>(s));
-    EXPECT_FLOAT_EQ(std::get<sm::On>(s).brightness, 1.0f);
+    EXPECT_FLOAT_EQ(std::get<sm::On>(s).brightness, 0.35f);
 }
 
 TEST_F(LightSmTest, RfTopAliasesLightOnRfBottomAliasesLightOff) {

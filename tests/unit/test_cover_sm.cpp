@@ -324,11 +324,6 @@ TEST_F(CoverSmTest, ClosingCmdUpReversesWithSnapshotPosition) {
     EXPECT_NEAR(std::get<sm::Opening>(s).start_position, 0.7f, 0.01f);
 }
 
-TEST_F(CoverSmTest, ClosingCmdTiltReversesToOpening) {
-    auto s = sm::on_command(sm::Closing{1.0f, 0}, pkt::command::TILT, 5000, ctx);
-    ASSERT_TRUE(std::holds_alternative<sm::Opening>(s));
-}
-
 TEST_F(CoverSmTest, StoppingCmdOverridesCooldownWithCorrectPosition) {
     sm::State stopping = sm::Stopping{0.5f, 100};
 
@@ -341,15 +336,23 @@ TEST_F(CoverSmTest, StoppingCmdOverridesCooldownWithCorrectPosition) {
     EXPECT_FLOAT_EQ(std::get<sm::Closing>(down).start_position, 0.5f);
 }
 
-TEST_F(CoverSmTest, IntermediateCommandIsNoOpInAllStates) {
-    EXPECT_TRUE(std::holds_alternative<sm::Idle>(
-        sm::on_command(sm::Idle{0.5f}, pkt::command::INTERMEDIATE, 100, ctx)));
-    EXPECT_TRUE(std::holds_alternative<sm::Opening>(
-        sm::on_command(sm::Opening{0.5f, 0}, pkt::command::INTERMEDIATE, 100, ctx)));
-    EXPECT_TRUE(std::holds_alternative<sm::Closing>(
-        sm::on_command(sm::Closing{0.5f, 0}, pkt::command::INTERMEDIATE, 100, ctx)));
-    EXPECT_TRUE(std::holds_alternative<sm::Stopping>(
-        sm::on_command(sm::Stopping{0.5f, 0}, pkt::command::INTERMEDIATE, 100, ctx)));
+TEST_F(CoverSmTest, PresetRecallKeepsCurrentEstimateUntilReceiverReportsDirection) {
+    const sm::State states[] = {sm::Idle{0.2f}, sm::Idle{0.8f}, sm::Opening{0.1f, 0},
+                                sm::Closing{0.9f, 0}, sm::Stopping{0.4f, 500}};
+    for (const auto &before : states) {
+        for (auto cmd : {pkt::command::TILT, pkt::command::INTERMEDIATE}) {
+            const auto expected = sm::position(before, 1000, ctx);
+            auto waiting = sm::on_command(before, cmd, 1000, ctx);
+            EXPECT_EQ(sm::operation(waiting), sm::Operation::IDLE);
+            EXPECT_FLOAT_EQ(sm::position(waiting, 4000, ctx), expected);
+            auto up = sm::on_rf_status(waiting, pkt::state::MOVING_UP, 4000, ctx);
+            auto down = sm::on_rf_status(waiting, pkt::state::MOVING_DOWN, 4000, ctx);
+            EXPECT_EQ(sm::operation(up), sm::Operation::OPENING);
+            EXPECT_EQ(sm::operation(down), sm::Operation::CLOSING);
+            EXPECT_FLOAT_EQ(sm::position(up, 4000, ctx), expected);
+            EXPECT_FLOAT_EQ(sm::position(down, 4000, ctx), expected);
+        }
+    }
 }
 
 TEST_F(CoverSmTest, CmdUpWhileAlreadyOpeningIsNoOp) {
@@ -531,4 +534,10 @@ TEST_F(CoverSmTest, RapidStopThenResumeFromStoppingState) {
     s = sm::on_command(s, pkt::command::UP, 4000, ctx);
     ASSERT_TRUE(std::holds_alternative<sm::Opening>(s));
     EXPECT_NEAR(std::get<sm::Opening>(s).start_position, 0.3f, 0.01f);
+}
+
+TEST_F(CoverSmTest, TopTiltAfterStopSetsOpenPositionDuringCooldown) {
+    auto s = sm::on_rf_status(sm::Stopping{0.4f, 100}, pkt::state::TOP_TILT, 200, ctx);
+    ASSERT_TRUE(std::holds_alternative<sm::Idle>(s));
+    EXPECT_FLOAT_EQ(std::get<sm::Idle>(s).position, 1.0f);
 }

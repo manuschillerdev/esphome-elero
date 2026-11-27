@@ -54,6 +54,15 @@ TEST_F(LearnInManagerTest, RejectsInvalidStartRequest) {
   EXPECT_EQ(manager_.state(), LearnInState::IDLE);
 }
 
+TEST_F(LearnInManagerTest, StartDuringRegistryLoopUsesCurrentClock) {
+  manager_.loop(&hub_);  // Idle at the start of the main loop.
+  mock_time_.advance(1);
+  ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));  // Web request during registry processing.
+  manager_.loop(&hub_);
+  EXPECT_EQ(hub_.request_count, 1);
+  EXPECT_EQ(manager_.state(), LearnInState::PROGRAMMING);
+}
+
 TEST_F(LearnInManagerTest, SessionTimeoutAtClockWrap) {
   mock_time_.current_time = UINT32_MAX - 99;
   LearnInStartRequest req{};
@@ -61,10 +70,10 @@ TEST_F(LearnInManagerTest, SessionTimeoutAtClockWrap) {
   req.channel = 1;
   req.session_timeout_ms = 100;
   ASSERT_TRUE(manager_.start(req));
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   ASSERT_EQ(hub_.request_count, 1);
   mock_time_.advance(100);
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   EXPECT_EQ(manager_.state(), LearnInState::TIMED_OUT);
 }
 
@@ -78,7 +87,7 @@ TEST_F(LearnInManagerTest, FullLearnInFlowCompletes) {
   EXPECT_EQ(manager_.state(), LearnInState::PROGRAMMING);
 
   for (int i = 0; i < packet::program::PACKETS; ++i) {
-    manager_.loop(mock_time_.millis(), &hub_);
+    manager_.loop(&hub_);
     ASSERT_EQ(hub_.last_cmd.type, packet::msg_type::PROGRAM);
     ASSERT_EQ(hub_.last_cmd.type2, packet::program::TYPE2);
     ASSERT_EQ(hub_.last_cmd.hop, packet::program::HOP);
@@ -90,7 +99,7 @@ TEST_F(LearnInManagerTest, FullLearnInFlowCompletes) {
 
   ASSERT_TRUE(manager_.confirm_up());
   for (int i = 0; i < packet::button::PACKETS; ++i) {
-    manager_.loop(mock_time_.millis(), &hub_);
+    manager_.loop(&hub_);
     ASSERT_EQ(hub_.last_cmd.type, packet::msg_type::BUTTON);
     ASSERT_EQ(hub_.last_cmd.type2, packet::button::TYPE2);
     ASSERT_EQ(hub_.last_cmd.hop, packet::button::HOP);
@@ -102,7 +111,7 @@ TEST_F(LearnInManagerTest, FullLearnInFlowCompletes) {
 
   ASSERT_TRUE(manager_.confirm_down());
   for (int i = 0; i < packet::button::PACKETS; ++i) {
-    manager_.loop(mock_time_.millis(), &hub_);
+    manager_.loop(&hub_);
     ASSERT_EQ(hub_.last_cmd.type, packet::msg_type::BUTTON);
     ASSERT_EQ(hub_.last_cmd.type2, packet::button::TYPE2);
     ASSERT_EQ(hub_.last_cmd.hop, packet::button::HOP);
@@ -130,11 +139,11 @@ TEST_F(LearnInManagerTest, RetriesAndFailsAfterMaxRetries) {
 
   ASSERT_TRUE(manager_.start(req));
 
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   for (int i = 0; i <= packet::limits::SEND_RETRIES; ++i) {
     hub_.complete(false);
     mock_time_.advance(packet::timing::MAX_BACKOFF_MS);
-    manager_.loop(mock_time_.millis(), &hub_);
+    manager_.loop(&hub_);
   }
 
   EXPECT_EQ(manager_.state(), LearnInState::FAILED);
@@ -148,7 +157,7 @@ TEST_F(LearnInManagerTest, TimesOutSession) {
 
   ASSERT_TRUE(manager_.start(req));
   mock_time_.advance(101);
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
 
   EXPECT_EQ(manager_.state(), LearnInState::TIMED_OUT);
 }
@@ -156,13 +165,13 @@ TEST_F(LearnInManagerTest, TimesOutSession) {
 
 TEST_F(LearnInManagerTest, LateCompletionCannotCompleteRetriedStep) {
   ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   const auto old_attempt = hub_.attempt;
   mock_time_.advance(5000);
   hub_.complete(false);
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   mock_time_.advance(20);
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   ASSERT_EQ(hub_.request_count, 2);
   manager_.complete_tx_attempt(old_attempt, true);
   EXPECT_EQ(manager_.state(), LearnInState::PROGRAMMING);
@@ -172,11 +181,11 @@ TEST_F(LearnInManagerTest, LateCompletionCannotCompleteRetriedStep) {
 
 TEST_F(LearnInManagerTest, CancelledSessionCompletionCannotCompleteNewSession) {
   ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   const auto old_attempt = hub_.attempt;
   manager_.cancel();
   ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   manager_.complete_tx_attempt(old_attempt, true);
   EXPECT_EQ(manager_.state(), LearnInState::PROGRAMMING);
   hub_.complete(true);
@@ -186,13 +195,13 @@ TEST_F(LearnInManagerTest, CancelledSessionCompletionCannotCompleteNewSession) {
 TEST_F(LearnInManagerTest, BusyUntilAcceptedPacketCompletes) {
   ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
   hub_.queue_accepts = false;
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   EXPECT_TRUE(manager_.is_busy());
   EXPECT_EQ(hub_.client, nullptr);
   EXPECT_FALSE(manager_.confirm_up());
 
   hub_.queue_accepts = true;
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   EXPECT_TRUE(manager_.is_busy());
   hub_.complete(true);
   EXPECT_FALSE(manager_.is_busy());
@@ -203,9 +212,9 @@ TEST_F(LearnInManagerTest, BusyUntilAcceptedPacketCompletes) {
 
 TEST_F(LearnInManagerTest, TimeoutDiscardsInFlightStep) {
   ASSERT_TRUE(manager_.start({0x17A753, 5, 1, 100}));
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   mock_time_.advance(100);
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   hub_.complete(true);
   EXPECT_FALSE(manager_.is_busy());
   EXPECT_FALSE(manager_.is_active());
@@ -214,9 +223,9 @@ TEST_F(LearnInManagerTest, TimeoutDiscardsInFlightStep) {
 
 TEST_F(LearnInManagerTest, LongQueueWaitDoesNotRetryProgrammingStep) {
   ASSERT_TRUE(manager_.start({0x17A753, 5, 1}));
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   mock_time_.advance(10000);
-  manager_.loop(mock_time_.millis(), &hub_);
+  manager_.loop(&hub_);
   EXPECT_EQ(hub_.request_count, 1);
   hub_.complete(true);
   EXPECT_EQ(manager_.state(), LearnInState::WAIT_UP);

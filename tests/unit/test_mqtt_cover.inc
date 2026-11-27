@@ -484,3 +484,26 @@ TEST_F(MqttCoverTest, ReceiverStatusReachesMqttAndWebWithoutChangingClosedCover)
         }
     }
 }
+
+TEST_F(MqttCoverTest, RejectsInvalidPositionTextBeforeMovingTheCover) {
+    auto *cover = add_cover();
+    const auto &logic = std::get<CoverDevice>(cover->logic);
+    for (const char *payload : {"", "bad", "45percent", "0x10", "nan", "inf", "1e-200", "-1", "101"}) {
+        broker_.deliver(SET_POSITION_TOPIC, payload);
+        EXPECT_EQ(cover->sender.queue_size(), 0u) << payload;
+        EXPECT_FLOAT_EQ(logic.target_position, cover_sm::NO_TARGET) << payload;
+    }
+    broker_.deliver(SET_POSITION_TOPIC, "37.5");
+    EXPECT_FLOAT_EQ(logic.target_position, 0.375f);
+    const auto pending = cover->sender.queue_size();
+    broker_.deliver(SET_POSITION_TOPIC, "bad");
+    EXPECT_EQ(cover->sender.queue_size(), pending);
+    EXPECT_FLOAT_EQ(logic.target_position, 0.375f);
+    (void) drain_commands(*cover);
+    for (const char *endpoint : {"0", "100"}) {
+        broker_.deliver(SET_POSITION_TOPIC, endpoint);
+        const auto packets = drain_commands(*cover);
+        ASSERT_FALSE(packets.empty());
+        EXPECT_EQ(packets.front().payload[4], endpoint[0] == '0' ? pkt::command::DOWN : pkt::command::UP);
+    }
+}
