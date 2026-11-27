@@ -330,8 +330,20 @@ class OneRequest : public RfTransportPort {
 }
 
 TEST_F(Cc1101DriverTxHelperTest, ClearChannelAssessmentFromRequestToCompletion) {
-  for (const unsigned clear_at : {0u, 8u, 1000u}) {
-    SCOPED_TRACE(clear_at);
+  struct Scenario {
+    const char *name;
+    unsigned clear_at;
+    bool reject_first_strobe;
+    bool finish_before_poll;
+  };
+  for (const Scenario scenario : {Scenario{"clear", 0, false, false},
+                                  Scenario{"busy then clear", 8, false, false},
+                                  Scenario{"always busy", 1000, false, false},
+                                  Scenario{"channel changed before STX", 0, true, false},
+                                  Scenario{"short frame", 0, false, true}}) {
+    SCOPED_TRACE(scenario.name);
+    const auto clear_at = scenario.clear_at;
+    unsigned strobes = 0;
     time_.reset();
     uint8_t state = CC1101_MARCSTATE_RX;
     unsigned transmissions = 0;
@@ -342,13 +354,15 @@ TEST_F(Cc1101DriverTxHelperTest, ClearChannelAssessmentFromRequestToCompletion) 
       if (command == CC1101_SRX) state = CC1101_MARCSTATE_RX;
       if (command == CC1101_SFTX) loaded = false;
       if (command == (CC1101_TXFIFO | CC1101_WRITE_BURST)) loaded = true;
-      if (command == CC1101_STX && loaded) {
-        const bool busy = time_.millis() < clear_at;
+      if (command == CC1101_STX) {
+        ++strobes;
+        EXPECT_TRUE(loaded);
+        const bool busy = time_.millis() < clear_at || (scenario.reject_first_strobe && strobes == 1);
         // TI CC1101 section 17.5 applies CCA only to an STX issued in RX.
         if (state == CC1101_MARCSTATE_IDLE || (state == CC1101_MARCSTATE_RX && !busy)) {
           busy_transmissions += busy;
           ++transmissions;
-          state = CC1101_MARCSTATE_TX;
+          state = scenario.finish_before_poll ? CC1101_MARCSTATE_RX : CC1101_MARCSTATE_TX;
           loaded = false;
         }
       }
@@ -373,6 +387,7 @@ TEST_F(Cc1101DriverTxHelperTest, ClearChannelAssessmentFromRequestToCompletion) 
     EXPECT_EQ(port.results.front().attempt, 19u);
     EXPECT_EQ(port.results.front().success, clear_at < 100);
     EXPECT_EQ(busy_transmissions, 0u);
+    EXPECT_EQ(strobes, transmissions + (scenario.reject_first_strobe ? 1u : 0u));
     EXPECT_EQ(transmissions, clear_at < 100 ? 1u : 0u);
     EXPECT_EQ(state, CC1101_MARCSTATE_RX);
     EXPECT_EQ(driver_.mode(), RadioMode::RX);
