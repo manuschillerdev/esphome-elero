@@ -43,7 +43,7 @@ interface LightConfig {
    */
   'is_on'?: boolean;
   /**
-   * Last known state byte (hex string)
+   * Last reported receiver status name, or a hexadecimal byte from older firmware
    * @example 0x10
    */
   'state'?: string;

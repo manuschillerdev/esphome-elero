@@ -17,6 +17,8 @@
 /// These paths are validated through hardware testing and RF observability sensors.
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <initializer_list>
 #include <vector>
 #include <string>
 #include <cstring>
@@ -58,6 +60,16 @@ uint32_t fnv1_hash(const std::string &str) {
     return hash;
 }
 
+// ESPHome builds a default API key from the normalized display name.
+uint32_t fnv1_hash_object_id(const char *name, size_t length) {
+    std::string id(name, length);
+    for (char &c : id) {
+        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) c = '_';
+    }
+    return fnv1_hash(id);
+}
+
 class InternalGPIOPin {
  public:
   void setup() {}
@@ -78,23 +90,44 @@ constexpr float DATA = 0.0f;
 // Unity build — real production code compiled here
 // ═══════════════════════════════════════════════════════════════════════════════
 
+#include "elero/rf_packet.cpp"
+#include "elero_web/rf_json.h"
 #include "elero/cover_sm.cpp"
 #include "elero/light_sm.cpp"
 #include "elero/state_snapshot.cpp"
 #include "elero/device_registry.cpp"
 #include "elero_mqtt/mqtt_adapter.h"
-#include "elero/esp_cover_action_button.h"
-#include "elero/esp_cover_shell.h"
-#include "elero/esp_light_shell.h"
+#define ELERO_COVER_ACTION_BUTTON_COUNT 4  // Supplied by elero_nvs codegen on ESP32.
+#include "elero_nvs/nvs_adapter.h"
 
 // Stub Elero methods (device_registry.cpp includes elero.h)
 namespace esphome {
 namespace elero {
 
-// Auto-complete TX — registry tests verify dispatch logic, not TX pipeline
-bool Elero::request_tx(TxClient *client, const EleroCommand &) {
-    client->on_tx_complete(true);
-    return true;
+// A radio request completes on a later main-loop tick, after request_tx() returns.
+struct RecordingRadio {
+    std::vector<EleroCommand> commands;
+    std::queue<TxResult> pending;
+
+    bool request_tx(TxClient *client, const EleroCommand &cmd) {
+        commands.push_back(cmd);
+        pending.push({client, true, client->begin_tx_attempt()});
+        return true;
+    }
+
+    void complete_pending() {
+        while (!pending.empty()) {
+            const auto result = pending.front();
+            pending.pop();
+            result.client->complete_tx_attempt(result.attempt, result.success);
+        }
+    }
+};
+
+static RecordingRadio radio;
+
+bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
+    return radio.request_tx(client, cmd);
 }
 
 bool Elero::take_request(RfTaskRequest &) { return false; }
@@ -104,13 +137,13 @@ void Elero::setup() {}
 void Elero::loop() {}
 void Elero::dump_config() {}
 void Elero::dispatch_packet(const RfPacketInfo &) {}
-bool Elero::send_raw_command(uint32_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t) { return false; }
+bool Elero::send_raw_command(uint32_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t, uint8_t,
+                             std::span<const uint8_t>, std::span<const uint8_t>) { return false; }
 void Elero::reinit_frequency(uint8_t, uint8_t, uint8_t) {}
 
 }  // namespace elero
 
-ESPPreferences prefs_instance_;
-ESPPreferences *global_preferences = &prefs_instance_;
+ESPPreferences *global_preferences = nullptr;
 
 }  // namespace esphome
 
@@ -250,12 +283,15 @@ static RfPacketInfo make_selector_pkt(uint32_t src, uint8_t channel, uint8_t typ
 
 class DeviceRegistryTest : public ::testing::Test {
  protected:
+    esphome::ESPPreferences preferences_;
     MockTimeProvider mock_time_;
     MockAdapter adapter_;
     DeviceRegistry registry_;
     Elero hub_;
 
     void SetUp() override {
+        esphome::global_preferences = &preferences_;
+        radio = {};
         set_time_provider(&mock_time_);
         mock_time_.reset();
         registry_.set_hub(&hub_);
@@ -264,6 +300,26 @@ class DeviceRegistryTest : public ::testing::Test {
 
     void TearDown() override {
         set_time_provider(nullptr);
+        esphome::global_preferences = nullptr;
+        esphome::App = {};
+    }
+
+    void tick_registry() {
+        radio.complete_pending();
+        registry_.loop(mock_time_.millis());
+    }
+
+    void restore_saved_covers(std::initializer_list<NvsDeviceConfig> configs) {
+        {
+            DeviceRegistry previous_boot;
+            previous_boot.set_nvs_enabled(true);
+            previous_boot.init_preferences();
+            for (const auto &cfg : configs) {
+                ASSERT_NE(previous_boot.upsert(cfg), nullptr);
+            }
+        }
+        registry_.set_nvs_enabled(true);
+        registry_.restore_all();
     }
 
     Device *add_cover(uint32_t addr = 0xA831E5) {
@@ -275,24 +331,11 @@ class DeviceRegistryTest : public ::testing::Test {
     }
 
     std::vector<EleroCommand> drain_commands(Device &dev) {
-        struct RecordingHub {
-            std::vector<EleroCommand> commands;
-            TxClient *pending{nullptr};
-            uint32_t attempt{0};
-            bool request_tx(TxClient *client, const EleroCommand &cmd) {
-                commands.push_back(cmd);
-                pending = client;
-                attempt = client->begin_tx_attempt();
-                return true;
-            }
-        } hub;
+        RecordingRadio hub;
         for (int i = 0; dev.sender.is_busy() && i < 100; ++i) {
             mock_time_.advance(pkt::button::INTER_PACKET_MS);
+            hub.complete_pending();
             dev.sender.process_queue(mock_time_.millis(), &hub, "test");
-            if (hub.pending) {
-                hub.pending->complete_tx_attempt(hub.attempt, true);
-                hub.pending = nullptr;
-            }
         }
         EXPECT_FALSE(dev.sender.is_busy());
         return hub.commands;
@@ -300,6 +343,40 @@ class DeviceRegistryTest : public ::testing::Test {
 };
 
 #include "test_mqtt_cover.inc"
+
+TEST_F(DeviceRegistryTest, NativeBootRegistersRestoredCoversAndRoutesStop) {
+    NvsAdapter native;
+    registry_.add_adapter(&native);
+    registry_.setup_adapters();
+    auto east = make_cover_config(0x120001, "East");
+    auto west = make_cover_config(0x120002, "West");
+    restore_saved_covers({east, west});
+    native.setup();
+
+    const auto &covers = esphome::App.covers;
+    ASSERT_EQ(covers.size(), 2u);
+    const auto selected = std::find_if(covers.begin(), covers.end(),
+        [](const auto &cover) { return cover.name == "West"; });
+    ASSERT_NE(selected, covers.end());
+    esphome::cover::CoverCall stop;
+    stop.stop = true;
+    auto *entity = esphome::App.get_cover_by_key(selected->key);
+    ASSERT_NE(entity, nullptr);
+    entity->control(stop);
+
+    for (int tick = 0; tick < 100; ++tick) {
+        mock_time_.advance(pkt::button::INTER_PACKET_MS);
+        tick_registry();
+    }
+    size_t stops = 0;
+    for (const auto &cmd : radio.commands) {
+        if (cmd.payload[4] == pkt::command::STOP) {
+            ++stops;
+            EXPECT_EQ(cmd.dst_addr, west.dst_address);
+        }
+    }
+    EXPECT_EQ(stops, pkt::button::PACKETS);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CRUD — only non-trivial paths
@@ -620,6 +697,33 @@ TEST_F(DeviceRegistryTest, RfStatus_IdenticalPacket_Suppressed) {
     EXPECT_EQ(adapter_.state_changed.size(), 0u);
 }
 
+TEST_F(DeviceRegistryTest, SceneAndDeletionReportsPreserveLightLevelAndFault) {
+    auto *dev = add_light();
+    ASSERT_NE(dev, nullptr);
+    for (uint8_t state : {0x11, 0x06, 0x0c, 0x12, 0x13, 0x14, 0x15}) {
+        registry_.on_rf_packet(make_status_pkt(dev->config.dst_address, state), mock_time_.millis());
+        const auto snapshot = compute_light_snapshot(*dev, mock_time_.millis());
+        EXPECT_TRUE(snapshot.is_on);
+        EXPECT_FLOAT_EQ(snapshot.brightness, 1.0f);
+        EXPECT_EQ(snapshot.is_problem, state != 0x11);
+        EXPECT_STREQ(snapshot.state_string, elero_state_to_string(state));
+    }
+}
+
+TEST_F(DeviceRegistryTest, BottomIntermediateReportPreservesTiltAndConfirmsClosed) {
+    auto *dev = add_cover();
+    ASSERT_NE(dev, nullptr);
+    auto &cover = std::get<CoverDevice>(dev->logic);
+    for (bool tilted : {false, true}) {
+        cover.tilted = tilted;
+        cover.state = cover_sm::Stopping{0.5f, mock_time_.millis()};
+        registry_.on_rf_packet(make_status_pkt(dev->config.dst_address, 0x0f), mock_time_.millis());
+        ASSERT_TRUE(std::holds_alternative<cover_sm::Idle>(cover.state));
+        EXPECT_FLOAT_EQ(std::get<cover_sm::Idle>(cover.state).position, cover_sm::POSITION_CLOSED);
+        EXPECT_EQ(cover.tilted, tilted);
+    }
+}
+
 TEST_F(DeviceRegistryTest, RfStatus_NotifiesOnDifferentStateByte) {
     // Different state byte = real state change, must notify adapters.
     add_cover();
@@ -733,7 +837,7 @@ TEST_F(DeviceRegistryTest, Loop_CoverAutoStopsAtTargetPosition) {
 
     // 5000ms = 50% of 10000ms open_duration → position reaches target
     mock_time_.advance(5000);
-    registry_.loop(mock_time_.millis());
+    tick_registry();
 
     // Auto-stop fires: clears target, transitions to Stopping
     EXPECT_FALSE(cover_sm::is_moving(cover.state));
@@ -746,7 +850,7 @@ TEST_F(DeviceRegistryTest, Loop_CoverMovementTimeout) {
 
     // 120001ms > TIMEOUT_MOVEMENT (120000ms) — blind must stop
     mock_time_.advance(120001);
-    registry_.loop(mock_time_.millis());
+    tick_registry();
 
     EXPECT_FALSE(cover_sm::is_moving(std::get<CoverDevice>(dev->logic).state));
 }
@@ -757,14 +861,14 @@ TEST_F(DeviceRegistryTest, HiddenLightProcessesManualCommandAndFinishesDimming) 
     auto *dev = registry_.upsert(cfg);
     ASSERT_TRUE(registry_.command_light(*dev, pkt::command::UP));
     mock_time_.advance(pkt::button::INTER_PACKET_MS);
-    registry_.loop(mock_time_.millis());
+    tick_registry();
     EXPECT_EQ(dev->sender.state(), CommandSender::State::TX_PENDING);
 
     registry_.set_hub(nullptr);
     dev->sender.clear_queue();
     registry_.set_light_brightness(*dev, 0.5f);
     mock_time_.advance(cfg.dim_duration_ms);
-    registry_.loop(mock_time_.millis());
+    tick_registry();
     EXPECT_FALSE(light_sm::is_dimming(std::get<LightDevice>(dev->logic).state));
     const auto packets = drain_commands(*dev);
     ASSERT_FALSE(packets.empty());
@@ -784,7 +888,7 @@ TEST_F(DeviceRegistryTest, Loop_LightDimComplete_EnqueuesRelease) {
 
     // Advance past dim completion
     mock_time_.advance(dev->config.dim_duration_ms + 100);
-    registry_.loop(mock_time_.millis());
+    tick_registry();
 
     // RELEASE must be enqueued — without it, the physical light keeps dimming
     EXPECT_GE(dev->sender.queue_size(), 1u);
@@ -1045,8 +1149,8 @@ TEST_F(DeviceRegistryTest, CommandGroup_QueuesRecipientsWithoutMutatingTemplate)
     ASSERT_EQ(commands.size(), 4u);  // Three group presses, one targeted CHECK.
     const auto &cmd = commands.front();
     EXPECT_EQ(cmd.num_dests, 2);
-    EXPECT_EQ(cmd.dest_channels[0], 1);
-    EXPECT_EQ(cmd.dest_channels[1], 3);
+    EXPECT_EQ(cmd.frame_data[0], 1);
+    EXPECT_EQ(cmd.frame_data[1], 3);
     EXPECT_EQ(commands.back().type, pkt::msg_type::COMMAND);
     EXPECT_EQ(commands.back().num_dests, 0);
 }
@@ -1090,8 +1194,8 @@ TEST_F(DeviceRegistryTest, CommandGroup_BackToBackGroupsAndIndividualKeepTheirTa
         } else if (i < 8) {
             EXPECT_EQ(cmd.payload[4], i < 4 ? pkt::command::UP : pkt::command::DOWN);
             EXPECT_EQ(cmd.num_dests, 2);
-            EXPECT_EQ(cmd.dest_channels[0], 1);
-            EXPECT_EQ(cmd.dest_channels[1], i < 4 ? 2 : 3);
+            EXPECT_EQ(cmd.frame_data[0], 1);
+            EXPECT_EQ(cmd.frame_data[1], i < 4 ? 2 : 3);
         } else {
             EXPECT_EQ(cmd.num_dests, 0);
             EXPECT_EQ(cmd.channel, 1);
@@ -1136,7 +1240,7 @@ TEST_F(DeviceRegistryTest, GroupStopCancelsOverlappingGroupsAndPreservesOtherTar
             // Only B's un-cancelled movement remains, even in A's sender.
             EXPECT_EQ(cmd.num_dests, 1);
             EXPECT_EQ(cmd.channel, 2);
-            EXPECT_EQ(cmd.dest_channels[0], 2);
+            EXPECT_EQ(cmd.frame_data[0], 2);
             uint8_t frame[pkt::FIFO_LENGTH]{};
             ASSERT_GT(pkt::build_command_packet(cmd, frame), 0u);
             EXPECT_EQ(frame[17], 2);  // Remaining selector actually encoded on wire.
@@ -1220,7 +1324,7 @@ TEST_F(DeviceRegistryTest, SourceUpdateCancelsOldGroupTargetAndPreservesOtherMem
         EXPECT_EQ(cmd.channel, 1);
         if (cmd.type == pkt::msg_type::BUTTON) {
             ASSERT_EQ(cmd.num_dests, 1);
-            EXPECT_EQ(cmd.dest_channels[0], 1);
+            EXPECT_EQ(cmd.frame_data[0], 1);
         }
     }
     const auto stopped = drain_commands(*edited);
@@ -1247,8 +1351,8 @@ TEST_F(DeviceRegistryTest, RenamePreservesQueuedGroupMovement) {
     ASSERT_EQ(commands.size(), 4u);
     EXPECT_EQ(commands.front().payload[4], pkt::command::UP);
     EXPECT_EQ(commands.front().num_dests, 2);
-    EXPECT_EQ(commands.front().dest_channels[0], 1);
-    EXPECT_EQ(commands.front().dest_channels[1], 2);
+    EXPECT_EQ(commands.front().frame_data[0], 1);
+    EXPECT_EQ(commands.front().frame_data[1], 2);
     EXPECT_EQ(drain_commands(*edited).size(), 1u);  // CHECK remains queued.
 }
 
@@ -1374,8 +1478,8 @@ TEST_F(DeviceRegistryTest, CommandSavedGroup_PartitionsByRemote) {
     ASSERT_EQ(first.size(), 4u);
     ASSERT_EQ(second.size(), 4u);
     EXPECT_EQ(first.front().num_dests, 2);
-    EXPECT_EQ(first.front().dest_channels[0], 1);
-    EXPECT_EQ(first.front().dest_channels[1], 3);
+    EXPECT_EQ(first.front().frame_data[0], 1);
+    EXPECT_EQ(first.front().frame_data[1], 3);
     EXPECT_EQ(second.front().num_dests, 0);
     EXPECT_GE(adapter_.state_changed.size(), 3u);
 }
@@ -1633,7 +1737,7 @@ TEST_F(DeviceRegistryTest, ManualActionsReplaceAnOldTimedPositionTarget) {
         EXPECT_EQ(cover.target_position, cover_sm::NO_TARGET) << action;
         (void) drain_commands(*dev);
         mock_time_.advance(6000);
-        registry_.loop(mock_time_.millis());
+        tick_registry();
         const auto commands = drain_commands(*dev);
         for (const auto &command : commands) EXPECT_NE(command.payload[4], 0x10) << action;
     }
@@ -1655,16 +1759,21 @@ TEST_F(DeviceRegistryTest, UnpublishedCoverStillAcceptsAndTransmitsExplicitStop)
     auto config = dev->config;
     config.set_enabled(false);
     registry_.upsert(config);
-    ASSERT_TRUE(registry_.command_cover_action(*dev, "stop"));
-    EXPECT_EQ(dev->sender.state(), CommandSender::State::WAIT_DELAY);
-    registry_.loop(mock_time_.millis());
-    EXPECT_EQ(dev->sender.state(), CommandSender::State::TX_PENDING);
-    dev->sender.clear_queue();
     ASSERT_TRUE(registry_.command_cover_action(config.dst_address, "stop"));
-    (void) drain_commands(*dev);
+    for (int i = 0; dev->sender.is_busy() && i < 100; ++i) {
+        mock_time_.advance(pkt::button::INTER_PACKET_MS);
+        tick_registry();
+    }
+    EXPECT_FALSE(dev->sender.is_busy());
+    ASSERT_EQ(radio.commands.size(), pkt::button::PACKETS + 1u);
+    for (size_t i = 0; i < pkt::button::PACKETS; ++i) {
+        EXPECT_EQ(radio.commands[i].dst_addr, config.dst_address);
+        EXPECT_EQ(radio.commands[i].payload[4], pkt::command::STOP);
+    }
+    EXPECT_EQ(radio.commands.back().payload[4], pkt::command::CHECK);
     mock_time_.advance(300000);
-    registry_.loop(mock_time_.millis());
-    EXPECT_EQ(dev->sender.queue_size(), 0u);  // No autonomous polling while unpublished.
+    tick_registry();
+    EXPECT_FALSE(dev->sender.is_busy());  // No autonomous polling while unpublished.
     EXPECT_FALSE(registry_.command_cover_action(config.dst_address, "full_up"));
 }
 
@@ -1686,7 +1795,7 @@ TEST_F(DeviceRegistryTest, UnpublishedManualDrainDoesNotChangeLightBehaviour) {
     auto *dev = registry_.upsert(config);
     ASSERT_TRUE(registry_.command_light(*dev, pkt::command::UP));
     ASSERT_EQ(dev->sender.state(), CommandSender::State::WAIT_DELAY);
-    registry_.loop(mock_time_.millis());
+    tick_registry();
     EXPECT_EQ(dev->sender.state(), CommandSender::State::WAIT_DELAY);
 }
 
@@ -1998,4 +2107,139 @@ TEST_F(DeviceRegistryTest, TiltCapabilityEditPreservesAnUnrelatedOpenCommand) {
         EXPECT_EQ(open.back().payload[4], pkt::command::CHECK);
         EXPECT_TRUE(cover_sm::is_moving(cover.state));
     }
+}
+
+TEST_F(DeviceRegistryTest, RepeatedOnReportsPreserveDimTargetAndScheduledRelease) {
+    registry_.set_hub(nullptr);  // Inspect the queued commands after the deadline.
+    for (bool dim_down : {false, true}) {
+        SCOPED_TRACE(dim_down);
+        const auto addr = dim_down ? 0xC00011u : 0xC00010u;
+        auto *dev = add_light(addr);
+        if (dim_down) {
+            registry_.on_rf_packet(make_status_pkt(addr, pkt::state::LIGHT_ON), mock_time_.millis());
+        }
+        registry_.set_light_brightness(*dev, 0.5f);
+        auto &light = std::get<LightDevice>(dev->logic);
+        for (int i = 0; i < 2; ++i) {
+            mock_time_.advance(500);
+            registry_.on_rf_packet(make_status_pkt(addr, pkt::state::LIGHT_ON), mock_time_.millis());
+            ASSERT_TRUE(light_sm::is_dimming(light.state));
+        }
+        mock_time_.advance(2000);
+        registry_.loop(mock_time_.millis());
+        ASSERT_TRUE(std::holds_alternative<light_sm::On>(light.state));
+        EXPECT_FLOAT_EQ(std::get<light_sm::On>(light.state).brightness, 0.5f);
+        const auto packets = drain_commands(*dev);
+        EXPECT_EQ(std::count_if(packets.begin(), packets.end(), [](const auto &cmd) {
+            return cmd.payload[4] == pkt::button::RELEASE;
+        }), pkt::button::PACKETS);
+    }
+}
+
+TEST_F(DeviceRegistryTest, ReceiverOffCancelsPendingDimRelease) {
+    registry_.set_hub(nullptr);
+    auto *dev = add_light();
+    registry_.set_light_brightness(*dev, 0.5f);
+    drain_commands(*dev);
+    registry_.on_rf_packet(make_status_pkt(dev->config.dst_address, pkt::state::LIGHT_OFF),
+                           mock_time_.millis());
+    mock_time_.advance(5000);
+    registry_.loop(mock_time_.millis());
+    EXPECT_TRUE(std::holds_alternative<light_sm::Off>(std::get<LightDevice>(dev->logic).state));
+    EXPECT_FALSE(dev->sender.is_busy());
+}
+
+TEST_F(DeviceRegistryTest, NewDimTargetReplacesOriginalReleaseDeadline) {
+    registry_.set_hub(nullptr);
+    auto *dev = add_light();
+    registry_.set_light_brightness(*dev, 0.5f);
+    drain_commands(*dev);
+    mock_time_.advance(500);
+    registry_.on_rf_packet(make_status_pkt(dev->config.dst_address, pkt::state::LIGHT_ON),
+                           mock_time_.millis());
+    registry_.set_light_brightness(*dev, 0.8f);
+    drain_commands(*dev);
+    mock_time_.advance(2000);
+    registry_.loop(mock_time_.millis());
+    const auto &state = std::get<LightDevice>(dev->logic).state;
+    ASSERT_TRUE(light_sm::is_dimming(state));
+    EXPECT_FALSE(dev->sender.is_busy());
+    mock_time_.advance(2000);
+    registry_.loop(mock_time_.millis());
+    ASSERT_TRUE(std::holds_alternative<light_sm::On>(state));
+    EXPECT_FLOAT_EQ(std::get<light_sm::On>(state).brightness, 0.8f);
+    const auto released = drain_commands(*dev);
+    ASSERT_EQ(released.size(), pkt::button::PACKETS);
+    for (const auto &cmd : released) EXPECT_EQ(cmd.payload[4], pkt::button::RELEASE);
+}
+
+TEST_F(DeviceRegistryTest, PacketDisplayPreservesUnsupportedFramesWithoutDeviceUpdates) {
+    auto *cover = add_cover();
+    adapter_.clear();
+    // A complete status header with an unsupported destination count.
+    uint8_t raw[] = {0x10, 1, 0xca, 0, 0, 1, 1, 0xa8, 0x31, 0xe5,
+                     0, 0, 1, 0, 0, 1, 0xff, 0x64, 0x80};
+    const auto frame = RfPacketInfo::decode(raw, sizeof(raw));
+    ASSERT_TRUE(frame.has_value());
+    ASSERT_TRUE(frame->raw_only);
+    registry_.on_rf_packet(*frame, 100);
+    EXPECT_EQ(adapter_.rf_packets, 1);
+    EXPECT_TRUE(adapter_.state_changed.empty());
+    EXPECT_EQ(cover->rf.last_seen_ms, 0u);
+    EXPECT_FALSE(cover->sender.is_busy());
+
+    JsonDocument json;
+    ASSERT_FALSE(deserializeJson(json, build_rf_json(*frame)));
+    EXPECT_FALSE(json["decoded"].as<bool>());
+    EXPECT_TRUE(json["state"].isNull());
+    EXPECT_TRUE(json["command"].isNull());
+    EXPECT_TRUE(json["dst"].isNull());
+    EXPECT_STREQ(json["raw"], "10 01 ca 00 00 01 01 a8 31 e5 00 00 01 00 00 01 ff 64 80");
+
+    raw[2] = 0xfe;
+    const auto unknown = RfPacketInfo::decode(raw, sizeof(raw));
+    ASSERT_TRUE(unknown.has_value());
+    EXPECT_TRUE(unknown->raw_only);
+    EXPECT_FALSE(RfPacketInfo::decode(raw, sizeof(raw) - 1).has_value());
+}
+
+TEST(PacketDisplay, AddressedAndSelectorFramesKeepDistinctFields) {
+    // Anonymized two-receiver CHECK from issue 70, with radio status appended.
+    const uint8_t check[] = {
+        0x20, 0x01, 0x6a, 0x10, 0x00, 0x01, 0x45, 0xaa, 0xaa, 0xaa,
+        0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0x02, 0x11, 0x11, 0x11,
+        0x22, 0x22, 0x22, 0x02, 0x03, 0x54, 0xf4, 0x1e, 0xbc, 0x6c,
+        0xde, 0xa4, 0xb2, 0x64, 0x80};
+    auto frame = RfPacketInfo::decode(check, sizeof(check));
+    ASSERT_TRUE(frame.has_value());
+    JsonDocument json;
+    ASSERT_FALSE(deserializeJson(json, build_rf_json(*frame)));
+    ASSERT_TRUE(json["decoded"].as<bool>());
+    EXPECT_STREQ(json["command"], "0x00");
+    EXPECT_EQ(json["selectors"].size(), 0u);
+    ASSERT_EQ(json["destinations"].size(), 2u);
+    EXPECT_STREQ(json["destinations"][0], "0x111111");
+    EXPECT_STREQ(json["destinations"][1], "0x222222");
+    EXPECT_STREQ(json["prefix"], "02 03");
+    EXPECT_STREQ(json["trailing"], "");
+
+    // Reuse its command block with an ordered selector list and two tail bytes.
+    uint8_t selectors[] = {
+        0x1f, 0x01, 0x44, 0x10, 0x00, 0x01, 0x45, 0xaa, 0xaa, 0xaa,
+        0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0x03, 7, 1, 3,
+        0x00, 0x03, 0x54, 0xf4, 0x1e, 0xbc, 0x6c, 0xde, 0xa4, 0xb2,
+        0xde, 0xad, 0x64, 0x80};
+    const std::string decoded = json["decoded_bytes"].as<std::string>();
+    EXPECT_EQ(decoded, "00 00 00 00 00 00 00 80");
+    frame = RfPacketInfo::decode(selectors, sizeof(selectors));
+    ASSERT_TRUE(frame.has_value());
+    ASSERT_FALSE(deserializeJson(json, build_rf_json(*frame)));
+    ASSERT_EQ(json["selectors"].size(), 3u);
+    EXPECT_EQ(json["selectors"][0].as<int>(), 7);
+    EXPECT_EQ(json["selectors"][1].as<int>(), 1);
+    EXPECT_EQ(json["selectors"][2].as<int>(), 3);
+    EXPECT_EQ(json["destinations"].size(), 0u);
+    EXPECT_STREQ(json["prefix"], "00 03");
+    EXPECT_EQ(json["decoded_bytes"].as<std::string>(), decoded);
+    EXPECT_STREQ(json["trailing"], "de ad");
 }

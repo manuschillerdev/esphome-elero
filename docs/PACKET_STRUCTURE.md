@@ -2,9 +2,9 @@
 
 This document describes the exact byte layout for TX and RX packets, derived from working implementation `fe33d186f70dd97a3fc8dc8a42bfb94dc3c7a5e5`.
 
-## TX Packet (Command to Blind)
+## Single-address command example
 
-Total length: 30 bytes (length byte + 29 data bytes)
+This example has one address and no trailing data. It uses 30 bytes including the length byte.
 
 | Position | Field | Bytes | C++ Constant | Value/Source | Notes |
 |----------|-------|-------|--------------|--------------|-------|
@@ -23,6 +23,13 @@ Total length: 30 bytes (length byte + 29 data bytes)
 | 20 | Payload 1 | 1 | `tx_offset::PAYLOAD` | `0x00` | Default |
 | 21 | Payload 2 | 1 | `tx_offset::PAYLOAD + 1` | `0x04` | Default |
 | **22-29** | **Encrypted** | **8** | `tx_offset::CRYPTO_CODE` | | **msg_encode() applied** |
+
+For the supported frame types, the body length is `26 + destination bytes + trailing bytes`.
+Each selector uses one byte in `0x44`, `0x45`, and `0x70`. Each address uses three bytes in
+`0x69`, `0x6A`, `0xC9`, and `0xCA`. The codec accepts a body of up to 57 bytes.
+The two prefix bytes precede the eight-byte encoded block. The codec preserves any remaining
+bytes in the declared frame as opaque data. The radio appends signal strength and link quality
+after the frame on receive.
 
 ### Encrypted Section (positions 22-29)
 
@@ -92,11 +99,16 @@ All constants in `packet::state::` namespace.
 | START_MOVING_DOWN | `0x09` | `state::START_MOVING_DOWN` | Starting downward movement |
 | MOVING_UP | `0x0A` | `state::MOVING_UP` | Moving up |
 | MOVING_DOWN | `0x0B` | `state::MOVING_DOWN` | Moving down |
+| DELETE_IN_REMOTE | `0x0C` | `state::DELETE_IN_REMOTE` | Delete in remote |
 | STOPPED | `0x0D` | `state::STOPPED` | Stopped |
 | TOP_TILT | `0x0E` | `state::TOP_TILT` | Open + tilted |
-| BOTTOM_TILT | `0x0F` | `state::BOTTOM_TILT` | Closed + tilted |
+| BOTTOM_TILT | `0x0F` | `state::BOTTOM_TILT` | Bottom end position coincides with the intermediate position. Tilt is unchanged. |
 | LIGHT_OFF | `0x10` | `state::LIGHT_OFF` | Switching receiver off |
 | LIGHT_ON | `0x11` | `state::LIGHT_ON` | Light on |
+| SCENE_SET | `0x12` | `state::SCENE_SET` | Scene set |
+| SCENE_STARTED | `0x13` | `state::SCENE_STARTED` | Scene started |
+| SCENE_STOPPED | `0x14` | `state::SCENE_STOPPED` | Scene stopped |
+| SCENE_ERROR | `0x15` | `state::SCENE_ERROR` | Scene error |
 
 ## Message Types
 

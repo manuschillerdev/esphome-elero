@@ -1,6 +1,7 @@
 #include <cinttypes>
 #include "elero_web_server.h"
 #include "web_json.h"
+#include "rf_json.h"
 #include "elero_web_ui.h"
 #include "../elero/elero_packet.h"
 #include "../elero/elero_strings.h"
@@ -276,7 +277,7 @@ void EleroWebServer::on_state_changed(const Device &dev, uint16_t /*changes*/) {
 void EleroWebServer::on_rf_packet(const RfPacketInfo &pkt) {
   if (this->ws_clients_.empty() || !this->enabled_)
     return;
-  this->ws_broadcast("rf", this->build_rf_json(pkt));
+  this->ws_broadcast("rf", build_rf_json(pkt));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -492,7 +493,7 @@ void EleroWebServer::handle_ws_message(struct mg_connection *c, struct mg_ws_mes
 
       // Unknown address → raw TX (blocking, debug only)
       uint8_t payload_1 = parse_hex_or(root, "payload_1", packet::defaults::PAYLOAD_1);
-      uint8_t payload_2 = parse_hex_or(root, "payload_2", packet::defaults::PAYLOAD_2);
+      uint8_t payload_2 = parse_hex_or(root, "payload_2", packet::default_payload_2(msg_type));
       uint8_t type2_val = parse_hex_or(root, "type2", packet::defaults::TYPE2);
       uint8_t hop = parse_hex_or(root, "hop", packet::defaults::HOP);
 
@@ -631,36 +632,6 @@ std::string EleroWebServer::build_config_json() {
     }
 
     // mode and crud are in hub object above
-  });
-}
-
-std::string EleroWebServer::build_rf_json(const RfPacketInfo &pkt) {
-  // Build hex string of raw packet
-  std::string raw_hex;
-  raw_hex.reserve(pkt.raw_len * 3);
-  for (int i = 0; i < pkt.raw_len && i < CC1101_FIFO_LENGTH; i++) {
-    char byte_buf[4];
-    snprintf(byte_buf, sizeof(byte_buf), i == 0 ? "%02x" : " %02x", pkt.raw[i]);
-    raw_hex += byte_buf;
-  }
-
-  return build_web_json([&](JsonObject root) {
-    root["t"] = pkt.timestamp_ms;
-    root["src"] = hex_str(pkt.src);
-    root["dst"] = hex_str(pkt.dst);
-    auto destinations = root["destinations"].to<JsonArray>();
-    for (uint8_t i = 0; i < pkt.num_address_dests; ++i) {
-      destinations.add(hex_str(pkt.dst_addrs[i]));
-    }
-    root["channel"] = pkt.channel;
-    root["type"] = hex_str8(pkt.type);
-    root["type2"] = hex_str8(pkt.type2);
-    root["command"] = hex_str8(pkt.command);
-    root["state"] = hex_str8(pkt.state);
-    root["cnt"] = pkt.cnt;
-    root["rssi"] = round_rssi(pkt.rssi);
-    root["hop"] = hex_str8(pkt.hop);
-    root["raw"] = raw_hex;
   });
 }
 

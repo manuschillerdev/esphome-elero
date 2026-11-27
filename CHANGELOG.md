@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0-rc.3](https://github.com/manuschillerdev/esphome-elero/compare/v0.11.0-rc.2...v0.11.0-rc.3) (2026-11-26)
+
+### Bug fixes
+
+- Fix the firmware build on ESPHome 2026.11 when debug or verbose packet logging is enabled (#109, #110).
+- Keep older radio reports from overriding a new cover command. Fix cover movement timing and native light control after device changes (#86).
+- Show more receiver status values in the web interface. Keep the tilt setting when the receiver reports state `0x0F` (#94).
+
+### Features
+
+- Edit the command bytes for each cover in the web interface (#84).
+- Use short presses for directional tilt controls in Home Assistant (#85).
+- Support radio packets of different lengths and preserve the original selector headers (#95).
+
 ## [0.11.0-rc.2](https://github.com/manuschillerdev/esphome-elero/compare/v0.11.0-rc.1...v0.11.0-rc.2) (2026-11-07)
 
 ### Features

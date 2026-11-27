@@ -276,7 +276,7 @@ TEST_F(MqttCoverTest, BootDiscardsOldStateUntilMotorReports) {
     broker_.retained[STATE_TOPIC] = "open";
     broker_.retained[POSITION_TOPIC] = "100";
     broker_.retained[TILT_TOPIC] = "100";
-    add_cover();
+    restore_saved_covers({make_cover_config(0xA831E5)});
     EXPECT_FALSE(broker_.retained.contains(STATE_TOPIC));
     EXPECT_FALSE(broker_.retained.contains(POSITION_TOPIC));
     EXPECT_FALSE(broker_.retained.contains(TILT_TOPIC));
@@ -289,7 +289,7 @@ TEST_F(MqttCoverTest, StartupWhileDisconnectedClearsOldStateOnReconnect) {
     mqtt_.loop();
     broker_.retained[STATE_TOPIC] = "open";
     broker_.retained[POSITION_TOPIC] = "100";
-    add_cover();
+    restore_saved_covers({make_cover_config(0xA831E5)});
 
     broker_.connected = true;
     mqtt_.loop();
@@ -519,4 +519,67 @@ TEST_F(MqttCoverTest, NativeGroupLightRoutesCommandsAndReportsMemberStateWithout
     output.sync_and_publish(registry_.group_snapshot(group, mock_time_.millis()));
     EXPECT_FALSE(state.remote_values.is_on());
     EXPECT_EQ(lamp->sender.queue_size(), 0u);
+}
+
+TEST_F(MqttCoverTest, ReceiverStatusReachesMqttAndWebWithoutChangingClosedCover) {
+    auto *dev = add_cover();
+    ASSERT_NE(dev, nullptr);
+    struct StatusCase { uint8_t byte; const char *name; };
+    const StatusCase cases[] = {
+        {0x0f, "bottom_tilt"}, {0x0c, "delete_in_remote"}, {0x12, "scene_set"},
+        {0x13, "scene_started"}, {0x14, "scene_stopped"}, {0x15, "scene_error"},
+    };
+    for (const auto type : {pkt::msg_type::STATUS, pkt::msg_type::STATUS_ALT}) {
+        for (const auto &[byte, name] : cases) {
+            SCOPED_TRACE(name);
+            // Synthetic input to the receiver parser, including the two FIFO status bytes.
+            pkt::TxParams params{};
+            params.type = type;
+            params.src_addr = dev->config.dst_address;
+            uint8_t frame[pkt::FIFO_LENGTH]{};
+            const size_t size = pkt::build_tx_packet(params, frame);
+            uint8_t block[8]{};
+            block[pkt::payload_offset::STATE] = byte;
+            protocol::msg_encode(block);
+            std::copy_n(block, sizeof(block), frame + pkt::tx_offset::CRYPTO_CODE);
+            frame[size + 1] = 0x80;
+            const auto decoded = pkt::parse_packet(frame, size + 2);
+            ASSERT_TRUE(decoded.valid);
+            auto report = make_status_pkt(decoded.src_addr, decoded.state);
+            report.type = decoded.type;
+            registry_.on_rf_packet(report, mock_time_.millis());
+
+            const auto snapshot = compute_cover_snapshot(*dev, mock_time_.millis());
+            JsonDocument json;
+            snapshot.to_json(json.to<JsonObject>());
+            EXPECT_EQ(json["state"].as<std::string>(), name);
+            EXPECT_EQ(json["ha_state"].as<std::string>(), "closed");
+            EXPECT_FALSE(json["tilted"].as<bool>());
+            EXPECT_EQ(broker_.retained.at(STATE_TOPIC), "closed");
+            EXPECT_EQ(broker_.retained.at("elero/cover/a831e5/device_state"), name);
+        }
+    }
+}
+
+TEST_F(MqttCoverTest, RejectsInvalidPositionTextBeforeMovingTheCover) {
+    auto *cover = add_cover();
+    const auto &logic = std::get<CoverDevice>(cover->logic);
+    for (const char *payload : {"", "bad", "45percent", "0x10", "nan", "inf", "1e-200", "-1", "101"}) {
+        broker_.deliver(SET_POSITION_TOPIC, payload);
+        EXPECT_EQ(cover->sender.queue_size(), 0u) << payload;
+        EXPECT_FLOAT_EQ(logic.target_position, cover_sm::NO_TARGET) << payload;
+    }
+    broker_.deliver(SET_POSITION_TOPIC, "37.5");
+    EXPECT_FLOAT_EQ(logic.target_position, 0.375f);
+    const auto pending = cover->sender.queue_size();
+    broker_.deliver(SET_POSITION_TOPIC, "bad");
+    EXPECT_EQ(cover->sender.queue_size(), pending);
+    EXPECT_FLOAT_EQ(logic.target_position, 0.375f);
+    (void) drain_commands(*cover);
+    for (const char *endpoint : {"0", "100"}) {
+        broker_.deliver(SET_POSITION_TOPIC, endpoint);
+        const auto packets = drain_commands(*cover);
+        ASSERT_FALSE(packets.empty());
+        EXPECT_EQ(packets.front().payload[4], endpoint[0] == '0' ? pkt::command::DOWN : pkt::command::UP);
+    }
 }

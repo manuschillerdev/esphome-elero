@@ -18,16 +18,16 @@ CoverStateSnapshot compute_cover_snapshot(const Device &dev, uint32_t now) {
     // BOTTOM from before movement) show "closed" — blind is mid-travel.
     const char *ha_state = std::holds_alternative<cover_sm::Stopping>(cover.state)
         ? "open"
-        : ha_cover_state_str(op, dev.rf.last_state_raw);
+        : ha_cover_state_str(op, dev.rf.last_operating_state);
 
-    auto *pt = problem_type_str(dev.rf.last_state_raw);
+    auto *pt = problem_type_str(dev.rf.last_operating_state);
 
     return CoverStateSnapshot{
         .position = pos,
         .ha_state = ha_state,
         .operation = op,
         .tilted = cover.tilted,
-        .is_problem = is_problem_state(dev.rf.last_state_raw),
+        .is_problem = is_problem_state(dev.rf.last_operating_state),
         .problem_type = pt != nullptr ? pt : PROBLEM_TYPE_NONE,
         .rssi = dev.rf.last_rssi,
         .state_string = elero_state_to_string(dev.rf.last_state_raw),
@@ -49,12 +49,12 @@ LightStateSnapshot compute_light_snapshot(const Device &dev, uint32_t now) {
     const auto &light = std::get<LightDevice>(dev.logic);
     auto ctx = light_context(dev.config);
 
-    auto *lpt = problem_type_str(dev.rf.last_state_raw);
+    auto *lpt = problem_type_str(dev.rf.last_operating_state);
 
     return LightStateSnapshot{
         .is_on = light_sm::is_on(light.state),
         .brightness = light_sm::brightness(light.state, now, ctx),
-        .is_problem = is_problem_state(dev.rf.last_state_raw),
+        .is_problem = is_problem_state(dev.rf.last_operating_state),
         .problem_type = lpt != nullptr ? lpt : PROBLEM_TYPE_NONE,
         .rssi = dev.rf.last_rssi,
         .state_string = elero_state_to_string(dev.rf.last_state_raw),

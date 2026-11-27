@@ -94,7 +94,7 @@ function buildRows(devs: Map<string, Device>, names: Record<string, string>): Ro
       pairedRemoteText: pairedRemotes.length > 0
         ? pairedRemotes.map((remote) => `${remote.label} ${remote.address} CH ${remote.channel}`).join(' ')
         : 'Unpaired',
-      haState: ((d.lastStatus as Record<string, unknown> | null)?.ha_state as string | undefined)?.toUpperCase() ?? '—',
+      haState: d.lastStatus?.ha_state?.toUpperCase() ?? '—',
       rfState: getStateLabel(d.lastStatus?.state, d.type),
       rssi: d.lastStatus?.rssi ?? null,
     })

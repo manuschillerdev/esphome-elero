@@ -1,3 +1,4 @@
+import { rfStatusNames } from '../generated/rf-status-names'
 import type { DeviceType, FreqConfig, RfData, RfStateName } from '@/generated'
 
 // ─── Protocol Constants (mirrors C++ packet:: namespace in elero_packet.h) ───
@@ -31,40 +32,23 @@ export const DISCOVERY_COMMANDS: Set<string> = new Set([
   command.UP, command.DOWN, command.FULL_UP, command.FULL_DOWN, command.STOP, command.TILT, command.INTERMEDIATE,
 ])
 
-/// Hex byte → RfStateName (from AsyncAPI spec). Single source of truth for
-/// normalizing RF packet state bytes to the canonical snake_case names that
-/// state_changed events already use.
-const STATE_HEX: Record<string, RfStateName> = {
-  '0x00': 'unknown',
-  '0x01': 'top',
-  '0x02': 'bottom',
-  '0x03': 'intermediate',
-  '0x04': 'tilt',
-  '0x05': 'blocking',
-  '0x06': 'overheated',
-  '0x07': 'timeout',
-  '0x08': 'start_moving_up',
-  '0x09': 'start_moving_down',
-  '0x0a': 'moving_up',
-  '0x0b': 'moving_down',
-  '0x0d': 'stopped',
-  '0x0e': 'top_tilt',
-  '0x0f': 'bottom_tilt',
-  '0x10': 'light_off',
-  '0x11': 'light_on',
-}
+const legacyNames = new Map(rfStatusNames.map((name, byte) => [`0x${byte.toString(16).padStart(2, '0')}`, name]))
 
-/// Resolve a state value (hex byte or snake_case name) to its canonical RfStateName.
 export function resolveStateName(raw: string | undefined): RfStateName | undefined {
-  if (!raw) return undefined
-  return STATE_HEX[raw.toLowerCase()] ?? (raw as RfStateName)
+  return raw ? legacyNames.get(raw.toLowerCase()) ?? rfStatusNames.find(name => name === raw) : undefined
 }
 
 // ─── Label Lookups ──────────────────────────────────────────────────────────
 
-const STATE_LABELS: Record<string, string> = Object.fromEntries(
-  Object.entries(STATE_HEX).map(([, name]) => [name, name.toUpperCase()])
-)
+const STATE_LABELS: Record<string, string> = {
+  ...Object.fromEntries(rfStatusNames.map(name => [name, name.toUpperCase()])),
+  delete_in_remote: 'Delete in remote',
+  bottom_tilt: 'Bottom (also intermediate position)',
+  scene_set: 'Scene set',
+  scene_started: 'Scene started',
+  scene_stopped: 'Scene stopped',
+  scene_error: 'Scene error',
+}
 const COMMAND_LABELS: Record<string, string> = Object.fromEntries(
   Object.entries(command).map(([k, v]) => [v, k])
 )
@@ -83,8 +67,9 @@ export function getStateLabel(state: string | undefined, deviceType?: DeviceType
   return (name && STATE_LABELS[name]) ?? state
 }
 
-export function getCommandLabel(hexCmd: string | undefined): string {
+export function getCommandLabel(hexCmd: string | undefined, frameType?: string): string {
   if (!hexCmd) return ''
+  if (frameType?.toLowerCase() === msg_type.BUTTON && hexCmd.toLowerCase() === command.CHECK) return 'RELEASE'
   return COMMAND_LABELS[hexCmd.toLowerCase()] ?? hexCmd
 }
 
@@ -96,20 +81,23 @@ export function getMsgTypeLabel(hexType: string | undefined): string {
 // ─── Packet Type Guards ─────────────────────────────────────────────────────
 
 export function isStatusPacket(pkt: RfData): boolean {
+  if (pkt.decoded === false) return false
   const t = pkt.type?.toLowerCase()
   return t === msg_type.STATUS || t === msg_type.STATUS_ALT
 }
 
 export function isCommandPacket(pkt: RfData): boolean {
+  if (pkt.decoded === false) return false
   const t = pkt.type?.toLowerCase()
   return t === msg_type.COMMAND || t === msg_type.COMMAND_ALT
 }
 
 export function isButtonPacket(pkt: RfData): boolean {
-  return pkt.type?.toLowerCase() === msg_type.BUTTON
+  return pkt.decoded !== false && pkt.type?.toLowerCase() === msg_type.BUTTON
 }
 
 export function isSelectorPacket(pkt: RfData): boolean {
+  if (pkt.decoded === false) return false
   const t = pkt.type?.toLowerCase()
   return t === msg_type.BUTTON || t === msg_type.BUTTON_GROUP || t === msg_type.PROGRAM
 }

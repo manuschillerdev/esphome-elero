@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cinttypes>
 #include <cmath>
+#include <cstring>
 #include <optional>
 #include "mqtt_adapter.h"
 #include "../elero/device.h"
@@ -29,11 +30,13 @@ static const char *const COVER_STATE_OPTIONS[] = {
     "top", "bottom", "intermediate", "tilt", "top_tilt", "bottom_tilt",
     "moving_up", "moving_down", "start_moving_up", "start_moving_down",
     "stopped", "blocking", "overheated", "timeout", "unknown",
+    "delete_in_remote", "scene_set", "scene_started", "scene_stopped", "scene_error",
 };
 static const char *const LIGHT_STATE_OPTIONS[] = {
     "light_off", "light_on", "top", "bottom", "intermediate",
     "moving_up", "moving_down", "start_moving_up", "start_moving_down",
     "stopped", "blocking", "overheated", "timeout", "unknown",
+    "delete_in_remote", "scene_set", "scene_started", "scene_stopped", "scene_error",
 };
 
 static std::optional<float> parse_percentage(const char *payload) {

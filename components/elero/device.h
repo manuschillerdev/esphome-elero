@@ -30,6 +30,16 @@ struct RfMeta {
     uint32_t last_seen_ms{0};
     float    last_rssi{0.0f};
     uint8_t  last_state_raw{0};
+    uint8_t  last_operating_state{0};
+
+    void record_status(uint8_t value) {
+        last_state_raw = value;
+        // Scene and deletion reports carry no motor, light, or fault state.
+        if (value != packet::state::DELETE_IN_REMOTE &&
+            !(value >= packet::state::SCENE_SET && value <= packet::state::SCENE_ERROR)) {
+            last_operating_state = value;
+        }
+    }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

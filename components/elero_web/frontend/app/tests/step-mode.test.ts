@@ -42,3 +42,9 @@ await test('contract preserves mode in save and backup, and rejects unknown mode
   assert.equal(readCommand(JSON.stringify({ type: 'import_config', snapshot })).type, 'import_config')
   assert.doesNotThrow(() => envelope('device_upserted', { address, device_type: 'cover', movement_mode: 'step' }))
 })
+
+await test('button release and status query have distinct packet labels', () => {
+  assert.equal(getCommandLabel('0x00', '0x44'), 'RELEASE')
+  assert.equal(getCommandLabel('0x00', '0x6A'), 'CHECK')
+  assert.equal(getCommandLabel('0x10', '0x44'), 'STOP')
+})

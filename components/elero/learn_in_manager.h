@@ -64,12 +64,14 @@ class LearnInManager : public TxClient {
   void cancel();
 
   template<typename Hub>
-  void loop(uint32_t now, Hub *hub) {
-    if (hub == nullptr) {
+  void loop(Hub *hub) {
+    if (hub == nullptr || !is_active()) {
       return;
     }
 
-    if (is_active() && now - session_start_ms_ >= session_timeout_ms_) {
+    // A web request can start this session during the registry loop.
+    const uint32_t now = get_time_provider().millis();
+    if (now - session_start_ms_ >= session_timeout_ms_) {
       finish_(LearnInState::TIMED_OUT);
       ESP_LOGW("elero.learn_in", "Learn-in session timed out");
       return;
@@ -111,7 +113,7 @@ class LearnInManager : public TxClient {
   void finish_(LearnInState state);
 
   EleroCommand command_{1, 0, 0, 0, packet::msg_type::PROGRAM,
-                        packet::program::TYPE2, packet::program::HOP, {0}};
+                        packet::program::TYPE2, packet::program::HOP, {0, packet::button::SINGLE_PAYLOAD_2}};
   std::variant<LearnInState, Sending> state_{LearnInState::IDLE};
   uint8_t packets_per_step_{packet::program::PACKETS};
   uint32_t session_start_ms_{0};

@@ -75,16 +75,14 @@ export function LightDeviceCell({ device }: { device: Device }) {
 }
 
 export function HaStateCell({ device }: { device: Device }) {
-  const status = device.lastStatus as Record<string, unknown> | null
-  const haState = (status?.ha_state as string | undefined)?.toUpperCase() ?? '—'
+  const haState = device.lastStatus?.ha_state?.toUpperCase() ?? '—'
   return (
     <span className="text-[10px] text-muted-foreground">{haState}</span>
   )
 }
 
 export function RfStateCell({ device }: { device: Device }) {
-  const status = device.lastStatus as Record<string, unknown> | null
-  const rfState = getStateLabel(status?.state as string | undefined, device.type)
+  const rfState = getStateLabel(device.lastStatus?.state, device.type)
   return (
     <span className="text-[10px] text-muted-foreground">{rfState}</span>
   )
@@ -414,7 +412,7 @@ export function DeviceExpandedPanel({ device }: { device: Device }) {
                 {commandPackets.map((pkt, i) => (
                   <tr key={`${pkt.t}-${i}`} className="group">
                     <td className="py-1.5 pr-3 text-muted-foreground">{formatTime(pkt.received_at)}</td>
-                    <td className="py-1.5 pr-3">{getCommandLabel(pkt.command)}</td>
+                    <td className="py-1.5 pr-3">{getCommandLabel(pkt.command, pkt.type)}</td>
                     <td className="py-1.5 pr-3 text-muted-foreground">{pkt.type}</td>
                     <td className="py-1.5 pr-3 text-muted-foreground">{pkt.rssi?.toFixed(0) ?? '-'}</td>
                     <td className="py-1.5 text-right">

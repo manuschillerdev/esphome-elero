@@ -606,7 +606,7 @@ Brightness is derived from `(state, now, config.dim_duration)` -- never stored. 
 | `0x0B` | `MOVING_DOWN` | Continuing downward movement |
 | `0x0D` | `STOPPED` | Stopped by command |
 | `0x0E` | `TOP_TILT` | Fully open + tilted |
-| `0x0F` | `BOTTOM_TILT` | Fully closed + tilted |
+| `0x0F` | `BOTTOM_TILT` | Bottom end position coincides with the intermediate position. Tilt is unchanged. |
 
 ---
 

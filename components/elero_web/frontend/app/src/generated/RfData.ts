@@ -1,4 +1,4 @@
-
+import {RfStateName} from './RfStateName';
 interface RfData {
   /**
    * Timestamp in milliseconds since boot (millis())
@@ -14,7 +14,27 @@ interface RfData {
    * Destination address (hex string). Blind for commands, remote for status.
    * @example 0xb42f01
    */
-  'dst': string;
+  'dst'?: string;
+  /**
+   * False for a complete frame with an unsupported layout. Only the common header, signal strength and raw bytes are available.
+   */
+  'decoded'?: boolean;
+  /**
+   * Channel selectors in received order. Empty for addressed packets.
+   */
+  'selectors'?: number[];
+  /**
+   * The two bytes before the command block, in hexadecimal.
+   */
+  'prefix'?: string;
+  /**
+   * The eight decoded command or status bytes, in hexadecimal.
+   */
+  'decoded_bytes'?: string;
+  /**
+   * Bytes after the command block, excluding radio status bytes, in hexadecimal.
+   */
+  'trailing'?: string;
   /**
    * All 24-bit destinations for addressed packets. Empty for selector envelopes.
    */
@@ -43,7 +63,7 @@ interface RfData {
   'type2': string;
   /**
    * Command byte (hex string, for command/selector packets):
-   * - `0x00` — check (request status)
+   * - `0x00` — release in a 0x44 button packet, check in a 0x6a command packet
    * - `0x10` — stop
    * - `0x20` — up/open
    * - `0x24` — tilt
@@ -54,29 +74,17 @@ interface RfData {
    * - `0x84` — programming/P targeted action
    * @example 0x20
    */
-  'command': string;
+  'command'?: string;
   /**
-   * State byte (hex string, for status packets):
-   * - `0x00` — unknown
-   * - `0x01` — top (fully open)
-   * - `0x02` — bottom (fully closed)
-   * - `0x03` — intermediate
-   * - `0x04` — tilt
-   * - `0x05` — blocking (obstacle)
-   * - `0x06` — overheated
-   * - `0x07` — timeout
-   * - `0x08` — start moving up
-   * - `0x09` — start moving down
-   * - `0x0a` — moving up
-   * - `0x0b` — moving down
-   * - `0x0d` — stopped
-   * - `0x0e` — top + tilted
-   * - `0x0f` — bottom + stored intermediate position
-   * - `0x10` — light off
-   * - `0x11` — light on
+   * Raw hexadecimal status byte. For a status packet, state_name gives the firmware's decoded name.
    * @example 0x01
    */
-  'state': string;
+  'state'?: string;
+  /**
+   * Receiver status name returned by elero_state_to_string().
+   * The enum index is the numeric status byte.
+   */
+  'state_name'?: RfStateName;
   /**
    * Rolling counter value from packet (0-255)
    * @example 42
