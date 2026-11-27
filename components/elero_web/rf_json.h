@@ -9,13 +9,13 @@
 namespace esphome::elero {
 
 inline std::string format_rf_bytes(std::span<const uint8_t> bytes) {
-  constexpr char HEX[] = "0123456789abcdef";
+  constexpr char ELERO_HEX_DIGITS[] = "0123456789abcdef";
   std::string text;
   text.reserve(bytes.size() * 3);
   for (uint8_t byte : bytes) {
     if (!text.empty()) text += ' ';
-    text += HEX[byte >> 4];
-    text += HEX[byte & 0x0f];
+    text += ELERO_HEX_DIGITS[byte >> 4];
+    text += ELERO_HEX_DIGITS[byte & 0x0f];
   }
   return text;
 }
