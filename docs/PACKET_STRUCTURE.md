@@ -31,8 +31,8 @@ The two prefix bytes precede the eight-byte encoded block. The codec preserves a
 bytes in the declared frame as opaque data. The radio appends signal strength and link quality
 after the frame on receive.
 
-For a decoded `0x45` group packet, the web interface shows the backward and forward addresses
-under **Frame → Bytes**. The WebSocket event exposes these header fields as `bwd` and `fwd`.
+Open `/elero#packets` and expand **Bytes** in the **Frame** column. For a decoded `0x45` group
+packet, the details show the backward and forward addresses. The WebSocket event exposes these header fields as `bwd` and `fwd`.
 Compare `bwd` across copies with the same source and counter to distinguish forwarding devices.
 The `encoded_bytes` field contains the eight bytes as received. The verbose radio log includes
 both addresses, the selectors, and the encoded and decoded blocks.
