@@ -2235,6 +2235,32 @@ TEST_F(DeviceRegistryTest, PacketDisplayPreservesUnsupportedFramesWithoutDeviceU
     EXPECT_FALSE(RfPacketInfo::decode(raw, sizeof(raw) - 1).has_value());
 }
 
+TEST(PacketDisplay, GroupCopiesExposeRoutingFieldsAndReceivedBlock) {
+    // Use distinct header addresses so a field read from the wrong offset fails.
+    uint8_t raw[] = {
+        0x1e, 0xe2, 0x45, 0x10, 0x15, 1, 0, 0xaa, 0xaa, 0xaa,
+        0x11, 0x11, 0x11, 0x22, 0x22, 0x22, 4, 1, 2, 3, 7, 0, 4,
+        0xe7, 0x11, 0x0d, 0x66, 0x2b, 0x11, 0xe0, 0x15, 0x64, 0x80};
+    const auto frame = RfPacketInfo::decode(raw, sizeof(raw));
+    ASSERT_TRUE(frame.has_value());
+    JsonDocument json;
+    ASSERT_FALSE(deserializeJson(json, build_rf_json(*frame)));
+    EXPECT_STREQ(json["src"], "0xaaaaaa");
+    EXPECT_STREQ(json["bwd"], "0x111111");
+    EXPECT_STREQ(json["fwd"], "0x222222");
+    EXPECT_STREQ(json["encoded_bytes"], "e7 11 0d 66 2b 11 e0 15");
+    EXPECT_STREQ(json["decoded_bytes"], "00 00 10 00 00 00 00 40");
+
+    raw[16] = 0xff;  // Unsupported selector count. Only the common header is valid.
+    const auto invalid = RfPacketInfo::decode(raw, sizeof(raw));
+    ASSERT_TRUE(invalid.has_value());
+    ASSERT_TRUE(invalid->raw_only);
+    ASSERT_FALSE(deserializeJson(json, build_rf_json(*invalid)));
+    EXPECT_TRUE(json["bwd"].isNull());
+    EXPECT_TRUE(json["fwd"].isNull());
+    EXPECT_TRUE(json["encoded_bytes"].isNull());
+}
+
 TEST(PacketDisplay, AddressedAndSelectorFramesKeepDistinctFields) {
     // Anonymized two-receiver CHECK from issue 70, with radio status appended.
     const uint8_t check[] = {

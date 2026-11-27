@@ -64,6 +64,14 @@ struct RfPacketInfo {
   uint8_t trailing_length{0};  ///< In raw, immediately before the two radio status bytes.
   uint8_t raw_len;
   uint8_t raw[CC1101_FIFO_LENGTH];
+
+  uint32_t backward_address() const { return packet::extract_addr(raw + packet::pkt_offset::BWD_ADDR); }
+  uint32_t forward_address() const { return packet::extract_addr(raw + packet::pkt_offset::FWD_ADDR); }
+
+  /// Valid after successful layout decoding.
+  const uint8_t *encoded_block() const {
+    return raw + packet::pkt_offset::FIRST_DEST + destination_bytes + packet::PREFIX_SIZE;
+  }
 };
 
 // String conversion declarations (elero_state_to_string, etc.) are in elero_strings.h

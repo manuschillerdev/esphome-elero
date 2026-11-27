@@ -147,7 +147,10 @@ export function buildFullColumns(
           <summary className="cursor-pointer">{pkt.decoded === false ? 'Raw frame' : 'Bytes'}</summary>
           <dl className="mt-1 space-y-1 text-xs">
             {Object.entries({
+              'Backward address': pkt.bwd,
+              'Forward address': pkt.fwd,
               Prefix: pkt.prefix,
+              'Encoded block': pkt.encoded_bytes,
               'Decoded block': pkt.decoded_bytes,
               'Trailing bytes': pkt.trailing,
               Raw: pkt.raw,

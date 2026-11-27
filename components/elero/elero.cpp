@@ -341,6 +341,16 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
 #ifdef ESPHOME_LOG_HAS_VERBOSE
   if (pkt.raw_only) {
     ESP_LOGV(TAG_RF, "Raw RX type=0x%02x cnt=%u", pkt.type, pkt.cnt);
+  } else if (pkt.type == msg_type::BUTTON_GROUP) {
+    char selectors[format_hex_pretty_size(packet::GROUP_MAX_DESTS)];
+    char encoded[format_hex_pretty_size(packet::COMMAND_BLOCK_SIZE)];
+    char decoded[format_hex_pretty_size(packet::COMMAND_BLOCK_SIZE)];
+    ESP_LOGV(TAG_RF, "RX group type=0x45 cnt=%u hop=0x%02x ch=%u src=0x%06" PRIx32 " bwd=0x%06" PRIx32
+             " fwd=0x%06" PRIx32 " selectors=[%s] encoded=[%s] decoded=[%s]",
+             pkt.cnt, pkt.hop, pkt.channel, pkt.src, pkt.backward_address(), pkt.forward_address(),
+             format_hex_pretty_to(selectors, pkt.raw + packet::pkt_offset::FIRST_DEST, pkt.destination_bytes, ' '),
+             format_hex_pretty_to(encoded, pkt.encoded_block(), packet::COMMAND_BLOCK_SIZE, ' '),
+             format_hex_pretty_to(decoded, pkt.payload, packet::COMMAND_BLOCK_SIZE, ' '));
   } else {
     ESP_LOGV(TAG_RF, "RX src=0x%06" PRIx32 " dst=0x%06" PRIx32 " type=0x%02x cmd=0x%02x state=0x%02x cnt=%u",
              pkt.src, pkt.dst, pkt.type, pkt.command, pkt.state, pkt.cnt);
