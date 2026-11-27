@@ -46,6 +46,16 @@ class EspHomeMqttAdapter : public MqttPublisher {
 #endif
   }
 
+  MqttAvailability availability() const override {
+#ifdef USE_MQTT
+    if (mqtt::global_mqtt_client != nullptr) {
+      const auto &config = mqtt::global_mqtt_client->get_availability();
+      return {config.topic.c_str(), config.payload_available.c_str(), config.payload_not_available.c_str()};
+    }
+#endif
+    return {};
+  }
+
   bool is_connected() const override {
 #ifdef USE_MQTT
     if (mqtt::global_mqtt_client == nullptr) return false;

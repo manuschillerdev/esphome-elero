@@ -8,6 +8,7 @@
 
 #include "esphome/components/button/button.h"
 #include "esphome/components/cover/cover.h"
+#include "esphome/components/light/light_state.h"
 #include "esphome/core/helpers.h"
 
 namespace esphome {
@@ -39,7 +40,9 @@ class Application {
   void register_button(button::Button *entity, const char *, uint32_t, uint32_t) {
     buttons.emplace_back(entity);
   }
-  void register_light(light::LightState *, const char *, uint32_t, uint32_t) {}
+  void register_light(light::LightState *state, const char *name, uint32_t key, uint32_t fields) {
+    state->configure_entity_(name, key, fields);
+  }
 };
 inline Application App;
 }  // namespace esphome

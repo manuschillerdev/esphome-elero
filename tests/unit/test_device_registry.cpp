@@ -309,7 +309,7 @@ class DeviceRegistryTest : public ::testing::Test {
         registry_.loop(mock_time_.millis());
     }
 
-    void restore_saved_covers(std::initializer_list<NvsDeviceConfig> configs) {
+    void restore_saved_devices(std::initializer_list<NvsDeviceConfig> configs) {
         {
             DeviceRegistry previous_boot;
             previous_boot.set_nvs_enabled(true);
@@ -344,13 +344,45 @@ class DeviceRegistryTest : public ::testing::Test {
 
 #include "test_mqtt_cover.inc"
 
+TEST_F(DeviceRegistryTest, NativeBootMigratesLightSettingsOnlyWhenTheAddressHasNoRecord) {
+    using esphome::light::LightStateRTCState;
+    auto west = make_light_config(0x100001, "Porch West");
+    auto east = make_light_config(0x100002, "Porch East");
+    auto seed = [](const char *name, uint32_t key, float brightness) {
+        NvsLightState old;
+        esphome::App.register_light(&old, name, key, 0);
+        LightStateRTCState saved{};
+        saved.brightness = brightness;
+        ASSERT_TRUE(old.make_entity_preference<LightStateRTCState>().save(&saved));
+    };
+    seed(west.name, 0, 0.3f);
+    seed(east.name, 0, 0.7f);
+    // An existing record from the newer firmware takes precedence.
+    seed(east.name, esphome::fnv1_hash("elero_light_" + hex_str(east.dst_address)), 0.5f);
+
+    NvsAdapter native;
+    NvsLightState west_slot, east_slot;
+    registry_.add_adapter(&native);
+    registry_.setup_adapters();
+    restore_saved_devices({west, east});
+    native.set_light_slot(registry_.slot_index(*registry_.find(west.dst_address)), &west_slot);
+    native.set_light_slot(registry_.slot_index(*registry_.find(east.dst_address)), &east_slot);
+    native.setup();
+
+    LightStateRTCState restored{};
+    ASSERT_TRUE(west_slot.make_entity_preference<LightStateRTCState>().load(&restored));
+    EXPECT_FLOAT_EQ(restored.brightness, 0.3f);
+    ASSERT_TRUE(east_slot.make_entity_preference<LightStateRTCState>().load(&restored));
+    EXPECT_FLOAT_EQ(restored.brightness, 0.5f);
+}
+
 TEST_F(DeviceRegistryTest, NativeBootRegistersRestoredCoversAndRoutesStop) {
     NvsAdapter native;
     registry_.add_adapter(&native);
     registry_.setup_adapters();
     auto east = make_cover_config(0x120001, "East");
     auto west = make_cover_config(0x120002, "West");
-    restore_saved_covers({east, west});
+    restore_saved_devices({east, west});
     native.setup();
 
     const auto &covers = esphome::App.covers;

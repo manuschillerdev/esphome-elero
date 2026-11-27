@@ -63,6 +63,7 @@ class MqttAdapter : public OutputAdapter {
     void subscribe_cover_commands_(const Device &dev);
 
     // ── Light helpers ──
+    void clear_light_state_(uint32_t address);
     void publish_light_discovery_(const Device &dev);
     void publish_light_state_(const Device &dev, uint16_t changes);
     void subscribe_light_commands_(const Device &dev);
@@ -109,6 +110,7 @@ class MqttAdapter : public OutputAdapter {
     CleanupState cleanup_state_{CleanupState::IDLE};
     uint32_t collect_start_ms_{0};
     std::vector<std::string> collected_topics_;
+    std::vector<uint32_t> removed_lights_;
 };
 
 }  // namespace elero

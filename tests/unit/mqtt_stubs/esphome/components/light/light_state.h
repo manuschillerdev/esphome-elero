@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include "esphome/core/component.h"
+#include "esphome/core/entity_base.h"
 
 namespace esphome::light {
 
@@ -13,7 +14,8 @@ struct LightColorValues {
   void set_brightness(float value) { brightness = value; }
 };
 class LightOutput;
-struct LightState : Component {
+struct LightStateRTCState { float brightness{1.0f}; };
+struct LightState : EntityBase, Component {
   explicit LightState(LightOutput *output = nullptr) : output_(output) {}
   void disable_loop() {}
   void set_save_enabled(bool) {}

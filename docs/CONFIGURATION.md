@@ -305,7 +305,9 @@ positions. Any moving member makes the group moving (opening takes precedence
 if members move in opposing directions); every cover must have opening and
 closing durations before group position control is offered. Disabled members
 make their group unavailable without deleting its saved membership.
-MQTT group updates apply immediately; native cover-group CRUD requires reboot.
+MQTT group updates apply immediately. Reboot after you change a native group.
+Both modes expose saved light groups with an on/off control. The group shows
+ON if at least one member is on.
 
 Members sharing a remote and command variant use one `0x44` selector-list
 transmission; different remotes or command variants use their own TX paths.
@@ -394,7 +396,10 @@ elero_mqtt:
 
 Notes:
 - Devices added through the web UI appear in HA immediately (no reboot).
-- Auto-discovered remotes (from observed RF) are **not** published until you save them.
+- Save a discovered remote to publish it in Home Assistant.
+- Discovery uses the availability topic and payloads from the ESPHome MQTT
+  client. This includes custom birth and last-will messages. The broker stores
+  the latest light state for clients that reconnect.
 
 ### Native API mode: `elero_nvs`
 
@@ -408,9 +413,14 @@ elero_nvs:
 No configuration parameters — including the component enables it.
 
 Notes:
-- On boot, active NVS devices are registered as ESPHome cover/light entities.
+- At boot, the hub registers enabled covers, lights, and saved groups.
+  Each saved device has a signal-strength sensor. Covers and lights have
+  a state sensor and a fault sensor. A remote shows its last command,
+  channel, and destination.
+- The radio address identifies each cover or light for commands. Devices
+  with the same normalized name show their address in the entity name.
 - ESPHome can't add entities after the initial API connection — adding/removing devices via the UI requires a reboot to surface the change to HA. The UI prompts for this automatically.
-- 48-slot pool is pre-allocated (`MAX_DEVICES`); empty slots have negligible runtime cost.
+- The hub supports up to 48 saved devices and 16 saved groups.
 
 ---
 
