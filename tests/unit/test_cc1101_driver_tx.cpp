@@ -293,7 +293,7 @@ TEST_F(Cc1101DriverTxHelperTest, DrainStopsWhenReadPermanentlyFailsRadio) {
 }
 
 TEST_F(Cc1101DriverTxHelperTest, LargestSupportedGroupReachesHardwareTx) {
-  esphome::spi::test_support::read_bytes = {CC1101_MARCSTATE_IDLE, CC1101_MARCSTATE_RX,
+  esphome::spi::test_support::read_bytes = {0, 0, CC1101_MARCSTATE_RX, CC1101_MARCSTATE_RX,
                                            CC1101_PKTSTATUS_CCA, CC1101_MARCSTATE_TX};
   EleroCommand cmd{};
   cmd.type = packet::msg_type::BUTTON;
@@ -349,8 +349,12 @@ TEST_F(Cc1101DriverTxHelperTest, ClearChannelAssessmentFromRequestToCompletion) 
     unsigned transmissions = 0;
     unsigned busy_transmissions = 0;
     bool loaded = false;
+    bool observed_idle_during_busy_rx = false;
     esphome::spi::test_support::transfer_handler = [&](uint8_t command) -> uint8_t {
-      if (command == CC1101_SIDLE) state = CC1101_MARCSTATE_IDLE;
+      if (command == CC1101_SIDLE) {
+        if (!loaded && time_.millis() < clear_at) observed_idle_during_busy_rx = true;
+        state = CC1101_MARCSTATE_IDLE;
+      }
       if (command == CC1101_SRX) state = CC1101_MARCSTATE_RX;
       if (command == CC1101_SFTX) loaded = false;
       if (command == (CC1101_TXFIFO | CC1101_WRITE_BURST)) loaded = true;
@@ -387,6 +391,7 @@ TEST_F(Cc1101DriverTxHelperTest, ClearChannelAssessmentFromRequestToCompletion) 
     EXPECT_EQ(port.results.front().attempt, 19u);
     EXPECT_EQ(port.results.front().success, clear_at < 100);
     EXPECT_EQ(busy_transmissions, 0u);
+    EXPECT_FALSE(observed_idle_during_busy_rx);
     EXPECT_EQ(strobes, transmissions + (scenario.reject_first_strobe ? 1u : 0u));
     EXPECT_EQ(transmissions, clear_at < 100 ? 1u : 0u);
     EXPECT_EQ(state, CC1101_MARCSTATE_RX);

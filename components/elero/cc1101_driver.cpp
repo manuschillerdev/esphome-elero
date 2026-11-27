@@ -347,34 +347,14 @@ bool CC1101Driver::init_registers() {
 // ─── TX State Machine ─────────────────────────────────────────────────────
 
 bool CC1101Driver::tx_prepare_for_fsm() {
-  (void) this->write_cmd(CC1101_SIDLE);
-
-  bool reached_idle = false;
-  for (uint8_t i = 0; i < TX_START_PROOF_POLLS; ++i) {
-    esp_rom_delay_us(50);
-    uint8_t marcstate =
-        this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-    if (marcstate == CC1101_MARCSTATE_IDLE) {
-      reached_idle = true;
-      break;
-    }
-  }
-  if (!reached_idle) {
-    uint8_t marcstate =
-        this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
-    ESP_LOGW(TAG, "Prepare: SIDLE failed, MARCSTATE=0x%02x", marcstate);
+  // Loading the TX FIFO is legal in RX. Taking the receiver idle here would
+  // discard its carrier/sync history just before asking the chip for CCA.
+  if (this->read_status_reliable_(CC1101_TXBYTES) != 0) {
+    ESP_LOGW(TAG, "Prepare: TX FIFO is not empty");
     return false;
   }
-
-  // Complete RX frames are serviced by the hub before requesting TX.
-  // SIDLE may interrupt a frame still on air: discard its prefix now, before
-  // sending, so it cannot corrupt the response received after this TX.
-  this->rx_packet_length_ = 0;
-  (void) this->write_cmd(CC1101_SFRX);
-  if (this->rx_ready_) this->rx_ready_->store(false, std::memory_order_release);
-  (void) this->write_cmd(CC1101_SFTX);
-  esp_rom_delay_us(100);
-
+  const auto state = this->read_status(CC1101_MARCSTATE) & packet::cc1101_status::MARCSTATE_MASK;
+  if (state == CC1101_MARCSTATE_IDLE && !this->write_cmd(CC1101_SRX)) return false;
   if (!this->write_burst(CC1101_TXFIFO, this->tx_buf_, static_cast<uint8_t>(this->tx_len_))) {
     ESP_LOGW(TAG, "Prepare: FIFO write failed");
     return false;
@@ -385,7 +365,7 @@ bool CC1101Driver::tx_prepare_for_fsm() {
   }
 
   this->tx_strobe_sent_ = false;
-  return this->write_cmd(CC1101_SRX);
+  return true;
 }
 
 Cc1101TxPhaseResult CC1101Driver::tx_wait_started_for_fsm() {
