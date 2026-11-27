@@ -92,7 +92,7 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   }
 
   // Check we have enough data for header (need at least FIRST_DEST bytes for basic header)
-  if (raw_len < pkt_offset::FIRST_DEST) {
+  if (raw_len < pkt_offset::FIRST_DEST || r.length < pkt_offset::NUM_DESTS) {
     r.reject_reason = "truncated_header";
     return r;
   }
@@ -112,6 +112,15 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
 
   // Destination count
   r.num_dests = raw[pkt_offset::NUM_DESTS];
+
+  const size_t frame_end = static_cast<size_t>(r.length) + 1;
+  r.complete_frame = frame_end + CC1101_APPEND_SIZE <= raw_len;
+  if (r.complete_frame) {
+    r.rssi_raw = raw[r.length + 1];  // +1 because length byte is at [0]
+    r.rssi = calc_rssi(r.rssi_raw);
+    r.lqi = raw[r.length + CC1101_APPEND_SIZE] & cc1101_status::LQI_MASK;
+    r.crc_ok = (raw[r.length + CC1101_APPEND_SIZE] & cc1101_status::CRC_OK_BIT) ? 1 : 0;
+  }
 
   // Validate destination count
   if (r.num_dests > GROUP_MAX_DESTS) {
@@ -135,7 +144,6 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
 
   const size_t block = pkt_offset::FIRST_DEST + r.dests_len + PREFIX_SIZE;
   const size_t tail = block + COMMAND_BLOCK_SIZE;
-  const size_t frame_end = static_cast<size_t>(r.length) + 1;
   if (tail > frame_end) {
     r.reject_reason = "dests_len_too_long";
     return r;
@@ -144,7 +152,7 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
     r.reject_reason = "truncated_payload";
     return r;
   }
-  if (frame_end + CC1101_APPEND_SIZE > raw_len) {
+  if (!r.complete_frame) {
     r.reject_reason = "rssi_oob";
     return r;
   }
@@ -157,11 +165,6 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   } else if (r.num_dests != 0) {
     r.dst_addr = raw[pkt_offset::FIRST_DEST];
   }
-
-  r.rssi_raw = raw[r.length + 1];  // +1 because length byte is at [0]
-  r.rssi = calc_rssi(r.rssi_raw);
-  r.lqi = raw[r.length + CC1101_APPEND_SIZE] & cc1101_status::LQI_MASK;
-  r.crc_ok = (raw[r.length + CC1101_APPEND_SIZE] & cc1101_status::CRC_OK_BIT) ? 1 : 0;
 
   memcpy(r.payload, raw + block, sizeof(r.payload));
   protocol::msg_decode(r.payload);

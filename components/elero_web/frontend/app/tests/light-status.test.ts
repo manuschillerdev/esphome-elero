@@ -100,3 +100,18 @@ await test('the contract rejects noncanonical switching snapshot names', () => {
     assert.throws(() => envelope('state_changed', data), /allowed values/)
   }
 })
+
+await test('unsupported frames stay in the packet list without device updates', () => {
+  const before = devices.value
+  const raw: RfData = {
+    t: 123, src: remote, channel: 1, type: '0xca', type2: '0x00', cnt: 9,
+    rssi: -55, hop: '0x00', decoded: false, raw: '10 09 ca 00 00 01 01 11 11 11 00 00 01 00 00 01 ff 64 80',
+  }
+  for (const type of ['0xca', '0x6a', '0x44', '0xfe']) {
+    const observation = { ...raw, type }
+    envelope('rf', observation)
+    addRfPacket(observation)
+    assert.equal(rfPackets.value.at(-1), observation)
+    assert.equal(devices.value, before)
+  }
+})

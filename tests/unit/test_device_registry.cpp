@@ -90,6 +90,8 @@ constexpr float DATA = 0.0f;
 // Unity build — real production code compiled here
 // ═══════════════════════════════════════════════════════════════════════════════
 
+#include "elero/rf_packet.cpp"
+#include "elero_web/rf_json.h"
 #include "elero/cover_sm.cpp"
 #include "elero/light_sm.cpp"
 #include "elero/state_snapshot.cpp"
@@ -2169,4 +2171,75 @@ TEST_F(DeviceRegistryTest, NewDimTargetReplacesOriginalReleaseDeadline) {
     const auto released = drain_commands(*dev);
     ASSERT_EQ(released.size(), pkt::button::PACKETS);
     for (const auto &cmd : released) EXPECT_EQ(cmd.payload[4], pkt::button::RELEASE);
+}
+
+TEST_F(DeviceRegistryTest, PacketDisplayPreservesUnsupportedFramesWithoutDeviceUpdates) {
+    auto *cover = add_cover();
+    adapter_.clear();
+    // A complete status header with an unsupported destination count.
+    uint8_t raw[] = {0x10, 1, 0xca, 0, 0, 1, 1, 0xa8, 0x31, 0xe5,
+                     0, 0, 1, 0, 0, 1, 0xff, 0x64, 0x80};
+    const auto frame = RfPacketInfo::decode(raw, sizeof(raw));
+    ASSERT_TRUE(frame.has_value());
+    ASSERT_TRUE(frame->raw_only);
+    registry_.on_rf_packet(*frame, 100);
+    EXPECT_EQ(adapter_.rf_packets, 1);
+    EXPECT_TRUE(adapter_.state_changed.empty());
+    EXPECT_EQ(cover->rf.last_seen_ms, 0u);
+    EXPECT_FALSE(cover->sender.is_busy());
+
+    JsonDocument json;
+    ASSERT_FALSE(deserializeJson(json, build_rf_json(*frame)));
+    EXPECT_FALSE(json["decoded"].as<bool>());
+    EXPECT_TRUE(json["state"].isNull());
+    EXPECT_TRUE(json["command"].isNull());
+    EXPECT_TRUE(json["dst"].isNull());
+    EXPECT_STREQ(json["raw"], "10 01 ca 00 00 01 01 a8 31 e5 00 00 01 00 00 01 ff 64 80");
+
+    raw[2] = 0xfe;
+    const auto unknown = RfPacketInfo::decode(raw, sizeof(raw));
+    ASSERT_TRUE(unknown.has_value());
+    EXPECT_TRUE(unknown->raw_only);
+    EXPECT_FALSE(RfPacketInfo::decode(raw, sizeof(raw) - 1).has_value());
+}
+
+TEST(PacketDisplay, AddressedAndSelectorFramesKeepDistinctFields) {
+    // Anonymized two-receiver CHECK from issue 70, with radio status appended.
+    const uint8_t check[] = {
+        0x20, 0x01, 0x6a, 0x10, 0x00, 0x01, 0x45, 0xaa, 0xaa, 0xaa,
+        0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0x02, 0x11, 0x11, 0x11,
+        0x22, 0x22, 0x22, 0x02, 0x03, 0x54, 0xf4, 0x1e, 0xbc, 0x6c,
+        0xde, 0xa4, 0xb2, 0x64, 0x80};
+    auto frame = RfPacketInfo::decode(check, sizeof(check));
+    ASSERT_TRUE(frame.has_value());
+    JsonDocument json;
+    ASSERT_FALSE(deserializeJson(json, build_rf_json(*frame)));
+    ASSERT_TRUE(json["decoded"].as<bool>());
+    EXPECT_STREQ(json["command"], "0x00");
+    EXPECT_EQ(json["selectors"].size(), 0u);
+    ASSERT_EQ(json["destinations"].size(), 2u);
+    EXPECT_STREQ(json["destinations"][0], "0x111111");
+    EXPECT_STREQ(json["destinations"][1], "0x222222");
+    EXPECT_STREQ(json["prefix"], "02 03");
+    EXPECT_STREQ(json["trailing"], "");
+
+    // Reuse its command block with an ordered selector list and two tail bytes.
+    uint8_t selectors[] = {
+        0x1f, 0x01, 0x44, 0x10, 0x00, 0x01, 0x45, 0xaa, 0xaa, 0xaa,
+        0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0x03, 7, 1, 3,
+        0x00, 0x03, 0x54, 0xf4, 0x1e, 0xbc, 0x6c, 0xde, 0xa4, 0xb2,
+        0xde, 0xad, 0x64, 0x80};
+    const std::string decoded = json["decoded_bytes"].as<std::string>();
+    EXPECT_EQ(decoded, "00 00 00 00 00 00 00 80");
+    frame = RfPacketInfo::decode(selectors, sizeof(selectors));
+    ASSERT_TRUE(frame.has_value());
+    ASSERT_FALSE(deserializeJson(json, build_rf_json(*frame)));
+    ASSERT_EQ(json["selectors"].size(), 3u);
+    EXPECT_EQ(json["selectors"][0].as<int>(), 7);
+    EXPECT_EQ(json["selectors"][1].as<int>(), 1);
+    EXPECT_EQ(json["selectors"][2].as<int>(), 3);
+    EXPECT_EQ(json["destinations"].size(), 0u);
+    EXPECT_STREQ(json["prefix"], "00 03");
+    EXPECT_EQ(json["decoded_bytes"].as<std::string>(), decoded);
+    EXPECT_STREQ(json["trailing"], "de ad");
 }

@@ -40,10 +40,14 @@ namespace elero {
 
 /// Decoded RF packet info for WebSocket broadcast
 struct RfPacketInfo {
+  static optional<RfPacketInfo> decode(const uint8_t *buf, size_t size);
+
   uint32_t timestamp_ms;
   int64_t decoded_at_us{0};  ///< esp_timer_get_time() when decode completed (us, for latency tracking)
   uint32_t src;           ///< Source address (remote for commands, blind for status)
   uint32_t dst;           ///< Destination address (blind for commands, remote for status)
+  bool raw_only{false};
+  uint8_t destination_bytes{0};  ///< Size of the validated list in raw.
   uint8_t num_address_dests{0};
   uint32_t dst_addrs[packet::ELERO_MAX_ADDRESS_DESTS]{};
   uint8_t channel;
@@ -67,7 +71,7 @@ struct RfPacketInfo {
 }  // namespace elero
 }  // namespace esphome
 
-// Lock payload size invariant: decode_packet memcpy's ParseResult::payload -> RfPacketInfo::payload
+// Both receive structures carry the same decoded command block.
 static_assert(sizeof(esphome::elero::RfPacketInfo::payload) == sizeof(esphome::elero::packet::ParseResult::payload),
               "RfPacketInfo::payload and ParseResult::payload must have the same size");
 
@@ -154,7 +158,6 @@ class Elero : public Component, private RfTransportPort {
 
  private:
   // ─── Protocol-level methods (stay on Elero — not hardware) ─────────────────
-  [[nodiscard]] optional<RfPacketInfo> decode_packet(const uint8_t *buf, size_t buf_len);
   bool take_request(RfTaskRequest &request) override;
   bool publish_completion(const TxResult &result) override;
   void receive_frame(const uint8_t *frame, size_t size) override;

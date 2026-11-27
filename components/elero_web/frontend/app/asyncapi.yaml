@@ -1107,7 +1107,7 @@ components:
     RfData:
       type: object
       additionalProperties: false
-      required: [t, src, dst, channel, type, type2, command, state, cnt, rssi, hop, raw]
+      required: [t, src, channel, type, type2, cnt, rssi, hop, raw]
       properties:
         t:
           type: integer
@@ -1121,6 +1121,25 @@ components:
           type: string
           description: Destination address (hex string). Blind for commands, remote for status.
           examples: ["0xb42f01"]
+        decoded:
+          type: boolean
+          description: False for a complete frame with an unsupported layout. Only the common header, signal strength and raw bytes are available.
+        selectors:
+          type: array
+          description: Channel selectors in received order. Empty for addressed packets.
+          items:
+            type: integer
+            minimum: 0
+            maximum: 255
+        prefix:
+          type: string
+          description: The two bytes before the command block, in hexadecimal.
+        decoded_bytes:
+          type: string
+          description: The eight decoded command or status bytes, in hexadecimal.
+        trailing:
+          type: string
+          description: Bytes after the command block, excluding radio status bytes, in hexadecimal.
         destinations:
           type: array
           description: All 24-bit destinations for addressed packets. Empty for selector envelopes.
@@ -1151,7 +1170,7 @@ components:
           type: string
           description: |
             Command byte (hex string, for command/selector packets):
-            - `0x00` — check (request status)
+            - `0x00` — release in a 0x44 button packet, check in a 0x6a command packet
             - `0x10` — stop
             - `0x20` — up/open
             - `0x24` — tilt

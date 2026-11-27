@@ -80,7 +80,6 @@ class EleroWebServer : public Component, public OutputAdapter {
 
   // JSON builders
   std::string build_config_json();
-  std::string build_rf_json(const RfPacketInfo &pkt);
   std::string build_device_upserted_json_(const Device &dev);
   std::string build_group_json_(const NvsGroupConfig &group) const;
   std::string build_learn_in_state_json_() const;
