@@ -49,6 +49,11 @@ inline std::string build_rf_json(const RfPacketInfo &pkt) {
     if (packet::uses_one_byte_selector_envelope(pkt.type)) {
       for (uint8_t selector : raw.subspan(first, pkt.destination_bytes)) selectors.add(selector);
     }
+    if (pkt.type == packet::msg_type::BUTTON_GROUP) {
+      root["bwd"] = hex_str(pkt.backward_address());
+      root["fwd"] = hex_str(pkt.forward_address());
+      root["encoded_bytes"] = format_rf_bytes({pkt.encoded_block(), packet::COMMAND_BLOCK_SIZE});
+    }
     root["prefix"] = format_rf_bytes(raw.subspan(prefix, packet::PREFIX_SIZE));
     root["decoded_bytes"] = format_rf_bytes(pkt.payload);
     root["trailing"] = format_rf_bytes(raw.subspan(

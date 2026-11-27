@@ -28,6 +28,18 @@ interface RfData {
    */
   'prefix'?: string;
   /**
+   * Backward address from the header of a decoded 0x45 group packet.
+   */
+  'bwd'?: string;
+  /**
+   * Forward address from the header of a decoded 0x45 group packet.
+   */
+  'fwd'?: string;
+  /**
+   * The eight encoded bytes received in a decoded 0x45 group packet.
+   */
+  'encoded_bytes'?: string;
+  /**
    * The eight decoded command or status bytes, in hexadecimal.
    */
   'decoded_bytes'?: string;

@@ -1134,6 +1134,15 @@ components:
         prefix:
           type: string
           description: The two bytes before the command block, in hexadecimal.
+        bwd:
+          type: string
+          description: Backward address from the header of a decoded 0x45 group packet.
+        fwd:
+          type: string
+          description: Forward address from the header of a decoded 0x45 group packet.
+        encoded_bytes:
+          type: string
+          description: The eight encoded bytes received in a decoded 0x45 group packet.
         decoded_bytes:
           type: string
           description: The eight decoded command or status bytes, in hexadecimal.
