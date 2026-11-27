@@ -11,6 +11,7 @@
 #include "esphome/core/component.h"
 #include "../elero/device_registry.h"
 #include "nvs_group_light.h"
+#include "light_preference.h"
 #ifdef ELERO_RSSI_CLASS
 #include "native_diagnostics.h"
 #endif
@@ -245,6 +246,7 @@ class NvsAdapter : public Component, public OutputAdapter {
 
     light_shells_[slot_index] = output;
     App.register_light(state, names_[slot_index].c_str(), fnv1_hash(device_id_(dev->config)), 0);
+    LegacyLightPreference::migrate(dev->config.name, *state);
   }
 
 #ifdef ELERO_RSSI_CLASS

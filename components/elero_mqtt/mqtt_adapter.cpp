@@ -4,6 +4,7 @@
 /// Publishes HA discovery configs, state updates, and subscribes to command topics.
 /// Reads all state from Device structs via the DeviceRegistry — no old entity classes.
 
+#include <algorithm>
 #include <charconv>
 #include <cinttypes>
 #include <cmath>
@@ -104,6 +105,13 @@ void MqttAdapter::loop() {
 
     if (connected && !mqtt_was_connected_) {
         ESP_LOGI(TAG, "MQTT connected, starting stale discovery cleanup");
+        for (auto address : removed_lights_) {
+            const auto *light = registry_->find(address, DeviceType::LIGHT);
+            if (light == nullptr || !light->config.is_enabled() || light->config.updated_at == 0) {
+                clear_light_state_(address);
+            }
+        }
+        removed_lights_.clear();
         start_stale_collection_();
     }
 
@@ -146,7 +154,15 @@ void MqttAdapter::on_device_added(const Device &dev) {
 }
 
 void MqttAdapter::on_device_removed(const Device &dev) {
-    if (!ctx_.mqtt->is_connected()) return;
+    if (!ctx_.mqtt->is_connected()) {
+        if (dev.is_light()) {
+            const auto address = dev.config.dst_address;
+            if (std::find(removed_lights_.begin(), removed_lights_.end(), address) == removed_lights_.end()) {
+                removed_lights_.push_back(address);
+            }
+        }
+        return;
+    }
     remove_all_discovery_(dev);
     publish_gateway_state_();
 }
@@ -168,11 +184,7 @@ void MqttAdapter::remove_all_discovery_(const Device &dev) {
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::COVER, addr, "state"));
         ctx_.remove_discovery(ha_discovery::BINARY_SENSOR, ctx_.object_id(DeviceType::COVER, addr, "problem"));
     } else if (dev.is_light()) {
-        for (const char *suffix : {mqtt_topic::STATE, mqtt_topic::RSSI, mqtt_topic::DEVICE_STATE,
-                                   mqtt_topic::PROBLEM, mqtt_topic::ATTRIBUTES}) {
-            ctx_.publish(DeviceType::LIGHT, addr, suffix, "", true);
-        }
-        ctx_.unsubscribe(DeviceType::LIGHT, addr, mqtt_topic::SET);
+        clear_light_state_(addr);
 
         ctx_.remove_discovery(ha_discovery::LIGHT, ctx_.object_id(DeviceType::LIGHT, addr));
         ctx_.remove_discovery(ha_discovery::SENSOR, ctx_.object_id(DeviceType::LIGHT, addr, "rssi"));
@@ -561,6 +573,14 @@ void MqttAdapter::publish_light_discovery_(const Device &dev) {
     ESP_LOGD(TAG, "Published light discovery for 0x%06" PRIx32, addr);
 }
 
+void MqttAdapter::clear_light_state_(uint32_t addr) {
+    for (const char *suffix : {mqtt_topic::STATE, mqtt_topic::RSSI, mqtt_topic::DEVICE_STATE,
+                               mqtt_topic::PROBLEM, mqtt_topic::ATTRIBUTES}) {
+        ctx_.publish(DeviceType::LIGHT, addr, suffix, "", true);
+    }
+    ctx_.unsubscribe(DeviceType::LIGHT, addr, mqtt_topic::SET);
+}
+
 void MqttAdapter::publish_light_state_(const Device &dev, uint16_t changes) {
     if (!ctx_.mqtt->is_connected()) return;
 
@@ -894,6 +914,8 @@ void MqttAdapter::publish_gateway_state_() {
 
 void MqttAdapter::start_stale_collection_() {
     collected_topics_.clear();
+    cleanup_state_ = CleanupState::COLLECTING;
+    collect_start_ms_ = millis();
 
     // Subscribe to wildcard discovery topics to collect all retained messages
     for (size_t i = 0; i < DISCOVERY_DOMAIN_COUNT; ++i) {
@@ -920,9 +942,6 @@ void MqttAdapter::start_stale_collection_() {
                 }
             });
     }
-
-    cleanup_state_ = CleanupState::COLLECTING;
-    collect_start_ms_ = millis();
 }
 
 void MqttAdapter::finish_stale_cleanup_() {
@@ -937,6 +956,7 @@ void MqttAdapter::finish_stale_cleanup_() {
     collect_expected_topics_(expected);
 
     // Remove any collected topic not in the expected set
+    const auto light_prefix = ctx_.discovery_prefix + "/light/" + ctx_.device_id + "_light_";
     size_t removed = 0;
     for (const auto &topic : collected_topics_) {
         bool is_expected = false;
@@ -945,6 +965,14 @@ void MqttAdapter::finish_stale_cleanup_() {
         }
         if (!is_expected) {
             ESP_LOGI(TAG, "Removing stale discovery: %s", topic.c_str());
+            // After a reboot the broker still has the discovery record for an offline deletion.
+            if (topic.starts_with(light_prefix) && topic.size() == light_prefix.size() + 6 + strlen(mqtt_topic::CONFIG) &&
+                topic.ends_with(mqtt_topic::CONFIG)) {
+                const char *first = topic.data() + light_prefix.size();
+                uint32_t address{};
+                const auto parsed = std::from_chars(first, first + 6, address, 16);
+                if (parsed.ec == std::errc{} && parsed.ptr == first + 6) clear_light_state_(address);
+            }
             ctx_.mqtt->publish(topic.c_str(), "", true);
             ++removed;
         }

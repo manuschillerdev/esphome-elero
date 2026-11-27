@@ -276,7 +276,7 @@ TEST_F(MqttCoverTest, BootDiscardsOldStateUntilMotorReports) {
     broker_.retained[STATE_TOPIC] = "open";
     broker_.retained[POSITION_TOPIC] = "100";
     broker_.retained[TILT_TOPIC] = "100";
-    restore_saved_covers({make_cover_config(0xA831E5)});
+    restore_saved_devices({make_cover_config(0xA831E5)});
     EXPECT_FALSE(broker_.retained.contains(STATE_TOPIC));
     EXPECT_FALSE(broker_.retained.contains(POSITION_TOPIC));
     EXPECT_FALSE(broker_.retained.contains(TILT_TOPIC));
@@ -289,7 +289,7 @@ TEST_F(MqttCoverTest, StartupWhileDisconnectedClearsOldStateOnReconnect) {
     mqtt_.loop();
     broker_.retained[STATE_TOPIC] = "open";
     broker_.retained[POSITION_TOPIC] = "100";
-    restore_saved_covers({make_cover_config(0xA831E5)});
+    restore_saved_devices({make_cover_config(0xA831E5)});
 
     broker_.connected = true;
     mqtt_.loop();
@@ -448,16 +448,6 @@ TEST_F(DeviceRegistryTest, NativeButtonReadsCurrentAddressConfigurationFromRegis
     EXPECT_EQ(commands.front().type, 0x6a);
 }
 
-TEST_F(MqttCoverTest, RejectsInvalidPositionTextBeforeMovingTheCover) {
-    auto *cover = add_cover();
-    for (const char *payload : {"", "bad", "45percent", "nan", "inf", "1e-200", "-1", "101"}) {
-        broker_.deliver(SET_POSITION_TOPIC, payload);
-        EXPECT_EQ(cover->sender.queue_size(), 0u) << payload;
-    }
-    broker_.deliver(SET_POSITION_TOPIC, "37.5");
-    EXPECT_FLOAT_EQ(std::get<CoverDevice>(cover->logic).target_position, 0.375f);
-}
-
 TEST_F(MqttCoverTest, GroupLightStateMatchesDiscoveryAndUsesTheClientWill) {
     auto *lamp = add_light();
     const auto group = make_group_config("lamps", "Lamps", {lamp->config.dst_address});
@@ -581,5 +571,113 @@ TEST_F(MqttCoverTest, RejectsInvalidPositionTextBeforeMovingTheCover) {
         const auto packets = drain_commands(*cover);
         ASSERT_FALSE(packets.empty());
         EXPECT_EQ(packets.front().payload[4], endpoint[0] == '0' ? pkt::command::DOWN : pkt::command::UP);
+    }
+}
+
+TEST_F(MqttCoverTest, RestoreKeepsLastReportedLightStateUntilNextReport) {
+    registry_.set_nvs_enabled(true);
+    auto *old = add_light();
+    const auto addr = old->config.dst_address;
+    const std::string topic = "elero/light/c41a2b/state";
+    registry_.on_rf_packet(make_status_pkt(addr, pkt::state::LIGHT_ON), mock_time_.millis());
+    const auto reported = broker_.retained.at(topic);
+    ASSERT_NE(reported.find("ON"), std::string::npos);
+    for (bool start_connected : {true, false}) {
+        FakeMqttPublisher restarted_broker;
+        restarted_broker.retained = broker_.retained;
+        restarted_broker.connected = start_connected;
+        MqttAdapter restarted_mqtt(restarted_broker);
+        DeviceRegistry restarted;
+        restarted.set_nvs_enabled(true);
+        restarted.set_hub(&hub_);
+        restarted.add_adapter(&restarted_mqtt);
+        restarted.init_preferences();
+        restarted.setup_adapters();
+        restarted.restore_all();
+        ASSERT_NE(restarted.find(addr, DeviceType::LIGHT), nullptr);
+        ASSERT_EQ(restarted.find(addr, DeviceType::LIGHT)->rf.last_seen_ms, 0u);
+        restarted.loop(mock_time_.millis());
+        restarted_broker.connected = true;
+        restarted_mqtt.loop();
+        mock_time_.advance(501);
+        restarted_mqtt.loop();
+        EXPECT_EQ(restarted_broker.retained.at(topic), reported);
+        restarted.on_rf_packet(make_status_pkt(addr, pkt::state::LIGHT_OFF), mock_time_.millis());
+        EXPECT_NE(restarted_broker.retained.at(topic).find("OFF"), std::string::npos);
+    }
+}
+
+TEST_F(MqttCoverTest, OfflineRemovalClearsRetainedLightStateOnReconnect) {
+    auto *lamp = add_light();
+    const auto addr = lamp->config.dst_address;
+    registry_.on_rf_packet(make_status_pkt(addr, pkt::state::LIGHT_ON), mock_time_.millis());
+    const std::string state = "elero/light/c41a2b/state";
+    const std::string discovery = "homeassistant/light/test-gateway_light_c41a2b/config";
+    ASSERT_TRUE(broker_.retained.contains(state));
+    ASSERT_TRUE(broker_.retained.contains(discovery));
+    broker_.connected = false;
+    mqtt_.loop();
+    ASSERT_TRUE(registry_.remove(addr, DeviceType::LIGHT));
+    broker_.connected = true;
+    mqtt_.loop();
+    for (const auto &[topic, value] : broker_.retained) {
+        if (!topic.starts_with("homeassistant/") || !topic.ends_with("/config")) continue;
+        const auto slash = topic.find('/', 14);
+        ASSERT_NE(slash, std::string::npos);
+        auto filter = topic.substr(0, slash) + "/+/config";
+        for (auto &cb : broker_.subscriptions.at(filter)) cb(topic.c_str(), value.c_str());
+    }
+    mock_time_.advance(501);
+    mqtt_.loop();
+    EXPECT_FALSE(broker_.retained.contains(discovery));
+    EXPECT_FALSE(broker_.retained.contains(state));
+    EXPECT_FALSE(broker_.subscriptions.contains(LIGHT_SET_TOPIC));
+}
+
+TEST_F(MqttCoverTest, FreshGatewayClearsDeletedLightFromRetainedDiscovery) {
+    auto *lamp = add_light();
+    registry_.on_rf_packet(make_status_pkt(lamp->config.dst_address, pkt::state::LIGHT_ON), mock_time_.millis());
+    const std::string state = "elero/light/c41a2b/state";
+    const std::string discovery = "homeassistant/light/test-gateway_light_c41a2b/config";
+    ASSERT_TRUE(broker_.retained.contains(state));
+
+    FakeMqttPublisher broker;
+    broker.retained = broker_.retained;
+    MqttAdapter adapter(broker);
+    DeviceRegistry empty;
+    empty.add_adapter(&adapter);
+    empty.setup_adapters();
+    auto &callbacks = broker.subscriptions.at("homeassistant/light/+/config");
+    for (const auto &callback : callbacks) callback(discovery.c_str(), broker.retained.at(discovery).c_str());
+    mock_time_.advance(501);
+    adapter.loop();
+    EXPECT_FALSE(broker.retained.contains(state));
+    EXPECT_FALSE(broker.retained.contains(discovery));
+}
+
+TEST_F(MqttCoverTest, NativeGroupLightReportsMemberStateWhenCommandQueueIsFull) {
+    auto *lamp = add_light();
+    auto *second = add_light(0xc41a2c);
+    const auto group = make_group_config("lamps", "Lamps", {lamp->config.dst_address, second->config.dst_address});
+    ASSERT_NE(registry_.upsert_group(group), nullptr);
+    esphome::light::LightState state;
+    NvsGroupLight output(registry_, group.id, state);
+    output.setup();
+    for (bool reported_on : {false, true}) {
+        const auto code = reported_on ? pkt::state::LIGHT_ON : pkt::state::LIGHT_OFF;
+        registry_.on_rf_packet(make_status_pkt(lamp->config.dst_address, code), mock_time_.millis());
+        registry_.on_rf_packet(make_status_pkt(second->config.dst_address, code), mock_time_.millis());
+        ASSERT_EQ(registry_.group_snapshot(group, mock_time_.millis()).is_on, reported_on);
+        while (lamp->sender.queue_size() < pkt::limits::MAX_COMMAND_QUEUE) {
+            ASSERT_TRUE(lamp->sender.enqueue(static_cast<uint8_t>(0x60 + lamp->sender.queue_size())));
+        }
+        state.current_values.set_state(!reported_on);
+        state.remote_values.set_state(!reported_on);
+        const auto publications = state.publications;
+        output.update_state(&state);
+        EXPECT_EQ(state.current_values.is_on(), reported_on);
+        EXPECT_EQ(state.remote_values.is_on(), reported_on);
+        EXPECT_EQ(state.publications, publications + 1);
+        EXPECT_EQ(lamp->sender.queue_size(), pkt::limits::MAX_COMMAND_QUEUE);
     }
 }

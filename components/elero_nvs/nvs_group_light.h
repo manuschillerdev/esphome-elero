@@ -31,7 +31,9 @@ class NvsGroupLight final : public light::LightOutput, public Component {
     const auto *group = registry_.find_group(id_.c_str());
     if (group == nullptr || registry_.group_snapshot(*group, millis()).type != DeviceType::LIGHT) return;
     const auto command = state->current_values.is_on() ? packet::command::UP : packet::command::DOWN;
-    registry_.command_saved_group(id_.c_str(), command);
+    if (!registry_.command_saved_group(id_.c_str(), command)) {
+      sync_and_publish(registry_.group_snapshot(*group, millis()));
+    }
   }
 
   void write_state(light::LightState *) override {}
