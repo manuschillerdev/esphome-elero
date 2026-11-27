@@ -183,7 +183,6 @@ State on_command(const State &state, uint8_t cmd_byte, uint32_t now,
     if (cmd == packet::command::TILT || cmd == packet::command::INTERMEDIATE)
         return Idle{pos};
 
-
     return std::visit(overloaded{
         [&](const Idle &) -> State {
             if (cmd == packet::command::UP)

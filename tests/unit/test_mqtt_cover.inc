@@ -495,6 +495,10 @@ TEST_F(MqttCoverTest, RejectsInvalidPositionTextBeforeMovingTheCover) {
     }
     broker_.deliver(SET_POSITION_TOPIC, "37.5");
     EXPECT_FLOAT_EQ(logic.target_position, 0.375f);
+    const auto pending = cover->sender.queue_size();
+    broker_.deliver(SET_POSITION_TOPIC, "bad");
+    EXPECT_EQ(cover->sender.queue_size(), pending);
+    EXPECT_FLOAT_EQ(logic.target_position, 0.375f);
     (void) drain_commands(*cover);
     for (const char *endpoint : {"0", "100"}) {
         broker_.deliver(SET_POSITION_TOPIC, endpoint);

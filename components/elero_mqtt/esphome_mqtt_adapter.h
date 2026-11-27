@@ -28,6 +28,8 @@ class EspHomeMqttAdapter : public MqttPublisher {
     mqtt::global_mqtt_client->subscribe(
         topic,
         [cb](const std::string &t, const std::string &p) {
+          // All subscribers expect text. Reject an embedded NUL before conversion.
+          if (p.find('\0') != std::string::npos) return;
           cb(t.c_str(), p.c_str());
         },
         0 /* qos */);

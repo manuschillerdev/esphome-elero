@@ -2133,3 +2133,40 @@ TEST_F(DeviceRegistryTest, RepeatedOnReportsPreserveDimTargetAndScheduledRelease
         }), pkt::button::PACKETS);
     }
 }
+
+TEST_F(DeviceRegistryTest, ReceiverOffCancelsPendingDimRelease) {
+    registry_.set_hub(nullptr);
+    auto *dev = add_light();
+    registry_.set_light_brightness(*dev, 0.5f);
+    drain_commands(*dev);
+    registry_.on_rf_packet(make_status_pkt(dev->config.dst_address, pkt::state::LIGHT_OFF),
+                           mock_time_.millis());
+    mock_time_.advance(5000);
+    registry_.loop(mock_time_.millis());
+    EXPECT_TRUE(std::holds_alternative<light_sm::Off>(std::get<LightDevice>(dev->logic).state));
+    EXPECT_FALSE(dev->sender.is_busy());
+}
+
+TEST_F(DeviceRegistryTest, NewDimTargetReplacesOriginalReleaseDeadline) {
+    registry_.set_hub(nullptr);
+    auto *dev = add_light();
+    registry_.set_light_brightness(*dev, 0.5f);
+    drain_commands(*dev);
+    mock_time_.advance(500);
+    registry_.on_rf_packet(make_status_pkt(dev->config.dst_address, pkt::state::LIGHT_ON),
+                           mock_time_.millis());
+    registry_.set_light_brightness(*dev, 0.8f);
+    drain_commands(*dev);
+    mock_time_.advance(2000);
+    registry_.loop(mock_time_.millis());
+    const auto &state = std::get<LightDevice>(dev->logic).state;
+    ASSERT_TRUE(light_sm::is_dimming(state));
+    EXPECT_FALSE(dev->sender.is_busy());
+    mock_time_.advance(2000);
+    registry_.loop(mock_time_.millis());
+    ASSERT_TRUE(std::holds_alternative<light_sm::On>(state));
+    EXPECT_FLOAT_EQ(std::get<light_sm::On>(state).brightness, 0.8f);
+    const auto released = drain_commands(*dev);
+    ASSERT_EQ(released.size(), pkt::button::PACKETS);
+    for (const auto &cmd : released) EXPECT_EQ(cmd.payload[4], pkt::button::RELEASE);
+}
