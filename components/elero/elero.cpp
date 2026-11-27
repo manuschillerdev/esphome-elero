@@ -100,9 +100,11 @@ void Elero::receive_frame(const uint8_t *frame, size_t fifo_count) {
       break;
     }
 
-    auto pkt = this->decode_packet(frame + offset, fifo_count - offset);
+    auto pkt = RfPacketInfo::decode(frame + offset, total);
     if (pkt) {
+      pkt->timestamp_ms = millis();
 #ifdef USE_ESP32
+      pkt->decoded_at_us = esp_timer_get_time();
       if (xQueueSend(this->rx_queue_handle_, &(*pkt), 0) != pdPASS) {
         ESP_LOGW(TAG, "RX queue full, dropping packet cnt=%d", pkt->cnt);
         this->stat_rx_drops_.fetch_add(1, std::memory_order_relaxed);
@@ -329,58 +331,6 @@ bool Elero::request_tx(TxClient *client, const EleroCommand &cmd) {
 #endif
 }
 
-// ─── decode_packet: fast path — pure decoding, no side effects ───────────────
-optional<RfPacketInfo> Elero::decode_packet(const uint8_t *buf, size_t buf_len) {
-  using namespace packet;
-
-  // Use the existing pure parse_packet() function
-  ParseResult r = parse_packet(buf, buf_len);
-  if (!r.valid) {
-    if (r.reject_reason) {
-      ESP_LOGV(TAG, "Packet rejected: %s", r.reject_reason);
-    }
-    return {};
-  }
-
-  // Extract fields relevant to this packet type
-  bool has_command = carries_command(r.type);
-  bool is_status_pkt = is_status_packet(r.type);
-  uint8_t command = has_command ? r.command : 0;
-  uint8_t state = is_status_pkt ? r.state : 0;
-
-  // Build RfPacketInfo
-  RfPacketInfo pkt{};
-#ifdef USE_ESP32
-  pkt.decoded_at_us = esp_timer_get_time();
-#endif
-  pkt.timestamp_ms = millis();
-  pkt.src = r.src_addr;
-  pkt.dst = r.dst_addr;
-  if (uses_three_byte_address_envelope(r.type)) {
-    pkt.num_address_dests = r.num_dests;
-    memcpy(pkt.dst_addrs, r.dst_addrs, sizeof(pkt.dst_addrs));
-  }
-  pkt.channel = r.channel;
-  pkt.type = r.type;
-  pkt.type2 = r.type2;
-  pkt.command = command;
-  pkt.state = state;
-  pkt.cnt = r.counter;
-  pkt.rssi = r.rssi;
-  pkt.lqi = r.lqi;
-  pkt.crc_ok = (r.crc_ok != 0);
-  pkt.hop = r.hop;
-  memcpy(pkt.payload, r.payload, sizeof(pkt.payload));
-  pkt.trailing_length = r.trailing.length;
-
-  // Copy raw bytes for WebSocket broadcast
-  size_t raw_total = static_cast<size_t>(r.length) + PACKET_TOTAL_OVERHEAD;
-  pkt.raw_len = (raw_total <= CC1101_FIFO_LENGTH) ? static_cast<uint8_t>(raw_total) : CC1101_FIFO_LENGTH;
-  memcpy(pkt.raw, buf, pkt.raw_len);
-
-  return pkt;
-}
-
 // ─── dispatch_packet: slow path — logging, registry, sensors ─────────────────
 void Elero::dispatch_packet(const RfPacketInfo &pkt) {
   using namespace packet;
@@ -388,8 +338,14 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
   const int64_t dispatch_start_us = esp_timer_get_time();
 #endif
 
-  ESP_LOGV(TAG_RF, "RX src=0x%06" PRIx32 " dst=0x%06" PRIx32 " type=0x%02x cmd=0x%02x state=0x%02x cnt=%u",
-           pkt.src, pkt.dst, pkt.type, pkt.command, pkt.state, pkt.cnt);
+#ifdef ESPHOME_LOG_HAS_VERBOSE
+  if (pkt.raw_only) {
+    ESP_LOGV(TAG_RF, "Raw RX type=0x%02x cnt=%u", pkt.type, pkt.cnt);
+  } else {
+    ESP_LOGV(TAG_RF, "RX src=0x%06" PRIx32 " dst=0x%06" PRIx32 " type=0x%02x cmd=0x%02x state=0x%02x cnt=%u",
+             pkt.src, pkt.dst, pkt.type, pkt.command, pkt.state, pkt.cnt);
+  }
+#endif
 
   // Dispatch through unified device registry (state machines, adapters, observers)
   if (this->registry_ != nullptr) {

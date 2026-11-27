@@ -1,6 +1,6 @@
 import { signal, computed, batch } from '@preact/signals'
-import { formatFrequency, command, msg_type, resolveStateName } from './lib/protocol'
-export { resolveStateName, getStateLabel, parseFreq, command, msg_type, getCommandLabel, getMsgTypeLabel } from './lib/protocol'
+import { formatFrequency, command, isStatusPacket, isCommandPacket, isSelectorPacket, resolveStateName } from './lib/protocol'
+export { isStatusPacket, isCommandPacket, isSelectorPacket, isButtonPacket, isMovingState, resolveStateName, getStateLabel, parseFreq, command, msg_type, getCommandLabel, getMsgTypeLabel } from './lib/protocol'
 import type {
   ConfigData, RfData, DeviceType, CrudEventData, DeviceUpsertedData,
   StateChangedData, FreqConfig, HubMode, HubConfig, HubConfigEventData, RadioConfig,
@@ -16,31 +16,6 @@ export type GroupConfig = WireGroupConfig & { updated_at: number | null }
 // ─── Packet Helpers ──────────────────────────────────────────────────────────
 
 export type RfPacketWithTimestamp = RfData & { received_at?: number }
-
-export function isStatusPacket(pkt: RfData): boolean {
-  const t = pkt.type?.toLowerCase()
-  return t === msg_type.STATUS || t === msg_type.STATUS_ALT
-}
-
-export function isCommandPacket(pkt: RfData): boolean {
-  const t = pkt.type?.toLowerCase()
-  return t === msg_type.COMMAND || t === msg_type.COMMAND_ALT
-}
-
-export function isButtonPacket(pkt: RfData): boolean {
-  return pkt.type?.toLowerCase() === msg_type.BUTTON
-}
-
-export function isSelectorPacket(pkt: RfData): boolean {
-  const t = pkt.type?.toLowerCase()
-  return t === msg_type.BUTTON || t === msg_type.BUTTON_GROUP || t === msg_type.PROGRAM
-}
-
-export function isMovingState(raw: string | undefined): boolean {
-  const name = resolveStateName(raw)
-  return name === 'start_moving_up' || name === 'start_moving_down' ||
-         name === 'moving_up' || name === 'moving_down'
-}
 
 // ─── Device Types ────────────────────────────────────────────────────────────
 
@@ -288,7 +263,6 @@ export function updateDevice(address: string, updates: Partial<Device>) {
 }
 
 export function addRfPacket(pkt: RfPacketWithTimestamp) {
-  const t = pkt.type?.toLowerCase()
   const devs = devices.value
   let next: Map<string, Device> | null = null
 
@@ -297,9 +271,9 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
     return next
   }
 
-  if (t === msg_type.COMMAND || t === msg_type.COMMAND_ALT) {
+  if (isCommandPacket(pkt)) {
     const pairing = makePairings(pkt.src, pkt.channel)
-    for (const address of pkt.destinations?.length ? pkt.destinations : [pkt.dst]) {
+    for (const address of pkt.destinations?.length ? pkt.destinations : pkt.dst ? [pkt.dst] : []) {
       const target = (next ?? devs).get(address)
       if (!target) {
         mut().set(address, makeDevice({ address, type: 'cover', remote: pkt.src, channel: pkt.channel, pairings: pairing }))
@@ -313,7 +287,7 @@ export function addRfPacket(pkt: RfPacketWithTimestamp) {
       }
     }
     if (!(next ?? devs).has(pkt.src)) mut().set(pkt.src, makeDevice({ address: pkt.src, type: 'remote' }))
-  } else if (t === msg_type.STATUS || t === msg_type.STATUS_ALT) {
+  } else if (isStatusPacket(pkt)) {
     const existing = (next ?? devs).get(pkt.src)
     if (existing) {
       // Type correction: if we see a light state, correct cover→light

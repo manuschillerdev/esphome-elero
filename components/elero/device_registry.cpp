@@ -718,6 +718,7 @@ bool DeviceRegistry::request_check(Device &dev) {
 void DeviceRegistry::on_rf_packet(const RfPacketInfo &pkt, uint32_t now) {
     // Notify all adapters of raw RF packet (web UI needs this)
     notify_rf_packet_(pkt);
+    if (pkt.raw_only) return;
 
     if (packet::is_status_packet(pkt.type)) {
         // Status packets: src is the blind/light reporting status

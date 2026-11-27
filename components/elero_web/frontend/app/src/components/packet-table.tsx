@@ -66,7 +66,7 @@ export function AddressCell({ addr, name, deviceType }: { addr: string; name?: s
   return (
     <span className="flex items-center gap-2">
       <span className="flex flex-col">
-        {name ? (
+        {name && name !== addr ? (
           <>
             <span className="text-foreground">{name}</span>
             <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
@@ -104,8 +104,16 @@ export function buildFullColumns(
     },
     {
       key: 'destination', label: 'Destination', sortable: true, filter: 'select',
-      value: (pkt) => configNames[pkt.dst] || pkt.dst,
-      render: (pkt) => <AddressCell addr={pkt.dst} name={configNames[pkt.dst]} deviceType={addressTypes[pkt.dst] ?? 'unknown'} />,
+      value: (pkt) => {
+        if (pkt.selectors?.length) return `Channels ${pkt.selectors.join(', ')}`
+        const addresses = pkt.destinations?.length ? pkt.destinations : pkt.dst ? [pkt.dst] : []
+        return addresses.map(addr => configNames[addr] || addr).join(', ')
+      },
+      render: (pkt) => {
+        if (pkt.selectors?.length) return <span>Channels {pkt.selectors.join(', ')}</span>
+        const addresses = pkt.destinations?.length ? pkt.destinations : pkt.dst ? [pkt.dst] : []
+        return addresses.map(addr => <AddressCell key={addr} addr={addr} name={configNames[addr]} deviceType={addressTypes[addr] ?? 'unknown'} />)
+      },
     },
     {
       key: 'channel', label: 'CH', sortable: true, filter: 'select',
@@ -131,6 +139,22 @@ export function buildFullColumns(
       key: 'rssi', label: 'RSSI', sortable: true,
       value: (pkt) => pkt.rssi ?? 0,
       render: (pkt) => <span className="text-muted-foreground">{pkt.rssi?.toFixed(1) ?? '-'}</span>,
+    },
+    {
+      key: 'bytes', label: 'Frame',
+      render: (pkt) => (
+        <details className="min-w-24">
+          <summary className="cursor-pointer">{pkt.decoded === false ? 'Raw frame' : 'Bytes'}</summary>
+          <dl className="mt-1 space-y-1 text-xs">
+            {Object.entries({
+              Prefix: pkt.prefix,
+              'Decoded block': pkt.decoded_bytes,
+              'Trailing bytes': pkt.trailing,
+              Raw: pkt.raw,
+            }).map(([label, value]) => value && <div key={label}><dt>{label}</dt><dd className="min-w-40">{value}</dd></div>)}
+          </dl>
+        </details>
+      ),
     },
     {
       key: 'actions', label: '',

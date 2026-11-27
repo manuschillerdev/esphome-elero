@@ -247,6 +247,7 @@ struct FrameTail {
 /// All fields are populated if valid==true, otherwise only reject_reason is set.
 struct ParseResult {
   bool valid{false};
+  bool complete_frame{false};  ///< Common header, declared body and both radio status bytes are present.
   const char* reject_reason{nullptr};
 
   // Header fields

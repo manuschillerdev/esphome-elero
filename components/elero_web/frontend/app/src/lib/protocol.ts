@@ -81,20 +81,23 @@ export function getMsgTypeLabel(hexType: string | undefined): string {
 // ─── Packet Type Guards ─────────────────────────────────────────────────────
 
 export function isStatusPacket(pkt: RfData): boolean {
+  if (pkt.decoded === false) return false
   const t = pkt.type?.toLowerCase()
   return t === msg_type.STATUS || t === msg_type.STATUS_ALT
 }
 
 export function isCommandPacket(pkt: RfData): boolean {
+  if (pkt.decoded === false) return false
   const t = pkt.type?.toLowerCase()
   return t === msg_type.COMMAND || t === msg_type.COMMAND_ALT
 }
 
 export function isButtonPacket(pkt: RfData): boolean {
-  return pkt.type?.toLowerCase() === msg_type.BUTTON
+  return pkt.decoded !== false && pkt.type?.toLowerCase() === msg_type.BUTTON
 }
 
 export function isSelectorPacket(pkt: RfData): boolean {
+  if (pkt.decoded === false) return false
   const t = pkt.type?.toLowerCase()
   return t === msg_type.BUTTON || t === msg_type.BUTTON_GROUP || t === msg_type.PROGRAM
 }
