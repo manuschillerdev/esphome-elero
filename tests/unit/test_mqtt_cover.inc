@@ -551,6 +551,30 @@ TEST_F(MqttCoverTest, ReceiverStatusReachesMqttAndWebWithoutChangingClosedCover)
     }
 }
 
+TEST_F(MqttCoverTest, TiltStopRoutesToTheConfiguredCover) {
+    auto config = make_cover_config(0xA831E5);
+    config.supports_tilt = true;
+    auto *cover = registry_.upsert(config);
+    ASSERT_NE(cover, nullptr);
+
+    const auto doc = discovery();
+    const char *topic = doc["tilt_command_topic"];
+    ASSERT_NE(topic, nullptr);
+    broker_.deliver(topic, "STOP");  // Home Assistant's default payload_stop_tilt
+    const auto commands = drain_commands(*cover);
+    ASSERT_FALSE(commands.empty());
+    EXPECT_EQ(commands.front().payload[4], pkt::command::STOP);
+    for (const auto &cmd : commands) {
+        EXPECT_EQ(cmd.dst_addr, config.dst_address);
+        EXPECT_TRUE(cmd.payload[4] == pkt::command::STOP || cmd.payload[4] == pkt::button::RELEASE);
+    }
+
+    config.supports_tilt = false;
+    ASSERT_NE(registry_.upsert(config), nullptr);
+    broker_.deliver(topic, "STOP");
+    EXPECT_TRUE(drain_commands(*cover).empty());
+}
+
 TEST_F(MqttCoverTest, RejectsInvalidPositionTextBeforeMovingTheCover) {
     auto *cover = add_cover();
     const auto &logic = std::get<CoverDevice>(cover->logic);
