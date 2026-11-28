@@ -482,6 +482,13 @@ void MqttAdapter::subscribe_cover_commands_(const Device &dev) {
 
     ctx_.subscribe(DeviceType::COVER, addr, mqtt_topic::TILT,
         [this, addr](const char *, const char *payload) {
+            // Home Assistant sends STOP to the tilt topic for stop_cover_tilt.
+            if (payload != nullptr && strcmp(payload, "STOP") == 0) {
+                Device *cover = registry_->find(addr, DeviceType::COVER);
+                if (cover != nullptr && cover->config.supports_tilt)
+                    registry_->command_cover_action(*cover, action::STOP);
+                return;
+            }
             const auto target = parse_percentage(payload);
             if (!target || !registry_->command_cover_tilt(addr, *target)) {
                 ESP_LOGW(TAG, "Invalid tilt request for 0x%06" PRIx32, addr);
