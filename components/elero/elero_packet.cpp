@@ -83,6 +83,23 @@ size_t build_command_packet(const EleroCommand &cmd, uint8_t *out) {
   return body_size + 1;
 }
 
+// P1 adds two zero bytes after its single selector. A regular 0x70 can
+// also have two trailing bytes. Verify the padded P1 block before moving the offset.
+static bool is_padded_program_frame(std::span<const uint8_t> frame) {
+  constexpr size_t dest = pkt_offset::FIRST_DEST;
+  constexpr size_t block = dest + ADDR_SIZE + PREFIX_SIZE;
+  if (frame.size() != block + COMMAND_BLOCK_SIZE || frame[pkt_offset::TYPE] != msg_type::PROGRAM ||
+      frame[pkt_offset::NUM_DESTS] != 1 || frame[dest] != frame[pkt_offset::CHANNEL] ||
+      frame[dest + 1] != 0 || frame[dest + 2] != 0 ||
+      frame[block - 2] != 0 || frame[block - 1] != button::SINGLE_PAYLOAD_2) return false;
+
+  const uint16_t code = calc_crypto_code(frame[pkt_offset::COUNTER]);
+  uint8_t expected[COMMAND_BLOCK_SIZE]{static_cast<uint8_t>(code >> 8), static_cast<uint8_t>(code),
+                                       command::PROGRAM, 0, 0, program::TRAINING_MARKER};
+  protocol::msg_encode(expected);
+  return std::equal(std::begin(expected), std::end(expected), frame.data() + block);
+}
+
 ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
   ParseResult r;
 
@@ -145,7 +162,7 @@ ParseResult parse_packet(const uint8_t* raw, size_t raw_len) {
     }
     r.dests_len = r.num_dests * ADDR_SIZE;
   } else if (uses_one_byte_selector_envelope(r.type)) {
-    r.dests_len = r.num_dests;
+    r.dests_len = r.complete_frame && is_padded_program_frame({raw, frame_end}) ? ADDR_SIZE : r.num_dests;
   } else {
     r.reject_reason = "unsupported_type";
     return r;

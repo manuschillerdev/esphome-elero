@@ -183,7 +183,7 @@ foreach(chip sx1262 sx1276)
 endforeach()
 
 add_executable(test_rf_transport test_rf_transport.cpp
-  ${COMPONENTS_DIR}/elero/rf_transport.cpp ${ELERO_PACKET_SRC} ${ELERO_TIME_PROVIDER_SRC})
+  ${COMPONENTS_DIR}/elero/rf_transport.cpp ${ELERO_PACKET_SRC} ${ELERO_TIME_PROVIDER_SRC} ${ELERO_LEARN_IN_SRC})
 target_compile_definitions(test_rf_transport PRIVATE UNIT_TEST)
 target_link_libraries(test_rf_transport GTest::gtest_main)
 

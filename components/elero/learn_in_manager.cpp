@@ -163,7 +163,7 @@ void LearnInManager::begin_training_step_(LearnInState phase, uint32_t delay_ms)
       command_.programming_layout = ProgrammingLayout::PADDED_SELECTOR;
       command_.payload[1] = 3;
       command_.payload[4] = 0x80;
-      command_.payload[7] = 2;
+      command_.payload[7] = packet::program::TRAINING_MARKER;
       next = TRAIN_P2;
       break;
     case TRAIN_P2:
@@ -174,7 +174,7 @@ void LearnInManager::begin_training_step_(LearnInState phase, uint32_t delay_ms)
       break;
     case TRAIN_P3:
       command_.payload[0] = 4;
-      command_.payload[7] = 2;
+      command_.payload[7] = packet::program::TRAINING_MARKER;
       break;
     case TRAIN_UP: command_.payload[4] = packet::command::UP; break;
     case TRAIN_DOWN: command_.payload[4] = packet::command::DOWN; break;

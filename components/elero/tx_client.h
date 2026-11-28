@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 
 namespace esphome::elero {
@@ -18,7 +19,7 @@ namespace esphome::elero {
 /// - Driver FSMs own hardware timeouts; waiting for queue capacity is not a retry
 ///
 /// Thread safety:
-/// - All calls happen in the main ESPHome loop (single-threaded)
+/// - Core 1 owns the client. The radio task checks only its atomic attempt ID.
 /// - Callbacks are never called from ISR context
 /// - Re-entrancy: on_tx_complete() may call request_tx() for a new transmission
 class TxClient {
@@ -31,12 +32,12 @@ class TxClient {
   TxClient(TxClient &&) = delete;
   TxClient &operator=(TxClient &&) = delete;
 
-  /// Begin/invalidate/deliver are Core 1 only. The RF task transports the ID
-  /// by value and never reads client state. Clients must outlive queued work.
+  /// Begin, invalidate and deliver on Core 1. Clients must outlive queued work.
   uint32_t begin_tx_attempt() { return ++this->tx_attempt_; }
   void invalidate_tx_attempt() { ++this->tx_attempt_; }
+  bool is_current_tx_attempt(uint32_t attempt) const { return this->tx_attempt_.load() == attempt; }
   void complete_tx_attempt(uint32_t attempt, bool success) {
-    if (attempt != this->tx_attempt_) return;
+    if (!this->is_current_tx_attempt(attempt)) return;
     this->invalidate_tx_attempt();  // Consume before invoking a reentrant callback.
     this->on_tx_complete(success);
   }
@@ -55,7 +56,7 @@ class TxClient {
   TxClient() = default;
 
  private:
-  uint32_t tx_attempt_{0};
+  std::atomic<uint32_t> tx_attempt_{0};
 };
 
 }  // namespace esphome::elero
