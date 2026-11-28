@@ -1,12 +1,17 @@
 # esphome-elero
 
-Control your Elero blinds and lights from Home Assistant with an ESP32 radio gateway.
+Control Elero blinds and lights from Home Assistant through an ESP32 running ESPHome.
+
+- **Radio drivers** — TI CC1101 (stable), Semtech SX1262 and SX1276/77/78 (experimental). [Radio support](docs/CONFIGURATION.md#hub-elero)
+- **Home Assistant** — Connect directly through the ESPHome native API or use MQTT discovery.
+- **Controls** — Open, close, stop, or tilt blinds. Switch or dim compatible lights, control groups, and receive status updates.
+- **Web interface** — Discover blinds from a remote button press, pair the gateway as a remote, and back up your devices.
 
 ## Quick start
 
 ### 1. Choose a board
 
-**We recommend the Heltec WiFi LoRa 32 V3 or V4, about US$30. Choose the **863–870 MHz** version. The LILYGO T-Embed CC1101 and T-Embed CC1101 Plus also work at 868 MHz.
+We recommend the **Heltec WiFi LoRa 32 V3 or V4**, about US$30. Choose the **863–870 MHz** version. The LILYGO T-Embed CC1101 and T-Embed CC1101 Plus also work at 868 MHz.
 
 | Board | Starter file | Hardware details |
 |---|---|---|
