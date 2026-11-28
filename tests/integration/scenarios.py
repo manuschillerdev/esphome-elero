@@ -1035,7 +1035,6 @@ class Suite:
     async def restart_firmware(self, *, reload_api=True):
         restart_started = time.monotonic()
         log_offset = (self.path / "firmware.log").stat().st_size
-        cursor = len((await command("docker", "logs", "broker")).splitlines()) if self.mode == "mqtt" else 0
         # Preferences writes are buffered by ESPHome. A hard reset before the
         # configured write interval is a power-loss test, not a normal reboot.
         started = (await self.radio("ping"))["sim_ns"]
@@ -1044,6 +1043,7 @@ class Suite:
             return (await self.radio("ping"))["sim_ns"] - started >= 2_000_000_000
 
         await wait_for(flushed_interval, "ESPHome preference write interval", timeout=60)
+        cursor = len((await command("docker", "logs", "broker")).splitlines()) if self.mode == "mqtt" else 0
         # The emulator's hard reset preserves the emulated flash and exercises
         # the ROM, bootloader, NVS restore and adapter construction again.
         connection = socket.create_connection(("127.0.0.1", 28591 + self.port_offset), timeout=5)
@@ -1420,7 +1420,7 @@ class Suite:
             self.record("authentication", {"native_api": "Noise encryption: YES"})
         await self.clear_tx()
         await self.service(self.entities["cover"], "stop_cover")
-        await self.expect_tx(0x10, address=COVER)
+        await self.expect_tx(0x10, address=COVER, packet_type=0x6A)
 
     async def save_cover_automation(self, entity):
         rule = {
@@ -1460,6 +1460,8 @@ class Suite:
             assert (
                 result["added"] == 4 and result["groups_added"] == 1 and result["hub_applied"] and not result["errors"]
             ), result
+            if self.mode == "mqtt":
+                await peer.wait_mqtt_commands(0, backup["devices"], groups=backup["groups"])
             await peer.restart_firmware()
             restored = await peer.firmware(export, "config_snapshot")
             expected = [
@@ -1528,7 +1530,7 @@ class Suite:
             assert {r["id"] for r in await wait_for(both_covers, "reconnected identities")} == {r["id"] for r in rows}
             await self.clear_tx()
             await self.service(original, "stop_cover")
-            await self.expect_tx(0x10, address=COVER)
+            await self.expect_tx(0x10, address=COVER, packet_type=0x6A)
         finally:
             await peer.stop_radio()
 
