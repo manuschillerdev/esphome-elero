@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0-rc.5](https://github.com/manuschillerdev/esphome-elero/compare/v0.11.0-rc.4...v0.11.0-rc.5) (2026-11-28)
+
+### Bug fixes
+
+- When Home Assistant sends a tilt STOP command over MQTT, the gateway now sends STOP to the selected blind (#119).
+
 ## [0.11.0-rc.4](https://github.com/manuschillerdev/esphome-elero/compare/v0.11.0-rc.3...v0.11.0-rc.4) (2026-11-27)
 
 ### Bug fixes
