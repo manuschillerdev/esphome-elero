@@ -149,6 +149,8 @@ def main():
             run(["smolvm", "machine", "start", "--name", args.name])
         if vm("ip", "link", "show", "eth0", check=False).returncode:
             raise RuntimeError("This test requires virtio-net. Create a fresh test VM; TSI breaks this workload.")
+        # A stopped VM retains the images on disk but loses its bind mounts.
+        vm("sh", "-ec", "mountpoint -q /var/lib/docker || mount --bind /storage/docker /var/lib/docker")
         vm(
             "sh",
             "-ec",

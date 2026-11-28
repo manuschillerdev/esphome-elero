@@ -7,5 +7,4 @@ storage = 30
 init = [
   "apk add --no-cache docker curl python3 py3-aiohttp -q",
   "mkdir -p /storage/docker /var/lib/docker /workspace",
-  "mount --bind /storage/docker /var/lib/docker",
 ]

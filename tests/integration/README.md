@@ -31,8 +31,8 @@ A Home Assistant service call passes through the selected adapter, the registry,
 | Home Assistant setup | Integration setup, removal and re-addition. Entity and device inventory, capabilities and unique IDs. |
 | Commands and feedback | Cover and light control, brightness, tilt, steps, position, buttons and groups. |
 | Device changes | Add, disable, enable, rename and remove. Check the entities and send commands after the changes. |
-| Backup and persistence | Export the settings, remove the devices, import the saved snapshot and compare devices and groups. Check receiver feedback in Home Assistant. Reset the emulated chip in a separate persistence test. |
-| Recovery | Restart Home Assistant, restart the MQTT broker, fail a radio transmit request and check the next command. |
+| Backup and persistence | Export the settings, remove the devices, import the saved snapshot and restart the emulated chip in both modes. Compare the saved settings, devices and groups. Send a command from Home Assistant and check receiver feedback. |
+| Recovery | Restart Home Assistant, restart the MQTT broker, check receiver fault and recovery states, and check the next command after a failed radio transmit request. |
 | Input checks | Invalid messages, malformed receiver frames and invalid settings. |
 
 Each run writes to `.tmp/integration/<run-id>/`. Start with `scenarios.log` and `evidence/results.xml`. The manifest records the revision, source file hashes and firmware hashes. The proof log records service calls and Home Assistant events. The SPI log records the radio model's observations. Detailed VM logs stay local.

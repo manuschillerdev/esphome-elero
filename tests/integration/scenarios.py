@@ -1205,16 +1205,23 @@ class Suite:
                 "device_removed",
             )
         empty = await self.firmware({"type": "export_config"}, "config_snapshot")
-        assert empty["devices"] == [], empty
+        assert not empty["devices"] and not empty["groups"], empty
         restored = await self.firmware({"type": "import_config", "snapshot": before}, "import_result")
-        assert restored["added"] == len(DEVICES) and not restored["errors"], restored
-        if self.mode == "native":
-            await self.restart_firmware()
+        assert restored["added"] == len(before["devices"]), restored
+        assert restored["groups_added"] == len(before["groups"]) and not restored["errors"], restored
+        await self.restart_firmware()
         after = await self.firmware({"type": "export_config"}, "config_snapshot")
-        assert after["devices"] == before["devices"]
-        assert after["groups"] == before["groups"]
+        for key in ("devices", "groups", "hub"):
+            assert after[key] == before[key], key
         await self.rx(COVER, 2)
-        await self.expect_state(self.entities["cover"], "closed")
+        entity = self.entities["cover"]
+        await self.expect_state(entity, "closed")
+        await self.clear_tx()
+        await self.service(entity, "open_cover")
+        await self.expect_tx(0x20, address=COVER)
+        await self.rx(COVER, 2)
+        await self.expect_state(entity, "closed")
+        await self.rx_state(COVER, 1, entity, "open")
 
     async def test_configuration_update(self):
         changed = {**DEVICES[0], "open_duration_ms": 0, "close_duration_ms": 0, "supports_tilt": False}
@@ -1242,17 +1249,18 @@ class Suite:
             self.record("ha_asserted_capabilities", await wait_for(configured, "updated cover capabilities"))
 
     async def test_problem_states(self):
-        states = await self.http("GET", "/api/states")
-        matches = [
-            state["entity_id"]
-            for state in states
-            if state["entity_id"].startswith("binary_sensor.")
-            and state["attributes"].get("friendly_name", "").lower() == "test blind problem"
-        ]
-        assert len(matches) == 1, matches
+        inventory = await self.wait_inventory()
+        key = (
+            ("binary_sensor", "Problem", "Test Blind")
+            if self.mode == "mqtt"
+            else ("binary_sensor", "Test Blind Problem", "Elero E2E")
+        )
+        entity = inventory[key]["entity_id"]
         for value, problem in ((5, "blocking"), (6, "overheated"), (2, "none")):
             await self.rx(COVER, value)
-            await self.expect_state(matches[0], "off" if problem == "none" else "on")
+            await self.expect_state(entity, "off" if problem == "none" else "on")
+            if self.mode == "native":
+                continue
 
             async def reported(problem=problem):
                 return await self.state(
@@ -1354,9 +1362,7 @@ async def main():
     parser.add_argument("--test")
     args = parser.parse_args()
     common_names = [name.removeprefix("test_") for name in vars(Suite) if name.startswith("test_")]
-    available = [
-        name for name in common_names if args.mode != "native" or name not in ("problem_states", "broker_restart")
-    ]
+    available = [name for name in common_names if args.mode != "native" or name != "broker_restart"]
     if args.test and not any(args.test in name for name in available):
         parser.error(f"No scenarios match {args.test!r}")
     EVIDENCE.mkdir(parents=True, exist_ok=True)
@@ -1387,9 +1393,9 @@ async def main():
                 "configuration_update",
                 "ha_restart",
                 "entity_lifecycle",
+                "problem_states",
             ]
             if mode == "mqtt":
-                names.append("problem_states")
                 names.append("broker_restart")
             names.extend(["cover_actions", "light_actions", "rename"])
             try:
