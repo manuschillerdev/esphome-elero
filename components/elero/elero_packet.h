@@ -221,6 +221,7 @@ constexpr uint8_t TYPE2 = button::TYPE2;            ///< type2 for programming/P
 constexpr uint8_t HOP = button::HOP;                ///< hop count for programming/P selector packets
 constexpr uint8_t COMMAND = command::PROGRAM;       ///< Canonical single-channel P command byte
 constexpr uint8_t PACKETS = button::PACKETS;        ///< Packets per programming/P phase
+constexpr uint8_t TRAINING_MARKER = 2;              ///< Decoded block byte 5 in P1 and P3
 }  // namespace program
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -268,7 +269,7 @@ struct ParseResult {
 
   // Destination info
   uint8_t num_dests{0};   ///< Number of destinations
-  uint8_t dests_len{0};   ///< Total bytes for destinations
+  uint8_t dests_len{0};   ///< Wire width of the destination list, including P1 selector padding
 
   // RSSI/LQI (appended by CC1101)
   uint8_t rssi_raw{0};    ///< Raw RSSI byte
@@ -583,6 +584,8 @@ namespace esphome::elero {
 /// TX command structure used by CommandSender and the hub's request_tx() API.
 /// Lives outside the packet namespace since it's used directly by CommandSender,
 /// DeviceRegistry, and the hub.
+enum class ProgrammingLayout : uint8_t { STANDARD, TRAINING, PADDED_SELECTOR, ZERO_BLOCK };
+
 struct EleroCommand {
   uint8_t counter;
   uint32_t dst_addr;   ///< Destination address (blind/light we control)
@@ -599,6 +602,7 @@ struct EleroCommand {
   // must fit the same frame budget, even while the command waits in the radio queue.
   uint8_t frame_data[packet::MAX_VARIABLE_BYTES]{};
   uint8_t trailing_length{0};
+  ProgrammingLayout programming_layout{ProgrammingLayout::STANDARD};
 
   /// Supply a packed destination list and any opaque bytes after the command block.
   /// An empty list uses the command's channel or single destination address.

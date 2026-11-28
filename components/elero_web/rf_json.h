@@ -47,7 +47,7 @@ inline std::string build_rf_json(const RfPacketInfo &pkt) {
     const size_t prefix = first + pkt.destination_bytes;
     auto selectors = root["selectors"].to<JsonArray>();
     if (packet::uses_one_byte_selector_envelope(pkt.type)) {
-      for (uint8_t selector : raw.subspan(first, pkt.destination_bytes)) selectors.add(selector);
+      for (uint8_t selector : raw.subspan(first, raw[packet::pkt_offset::NUM_DESTS])) selectors.add(selector);
     }
     if (pkt.type == packet::msg_type::BUTTON_GROUP) {
       root["bwd"] = hex_str(pkt.backward_address());

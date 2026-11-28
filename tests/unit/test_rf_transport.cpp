@@ -8,6 +8,7 @@
 #define ESP_LOGE(tag, format, ...) ((void)0)
 #define ESP_LOGW(tag, format, ...) ((void)0)
 #include "elero/command_sender.h"
+#include "elero/learn_in_manager.h"
 
 using namespace esphome::elero;
 namespace {
@@ -180,6 +181,34 @@ TEST_F(RfTransportTest, FailedDriverCompletesActiveAndQueuedRequestsWithoutHardw
   EXPECT_EQ(port.completions[0].attempt, 1u);
   EXPECT_EQ(port.completions[1].attempt, 2u);
   EXPECT_EQ(radio.polls, 1u);
+}
+
+TEST_F(RfTransportTest, CancelOrTimeoutDropsUnsentRemovalBeforeNewSession) {
+  LearnInManager manager;
+  LearnInStartRequest request{.src_addr = 0x010203, .channel = 1, .session_timeout_ms = 100,
+                              .mode = LearnInMode::REMOVE_LINK, .receiver = 0x040506};
+  radio.partial = true;  // A receive is in progress. The accepted removal must wait.
+  ASSERT_TRUE(manager.start(request));
+  manager.loop(&port);
+  transport.step(port);
+  ASSERT_EQ(port.requests.size(), 1u);
+  ASSERT_TRUE(radio.sent.empty());
+  manager.cancel();
+
+  ASSERT_TRUE(manager.start(request));
+  manager.loop(&port);
+  time.advance(request.session_timeout_ms);
+  manager.loop(&port);
+  ASSERT_EQ(manager.state(), LearnInState::TIMED_OUT);
+
+  request.mode = LearnInMode::OPEN_STANDBY;
+  ASSERT_TRUE(manager.start(request));
+  manager.loop(&port);
+  ASSERT_EQ(port.requests.size(), 3u);
+  radio.partial = false;
+  while (!port.requests.empty()) transport.step(port);
+  ASSERT_EQ(radio.sent.size(), 1u);
+  EXPECT_EQ(radio.sent.front()[packet::pkt_offset::TYPE], packet::msg_type::COMMAND);
 }
 
 TEST_F(RfTransportTest, CancelledCompletionCannotCompleteNewAttempt) {

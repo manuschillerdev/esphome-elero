@@ -111,6 +111,22 @@ flash, then add devices through the web UI:
 
 To restore from a backup (or migrate from older YAML): Hub → Backup & Restore → **Restore from backup**.
 
+### Pair with a remote that already controls the motor
+
+Use one spare receiver and a hand transmitter that already controls it. Leave motor power on. Use a gateway channel that no other receiver has learned. The physical motor test is pending.
+
+1. Open `/elero` on the test gateway. On **Packets**, check that an action on the hand transmitter produces a packet and a reply from the intended receiver. Record the receiver address and model. Check that **Hub** shows the frequency used by the hand transmitter.
+2. Open **Hub → Learn-In**. Use the hand transmitter to put the receiver into programming standby. On a TempoTel 2 or LumeroTel 2, hold UP, DOWN and P together for three seconds on the paired channel. If a saved channel on this gateway already controls the receiver, you can instead select **Open standby with a paired gateway channel**. Check the receiver response.
+3. Select **Pair with the receiver in standby**. Enter the receiver address and the spare gateway channel. Record the virtual remote address shown. Start pairing. Press **Confirm UP movement** as upward travel starts and **Confirm DOWN movement** as downward travel starts. For the TempoTel 2 procedure, confirm each direction within one second of the start of that movement.
+4. Wait for **Ack Sent**. This records the gateway's reply to the receiver's completion packet.
+5. For control and removal, the saved cover must use the gateway's virtual remote address and spare channel. On a spare gateway you can set these fields in a copy of its own downloaded backup. In the cover entry under `devices`, set `dst_address` to the receiver, `src_address` to the gateway address and `channel` to the spare channel. Use **Hub → Backup & Restore → Restore from backup** to apply the copy. Saving a device record does not program the receiver.
+6. Verify pairing by moving and stopping the motor from the new gateway channel. Verify that the original hand transmitter can still move and stop it.
+7. After the movement test passes, select **Remove a gateway channel from receivers**. Select the saved test cover. Read the list of saved receivers before confirming. Any receiver in range that learned this gateway address and channel can lose the link. **Removal Sent** records transmission. Repeat the same movement command from the spare channel. It should have no effect. Then check that the original transmitter still moves and stops the motor.
+
+Record the board, radio frequency, gateway and receiver addresses, spare channel, order of movements and result of each control test. Save the gateway log and use **Packets → Copy packet JSON** for the receiver's `0xD4` completion frame. If pairing times out, save the last state and packets to identify where the exchange stopped. Cancellation can discard packets waiting for the radio. It cannot recall a packet once the driver has accepted it.
+
+The physical button sequence is in the [TempoTel 2 operating instructions, pp. 27–28](https://www.elero.com/en/downloads-service/downloads?cHash=19416ea19b003d4510544ed8c8638c8f&tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bdownload%5D=324#page=27).
+
 ### Per-device fields managed in the UI
 
 These are stored in `NvsDeviceConfig` (see `components/elero/nvs_config.h`)

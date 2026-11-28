@@ -15,6 +15,8 @@ void RfTransport::start_request_(const RfTaskRequest &request) {
   switch (request.type) {
     case RfTaskRequest::Type::TX: {
       const size_t size = packet::build_command_packet(request.cmd, this->tx_buffer_);
+      // A cancelled or expired request can still be in the cross-core queue.
+      if (request.client && !request.client->is_current_tx_attempt(request.attempt)) return;
       const TxResult result{request.client, false, request.attempt};
       if (size != 0 && !this->driver_.failed() &&
           this->driver_.load_and_transmit(this->tx_buffer_, size)) {

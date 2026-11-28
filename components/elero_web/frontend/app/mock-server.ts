@@ -119,9 +119,10 @@ function config(): ConfigData {
   for (const device of devices.values()) {
     const c = configEvent(device)
     const { device_type: type, ...entry } = c
-    const live = snapshot(device)
+    const state = snapshot(device)
+    const live = { state: state.state, rssi: state.rssi, last_seen: state.last_seen }
     if (type === 'cover') data.blinds.push({ ...entry, name: c.name ?? '', channel: c.channel!, remote: c.remote!, enabled: c.enabled!,
-      open_ms: c.open_ms!, close_ms: c.close_ms!, poll_ms: c.poll_ms!, supports_tilt: c.supports_tilt!, movement_mode: device.config.movement_mode ?? 'standard', tilt_mode: device.config.tilt_mode ?? 'preset', ...live, position: device.value })
+      open_ms: c.open_ms!, close_ms: c.close_ms!, poll_ms: c.poll_ms!, supports_tilt: c.supports_tilt!, movement_mode: device.config.movement_mode ?? 'standard', tilt_mode: device.config.tilt_mode ?? 'preset', ...live, ha_state: state.ha_state, position: device.value })
     else if (type === 'light') data.lights.push({ ...entry, name: c.name ?? '', channel: c.channel!, remote: c.remote!, enabled: c.enabled!, dim_ms: c.dim_ms!, ...live, brightness: device.value, is_on: device.value > 0 })
     else data.remotes.push({ address: entry.address, name: entry.name ?? '', updated_at: entry.updated_at })
   }
@@ -298,11 +299,21 @@ function restore(s: ConfigSnapshot): ImportResult {
   })
   return result
 }
+let mockDirections = 0
 function learnState(state: LearnInState) {
-  const active = ['programming', 'wait_up', 'confirming_up', 'wait_down', 'confirming_down'].includes(state)
-  learn = { ...learn, state, active, busy: ['programming', 'confirming_up', 'confirming_down'].includes(state) }
+  const busy = ['programming', 'confirming_up', 'confirming_down', 'opening_standby', 'train_p1', 'train_p2', 'train_p3', 'train_up', 'train_down', 'acknowledging', 'removing_link'].includes(state)
+  const active = busy || ['wait_up', 'wait_down', 'watch_movement'].includes(state)
+  learn = { ...learn, state, active, busy }
   if (!active) { clearTimeout(learnStep); clearTimeout(learnTimeout) }
   broadcast('learn_in_state', learn); log(`Learn-in: ${state}`)
+}
+function mockTraining(steps: LearnInState[]) {
+  const [state, ...rest] = steps
+  learnState(state)
+  if (rest.length) learnStep = setTimeout(() => {
+    if (process.env.MOCK_LEARN_IN_FAILURE === '1') learnState('failed')
+    else mockTraining(rest)
+  }, STEP_MS)
 }
 function learnTransition(pending: LearnInState, next: LearnInState) {
   learnState(pending)
@@ -372,19 +383,41 @@ function handle(ws: WebSocket, m: ClientMessage) {
     case 'set_hub_config': hubName(m.name); break
     case 'export_config': send(ws, 'config_snapshot', backup()); break
     case 'import_config': send(ws, 'import_result', restore(m.snapshot)); break
-    case 'learn_in_start':
+    case 'learn_in_start': {
       if (learn.active) throw new Error('Learn-in already active')
       if (m.session_timeout_ms !== undefined && (m.session_timeout_ms <= 0 || m.session_timeout_ms > 0x7fffffff)) throw new Error('Invalid session timeout')
-      learn = { ...learn, src_address: address(m.src_address), channel: m.channel }
-      learnTransition('programming', 'wait_up')
+      const mode = m.mode ?? 'power_cycle'
+      if (mode !== 'power_cycle') {
+        if (address(m.src_address) !== '0x000001' || !m.receiver_address || address(m.receiver_address) === '0x000000') throw new Error('Select the gateway source and a receiver')
+        if (mode !== 'train') {
+          const d = devices.get(address(m.receiver_address))?.config
+          if (!d || d.device_type !== 'cover' || d.src_address !== '0x000001' || d.channel !== m.channel) throw new Error('Select a saved gateway link')
+          if (mode === 'remove_link' && !m.confirm_all_receivers) throw new Error('Confirm the affected receivers')
+        }
+      }
+      learn = { state: 'idle', active: false, busy: false, src_address: address(m.src_address), channel: m.channel, mode, receiver_address: m.receiver_address }
+      mockDirections = 0
+      if (mode === 'train') mockTraining(['train_p1', 'train_p2', 'train_p3', 'watch_movement'])
+      else if (mode === 'open_standby') mockTraining(['opening_standby', 'standby_sent'])
+      else if (mode === 'remove_link') mockTraining(['removing_link', 'removal_sent'])
+      else learnTransition('programming', 'wait_up')
       learnTimeout = setTimeout(() => learnState('timed_out'), m.session_timeout_ms ?? 300000)
       break
+    }
     case 'learn_in_confirm_up':
+    case 'learn_in_confirm_down':
+      if (learn.state === 'watch_movement') {
+        const up = m.type === 'learn_in_confirm_up'
+        mockDirections |= up ? 1 : 2
+        mockTraining(mockDirections === 3 ? [up ? 'train_up' : 'train_down', 'acknowledging', 'ack_sent'] : [up ? 'train_up' : 'train_down', 'watch_movement'])
+        break
+      }
+      if (m.type === 'learn_in_confirm_down') {
+        if (learn.state !== 'wait_down') throw new Error('Learn-in is not waiting for down confirmation')
+        learnTransition('confirming_down', 'complete'); break
+      }
       if (learn.state !== 'wait_up') throw new Error('Learn-in is not waiting for up confirmation')
       learnTransition('confirming_up', 'wait_down'); break
-    case 'learn_in_confirm_down':
-      if (learn.state !== 'wait_down') throw new Error('Learn-in is not waiting for down confirmation')
-      learnTransition('confirming_down', 'complete'); break
     case 'learn_in_cancel': if (learn.active) learnState('cancelled'); else send(ws, 'learn_in_state', learn); break
     case 'restart':
       restarting = true; log('Restarting gateway')

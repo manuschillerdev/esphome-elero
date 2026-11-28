@@ -1380,6 +1380,11 @@ components:
       required: [state, active, busy]
       description: Thin snapshot of the backend learn-in session.
       properties:
+        mode:
+          $ref: "#/components/schemas/LearnInMode"
+        receiver_address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{6}$"
         state:
           $ref: "#/components/schemas/LearnInState"
         active:
@@ -1463,10 +1468,16 @@ components:
       type: object
       additionalProperties: false
       required: [type, src_address, channel]
-      description: |
-        Starts a backend learn-in session. The frontend must already have guided
-        the user through the required power-cycle of the target motor.
+      description: Starts the selected learn-in operation. The default is power-cycle pairing.
       properties:
+        mode:
+          $ref: "#/components/schemas/LearnInMode"
+        receiver_address:
+          type: string
+          pattern: "^0x[0-9a-fA-F]{6}$"
+        confirm_all_receivers:
+          type: boolean
+          description: Must be true to remove the gateway channel from every receiver that learned it.
         type:
           type: string
           const: learn_in_start
@@ -2011,9 +2022,13 @@ components:
           - `native` — ESPHome native API (NvsAdapter creates entities at boot)
           - `mqtt`   — MQTT HA discovery (MqttAdapter publishes topics)
 
+    LearnInMode:
+      type: string
+      enum: [power_cycle, open_standby, train, remove_link]
+
     LearnInState:
       type: string
-      enum: [idle, programming, wait_up, confirming_up, wait_down, confirming_down, complete, failed, cancelled, timed_out]
+      enum: [idle, programming, wait_up, confirming_up, wait_down, confirming_down, complete, failed, cancelled, timed_out, opening_standby, standby_sent, train_p1, train_p2, train_p3, watch_movement, train_up, train_down, acknowledging, ack_sent, removing_link, removal_sent]
       description: Backend learn-in session state.
 
     CoverTiltMode:

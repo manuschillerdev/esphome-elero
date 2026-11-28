@@ -15,6 +15,8 @@ Node.js, pnpm, or a separate frontend download. Frontend contributors must rebui
 and commit `components/elero_web/elero_web_ui.h` alongside source changes;
 CI verifies that the generated header matches the source.
 
+The web UI can pair a gateway channel with a motor through an existing paired remote. See [Pair with a remote that already controls the motor](docs/CONFIGURATION.md#pair-with-a-remote-that-already-controls-the-motor) for the test procedure and the scope of channel removal.
+
 ## Frontend mock development
 
 In `components/elero_web/frontend/app`, run `mise exec node pnpm -- pnpm mock`

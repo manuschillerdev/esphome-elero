@@ -47,7 +47,7 @@ struct RfPacketInfo {
   uint32_t src;           ///< Source address (remote for commands, blind for status)
   uint32_t dst;           ///< Destination address (blind for commands, remote for status)
   bool raw_only{false};
-  uint8_t destination_bytes{0};  ///< Size of the validated list in raw.
+  uint8_t destination_bytes{0};  ///< Wire width of the validated list, including P1 selector padding.
   uint8_t num_address_dests{0};
   uint32_t dst_addrs[packet::ELERO_MAX_ADDRESS_DESTS]{};
   uint8_t channel;

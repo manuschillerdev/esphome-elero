@@ -1,8 +1,11 @@
+import {LearnInMode} from './LearnInMode';
 import {LearnInState} from './LearnInState';
 /**
  * Thin snapshot of the backend learn-in session.
  */
 interface LearnInStateData {
+  'mode'?: LearnInMode;
+  'receiver_address'?: string;
   /**
    * Backend learn-in session state.
    */

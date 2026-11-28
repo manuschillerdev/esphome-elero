@@ -34,11 +34,15 @@ namespace esphome::elero {
 
 class Elero;
 
+enum class LearnInMode : uint8_t { POWER_CYCLE, OPEN_STANDBY, TRAIN, REMOVE_LINK };
+
 struct LearnInStartRequest {
   uint32_t src_addr{0};
   uint8_t channel{0};
   uint8_t packets{packet::program::PACKETS};
   uint32_t session_timeout_ms{300000};
+  LearnInMode mode{LearnInMode::POWER_CYCLE};
+  uint32_t receiver{0};
 };
 
 enum class LearnInState : uint8_t {
@@ -52,6 +56,18 @@ enum class LearnInState : uint8_t {
   FAILED,
   CANCELLED,
   TIMED_OUT,
+  OPENING_STANDBY,
+  STANDBY_SENT,
+  TRAIN_P1,
+  TRAIN_P2,
+  TRAIN_P3,
+  WATCH_MOVEMENT,
+  TRAIN_UP,
+  TRAIN_DOWN,
+  ACKNOWLEDGING,
+  ACK_SENT,
+  REMOVING_LINK,
+  REMOVAL_SENT,
 };
 
 const char *learn_in_state_str(LearnInState state);
@@ -62,6 +78,9 @@ class LearnInManager : public TxClient {
   [[nodiscard]] bool confirm_up();
   [[nodiscard]] bool confirm_down();
   void cancel();
+  void on_receiver_frame(std::span<const uint8_t> raw);
+  [[nodiscard]] uint32_t receiver() const { return command_.dst_addr; }
+  [[nodiscard]] LearnInMode mode() const { return mode_; }
 
   template<typename Hub>
   void loop(Hub *hub) {
@@ -111,6 +130,11 @@ class LearnInManager : public TxClient {
 
   void begin_step_(uint8_t command, LearnInState phase, LearnInState on_success);
   void finish_(LearnInState state);
+  void begin_training_step_(LearnInState phase, uint32_t delay_ms = 0);
+  LearnInMode mode_{LearnInMode::POWER_CYCLE};
+  uint8_t next_training_counter_{1};
+  uint8_t confirmed_directions_{0};
+  bool receiver_answered_{false};
 
   EleroCommand command_{1, 0, 0, 0, packet::msg_type::PROGRAM,
                         packet::program::TYPE2, packet::program::HOP, {0, packet::button::SINGLE_PAYLOAD_2}};
