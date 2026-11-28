@@ -702,8 +702,9 @@ class Suite:
                     ):
                         errors.append(f"{key[0]} identity disappeared: {identity['entity_id']}")
                         continue
-                    if any(current[field] != identity[field] for field in ("entity_id", "unique_id", "device_id")):
-                        errors.append(f"{key[0]} identity changed: {identity['entity_id']}")
+                    for field in ("entity_id", "unique_id", "device_id"):
+                        if current[field] != identity[field]:
+                            errors.append(f"{identity['entity_id']}: {field} {identity[field]!r} -> {current[field]!r}")
                     if current["original_name"] != expected_name:
                         errors.append(f"{key[0]} name {current['original_name']!r}, expected {expected_name!r}")
                 self.record(
