@@ -138,11 +138,12 @@ target_link_libraries(test_group_packet GTest::gtest_main)
 # Learn-in manager (provisioning TX flow)
 add_executable(test_learn_in_manager
   test_learn_in_manager.cpp
+  ${ELERO_PACKET_SRC}
   ${ELERO_LEARN_IN_SRC}
   ${ELERO_TIME_PROVIDER_SRC}
 )
 target_compile_definitions(test_learn_in_manager PRIVATE UNIT_TEST)
-target_link_libraries(test_learn_in_manager GTest::gtest_main)
+target_link_libraries(test_learn_in_manager GTest::gtest_main ArduinoJson)
 
 # CC1101-compatible CRC-16 and PN9 whitening (pure functions, used by SX1262/SX1276 drivers)
 add_executable(test_cc1101_compat

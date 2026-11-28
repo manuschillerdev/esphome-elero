@@ -33,7 +33,10 @@ namespace esphome::elero::packet {
 // All radio backends use this layout. Only the command block is encoded.
 size_t build_command_packet(const EleroCommand &cmd, uint8_t *out) {
   const bool selector = uses_one_byte_selector_envelope(cmd.type);
-  const size_t width = selector ? 1 : ADDR_SIZE;
+  if (cmd.programming_layout != ProgrammingLayout::STANDARD && (cmd.num_dests != 0 || cmd.trailing_length != 0))
+    return 0;
+  const bool padded = cmd.programming_layout == ProgrammingLayout::PADDED_SELECTOR;
+  const size_t width = selector && !padded ? 1 : ADDR_SIZE;
   const uint8_t count = cmd.num_dests == 0 ? 1 : cmd.num_dests;
   const size_t dest_size = count * width;
   const size_t prefix = pkt_offset::FIRST_DEST + dest_size;
@@ -57,6 +60,7 @@ size_t build_command_packet(const EleroCommand &cmd, uint8_t *out) {
     memcpy(&out[pkt_offset::FIRST_DEST], cmd.frame_data, dest_size);
   } else if (selector) {
     out[pkt_offset::FIRST_DEST] = cmd.channel;
+    if (padded) memset(out + pkt_offset::FIRST_DEST + 1, 0, ADDR_SIZE - 1);
   } else {
     write_addr(&out[pkt_offset::FIRST_DEST], cmd.dst_addr);
   }
@@ -65,10 +69,15 @@ size_t build_command_packet(const EleroCommand &cmd, uint8_t *out) {
   out[prefix + 1] = cmd.payload[1];
   auto *encoded = &out[block];
   memset(encoded, 0, COMMAND_BLOCK_SIZE);
+  if (cmd.programming_layout == ProgrammingLayout::ZERO_BLOCK) return body_size + 1;
   const uint16_t code = calc_crypto_code(cmd.counter);
   encoded[payload_offset::CRYPTO_HIGH] = code >> 8;
   encoded[payload_offset::CRYPTO_LOW] = code & 0xff;
   encoded[payload_offset::COMMAND] = cmd.payload[4];
+  if (cmd.programming_layout != ProgrammingLayout::STANDARD) {
+    encoded[payload_offset::COMMAND2] = cmd.payload[5];
+    encoded[5] = cmd.payload[7];
+  }
   protocol::msg_encode(encoded);
   memcpy(out + tail, std::end(cmd.frame_data) - cmd.trailing_length, cmd.trailing_length);
   return body_size + 1;

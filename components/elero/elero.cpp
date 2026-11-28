@@ -357,6 +357,8 @@ void Elero::dispatch_packet(const RfPacketInfo &pkt) {
   }
 #endif
 
+  if (pkt.type == 0xd4) this->learn_in_.on_receiver_frame({pkt.raw, pkt.raw_len});
+
   // Dispatch through unified device registry (state machines, adapters, observers)
   if (this->registry_ != nullptr) {
     this->registry_->on_rf_packet(pkt, pkt.timestamp_ms);

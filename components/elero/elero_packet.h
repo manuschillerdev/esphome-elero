@@ -583,6 +583,8 @@ namespace esphome::elero {
 /// TX command structure used by CommandSender and the hub's request_tx() API.
 /// Lives outside the packet namespace since it's used directly by CommandSender,
 /// DeviceRegistry, and the hub.
+enum class ProgrammingLayout : uint8_t { STANDARD, TRAINING, PADDED_SELECTOR, ZERO_BLOCK };
+
 struct EleroCommand {
   uint8_t counter;
   uint32_t dst_addr;   ///< Destination address (blind/light we control)
@@ -599,6 +601,7 @@ struct EleroCommand {
   // must fit the same frame budget, even while the command waits in the radio queue.
   uint8_t frame_data[packet::MAX_VARIABLE_BYTES]{};
   uint8_t trailing_length{0};
+  ProgrammingLayout programming_layout{ProgrammingLayout::STANDARD};
 
   /// Supply a packed destination list and any opaque bytes after the command block.
   /// An empty list uses the command's channel or single destination address.

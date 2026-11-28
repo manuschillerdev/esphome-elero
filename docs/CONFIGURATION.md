@@ -111,6 +111,18 @@ flash, then add devices through the web UI:
 
 To restore from a backup (or migrate from older YAML): Hub → Backup & Restore → **Restore from backup**.
 
+### Pair with a remote that already controls the motor
+
+Open **Hub → Learn-In**. Keep only the selected receiver in programming standby.
+The following procedure needs a test on a motor.
+
+1. Use a paired hand transmitter to open programming standby. On a LumeroTel 2, hold UP, DOWN and P together for 3 seconds. If the gateway's own remote already controls the motor, select **Open standby with a paired gateway channel** and select the saved cover. Check the motor response.
+2. Select **Pair with the receiver in standby**. Enter the motor address and the new gateway channel. Start pairing.
+3. When the motor moves, press **Confirm UP movement** or **Confirm DOWN movement** to match its direction. Repeat as needed.
+4. Wait for **Ack Sent**. The receiver sent its completion frame and the gateway sent its reply. Test control with the new channel.
+
+To remove a link, select **Remove a gateway channel from receivers**. Select the saved cover that uses the gateway remote and channel. Check the list of covers in the confirmation. All receivers in range that learned this remote and channel can lose the link, including receivers absent from the list. **Removal Sent** means that the gateway sent the command. Test the affected receivers. Saved device records stay in the gateway.
+
 ### Per-device fields managed in the UI
 
 These are stored in `NvsDeviceConfig` (see `components/elero/nvs_config.h`)

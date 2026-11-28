@@ -1,6 +1,7 @@
 #include <cinttypes>
 #include "elero_web_server.h"
 #include "web_json.h"
+#include "learn_in_request.h"
 #include "rf_json.h"
 #include "elero_web_ui.h"
 #include "../elero/elero_packet.h"
@@ -70,18 +71,18 @@ static void stream_index_body(struct mg_connection *c) {
   }
 }
 
-static uint32_t derive_default_virtual_remote_address() {
+static uint32_t derive_default_virtual_remote_address(uint32_t fallback = 1) {
 #ifdef USE_ESP32
   uint8_t mac[6] = {0};
   if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
-    return 0x000001;
+    return fallback;
   }
   uint32_t addr = (static_cast<uint32_t>(mac[3]) << 16) |
                   (static_cast<uint32_t>(mac[4]) << 8) |
                   static_cast<uint32_t>(mac[5]);
-  return addr != 0 ? addr : 0x000001;
+  return addr != 0 ? addr : fallback;
 #else
-  return 0x000001;
+  return fallback;
 #endif
 }
 
@@ -685,6 +686,15 @@ std::string EleroWebServer::build_learn_in_state_json_() const {
     root["state"] = learn_in_state_str(this->parent_->learn_in_state());
     root["active"] = this->parent_->is_learn_in_active();
     root["busy"] = learn_in.is_busy();
+    if (learn_in.mode() != LearnInMode::POWER_CYCLE) {
+      root["receiver_address"] = hex_str(learn_in.receiver());
+      switch (learn_in.mode()) {
+        case LearnInMode::OPEN_STANDBY: root["mode"] = "open_standby"; break;
+        case LearnInMode::TRAIN: root["mode"] = "train"; break;
+        case LearnInMode::REMOVE_LINK: root["mode"] = "remove_link"; break;
+        default: break;
+      }
+    }
     if (learn_in.src_addr() != 0) {
       root["src_address"] = hex_str(learn_in.src_addr());
       root["channel"] = learn_in.channel();
@@ -1253,6 +1263,16 @@ void EleroWebServer::handle_learn_in_start_(struct mg_connection *c, JsonObject 
   request.channel = root["channel"] | 0;
   request.packets = parse_hex_or(root, "packets", packet::program::PACKETS);
   request.session_timeout_ms = root["session_timeout_ms"] | 300000;
+
+  auto saved_link = [this](uint32_t receiver, uint32_t source, uint8_t channel) {
+    auto *registry = this->parent_->get_registry();
+    auto *cover = registry ? registry->find(receiver, DeviceType::COVER) : nullptr;
+    return cover && cover->config.src_address == source && cover->config.channel == channel;
+  };
+  if (const char *error = parse_training_request(root, derive_default_virtual_remote_address(0), saved_link, request)) {
+    this->ws_send(c, "error", build_web_json([&](JsonObject reply) { reply["msg"] = error; }));
+    return;
+  }
 
   if (!this->parent_->start_learn_in(request)) {
     this->ws_send(c, "error", "{\"msg\":\"Failed to start learn-in\"}");
