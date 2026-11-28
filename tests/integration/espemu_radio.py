@@ -16,6 +16,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+PORT_OFFSET = int(os.environ.get("ELERO_PORT_OFFSET", "0"))
 LOG = Path(os.environ.get("ELERO_EVIDENCE", "/workspace/evidence")) / "espemu-spi.jsonl"
 
 
@@ -185,7 +186,7 @@ class Radio:
     def run(self):
         for _ in range(200):
             try:
-                self.connection = socket.create_connection(("127.0.0.1", 28590), timeout=1)
+                self.connection = socket.create_connection(("127.0.0.1", 28590 + PORT_OFFSET), timeout=1)
                 self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 self.connection.settimeout(None)
                 break
@@ -293,4 +294,4 @@ class Control(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     threading.Thread(target=RADIO.run, daemon=True).start()
-    ThreadingHTTPServer(("127.0.0.1", 28060), Control).serve_forever()
+    ThreadingHTTPServer(("127.0.0.1", 28060 + PORT_OFFSET), Control).serve_forever()

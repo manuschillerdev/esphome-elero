@@ -1,0 +1,87 @@
+{
+  "snapshot_version": 2,
+  "exported_at": 4024,
+  "exporter": {
+    "device": "elero-e2e",
+    "version": "0.11.0-rc.1"
+  },
+  "hub": {
+    "name_override": "Workshop"
+  },
+  "devices": [
+    {
+      "device_type": "cover",
+      "dst_address": "0xa831e5",
+      "name": "Test Blind",
+      "enabled": true,
+      "src_address": "0xf0d008",
+      "channel": 1,
+      "hop": "0x0a",
+      "payload_1": "0x00",
+      "payload_2": "0x04",
+      "msg_type": "0x6a",
+      "type2": "0x00",
+      "open_duration_ms": 2000,
+      "close_duration_ms": 2000,
+      "supports_tilt": true,
+      "command_up": "0x20",
+      "command_down": "0x40",
+      "command_stop": "0x10",
+      "command_check": "0x00",
+      "command_tilt": "0x24",
+      "ha_device_class": 0
+    },
+    {
+      "device_type": "light",
+      "dst_address": "0xa831e6",
+      "name": "Test Light",
+      "enabled": true,
+      "src_address": "0xf0d008",
+      "channel": 2,
+      "hop": "0x0a",
+      "payload_1": "0x00",
+      "payload_2": "0x04",
+      "msg_type": "0x6a",
+      "type2": "0x00",
+      "dim_duration_ms": 2000
+    },
+    {
+      "device_type": "cover",
+      "dst_address": "0xa831e8",
+      "name": "Plain Blind",
+      "enabled": true,
+      "src_address": "0xf0d008",
+      "channel": 4,
+      "hop": "0x0a",
+      "payload_1": "0x00",
+      "payload_2": "0x04",
+      "msg_type": "0x6a",
+      "type2": "0x00",
+      "open_duration_ms": 2000,
+      "close_duration_ms": 2000,
+      "supports_tilt": false,
+      "command_up": "0x20",
+      "command_down": "0x40",
+      "command_stop": "0x10",
+      "command_check": "0x00",
+      "command_tilt": "0x24",
+      "ha_device_class": 0
+    },
+    {
+      "device_type": "remote",
+      "dst_address": "0xa831ea",
+      "name": "Legacy Remote",
+      "enabled": true
+    }
+  ],
+  "groups": [
+    {
+      "id": "test_group",
+      "name": "Test Group",
+      "device_ids": [
+        "0xa831e5",
+        "0xa831e8"
+      ]
+    }
+  ]
+}

@@ -5,6 +5,8 @@ packages:
   common: !include common.yaml
 
 api:
+  encryption:
+    key: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
   reboot_timeout: 0s
 
 elero_nvs:

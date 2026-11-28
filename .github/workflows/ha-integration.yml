@@ -59,6 +59,7 @@ jobs:
           path: |
             .tmp/integration/*/evidence/results.json
             .tmp/integration/*/evidence/results.xml
+            .tmp/integration/*/evidence/*/gateway-checks.jsonl
             .tmp/integration/*/timing.json
             .tmp/integration/*/manifest.json
           if-no-files-found: warn

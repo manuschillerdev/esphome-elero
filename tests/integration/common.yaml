@@ -1,6 +1,10 @@
+substitutions:
+  node_name: elero-e2e
+  hub_name: Elero E2E
+
 esphome:
-  name: elero-e2e
-  friendly_name: Elero E2E
+  name: ${node_name}
+  friendly_name: ${hub_name}
   build_path: build/${test_mode}
 
 esp32:

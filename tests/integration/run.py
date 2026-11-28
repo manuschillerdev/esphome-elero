@@ -90,11 +90,23 @@ def main():
         run(["smolvm", "machine", "cp", str(source), f"{args.name}:{target}"])
 
     modes = ["mqtt", "native"] if args.mode == "all" else [args.mode]
+    builds = {mode: mode for mode in modes}
+    if not args.test or args.test in "legacy_replacement_two_gateways":
+        builds.update({mode + "-peer": mode for mode in modes})
     created = False
     try:
         if not args.skip_build:
-            for mode in modes:
-                run(["uv", "run", "--locked", "esphome", "compile", str(HERE / f"{mode}.yaml")], timeout=1800)
+            for name, mode in builds.items():
+                overrides = []
+                if name.endswith("-peer"):
+                    values = {"test_mode": name, "node_name": "elero-peer", "hub_name": "Elero Peer"}
+                    if mode == "mqtt":
+                        values["command_prefix"] = "elero-peer"
+                    overrides = [arg for key, value in values.items() for arg in ("-s", key, value)]
+                run(
+                    ["uv", "run", "--locked", "esphome", *overrides, "compile", str(HERE / f"{mode}.yaml")],
+                    timeout=1800,
+                )
         sources = run(
             [
                 "git",
@@ -122,7 +134,7 @@ def main():
                 mode: hashlib.sha256(
                     (HERE / ".esphome" / "build" / mode / "build" / "firmware.factory.bin").read_bytes()
                 ).hexdigest()
-                for mode in modes
+                for mode in builds
             },
         }
         (artifacts / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -166,11 +178,11 @@ def main():
             vm("apk", "add", "--no-cache", "py3-aiohttp", "-q")
         vm("rm", "-rf", "/workspace/evidence")
         vm("mkdir", "-p", "/workspace/tests", "/workspace/evidence")
-        for filename in ("scenarios.py", "protocol.py", "espemu_radio.py"):
+        for filename in ("scenarios.py", "protocol.py", "espemu_radio.py", "backup-rc1.json"):
             copy(HERE / filename, f"/workspace/tests/{filename}")
         copy(emulator_binary(), "/workspace/esp-emu")
         vm("chmod", "+x", "/workspace/esp-emu")
-        for mode in modes:
+        for mode in builds:
             binary = HERE / ".esphome" / "build" / mode / "build" / "firmware.factory.bin"
             copy(binary, f"/workspace/tests/{mode}.bin")
         for image in ("ghcr.io/home-assistant/home-assistant:2026.11.0", "eclipse-mosquitto:2.0.22"):

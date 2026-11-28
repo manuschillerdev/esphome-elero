@@ -89,8 +89,13 @@ async def wait_for(probe, description, timeout=120):
 
 
 class Suite:
-    def __init__(self, mode, session):
+    def __init__(self, mode, session, *, peer=False):
         self.mode = mode
+        self.image = mode + ("-peer" if peer else "")
+        self.port_offset = 100 if peer else 0
+        self.node = "elero-peer" if peer else "elero-e2e"
+        self.prefix = "elero-peer" if peer else "elero"
+        self.flash = WORK / "runtime" / f"{self.image}.bin"
         self.session = session
         self.token = None
         self.counter = 0
@@ -102,12 +107,28 @@ class Suite:
         self.case = "startup"
         self.processes = []
         self.log_files = []
-        self.path = EVIDENCE / mode
+        self.path = EVIDENCE / self.image
         self.path.mkdir(parents=True, exist_ok=True)
 
     def record(self, kind, data):
+        entry = (
+            json.dumps({"time": time.time(), "case": self.case, "gateway": self.node, "kind": kind, "data": data})
+            + "\n"
+        )
         with (self.path / "proof.jsonl").open("a") as log:
-            log.write(json.dumps({"time": time.time(), "case": self.case, "kind": kind, "data": data}) + "\n")
+            log.write(entry)
+        if self.case in ("legacy_replacement_two_gateways", "authenticated_connection") and kind in {
+            "authentication",
+            "firmware_response",
+            "two_gateway_registry",
+            "saved_automation",
+            "ha_asserted_state",
+            "asserted_tx",
+            "other_gateway_commands",
+            "broker_command_subscriptions",
+        }:
+            with (self.path / "gateway-checks.jsonl").open("a") as log:
+                log.write(entry)
 
     async def http(self, method, path, data=None, *, auth=True, form=None, missing_ok=False):
         headers = {"Authorization": f"Bearer {self.token}"} if auth and self.token else {}
@@ -123,7 +144,7 @@ class Suite:
 
     async def radio(self, op, **data):
         request = dict(op=op, **data)
-        async with self.session.post("http://127.0.0.1:28060", json=request) as response:
+        async with self.session.post(f"http://127.0.0.1:{28060 + self.port_offset}", json=request) as response:
             result = await response.json()
         if not result.get("ok") or result.get("overflows"):
             raise AssertionError(f"Radio control failed: {request} {result}")
@@ -140,7 +161,7 @@ class Suite:
             return False
 
     async def firmware(self, message, expected):
-        async with self.session.ws_connect("http://127.0.0.1:18080/elero/ws") as ws:
+        async with self.session.ws_connect(f"http://127.0.0.1:{18080 + self.port_offset}/elero/ws") as ws:
             await ws.send_json(message)
             async with asyncio.timeout(45):
                 async for response in ws:
@@ -279,7 +300,7 @@ class Suite:
 
         self.event_task = asyncio.create_task(collect())
 
-    async def wait_mqtt_commands(self, cursor, configs, *, groups=False):
+    async def wait_mqtt_commands(self, cursor, configs, *, groups=()):
         topics = set()
         for config in configs:
             if not config.get("enabled", True):
@@ -289,9 +310,8 @@ class Suite:
                 continue
             address = int(config["dst_address"], 16)
             suffixes = ("set", "set_position", "tilt") if kind == "cover" else ("set",)
-            topics.update(f"elero/{kind}/{address:06x}/{suffix}" for suffix in suffixes)
-        if groups:
-            topics.update(f"elero/group/{group['id']}/set" for group in GROUPS)
+            topics.update(f"{self.prefix}/{kind}/{address:06x}/{suffix}" for suffix in suffixes)
+        topics.update(f"{self.prefix}/group/{group['id']}/set" for group in groups)
 
         async def subscribed():
             lines = (await command("docker", "logs", "broker")).splitlines()[cursor:]
@@ -299,7 +319,7 @@ class Suite:
             for index, line in enumerate(lines):
                 for topic in topics:
                     if f"{topic} (QoS 0)" in line and any(
-                        "Sending SUBACK to elero-e2e-" in ack for ack in lines[index + 1 : index + 4]
+                        f"Sending SUBACK to {self.node}-" in ack for ack in lines[index + 1 : index + 4]
                     ):
                         acknowledged.add(topic)
             return acknowledged == topics
@@ -433,6 +453,10 @@ class Suite:
             "exec",
             "broker",
             "mosquitto_sub",
+            "-u",
+            "homeassistant",
+            "-P",
+            "public-ha-only",
             "-t",
             "homeassistant/#",
             "--retained-only",
@@ -823,14 +847,16 @@ class Suite:
                     "broker": "127.0.0.1",
                     "port": 1883,
                     "protocol": "3.1.1",
-                    "username": "",
-                    "password": "",
+                    "username": "homeassistant",
+                    "password": "public-ha-only",
                     "other_settings": {"set_client_cert": False, "set_ca_cert": "off", "transport": "tcp"},
                 }
             elif self.mode == "mqtt" and step == "options":
                 data = {}
             elif self.mode == "native" and step == "user":
-                data = {"host": "127.0.0.1", "port": 16053}
+                data = {"host": "127.0.0.1", "port": 16053 + self.port_offset}
+            elif self.mode == "native" and step == "encryption_key":
+                data = {"noise_psk": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="}
             else:
                 raise AssertionError(f"Unexpected HA config flow: {flow}")
             flow = await self.http("POST", f"/api/config/config_entries/flow/{flow['flow_id']}", data)
@@ -844,16 +870,29 @@ class Suite:
         if runtime.exists():
             shutil.rmtree(runtime)
         (runtime / "ha").mkdir(parents=True)
+        (runtime / "ha" / "automations.yaml").write_text("[]\n")
         (runtime / "ha" / "configuration.yaml").write_text(
             "homeassistant:\n  name: Elero Integration Test\n  latitude: 48\n  longitude: 16\n"
             "  elevation: 0\n  unit_system: metric\n  time_zone: Europe/Vienna\n"
+            "automation: !include automations.yaml\n"
             "http:\napi:\nwebsocket_api:\nconfig:\nonboarding:\nfrontend:\nlogger:\n  default: info\n"
         )
         (runtime / "mosquitto.conf").write_text(
-            "listener 1883\nallow_anonymous true\npersistence false\nlog_type all\n"
+            "listener 1883\nallow_anonymous false\npassword_file /mosquitto/config/passwords\npersistence false\nlog_type all\n"
         )
-        binary = (WORK / "tests" / f"{self.mode}.bin").read_bytes()
-        (runtime / "flash.bin").write_bytes(binary + b"\xff" * (4 * 1024 * 1024 - len(binary)))
+        await command(
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{runtime}:/fixture",
+            "--entrypoint",
+            "sh",
+            "eclipse-mosquitto:2.0.22",
+            "-ec",
+            "mosquitto_passwd -b -c /fixture/passwords gateway public-fixture-only && "
+            "mosquitto_passwd -b /fixture/passwords homeassistant public-ha-only && chown 1883:1883 /fixture/passwords",
+        )
         await command(
             "docker",
             "run",
@@ -864,8 +903,11 @@ class Suite:
             "host",
             "-v",
             f"{runtime}/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro",
+            "-v",
+            f"{runtime}/passwords:/mosquitto/config/passwords:ro",
             "eclipse-mosquitto:2.0.22",
         )
+        self.new_flash()
         await self.launch_radio()
         await command(
             "docker", "run", "-d", "--name", "ha", "--network", "host", "-v", f"{runtime}/ha:/config", HA_IMAGE
@@ -902,7 +944,7 @@ class Suite:
             await self.restart_firmware()
         await self.add_integration()
         if self.mode == "mqtt":
-            await self.wait_mqtt_commands(0, DEVICES, groups=True)
+            await self.wait_mqtt_commands(0, DEVICES, groups=GROUPS)
 
             async def light_state_subscriptions_ready():
                 log = await command("docker", "logs", "broker")
@@ -943,7 +985,22 @@ class Suite:
         await self.seed_receivers()
         self.record("timing", {"phase": "fixture_start", "seconds": round(time.monotonic() - setup_started, 3)})
 
+    def new_flash(self):
+        binary = (WORK / "tests" / f"{self.image}.bin").read_bytes()
+        self.flash.write_bytes(binary.ljust(4 * 1024 * 1024, b"\xff"))
+
     async def launch_radio(self):
+        offset = self.port_offset
+        chip_args = []
+        if offset:
+            # QEMU eFuse layout: BLK1 starts at byte 24 (factory MAC, little endian).
+            # BLK2 bit 128 is the S3 calibration block version.
+            efuse = bytearray(336)
+            efuse[24:30] = bytes.fromhex("020000000002")[::-1]
+            efuse[64] = 1
+            path = self.flash.with_suffix(".efuse")
+            path.write_bytes(efuse)
+            chip_args = ["--efuse", str(path)]
         for name, command_line in (
             ("model", ["python3", "-u", "/workspace/tests/espemu_radio.py"]),
             (
@@ -953,21 +1010,25 @@ class Suite:
                     "--chip",
                     "esp32s3",
                     "--firmware",
-                    "/workspace/runtime/flash.bin",
+                    str(self.flash),
+                    *chip_args,
                     "--save-state",
                     "--net",
-                    "user,hostfwd=tcp:127.0.0.1:18080-:80,hostfwd=tcp:127.0.0.1:16053-:6053",
+                    f"user,hostfwd=tcp:127.0.0.1:{18080 + offset}-:80,hostfwd=tcp:127.0.0.1:{16053 + offset}-:6053",
                     "--cosim-tcp",
-                    "127.0.0.1:28590",
+                    f"127.0.0.1:{28590 + offset}",
                     "--control-tcp",
-                    "127.0.0.1:28591",
+                    f"127.0.0.1:{28591 + offset}",
                 ],
             ),
         ):
             log = (self.path / f"{name}.log").open("a")
             self.log_files.append(log)
             process = await asyncio.create_subprocess_exec(
-                *command_line, stdout=log, stderr=log, env={**os.environ, "ELERO_EVIDENCE": str(self.path)}
+                *command_line,
+                stdout=log,
+                stderr=log,
+                env={**os.environ, "ELERO_EVIDENCE": str(self.path), "ELERO_PORT_OFFSET": str(offset)},
             )
             self.processes.append(process)
 
@@ -985,7 +1046,7 @@ class Suite:
         await wait_for(flushed_interval, "ESPHome preference write interval", timeout=60)
         # The emulator's hard reset preserves the emulated flash and exercises
         # the ROM, bootloader, NVS restore and adapter construction again.
-        connection = socket.create_connection(("127.0.0.1", 28591), timeout=5)
+        connection = socket.create_connection(("127.0.0.1", 28591 + self.port_offset), timeout=5)
         with connection:
             connection.sendall(b"reset\n")
             assert connection.recv(128).strip() == b"ok"
@@ -997,7 +1058,7 @@ class Suite:
             timeout=120,
         )
         if self.mode == "mqtt":
-            await self.wait_mqtt_commands(cursor, snapshot["devices"], groups=True)
+            await self.wait_mqtt_commands(cursor, snapshot["devices"], groups=snapshot["groups"])
         elif self.entities:
             if reload_api:
                 entries = await self.ha_ws("config_entries/get")
@@ -1328,7 +1389,9 @@ class Suite:
             lines = (await command("docker", "logs", "broker")).splitlines()[cursor:]
             topic = f"elero/cover/{COVER:06x}/set (QoS 0)"
             for index, line in enumerate(lines):
-                if topic in line and any("Sending SUBACK to elero-e2e-" in ack for ack in lines[index + 1 : index + 4]):
+                if topic in line and any(
+                    f"Sending SUBACK to {self.node}-" in ack for ack in lines[index + 1 : index + 4]
+                ):
                     self.record("broker_subscription_restored", {"topic": topic})
                     return True
             return False
@@ -1343,11 +1406,145 @@ class Suite:
         await self.rx(COVER, 1)
         await self.expect_state(self.entities["cover"], "open")
 
+    async def test_authenticated_connection(self):
+        if self.mode == "mqtt":
+            out = await command("docker", "exec", "broker", "mosquitto_sub", "-t", "elero/#", "-W", "1", check=False)
+            assert "not authori" in out.lower(), out
+            log = await command("docker", "logs", "broker")
+            for user in ("gateway", "homeassistant"):
+                assert f"u'{user}'" in log, user
+            self.record("authentication", {"anonymous": out.strip(), "connected_users": ["gateway", "homeassistant"]})
+        else:
+            log = (self.path / "firmware.log").read_text(errors="replace")
+            assert "Noise encryption: YES" in log
+            self.record("authentication", {"native_api": "Noise encryption: YES"})
+        await self.clear_tx()
+        await self.service(self.entities["cover"], "stop_cover")
+        await self.expect_tx(0x10, address=COVER)
+
+    async def save_cover_automation(self, entity):
+        rule = {
+            "id": "restore_blind",
+            "alias": "Restore blind",
+            "triggers": [{"trigger": "event", "event_type": "elero_test_open"}],
+            "actions": [{"action": "cover.open_cover", "target": {"entity_id": entity}}],
+        }
+        (WORK / "runtime/ha/automations.yaml").write_text(json.dumps([rule]))
+        await self.http("POST", "/api/services/automation/reload", {})
+        await self.expect_state("automation.restore_blind", "on")
+        self.record("saved_automation", rule)
+
+    async def test_legacy_replacement_two_gateways(self):
+        original = self.entities["cover"]
+        await self.save_cover_automation(original)
+        await self.rx(COVER, 2)
+        await self.expect_state(original, "closed")
+        await self.clear_tx()
+        await self.http("POST", "/api/events/elero_test_open", {})
+        await self.expect_tx(0x20, address=COVER)
+        await self.rx(COVER, 2)
+        await self.expect_state(original, "closed")
+        peer = Suite(self.mode, self.session, peer=True)
+        peer.case, peer.token = self.case, self.token
+        backup = json.loads((WORK / "tests/backup-rc1.json").read_text())
+        assert backup["exporter"]["version"] == "0.11.0-rc.1"
+        try:
+            peer.new_flash()
+            await peer.launch_radio()
+            await wait_for(peer.radio_ready, "second CC1101")
+            export = {"type": "export_config"}
+            empty = await wait_for(lambda: peer.firmware(export, "config_snapshot"), "fresh replacement")
+            assert empty["devices"] == [] and empty["groups"] == [] and empty["hub"] == {}, empty
+            assert empty["exporter"]["device"] == "elero-peer", empty
+            result = await peer.firmware({"type": "import_config", "snapshot": backup}, "import_result")
+            assert (
+                result["added"] == 4 and result["groups_added"] == 1 and result["hub_applied"] and not result["errors"]
+            ), result
+            await peer.restart_firmware()
+            restored = await peer.firmware(export, "config_snapshot")
+            expected = [
+                dict(d, movement_mode="standard", tilt_mode="preset") if d["device_type"] == "cover" else d
+                for d in backup["devices"]
+            ]
+            assert restored["devices"] == expected, restored
+            assert all(backup[k] == restored[k] for k in ("hub", "groups")), restored
+            if self.mode == "native":
+                await peer.add_integration()
+
+            async def both_covers():
+                rows = [
+                    r
+                    for r in await self.ha_ws("config/entity_registry/list")
+                    if r["original_name"] == "Test Blind" and r["entity_id"].startswith("cover.")
+                ]
+                return rows if len(rows) == 2 else None
+
+            rows = await wait_for(both_covers, "two Test Blind entities")
+            first = next(r for r in rows if r["entity_id"] == original)
+            second = next(r for r in rows if r["entity_id"] != original)
+            for key in ("id", "unique_id", "device_id"):
+                assert first[key] != second[key], rows
+            devices = {d["id"]: d for d in await self.ha_ws("config/device_registry/list")}
+            if self.mode == "mqtt":
+                owners = [devices[r["device_id"]]["via_device_id"] for r in (first, second)]
+                assert owners[0] and owners[1] and owners[0] != owners[1], owners
+                assert first["config_entry_id"] == second["config_entry_id"], rows
+            else:
+                assert first["config_entry_id"] != second["config_entry_id"], rows
+            self.record("two_gateway_registry", rows)
+            replacement = second["entity_id"]
+            await peer.rx(COVER, 2)
+            await self.expect_state(replacement, "closed")
+            await self.clear_tx()
+            await peer.clear_tx()
+            await self.http("POST", "/api/events/elero_test_open", {})
+            await self.expect_tx(0x20, address=COVER)
+            await self.rx(COVER, 1)
+            await self.expect_state(original, "open")
+            await self.expect_state(replacement, "closed")
+            commands = [decode(frame)["command"] for frame in (await peer.radio("status"))["tx"]]
+            peer.record("other_gateway_commands", commands)
+            assert 0x20 not in commands, commands
+            # The saved rule still targets the original registry entity. Take that
+            # gateway offline and retarget the same rule to the restored cover.
+            await self.stop_radio()
+            await self.expect_state(original, "unavailable", timeout=120)
+            await self.expect_state(replacement, "closed")
+            await self.save_cover_automation(replacement)
+            await self.http("POST", "/api/events/elero_test_open", {})
+            await peer.expect_tx(0x20, address=COVER)
+            await peer.rx(COVER, 1)
+            await self.expect_state(replacement, "open")
+            await self.expect_state(original, "unavailable")
+            # Reconnect the original chip with its persisted flash while the peer stays online.
+            cursor = len((await command("docker", "logs", "broker")).splitlines()) if self.mode == "mqtt" else 0
+            await self.launch_radio()
+            await wait_for(self.radio_ready, "original radio reconnect")
+            if self.mode == "mqtt":
+                await self.wait_mqtt_commands(cursor, DEVICES, groups=GROUPS)
+            await self.rx(COVER, 2)
+            await self.expect_state(original, "closed", timeout=120)
+            await self.expect_state(replacement, "open")
+            assert {r["id"] for r in await wait_for(both_covers, "reconnected identities")} == {r["id"] for r in rows}
+            await self.clear_tx()
+            await self.service(original, "stop_cover")
+            await self.expect_tx(0x10, address=COVER)
+        finally:
+            await peer.stop_radio()
+
     async def close(self):
         if self.event_task:
             self.event_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self.event_task
+        await self.stop_radio()
+        for name in ("ha", "broker"):
+            text = await command("docker", "logs", name, check=False)
+            (self.path / f"{name}.log").write_text(text)
+            (self.path / f"{name}-{self.case}.log").write_text(text)
+        (self.path / "containers.json").write_text(await command("docker", "inspect", "ha", "broker", check=False))
+
+    async def stop_radio(self):
         for process in reversed(self.processes):
             if process.returncode is None:
                 process.send_signal(signal.SIGINT)
@@ -1358,11 +1555,8 @@ class Suite:
                     await process.wait()
         for log in self.log_files:
             log.close()
-        for name in ("ha", "broker"):
-            text = await command("docker", "logs", name, check=False)
-            (self.path / f"{name}.log").write_text(text)
-            (self.path / f"{name}-{self.case}.log").write_text(text)
-        (self.path / "containers.json").write_text(await command("docker", "inspect", "ha", "broker", check=False))
+        self.processes.clear()
+        self.log_files.clear()
 
 
 async def main():
@@ -1383,6 +1577,7 @@ async def main():
             suite = Suite(mode, session)
             names = [
                 "discovery",
+                "authenticated_connection",
                 "entity_inventory",
                 "integration_readd",
                 "action_buttons",
@@ -1406,7 +1601,7 @@ async def main():
             ]
             if mode == "mqtt":
                 names.append("broker_restart")
-            names.extend(["cover_actions", "light_actions", "rename"])
+            names.extend(["cover_actions", "light_actions", "rename", "legacy_replacement_two_gateways"])
             try:
                 print(f"[{mode}] Start real HA and ESP32 firmware", flush=True)
                 await suite.start()
