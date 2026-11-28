@@ -1,0 +1,57 @@
+esphome:
+  name: elero-gateway
+  friendly_name: Elero Gateway
+  on_boot:
+    priority: 800
+    then:
+      - output.turn_on: vext_enable
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_VFS_SUPPORT_SELECT: "y"
+
+output:
+  - platform: gpio
+    id: vext_enable
+    pin:
+      number: GPIO36
+      inverted: true
+
+spi:
+  clk_pin: GPIO9
+  mosi_pin: GPIO10
+  miso_pin: GPIO11
+
+elero:
+  radio: sx1262
+  cs_pin: GPIO8
+  irq_pin: GPIO14
+  busy_pin: GPIO13
+  rst_pin: GPIO12
+  rf_switch: true
+  tcxo_voltage: 1.8
+  fem_power_pin: GPIO7
+  fem_enable_pin: GPIO2
+  fem_pa_pin: GPIO46  # V4.2. Use GPIO5 for V4.3.1 and later.
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+
+external_components:
+  - source: github://manuschillerdev/esphome-elero@dev
+
+elero_web:
+
+# Home Assistant connection
+api:
+  encryption:
+    key: !secret elero_api_key
+
+elero_nvs:
