@@ -1,0 +1,13 @@
+# The same production-driver capability probe on the single-core C6 target.
+packages:
+  probe: !include espemu.yaml
+
+esphome:
+  name: elero-espemu-c6
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+
+logger:
+  hardware_uart: UART0

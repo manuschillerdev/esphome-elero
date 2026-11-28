@@ -1,0 +1,65 @@
+name: Home Assistant integration
+
+on:
+  pull_request:
+    paths:
+      - components/elero/**
+      - components/elero_mqtt/**
+      - components/elero_nvs/**
+      - components/elero_web/**
+      - tests/integration/**
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/ha-integration.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ha-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Home Assistant (${{ matrix.mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [native, mqtt]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: python uv
+      - name: Enable access to KVM
+        run: |
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Install smolvm with its guest filesystem
+        working-directory: ${{ runner.temp }}
+        run: |
+          archive=smolvm-1.33.0-linux-x86_64.tar.gz
+          curl --fail --location --retry 3 --output "$archive" "https://github.com/smol-machines/smolvm/releases/download/v1.33.0/$archive"
+          echo "97e0c64d50abc407499802daa6c849ac010ef29d44e1d97664d8a78067927274  $archive" | sha256sum --check
+          mkdir smolvm
+          tar -xf "$archive" -C smolvm --strip-components=1
+          echo "$RUNNER_TEMP/smolvm" >> "$GITHUB_PATH"
+      - name: Run the integration suite
+        run: |
+          mise exec python uv -- uv run --locked python tests/integration/run.py --mode "${{ matrix.mode }}"
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ha-integration-${{ matrix.mode }}
+          include-hidden-files: true
+          path: |
+            .tmp/integration/*/evidence/results.json
+            .tmp/integration/*/evidence/results.xml
+            .tmp/integration/*/evidence/*/gateway-checks.jsonl
+            .tmp/integration/*/timing.json
+            .tmp/integration/*/manifest.json
+          if-no-files-found: warn

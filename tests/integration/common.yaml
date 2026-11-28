@@ -1,0 +1,44 @@
+substitutions:
+  node_name: elero-e2e
+  hub_name: Elero E2E
+
+esphome:
+  name: ${node_name}
+  friendly_name: ${hub_name}
+  build_path: build/${test_mode}
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  fast_connect: true
+  ssid: myssid
+  password: mypassword
+  reboot_timeout: 0s
+
+preferences:
+  flash_write_interval: 1s
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+  miso_pin: GPIO13
+
+elero:
+  id: hub
+  cs_pin: GPIO10
+  irq_pin: GPIO9
+
+elero_web:
+  port: 80

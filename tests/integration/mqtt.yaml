@@ -1,0 +1,19 @@
+substitutions:
+  test_mode: mqtt
+  command_prefix: elero
+
+packages:
+  common: !include common.yaml
+
+mqtt:
+  broker: 192.168.4.1
+  username: gateway
+  password: public-fixture-only
+  # Firmware time runs slower than broker wall time when two chips share a VM.
+  keepalive: 120s
+  discovery: false
+  reboot_timeout: 0s
+
+elero_mqtt:
+  topic_prefix: ${command_prefix}
+  device_name: ${hub_name}

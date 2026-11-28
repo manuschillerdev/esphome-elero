@@ -15,6 +15,8 @@ Node.js, pnpm, or a separate frontend download. Frontend contributors must rebui
 and commit `components/elero_web/elero_web_ui.h` alongside source changes;
 CI verifies that the generated header matches the source.
 
+Run the [Home Assistant integration suite](tests/integration/README.md) to test the native API and MQTT with emulated ESP32 firmware.
+
 ## Frontend mock development
 
 In `components/elero_web/frontend/app`, run `mise exec node pnpm -- pnpm mock`
