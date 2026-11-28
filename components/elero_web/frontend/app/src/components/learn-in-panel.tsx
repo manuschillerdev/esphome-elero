@@ -80,11 +80,12 @@ export function LearnInPanel() {
   const mode = state.active ? state.mode ?? 'power_cycle' : selectedMode.value
   const legacy = mode === 'power_cycle'
   const trackedLink = mode === 'open_standby' || mode === 'remove_link'
-  const savedLinks = [...devices.value.values()].filter(d =>
-    d.type === 'cover' && d.updated_at !== null && d.remote.toLowerCase() === defaultSrcAddress.value.toLowerCase())
+  const savedReceivers = [...devices.value.values()].filter(d =>
+    d.type !== 'remote' && d.updated_at !== null && d.remote.toLowerCase() === defaultSrcAddress.value.toLowerCase())
+  const savedLinks = savedReceivers.filter(d => d.type === 'cover')
   const selectedLink = savedLinks.find(d => d.address === selectedReceiver.value)
   const linkChannel = trackedLink ? selectedLink?.channel : channel.value
-  const shared = savedLinks.filter(d => d.channel === linkChannel).map(d => d.name || d.address)
+  const shared = savedReceivers.filter(d => d.channel === linkChannel).map(d => d.name || d.address)
   const movement = state.state === 'watch_movement'
   const setOperation = (value: Operation) => {
     selectedMode.value = value
@@ -97,9 +98,7 @@ export function LearnInPanel() {
 
   const formValid = (
     (legacy ? isValidHexAddress(srcAddress.value) : isValidHexAddress(selectedReceiver.value))
-    && channel.value >= 1
-    && channel.value <= 255
-    && (!trackedLink || Boolean(selectedLink))
+    && linkChannel !== undefined && Number.isInteger(linkChannel) && linkChannel >= 1 && linkChannel <= 255
     && sessionTimeoutSec.value >= 5
   )
 
@@ -126,7 +125,7 @@ export function LearnInPanel() {
   const handleStart = () => {
     if (!linkChannel) return
     if (mode === 'remove_link' && !window.confirm(
-      `Remove gateway remote ${defaultSrcAddress.value}, channel ${linkChannel}, from every receiver that learned it? Known covers: ${shared.join(', ')}. Other receivers may also use this link.`,
+      `Remove gateway remote ${defaultSrcAddress.value}, channel ${linkChannel}, from every receiver that learned it? Saved receivers: ${shared.join(', ')}. Other receivers may also use this link.`,
     )) return
     sendLearnInStart({
       ...(legacy ? {} : { mode, receiver_address: selectedReceiver.value }),
@@ -272,7 +271,7 @@ export function LearnInPanel() {
           {!legacy && <div className="rounded-lg border p-3 text-sm">
             {mode === 'open_standby' && 'Use the saved channel that already controls this motor. When the motor responds, select Pair with the receiver in standby.'}
             {mode === 'train' && 'First open standby with a paired gateway channel or with a paired hand transmitter. For a LumeroTel 2, hold UP, DOWN and P together for 3 seconds. Select the new gateway channel. Start pairing. For each movement, press the matching direction until the motor reports completion.'}
-            {mode === 'remove_link' && 'This removes the gateway remote and selected channel from all receivers that learned this link. A receiver can be affected even if it is absent from the saved cover list.'}
+            {mode === 'remove_link' && 'This removes the gateway remote and selected channel from all receivers that learned this link. A receiver can be affected even if it is absent from the list of saved receivers.'}
           </div>}
           {legacy && <><StepRow
             icon={Power}
