@@ -1497,6 +1497,7 @@ class Suite:
             replacement = second["entity_id"]
             await peer.rx(COVER, 2)
             await self.expect_state(replacement, "closed")
+            await self.expect_state(original, "closed")
             await self.clear_tx()
             await peer.clear_tx()
             await self.http("POST", "/api/events/elero_test_open", {})
