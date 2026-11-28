@@ -343,8 +343,8 @@ class Suite:
                 expected.extend(
                     ("button", action if self.mode == "mqtt" else f"{name} {action}", owner) for action in ACTIONS
                 )
-            for domain, label in (("sensor", "RSSI"), ("sensor", "State"), ("binary_sensor", "Problem")):
-                expected.append((domain, label if self.mode == "mqtt" else f"{name} {label}", owner))
+            for entity_domain, label in (("sensor", "RSSI"), ("sensor", "State"), ("binary_sensor", "Problem")):
+                expected.append((entity_domain, label if self.mode == "mqtt" else f"{name} {label}", owner))
         expected.extend([("cover", "Test Group", "Elero E2E"), ("light", "Light Group", "Elero E2E")])
         expected.extend((kind, name, "Elero E2E") for kind, name in groups)
         if self.mode == "mqtt":
