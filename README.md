@@ -1,40 +1,27 @@
 # esphome-elero
 
-Control your Elero blinds and lights from Home Assistant. An ESP32 board acts as the gateway. It can pair with the motor as a new remote or listen to a remote you already use.
+Control your Elero blinds and lights from Home Assistant with an ESP32 radio gateway.
 
 ## Quick start
 
-### 1. Choose an 868 MHz board
+### 1. Choose a board
 
-**We recommend the Heltec WiFi LoRa 32 V3 or V4.** Budget about US$30. Choose **863–870 MHz** in the band selector. The SX1262 radio is built in. Use an 868 MHz antenna and a USB-C data cable. [Heltec V3 models and prices](https://heltec.org/project/wifi-lora-32-v3) · [Heltec V4 models and prices](https://heltec.org/project/wifi-lora-32-v4)
+**We recommend the Heltec WiFi LoRa 32 V3 or V4, about US$30. Choose the **863–870 MHz** version. The LILYGO T-Embed CC1101 and T-Embed CC1101 Plus also work at 868 MHz.
 
-**If you prefer LILYGO,** choose the **T-Embed CC1101** or **T-Embed CC1101 Plus**. Both have a built-in CC1101 radio that can operate at 868 MHz. [T-Embed CC1101 radio bands](https://lilygo.cc/en-us/products/t-embed-cc1101) · [Plus model description](https://lilygo.cc/products/t-embed-cc1101-plus)
-
-**Avoid CC1101 boards and modules sold for 433 MHz.** They have poor range with 868 MHz Elero equipment. [Installation guide, required parts](docs/INSTALLATION.md#1-required-parts)
-
-| Board | ESPHome starter file | What to check |
+| Board | Starter file | Hardware details |
 |---|---|---|
-| Heltec WiFi LoRa 32 V3 | [Heltec V3 YAML](configs/quickstart/heltec-v3.yaml) | Choose the 868 MHz version. |
-| Heltec WiFi LoRa 32 V4 | [Heltec V4 YAML](configs/quickstart/heltec-v4.yaml) | Read the revision on the board. The file uses `GPIO46` for V4.2. For V4.3.1 and later, use `GPIO5` for `fem_pa_pin`. This setting still needs a hardware test. [V4 revision guide](docs/devices/heltec-lora-v4.md#hardware-variants) |
-| LILYGO T-Embed CC1101 or T-Embed CC1101 Plus | [LILYGO CC1101 YAML](configs/quickstart/lilygo-t-embed-cc1101.yaml) | Look for **CC1101** in the model name. The starter selects the 868 MHz antenna path. |
+| Heltec WiFi LoRa 32 V3 | [V3 YAML](configs/quickstart/heltec-v3.yaml) | [Heltec V3 band selector](https://heltec.org/project/wifi-lora-32-v3) |
+| Heltec WiFi LoRa 32 V4 | [V4 YAML](configs/quickstart/heltec-v4.yaml) | V4.2 uses `fem_pa_pin: GPIO46`. V4.3.1 and later use `GPIO5` (untested). [Revision guide](docs/devices/heltec-lora-v4.md#hardware-variants) · [Heltec V4 band selector](https://heltec.org/project/wifi-lora-32-v4) |
+| LILYGO T-Embed CC1101 or CC1101 Plus | [LILYGO YAML](configs/quickstart/lilygo-t-embed-cc1101.yaml) | Check for **CC1101** in the model name. [Base model](https://lilygo.cc/en-us/products/t-embed-cc1101) · [Plus model](https://lilygo.cc/products/t-embed-cc1101-plus) |
 
-### 2. Choose how Home Assistant connects
+**Avoid 433 MHz CC1101 boards.** They have poor range with 868 MHz Elero equipment.
 
-Both modes store the blind settings on the gateway. Choose one connection for Home Assistant.
+### 2. Configure ESPHome
 
-| Mode | What you need | When you add, rename, or remove a blind |
-|---|---|---|
-| **Native API** | Only the ESPHome integration. Home Assistant connects directly to the gateway. | Restart the gateway once after your changes. Home Assistant then shows the updated devices. |
-| **MQTT** | An MQTT broker (message server) and the Home Assistant MQTT integration. The broker must be available for control. | Home Assistant discovery applies changes immediately. You can keep the gateway running. |
+Use ESPHome **2026.10.2 or newer**. Copy your starter file to the ESPHome configuration folder as `elero-gateway.yaml`. Set `wifi_ssid` and `wifi_password` in `secrets.yaml` in the same folder. [ESPHome setup guide](https://esphome.io/install/getting-started/)
 
-Use ESPHome **2026.10.2 or newer**. Copy the starter file for your board to your ESPHome configuration folder. Name it `elero-gateway.yaml`. In Device Builder, you can paste the starter into a new configuration named `elero-gateway`. Set your Wi-Fi details in `secrets.yaml` in the same folder. [ESPHome setup guide](https://esphome.io/install/getting-started/)
-
-```yaml
-wifi_ssid: "Your Wi-Fi network"
-wifi_password: "Your Wi-Fi password"
-```
-
-**For the native API**, the starter already includes `api:` and `elero_nvs:`. Copy a new encryption key from the ESPHome page below. Add it to `secrets.yaml` as `elero_api_key: "your generated key"`. [ESPHome encryption key generator](https://esphome.io/components/api/#configuration-variables)
+- **Native API (default).** Home Assistant connects directly. Restart the gateway once after adding, renaming, or removing blinds. Add `elero_api_key: "your generated key"` to `secrets.yaml`. [Generate an encryption key](https://esphome.io/components/api/#configuration-variables)
+- **MQTT.** You need an MQTT broker (message server). Home Assistant shows each saved blind immediately. Expand the settings below to use MQTT.
 
 <details>
 <summary><strong>Use MQTT with an existing broker</strong></summary>
@@ -62,35 +49,28 @@ mqtt_password: "Your MQTT password"
 
 ### 3. Install the firmware
 
-1. If your board has an external antenna, attach it before you connect power.
-2. Connect the board to your computer with the USB data cable.
-3. In ESPHome Device Builder, open `elero-gateway.yaml` and select **Install → Plug into this computer**. If you use the command line, run `esphome run elero-gateway.yaml` and select the USB port.
-4. Wait for the board to join Wi-Fi. Open `http://elero-gateway.local/elero` in a browser on the same network. If the name does not resolve, use the IP address from the ESPHome log, for example `http://192.168.1.50/elero`.
+1. Attach the 868 MHz antenna if your board uses an external antenna. Connect the board to your computer with a USB-C data cable.
+2. In ESPHome Device Builder, select **Install → Plug into this computer**. From the command line, use `esphome run elero-gateway.yaml` and select the USB port.
+3. Open `http://elero-gateway.local/elero`. If needed, replace `elero-gateway.local` with the IP address from the ESPHome log.
 
-### 4. Add your blind
+### 4. Add your blind and test it
 
-Choose one path. Use a working remote to discover the blind, or pair the gateway itself as a new remote.
+1. Open **Manage**. On your handheld remote, select one blind and press **Stop** once.
+2. Click the name in the new **Cover** row. Enter a name, press **Enter**, and click the disk icon (**Save to NVS**). The gateway can now use that remote's address and channel. Repeat for each blind.
 
-#### Use your existing remote
+   ![Manage shows Kitchen blind on channel 3. The blue ring marks the save button.](docs/screenshots/save-blind.png)
 
-1. Open **Manage**. On the handheld remote, select the channel for one blind and press **Stop** once.
-2. A **Cover** row appears. Under **Remote / channel pairings**, check the remote address and channel. Click the cover name, enter a name such as `Kitchen blind`, and press **Enter**.
-3. Click the disk icon (**Save to NVS**) on that row. This saves the blind, remote address, and channel in the gateway's memory. The gateway can now act as the paired remote for that blind. Use **Open**, **Stop**, or **Close** on the row. For other commands, open **Hub → Simulate Remote** and select the remote, blind, and command.
+3. In Home Assistant, open **Settings → Devices & services**.
+   - **Native API.** Select **Reboot now** on the gateway after your last save. In Home Assistant, add the ESPHome gateway and enter your encryption key. [ESPHome integration setup](https://www.home-assistant.io/integrations/esphome/#configuration)
+   - **MQTT.** Open the **MQTT** integration to find your saved blind.
 
-   ![Manage shows Kitchen blind on channel 3. The blue ring marks the Save to NVS button.](docs/screenshots/save-blind.png)
+   ![Native API restart prompt with the Reboot now button.](docs/screenshots/native-api-restart.png)
 
-4. Repeat for each channel you want to use. **MQTT** publishes each saved blind immediately. With the **native API**, select **Reboot now** once after your last save so Home Assistant can see the new blinds.
+4. Select **Open**, then **Stop**, and check that the blind responds.
 
-<details>
-<summary>See a Stop command in Simulate Remote</summary>
+## Advanced
 
-![Simulate Remote with the physical remote, Kitchen blind, and the Stop command selected.](docs/screenshots/simulate-remote.png)
-
-</details>
-
-If no packets appear, check the antenna and the board revision. Compare the frequency under **Hub** with the frequency for your remote. [Radio frequency settings](docs/CONFIGURATION.md#frequency-variants)
-
-#### Pair the gateway without a handheld remote
+### Pair the gateway without a handheld remote
 
 Open **Hub → Learn-In**. The gateway acts as a virtual remote. You need access to a compatible receiver to put it into programming mode.
 
@@ -100,7 +80,7 @@ Open **Hub → Learn-In**. The gateway acts as a virtual remote. You need access
 
    ![Learn-In shows Wait Up. Select Confirm UP movement when the blind starts to move up.](docs/screenshots/learn-in.png)
 
-4. **Complete** means the gateway sent the sequence. Save the blind on the gateway, then test it in step 5. [What learn-in completion means](docs/research/elero-open-protocol-issues.md#what-completion-actually-means-today)
+4. **Complete** means the gateway sent the sequence. Save the blind on the gateway, then test **Open** and **Stop** in Home Assistant. [What learn-in completion means](docs/research/elero-open-protocol-issues.md#what-completion-actually-means-today)
 
 <details>
 <summary>Save the blind after direct pairing</summary>
@@ -125,20 +105,20 @@ If **Manage** shows the blind with the correct remote address and channel, name 
 
 </details>
 
-### 5. Test the blind in Home Assistant
+### Send other remote commands
 
-Open **Settings → Devices & services** in Home Assistant.
+Open **Hub → Simulate Remote**. Select the remote, blind, and command.
 
-- **Native API.** In the gateway's **Manage** tab, select **Reboot now** after the last save. In Home Assistant, add the discovered ESPHome gateway and enter your encryption key. If discovery misses it, add **ESPHome** and enter the board's IP address. [ESPHome integration setup](https://www.home-assistant.io/integrations/esphome/#configuration)
+<details>
+<summary>See a Stop command in Simulate Remote</summary>
 
-  ![The native API restart prompt with the Reboot now button on the right.](docs/screenshots/native-api-restart.png)
+![Simulate Remote with the physical remote, Kitchen blind, and the Stop command selected.](docs/screenshots/simulate-remote.png)
 
-- **MQTT.** Open the **MQTT** integration. Each blind appears as soon as you save it on the gateway.
-
-Find the blind by the name you gave it. Select **Open**, then **Stop**, and check that the blind responds.
+</details>
 
 ## After setup
 
+- If the gateway receives no packets, check the antenna, board revision, and frequency. [Radio frequency settings](docs/CONFIGURATION.md#frequency-variants)
 - Save a copy of your device list under **Hub → Backup & Restore**. [Backup and restore](docs/BACKUP-RESTORE.md)
 - Set opening and closing times for percentage control, or configure tilt and step receivers. [Cover settings](docs/CONFIGURATION.md#cover-position-and-tilt) · [Step receiver guide](docs/TESTING_STEP_RECEIVERS.md)
 - Set up other boards, including an ESP32 with a separate CC1101 or a LILYGO LoRa32 V2.1 with an SX1276. [Board guides](docs/devices/)
