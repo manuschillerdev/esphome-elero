@@ -676,9 +676,13 @@ class Suite:
             if added:
                 before = await self.wait_inventory(configs)
                 continue
-            # The API has reconnected and sent its initial states. Inspect all
-            # kinds even when one name or identity is wrong; do not wait for a
-            # known metadata mismatch or let it hide the other rename checks.
+            # Registry metadata can arrive after the first state on reconnect.
+            try:
+                after = await self.wait_inventory(renamed)
+                assert {v["id"] for v in before.values()} == {v["id"] for v in after.values()}
+            except AssertionError as err:
+                failures.append(f"Renamed registry inventory: {err}")
+            # Inspect each surviving registry row to identify the affected field.
             entities = await self.ha_ws("config/entity_registry/list")
             by_id = {e["id"]: e for e in entities}
             states = {v["entity_id"]: v for v in await self.http("GET", "/api/states")}
@@ -702,9 +706,16 @@ class Suite:
                     ):
                         errors.append(f"{key[0]} identity disappeared: {identity['entity_id']}")
                         continue
-                    for field in ("entity_id", "unique_id", "device_id"):
+                    for field in ("entity_id", "device_id"):
                         if current[field] != identity[field]:
                             errors.append(f"{identity['entity_id']}: {field} {identity[field]!r} -> {current[field]!r}")
+                    allowed_ids = {identity["unique_id"]}
+                    suffix = "/" + key[1]
+                    if self.mode == "native" and identity["unique_id"].endswith(suffix):
+                        # HA migrates a name-based native unique_id on the same registry row.
+                        allowed_ids.add(identity["unique_id"].removesuffix(suffix) + "/" + expected_name)
+                    if current["unique_id"] not in allowed_ids:
+                        errors.append(f"{identity['entity_id']}: unexpected unique_id {current['unique_id']!r}")
                     if current["original_name"] != expected_name:
                         errors.append(f"{key[0]} name {current['original_name']!r}, expected {expected_name!r}")
                 self.record(
@@ -712,9 +723,6 @@ class Suite:
                     {"kind": old["device_type"], "before": [v for _, v in originals], "errors": errors},
                 )
                 failures.extend(f"{old['device_type']}: {error}" for error in errors)
-            if not failures:
-                after = await self.wait_inventory(renamed)
-                assert sorted(v["id"] for v in before.values()) == sorted(v["id"] for v in after.values())
         for config in configs:
             await self.firmware(
                 {"type": "remove_device", "dst_address": config["dst_address"], "device_type": config["device_type"]},
