@@ -1,159 +1,159 @@
 # esphome-elero
 
-ESPHome component for controlling Elero wireless blinds and lights via an ESP32 with a CC1101, SX1262, or SX1276 868 MHz RF transceiver. Bidirectional -- sends commands and receives status feedback.
+Control your Elero blinds and lights from Home Assistant. An ESP32 board acts as the gateway. It can pair with the motor as a new remote or listen to a remote you already use.
 
-[![ESPHome](https://img.shields.io/badge/ESPHome-Component-blue)](https://esphome.io/)
-[![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
+## Quick start
 
-This branch requires **ESPHome 2026.10.2 or newer**. Local development uses Python 3.12;
-install the pinned tools with `mise install`, then dependencies with `mise exec -- uv sync`.
-Native API devices continue to come from NVS; existing device backups and configuration
-remain supported. See [ESPHome compatibility](docs/ESPHOME-COMPATIBILITY.md) for migration details.
+### 1. Choose an 868 MHz board
 
-The web UI is bundled with the component. GitHub installations do not require
-Node.js, pnpm, or a separate frontend download. Frontend contributors must rebuild
-and commit `components/elero_web/elero_web_ui.h` alongside source changes;
-CI verifies that the generated header matches the source.
+**We recommend the Heltec WiFi LoRa 32 V3 or V4.** Budget about US$30. Choose **863–870 MHz** in the band selector. The SX1262 radio is built in. Use an 868 MHz antenna and a USB-C data cable. [Heltec V3 models and prices](https://heltec.org/project/wifi-lora-32-v3) · [Heltec V4 models and prices](https://heltec.org/project/wifi-lora-32-v4)
 
-## Frontend mock development
+**If you prefer LILYGO,** choose the **T-Embed CC1101** or **T-Embed CC1101 Plus**. Both have a built-in CC1101 radio that can operate at 868 MHz. [T-Embed CC1101 radio bands](https://lilygo.cc/en-us/products/t-embed-cc1101) · [Plus model description](https://lilygo.cc/products/t-embed-cc1101-plus)
 
-In `components/elero_web/frontend/app`, run `mise exec node pnpm -- pnpm mock`
-and `mise exec node pnpm -- pnpm dev` in separate terminals. Open
-`http://localhost:3000`; Vite proxies `/elero/ws` to the mock on port 8080.
-The mock validates commands and outgoing events against `asyncapi.yaml` and shares
-one device model across clients. CRUD, groups, backup/restore, learn-in, movement,
-dimming, errors, and restart are simulated. Configuration survives a simulated
-restart and resets when the mock process exits. RF `raw` bytes are diagnostic
-placeholders; motor timing and radio reliability still require hardware testing.
+**Avoid CC1101 boards and modules sold for 433 MHz.** They have poor range with 868 MHz Elero equipment. [Installation guide, required parts](docs/INSTALLATION.md#1-required-parts)
 
-For remote activity and fault scenarios, enter newline-delimited JSON in the mock
-terminal, for example `{"address":"0x333238","action":"up"}` or
-`{"address":"0x333238","state":"blocking","rssi":-85}`. The `state` field accepts
-any documented RF state name. Learn-in normally completes each transmission step
-in 300 ms; start the mock with `MOCK_LEARN_IN_FAILURE=1` to simulate failure, or
-send a short `session_timeout_ms` to exercise timeout. `MOCK_PORT` changes the
-standalone server port; the default Vite proxy expects 8080.
+| Board | ESPHome starter file | What to check |
+|---|---|---|
+| Heltec WiFi LoRa 32 V3 | [Heltec V3 YAML](configs/quickstart/heltec-v3.yaml) | Choose the 868 MHz version. |
+| Heltec WiFi LoRa 32 V4 | [Heltec V4 YAML](configs/quickstart/heltec-v4.yaml) | Read the revision on the board. The file uses `GPIO46` for V4.2. For V4.3.1 and later, use `GPIO5` for `fem_pa_pin`. This setting still needs a hardware test. [V4 revision guide](docs/devices/heltec-lora-v4.md#hardware-variants) |
+| LILYGO T-Embed CC1101 or T-Embed CC1101 Plus | [LILYGO CC1101 YAML](configs/quickstart/lilygo-t-embed-cc1101.yaml) | Look for **CC1101** in the model name. The starter selects the 868 MHz antenna path. |
 
-## Quick Start
+### 2. Choose how Home Assistant connects
 
-### 1. Choose your hardware
+Both modes store the blind settings on the gateway. Choose one connection for Home Assistant.
 
-Pick a device config for your board:
+| Mode | What you need | When you add, rename, or remove a blind |
+|---|---|---|
+| **Native API** | Only the ESPHome integration. Home Assistant connects directly to the gateway. | Restart the gateway once after your changes. Home Assistant then shows the updated devices. |
+| **MQTT** | An MQTT broker (message server) and the Home Assistant MQTT integration. The broker must be available for control. | Home Assistant discovery applies changes immediately. You can keep the gateway running. |
 
-- [ESP32 + CC1101](docs/devices/esp32-cc1101.md) -- generic ESP32 with external CC1101 module
-- [ESP32-C6 + CC1101](docs/devices/esp32-c6-cc1101.md) -- ESP32-C6 with external CC1101 module
-- [Heltec WiFi LoRa 32 V4](docs/devices/heltec-lora-v4.md) -- onboard SX1262 (experimental)
-- [LILYGO LoRa32 V2.1](docs/devices/lilygo-lora32-sx1276.md) -- onboard SX1276 (experimental); [native API + ESP-IDF setup](docs/ESPHOME-2026-LILYGO.md)
-- [LilyGO T-Embed](docs/devices/lilygo-t-embed.md) -- onboard CC1101
-
-### 2. Choose your output adapter
-
-Devices always live in NVS and are managed at runtime through the web UI. The adapter only decides how Home Assistant sees them:
-
-**`elero_nvs:`** -- ESPHome native API. Recommended for HA-only setups.
+Use ESPHome **2026.10.2 or newer**. Copy the starter file for your board to your ESPHome configuration folder. Name it `elero-gateway.yaml`. In Device Builder, you can paste the starter into a new configuration named `elero-gateway`. Set your Wi-Fi details in `secrets.yaml` in the same folder. [ESPHome setup guide](https://esphome.io/install/getting-started/)
 
 ```yaml
-external_components:
-  - source: github://manuschillerdev/esphome-elero
-
-# ... board + SPI + elero config from your device page ...
-
-api:
-elero_nvs:
-elero_web:
+wifi_ssid: "Your Wi-Fi network"
+wifi_password: "Your Wi-Fi password"
 ```
 
-**`elero_mqtt:`** -- MQTT HA discovery. Use when you already run an MQTT broker, or when you want device CRUD to apply without rebooting.
+**For the native API**, the starter already includes `api:` and `elero_nvs:`. Copy a new encryption key from the ESPHome page below. Add it to `secrets.yaml` as `elero_api_key: "your generated key"`. [ESPHome encryption key generator](https://esphome.io/components/api/#configuration-variables)
+
+<details>
+<summary><strong>Use MQTT with an existing broker</strong></summary>
+
+Connect the Home Assistant MQTT integration to your broker and enable discovery. In `elero-gateway.yaml`, replace everything below `# Home Assistant connection` with this block. [Home Assistant MQTT discovery options](https://www.home-assistant.io/integrations/mqtt/#discovery-options)
 
 ```yaml
-external_components:
-  - source: github://manuschillerdev/esphome-elero
-
-# ... board + SPI + elero config from your device page ...
-
 mqtt:
   broker: !secret mqtt_broker
+  username: !secret mqtt_username
+  password: !secret mqtt_password
 
 elero_mqtt:
-  topic_prefix: elero
-  discovery_prefix: homeassistant
-  device_name: "Elero Gateway"
-
-elero_web:
 ```
 
-### 3. Flash, discover, and add devices
+For MQTT, add these entries to `secrets.yaml` and use your broker details.
 
-1. Flash your config (`uv run esphome run your-config.yaml`).
-2. Open `http://<device-ip>/elero`.
-3. Press buttons on your physical Elero remote -- RF packets appear in real time and remotes/blinds are auto-discovered.
-4. Save discovered devices in the web UI.
-5. (Optional) **Backup**: Hub → Backup & Restore → Download. Keep this JSON safe -- it's how you recover devices after flashing a replacement chip.
+```yaml
+mqtt_broker: "192.168.1.10"
+mqtt_username: "Your MQTT username"
+mqtt_password: "Your MQTT password"
+```
 
-### Migrating from older versions (YAML-defined devices)
+</details>
 
-If you're upgrading from a version where devices were defined under `cover: - platform: elero` / `light: - platform: elero`, see [docs/MIGRATION-yaml-to-nvs.md](docs/MIGRATION-yaml-to-nvs.md). The TL;DR: run `uv run scripts/migrate_yaml_to_json.py old.yaml -o backup.json`, remove the `cover:` / `light:` blocks from YAML, flash, then upload the backup via the web UI.
+### 3. Install the firmware
 
-Group transmissions support up to **31 destination channels per source address**
-on CC1101, SX1262, and SX1276. See [radio framing and limits](docs/RADIO_FRAMING.md#supported-group-size).
+1. If your board has an external antenna, attach it before you connect power.
+2. Connect the board to your computer with the USB data cable.
+3. In ESPHome Device Builder, open `elero-gateway.yaml` and select **Install → Plug into this computer**. If you use the command line, run `esphome run elero-gateway.yaml` and select the USB port.
+4. Wait for the board to join Wi-Fi. Open `http://elero-gateway.local/elero` in a browser on the same network. If the name does not resolve, use the IP address from the ESPHome log, for example `http://192.168.1.50/elero`.
 
-Cover groups expose member-derived state and position through MQTT and the native
-API. Motors with different command variants can coexist: each cover supports
-`command_up`, `command_down`, `command_stop`, `command_check`, and `command_tilt`
-overrides. In the expanded cover settings, open **Custom command bytes** to edit
-all five values. Enter a hex byte (`0x00`–`0xFF`), then use **Save to NVS**.
-**Reset command bytes** restores the defaults; save to apply them.
-For example, Raffstore motors may need `command_up: "0x21"` and
-`command_down: "0x44"`. Existing NVS devices and backups retain their defaults.
-See the [per-device fields](docs/CONFIGURATION.md#per-device-fields-managed-in-the-ui).
+### 4. Add your blind
 
-### Step receivers and full travel
+Choose one path. Use a working remote to discover the blind, or pair the gateway itself as a new remote.
 
-For Home Assistant's tilt controls, enable **Tilt** and select **HA tilt control →
-Directional steps** in the expanded cover settings (`tilt_mode: step`). Each HA
-tilt request sends one existing short press: DOWN below 50%, UP at 50% or above.
-The percentage selects a direction; it does not set or measure an angle.
-**Saved preset** (`tilt_mode: preset`) is the default for existing devices and
-backups. The separate Saved tilt action still recalls the programmed preset.
-Tilt control uses the shared registry and sender on CC1101, SX1262, and SX1276.
+#### Use your existing remote
 
-The cover editor has a **Movement mode** selector. Use **Step receiver** when
-ordinary UP/DOWN only move the slats or make a short step. After saving, Open/Close
-use receiver-addressed full travel (`0x21`/`0x41`). Standard mode keeps the configured
-command bytes. The expanded panel has separate **Short press up/down**, **Full up/down**,
-**Stop**, and **Intermediate** controls for hardware tests. Steps send a short
-channel-button press and release; they do not measure or select a slat angle.
-Home Assistant also gets four button entities per enabled cover: **Short press
-up**, **Short press down**, **Full up**, and **Full down**, through native API or
-MQTT discovery. These call the same registry actions as the web UI. A short
-press can start full travel on a standard receiver. The feature distinction is
-covered by [official remote manuals](docs/TESTING_STEP_RECEIVERS.md#official-remote-manual-evidence).
-See the [hardware test guide](docs/TESTING_STEP_RECEIVERS.md) and
-[configuration reference](docs/CONFIGURATION.md#step-receiver-movement-mode).
+1. Open **Manage**. On the handheld remote, select the channel for one blind and press **Stop** once.
+2. A **Cover** row appears. Under **Remote / channel pairings**, check the remote address and channel. Click the cover name, enter a name such as `Kitchen blind`, and press **Enter**.
+3. Click the disk icon (**Save to NVS**) on that row. This saves the blind, remote address, and channel in the gateway's memory. The gateway can now act as the paired remote for that blind. Use **Open**, **Stop**, or **Close** on the row. For other commands, open **Hub → Simulate Remote** and select the remote, blind, and command.
 
-### Cover position and Apple Home
+   ![Manage shows Kitchen blind on channel 3. The blue ring marks the Save to NVS button.](docs/screenshots/save-blind.png)
 
-Percentage positioning is enabled only when **both** opening and closing travel
-times are configured in the device editor. Measure each full travel separately;
-the reported percentage is a time-based estimate, not a motor position reading.
-With either time set to zero, Home Assistant and HomeKit get open/close/stop only.
-The optional Tilt control recalls the motor's **saved tilt preset**; it does not
-provide arbitrary slat-angle positioning. See the
-[calibration and HomeKit notes](docs/CONFIGURATION.md#cover-position-and-tilt).
+4. Repeat for each channel you want to use. **MQTT** publishes each saved blind immediately. With the **native API**, select **Reboot now** once after your last save so Home Assistant can see the new blinds.
 
-MQTT cover state is retained for Home Assistant restarts and discovery updates.
-Changing a saved cover's capabilities republishes its known state immediately;
-an unobserved cover waits for an RF report instead of publishing a guessed position.
+<details>
+<summary>See a Stop command in Simulate Remote</summary>
 
-## Documentation
+![Simulate Remote with the physical remote, Kitchen blind, and the Stop command selected.](docs/screenshots/simulate-remote.png)
 
-- [Configuration Reference](docs/CONFIGURATION.md) -- full parameter tables for all modes
-- [Installation Guide](docs/INSTALLATION.md) -- step-by-step hardware setup
-- [Backup &amp; Restore](docs/BACKUP-RESTORE.md) -- exporting/importing your NVS device list
-- [Migration from YAML devices](docs/MIGRATION-yaml-to-nvs.md) -- upgrading from pre-0.11.0
-- [Device Configs](docs/devices/) -- board-specific wiring and config
-- [example.yaml](example.yaml) -- minimal working config
+</details>
+
+If no packets appear, check the antenna and the board revision. Compare the frequency under **Hub** with the frequency for your remote. [Radio frequency settings](docs/CONFIGURATION.md#frequency-variants)
+
+#### Pair the gateway without a handheld remote
+
+Open **Hub → Learn-In**. The gateway acts as a virtual remote. You need access to a compatible receiver to put it into programming mode.
+
+1. Keep the default **Virtual Remote Address** and select a **Channel** for this blind. Write down both values.
+2. Put only the target receiver into programming mode. For a ProLine 2 receiver with no stored transmitter, switch its power off and on. If a transmitter is already stored, follow the instructions for your receiver. [Elero programming guide, page 2](https://www.elero.com/en/downloads-service/downloads?tx_avelero_downloads%5Baction%5D=download&tx_avelero_downloads%5Bcontroller%5D=Download&tx_avelero_downloads%5Bdownload%5D=1298&cHash=72809734d88e40d8f3fda759204ee1f3#page=2)
+3. Select **Start learn-in**. Watch the blind. Select **Confirm UP movement** as soon as it starts to move up. Select **Confirm DOWN movement** as soon as it starts to move down. The blind should stop.
+
+   ![Learn-In shows Wait Up. Select Confirm UP movement when the blind starts to move up.](docs/screenshots/learn-in.png)
+
+4. **Complete** means the gateway sent the sequence. Save the blind on the gateway, then test it in step 5. [What learn-in completion means](docs/research/elero-open-protocol-issues.md#what-completion-actually-means-today)
+
+<details>
+<summary>Save the blind after direct pairing</summary>
+
+If **Manage** shows the blind with the correct remote address and channel, name it and select **Save to NVS**. If it has no row, use **Hub → RF Packets** to find the source address of a status message from that motor. You need the motor address as well as the virtual remote address to save the blind.
+
+1. Under **Hub → Backup & Restore**, select **Download backup**. Open a copy of the JSON file in a text editor.
+2. Add a cover entry to the `devices` list. In the example below, replace `dst_address` with the motor address. Set `src_address` and `channel` to the values from **Learn-In**.
+
+   ```json
+   {
+     "device_type": "cover",
+     "name": "Kitchen blind",
+     "dst_address": "0xabc321",
+     "src_address": "0x000001",
+     "channel": 1,
+     "enabled": true
+   }
+   ```
+
+3. Select **Restore from backup** and choose the edited file. Open **Manage** and check the blind name and channel. [Backup file format](docs/BACKUP-RESTORE.md#snapshot-file-format)
+
+</details>
+
+### 5. Test the blind in Home Assistant
+
+Open **Settings → Devices & services** in Home Assistant.
+
+- **Native API.** In the gateway's **Manage** tab, select **Reboot now** after the last save. In Home Assistant, add the discovered ESPHome gateway and enter your encryption key. If discovery misses it, add **ESPHome** and enter the board's IP address. [ESPHome integration setup](https://www.home-assistant.io/integrations/esphome/#configuration)
+
+  ![The native API restart prompt with the Reboot now button on the right.](docs/screenshots/native-api-restart.png)
+
+- **MQTT.** Open the **MQTT** integration. Each blind appears as soon as you save it on the gateway.
+
+Find the blind by the name you gave it. Select **Open**, then **Stop**, and check that the blind responds.
+
+## After setup
+
+- Save a copy of your device list under **Hub → Backup & Restore**. [Backup and restore](docs/BACKUP-RESTORE.md)
+- Set opening and closing times for percentage control, or configure tilt and step receivers. [Cover settings](docs/CONFIGURATION.md#cover-position-and-tilt) · [Step receiver guide](docs/TESTING_STEP_RECEIVERS.md)
+- Set up other boards, including an ESP32 with a separate CC1101 or a LILYGO LoRa32 V2.1 with an SX1276. [Board guides](docs/devices/)
+- Find a remote manual or move devices from an older YAML configuration. [Remote manuals](docs/manuals/) · [Migration guide](docs/MIGRATION-yaml-to-nvs.md)
+- Check command bytes, cover groups, and radio limits. [Configuration reference](docs/CONFIGURATION.md) · [Radio framing and limits](docs/RADIO_FRAMING.md#supported-group-size)
+
+<details>
+<summary>For contributors</summary>
+
+Local development uses Python 3.12. Run `mise install` and `mise exec -- uv sync` in the repository. The component includes the web interface. If you change the frontend, rebuild and commit `components/elero_web/elero_web_ui.h` with its source. [Build and compatibility guide](docs/ESPHOME-COMPATIBILITY.md#local-verification)
+
+To run the simulator, open two terminals in `components/elero_web/frontend/app`. Run `mise exec node pnpm -- pnpm mock` in one and `mise exec node pnpm -- pnpm dev` in the other. Open `http://localhost:3000`. Enter `{"address":"0x333238","action":"up"}` in the simulator terminal to simulate a remote button press. The simulator keeps saved devices until you stop its process.
+
+</details>
 
 ## Credits
 
-Based on protocol research by [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT), [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3), and [andyboeh/esphome-elero](https://github.com/andyboeh/esphome-elero).
+This project uses protocol research from [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT), [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3), and [andyboeh/esphome-elero](https://github.com/andyboeh/esphome-elero).

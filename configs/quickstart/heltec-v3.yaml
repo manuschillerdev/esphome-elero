@@ -1,0 +1,44 @@
+esphome:
+  name: elero-gateway
+  friendly_name: Elero Gateway
+
+esp32:
+  board: heltec_wifi_lora_32_V3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_VFS_SUPPORT_SELECT: "y"
+
+spi:
+  clk_pin: GPIO9
+  mosi_pin: GPIO10
+  miso_pin: GPIO11
+
+elero:
+  radio: sx1262
+  cs_pin: GPIO8
+  irq_pin: GPIO14
+  busy_pin: GPIO13
+  rst_pin: GPIO12
+  rf_switch: true
+  tcxo_voltage: 1.8
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+  hardware_uart: UART0  # USB serial port on the V3
+
+external_components:
+  - source: github://manuschillerdev/esphome-elero@dev
+
+elero_web:
+
+# Home Assistant connection
+api:
+  encryption:
+    key: !secret elero_api_key
+
+elero_nvs:
