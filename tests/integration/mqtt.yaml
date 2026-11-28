@@ -1,0 +1,14 @@
+substitutions:
+  test_mode: mqtt
+
+packages:
+  common: !include common.yaml
+
+mqtt:
+  broker: 192.168.4.1
+  discovery: false
+  reboot_timeout: 0s
+
+elero_mqtt:
+  topic_prefix: elero
+  device_name: Elero E2E

@@ -1,0 +1,10 @@
+substitutions:
+  test_mode: native
+
+packages:
+  common: !include common.yaml
+
+api:
+  reboot_timeout: 0s
+
+elero_nvs:

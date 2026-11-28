@@ -1,0 +1,11 @@
+cpus = 4
+memory = 6144
+net = true
+net_backend = "virtio-net"
+storage = 30
+
+init = [
+  "apk add --no-cache docker curl python3 py3-aiohttp -q",
+  "mkdir -p /storage/docker /var/lib/docker /workspace",
+  "mount --bind /storage/docker /var/lib/docker",
+]

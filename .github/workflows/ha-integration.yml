@@ -1,0 +1,56 @@
+name: Home Assistant integration
+
+on:
+  pull_request:
+    paths:
+      - components/elero/**
+      - components/elero_mqtt/**
+      - components/elero_nvs/**
+      - components/elero_web/**
+      - tests/integration/**
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/ha-integration.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ha-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Home Assistant (${{ matrix.mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [native, mqtt]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: python uv
+      - name: Enable access to KVM
+        run: |
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Run the integration suite
+        run: |
+          mise install github:smol-machines/smolvm@1.33.0
+          mise exec python uv github:smol-machines/smolvm@1.33.0 -- uv run --locked python tests/integration/run.py --mode "${{ matrix.mode }}"
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ha-integration-${{ matrix.mode }}
+          include-hidden-files: true
+          path: |
+            .tmp/integration/*/evidence/results.json
+            .tmp/integration/*/evidence/results.xml
+            .tmp/integration/*/timing.json
+            .tmp/integration/*/manifest.json
+          if-no-files-found: warn

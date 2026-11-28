@@ -15,6 +15,7 @@ dev = [
     # PlatformIO ESP32 build deps (pioarduino builder imports these unconditionally)
     "littlefs-python>=0.17.1",
     "fatfs-ng>=0.1.15",
+    "aiohttp>=3.14.5",
 ]
 
 [tool.ruff]
